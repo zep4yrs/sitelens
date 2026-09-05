@@ -227,7 +227,7 @@ def _grab(host, port, timeout):
 # ---------------------------------------------------------------- 授权审计模块
 WEAK_USERS = "data/wordlists/weak_users.txt"
 WEAK_PASSWORDS = "data/wordlists/weak_passwords.txt"
-SHELL_LIST = "data/wordlists/full/WebShell字典.json"
+SHELL_LIST = "data/wordlists/shell_default.txt"
 
 
 def weak_audit(fetcher, target, progress=None, max_tries=120):
@@ -318,22 +318,15 @@ def _wordlist(path, limit=64):
 
 
 def _load_shell_paths():
-    import json as _json
+    """读取 WebShell 常见落点路径表（纯文本，每行一条，# 开头为注释）"""
     from pathlib import Path as _P
     try:
-        data = _json.loads(_P(SHELL_LIST).read_text(encoding="utf8"))
+        lines = _P(SHELL_LIST).read_text(encoding="utf8").splitlines()
     except Exception:
         return []
-    # 兼容 list / dict(value 为路径列表) 两种结构
-    if isinstance(data, list):
-        items = data
-    elif isinstance(data, dict):
-        items = [x for v in data.values() for x in (v if isinstance(v, list) else [v])]
-    else:
-        items = []
     out = []
-    for x in items:
-        x = str(x).strip()
+    for x in lines:
+        x = x.strip()
         if x and not x.startswith("#"):
             out.append(x.lstrip("/"))
     return out
