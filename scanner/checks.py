@@ -124,14 +124,36 @@ def run_checks(fetcher, target, level="core", progress=None, include_ids=None,
             continue
         ok = (r.get("status") == match.get("s"))
         body = r.get("body") or ""
+        # 剔除回显的请求路径：Apache 404 页面会回显路径本身，
+        # 若模板关键词恰为路径片段会造成自指误报
+        body = body.replace(url, "").replace(path, "")
         if ok and base_size is not None and r.get("size") == base_size and base_body and body[:200] == base_body:
             ok = False                      # 软 404：与不存在路径响应一致
         for kw in match.get("c", []):
             if kw not in body:
                 ok = False                  # 包含条件全满足
         if ok:
+            # 二次确认：命中后立即重放，两次都命中才采信（防 CDN 多节点
+            # 内容不一致 / WAF 抖动造成的单次采样误报）
+            ok2 = None
+            try:
+                r2 = fetcher.get_small(url)
+            except Exception:
+                r2 = None
+            if r2 is not None:
+                ok2 = (r2.get("status") == match.get("s"))
+                body2 = (r2.get("body") or "").replace(url, "").replace(path, "")
+                for kw in match.get("c", []):
+                    if kw not in body2:
+                        ok2 = False
+            if ok2 is False:
+                progress(i + 1, total, path)
+                continue                  # 复核未复现，判定为误报丢弃
             hits.append({"check": cid, "title": title, "severity": sev,
-                         "url": url, "evidence": "HTTP %d" % r.get("status", 0), "advice": adv})
+                         "url": url,
+                         "evidence": "HTTP %d（二次确认）" % r.get("status", 0)
+                         if ok2 else "HTTP %d（单次采样）" % r.get("status", 0),
+                         "advice": adv})
         progress(i + 1, total, path)
     return hits
 
@@ -246,11 +268,31 @@ def run_nuclei(fetcher, target, rows, progress=None, cancel_check=None):
             continue
         status = r.get("status")
         body_l = (r.get("body") or "").lower()
+        # 剔除回显的请求路径（404 页面回显路径 → 含路径关键词的自指误报）
+        body_l = body_l.replace(url.lower(), "").replace(path.lower(), "")
         header_text = " | ".join("%s: %s" % (k, v) for k, v in (r.get("headers") or {}).items())
         header_l = header_text.lower()
         if any(_group_match(g, status, body_l, header_l) for g in row.get("groups", [])):
-            hits.append({"check": row["id"], "title": row["name"], "severity": row["sev"],
-                         "url": url, "evidence": "HTTP %d" % status, "advice": "参考 Nuclei 模板人工确认",
-                         "src": "nuclei"})
+            # 二次确认：立即重放，两次都命中才采信（防 CDN 多节点抖动误报）
+            ok2 = None
+            try:
+                r2 = fetcher.get_small(url)
+            except Exception:
+                r2 = None
+            if r2 is not None:
+                s2 = r2.get("status")
+                b2 = (r2.get("body") or "").lower().replace(
+                    url.lower(), "").replace(path.lower(), "")
+                h2 = " | ".join("%s: %s" % (k, v)
+                                for k, v in (r2.get("headers") or {}).items()).lower()
+                ok2 = any(_group_match(g, s2, b2, h2)
+                          for g in row.get("groups", []))
+            if ok2 is not False:
+                hits.append({"check": row["id"], "title": row["name"],
+                             "severity": row["sev"], "url": url,
+                             "evidence": "HTTP %d（二次确认）" % status
+                             if ok2 else "HTTP %d（单次采样）" % status,
+                             "advice": "参考 Nuclei 模板人工确认",
+                             "src": "nuclei"})
         progress(i + 1, len(rows), path)
     return hits

@@ -33,7 +33,10 @@
   <div class="stats-row" id="kb-stats" style="display:none">
     <div><b id="kb-vulns">—</b><span>漏洞情报</span></div>
     <div><b id="kb-high">—</b><span>高危及以上</span></div>
+    <div><b id="kb-ranges">—</b><span>带版本区间</span></div>
+    <div><b id="kb-cvss">—</b><span>带 CVSS 评分</span></div>
     <div><b id="kb-tech">—</b><span>覆盖产品指纹</span></div>
+    <div style="flex-basis:100%"><span id="kb-src-chips" style="display:flex;gap:6px;flex-wrap:wrap"></span></div>
   </div>
 
   <div id="out">
@@ -52,6 +55,17 @@ api.get("/api/stats").then(function (s) {
   });
   document.getElementById("kb-high").textContent = high ? high.toLocaleString() : "—";
   document.getElementById("kb-tech").textContent = (s.technologies || 0).toLocaleString();
+  document.getElementById("kb-ranges").textContent =
+    s.intel_with_ranges != null ? Number(s.intel_with_ranges).toLocaleString() : "—";
+  document.getElementById("kb-cvss").textContent =
+    s.intel_with_cvss != null ? Number(s.intel_with_cvss).toLocaleString() : "—";
+  var chips = document.getElementById("kb-src-chips");
+  var names = { tscan: "TscanPlus", afrog: "afrog", xray: "xray", osv: "OSV",
+                ghsa: "GHSA", nvd: "NVD" };
+  chips.innerHTML = Object.keys(s.intel_sources || {}).map(function (k) {
+    return '<span class="badge">' + esc(names[k] || k) + " " +
+      Number(s.intel_sources[k]).toLocaleString() + "</span>";
+  }).join("");
 }).catch(function () {});
 
 function search() {

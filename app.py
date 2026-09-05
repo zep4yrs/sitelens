@@ -452,6 +452,19 @@ def _csv_response(text, filename):
 def api_stats():
     kb_stats = _registry.stats()
     hist = _store.history_stats()
+    with _db.transaction(dict_rows=True) as cur:
+        cur.execute("SELECT src, COUNT(*) AS n FROM vuln_kb"
+                    " GROUP BY src ORDER BY n DESC")
+        intel_sources = {r["src"]: r["n"] for r in cur.fetchall()}
+        cur.execute("SELECT sources FROM vuln_kb WHERE sources <> ''")
+        for r in cur.fetchall():                       # 富集来源（osv/ghsa/nvd）
+            for s in (r["sources"] or "").split(","):
+                s = s.strip()
+                if s:
+                    intel_sources[s] = intel_sources.get(s, 0) + 1
+        cur.execute("SELECT COALESCE(SUM((affected <> '')::int),0) AS n,"
+                    " COALESCE(SUM((cvss_score > 0)::int),0) AS scored FROM vuln_kb")
+        row = cur.fetchone()
     return jsonify({
         "categories": kb_stats["categories"],
         "technologies": kb_stats["technologies"],
@@ -459,6 +472,9 @@ def api_stats():
         "tscan": kb_stats["tscan"],
         "vulns": kb_stats["vulns"],
         "vuln_by_severity": kb_stats["vuln_by_severity"],
+        "intel_sources": intel_sources,
+        "intel_with_ranges": row["n"],
+        "intel_with_cvss": row["scored"],
         "history": hist,
         "top_techs": _store.top_techs(8),
     })
