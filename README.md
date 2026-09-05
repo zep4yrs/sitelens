@@ -10,20 +10,24 @@
 ## 快速开始
 
 ```bash
-# 1) 依赖（Python 3.10+，本地需有 PostgreSQL 12+）
+# 0) 准备数据库（PostgreSQL 12+，推荐 18）：只需创建空库，表会自动创建
+#    psql -U postgres -c "CREATE DATABASE sitelens;"
+
+# 1) 安装依赖（Python 3.10+）
 pip install -r requirements.txt
 
-# 2) 配置数据库连接（项目根 .env，SLENS_DB_* 键；也可用环境变量）
+# 2) 配置数据库连接：复制 .env.example 为 .env，填入 SLENS_DB_PASSWORD
 #    SLENS_DB_HOST / SLENS_DB_PORT / SLENS_DB_USER / SLENS_DB_PASSWORD / SLENS_DB_NAME=sitelens
 
-# 3) 初始化知识库（首次运行自动建表并播种 78 类 + 369 条精编指纹）
-python tools/import_assets.py     # 可选：额外导入漏洞收集包资产（见下）
+# 3) 初始化知识库（自动建表并播种 78 类 + 369 条精编指纹）
+#    没有"漏洞收集包"也能跑：会提示跳过资产导入，扫描功能不受影响
+python tools/import_assets.py
 
 # 4) 启动
 python app.py                     # http://127.0.0.1:5000
 python main.py scan https://example.com        # 命令行扫描
 python main.py scan <url> --full               # 含全部主动模块（仅限授权目标）
-python -m unittest discover -s tests -v        # 测试（18 项，离线可跑）
+python -m unittest discover -s tests -v        # 测试（离线可跑）
 ```
 
 ## 功能总览
