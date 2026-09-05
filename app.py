@@ -26,7 +26,7 @@ from scanner.target import TargetError
 
 WEB_DIR = str(_Path(__file__).resolve().parent / "web")
 
-APP_VERSION = "1.0.0"
+APP_VERSION = "0.0.1-demo"
 try:
     # 优先取 git 标签，避免版本号与 tag 漂移
     import subprocess as _sub
