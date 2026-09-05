@@ -421,6 +421,11 @@ def main():
     st = reg.stats()
     log(f"[内置库] 类别 {st['categories']}，精编指纹 {st['curated']}")
 
+    if not ZIP_PATH.exists():
+        log(f"[跳过] 未找到资产包 {ZIP_PATH}——已建表并播种内置指纹，"
+            f"扫描功能可用；漏洞情报/社区指纹可后续放入资产包后重跑本命令导入")
+        return
+
     z = zipfile.ZipFile(str(ZIP_PATH))
     import_tscan_fp(db, z)
     import_fingerdir(db, z)
