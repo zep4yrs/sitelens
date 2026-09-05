@@ -1,0 +1,158 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>源码审计 — SiteLens</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<script>if(localStorage.getItem("sitelens-theme")==="dark")document.documentElement.classList.add("dark")</script>
+<style>
+  .dropzone{border:2px dashed var(--border);border-radius:12px;padding:38px 20px;text-align:center;
+    cursor:pointer;transition:border-color .2s,background .2s;background:var(--card)}
+  .dropzone:hover,.dropzone.drag{border-color:var(--primary);background:var(--accent)}
+  .dz-icon{color:var(--muted-fg);margin-bottom:10px}
+  .dz-main{font-size:15px;font-weight:500}
+  .dz-sub{font-size:12.5px;color:var(--muted-fg);margin-top:6px}
+  .dz-sub .dz-pick{color:var(--info);text-decoration:underline}
+  .dz-names{font-size:12px;color:var(--muted-fg);margin-top:12px;line-height:1.9;word-break:break-all}
+</style>
+</head>
+<body>
+<script src="/js/common.js"></script>
+
+<main class="page">
+  <h1>源码静态审计</h1>
+  <p class="sub">上传源码文件或 zip 工程包，按 16 条规则扫描危险函数、SQL 拼接、弱哈希、硬编码密钥、
+    反序列化等线索，并做 AST 污点数据流分析。文件审计后即删，不做留存。结果仅为线索，需人工复查。</p>
+
+  <div class="dropzone" id="dz">
+    <input id="files" type="file" multiple style="display:none"
+      accept=".py,.js,.php,.java,.go,.rb,.html,.json,.yaml,.yml,.sql,.sh,.txt,.md,.zip,.rar,.7z,.tar,.gz">
+    <div class="dz-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:26px;height:26px"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg></div>
+    <div class="dz-main">把源码文件 / zip 包拖到这里</div>
+    <div class="dz-sub">或 <span class="dz-pick">点击选择</span> · 支持多选 · 压缩包自动解包（zip / rar / 7z）</div>
+    <div class="dz-names mono" id="names"></div>
+  </div>
+
+  <div class="toolbar" style="margin-top:14px">
+    <button class="btn" id="go" onclick="runAudit()">▶ 开始审计</button>
+    <button class="btn ghost" onclick="runDemo()">载入演示样本</button>
+    <span class="hint" style="margin:0">演示样本为内置的「故意漏洞」教学代码，服务端运行时拼装、从不执行</span>
+  </div>
+
+  <div id="summary" class="summary" style="display:none"></div>
+  <div id="out"></div>
+</main>
+
+<script>
+var input = document.getElementById("files");
+var dz = document.getElementById("dz");
+
+input.addEventListener("change", showNames);
+dz.addEventListener("click", function (e) {
+  if (e.target === dz || e.target.className !== "dz-pick") input.click();
+});
+dz.querySelector(".dz-pick").addEventListener("click", function (e) {
+  e.stopPropagation(); input.click();
+});
+["dragover", "dragenter"].forEach(function (ev) {
+  dz.addEventListener(ev, function (e) { e.preventDefault(); dz.classList.add("drag"); });
+});
+["dragleave", "drop"].forEach(function (ev) {
+  dz.addEventListener(ev, function (e) { e.preventDefault(); dz.classList.remove("drag"); });
+});
+dz.addEventListener("drop", function (e) {
+  if (e.dataTransfer && e.dataTransfer.files.length) {
+    input.files = e.dataTransfer.files;
+    showNames();
+  }
+});
+
+function showNames() {
+  document.getElementById("names").innerHTML = input.files.length
+    ? [...input.files].map(function (f) {
+        return esc(f.name) + " (" + (f.size / 1024).toFixed(1) + " KB)";
+      }).join("<br>")
+    : "";
+}
+
+function runAudit() {
+  var picked = input.files;
+  if (!picked.length) { dz.classList.add("drag"); return; }
+  var fd = new FormData();
+  [...picked].forEach(function (f) { fd.append("files", f); });
+  busy(true);
+  fetch("/api/audit", { method: "POST", body: fd })
+    .then(function (r) {
+      return r.json().then(function (j) {
+        if (!r.ok) throw new Error(j.error || "HTTP " + r.status);
+        return j;
+      });
+    })
+    .then(function (r) { busy(false); render(r); })
+    .catch(function (e) {
+      busy(false);
+      document.getElementById("out").innerHTML =
+        '<p style="color:var(--danger);font-size:13.5px">' + esc(e.message) + "</p>";
+    });
+}
+
+function runDemo() {
+  busy(true);
+  api.get("/api/audit/demo")
+    .then(function (r) { busy(false); render(r); })
+    .catch(function (e) {
+      busy(false);
+      document.getElementById("out").innerHTML =
+        '<p style="color:var(--danger);font-size:13.5px">' + esc(e.message) + "</p>";
+    });
+}
+
+function busy(on) {
+  document.getElementById("go").disabled = on;
+  if (on) {
+    document.getElementById("summary").style.display = "none";
+    document.getElementById("out").innerHTML =
+      '<div class="skeleton" style="height:60px;margin-bottom:10px"></div>' +
+      '<div class="skeleton" style="height:60px"></div><p class="hint">审计中…</p>';
+  }
+}
+
+function render(r) {
+  var sev = r.by_severity || {};
+  document.getElementById("summary").style.display = "grid";
+  document.getElementById("summary").innerHTML =
+    cell("扫描文件", r.files) + cell("代码行", (r.lines || 0).toLocaleString()) +
+    cell("发现总数", (r.findings || []).length) +
+    '<div class="cell"><span>高危</span><b><span class="badge danger">' + (sev.high || 0) + "</span></b></div>" +
+    '<div class="cell"><span>中危</span><b><span class="badge warn">' + (sev.medium || 0) + "</span></b></div>" +
+    '<div class="cell"><span>低危</span><b><span class="badge ok">' + (sev.low || 0) + "</span></b></div>";
+
+  var findings = r.findings || [];
+  if (!findings.length) {
+    document.getElementById("out").innerHTML =
+      '<p class="muted" style="font-size:13.5px">未命中任何规则线索。</p>';
+    return;
+  }
+  var html = '<div class="sec-title">审计发现 <span class="count">最多展示 120 条</span></div>' +
+    '<div class="tbl-wrap"><table class="list"><tr><th>等级</th><th>规则</th><th>位置</th><th>说明 / 修复建议</th></tr>';
+  findings.slice(0, 120).forEach(function (f) {
+    html += "<tr><td>" + sevBadge(f.severity) + "</td>" +
+      '<td class="mono">' + esc(f.rule) + '<br><span class="hint" style="margin:0">' + esc(f.title) + "</span></td>" +
+      '<td class="mono" style="font-size:12px;word-break:break-all">' + esc(f.file) + ":" + esc(f.line) +
+      '<br><span class="muted">' + esc(String(f.snippet || "").slice(0, 70)) + "</span></td>" +
+      '<td style="font-size:12.5px">' + esc(f.advice) + "</td></tr>";
+  });
+  html += "</table></div>";
+  if (findings.length > 120)
+    html += '<p class="hint">… 其余 ' + (findings.length - 120) + " 条略</p>";
+  document.getElementById("out").innerHTML = html;
+}
+
+function cell(k, v) {
+  return '<div class="cell"><span>' + esc(k) + '</span><b class="mono">' + esc(v) + "</b></div>";
+}
+</script>
+</body>
+</html>

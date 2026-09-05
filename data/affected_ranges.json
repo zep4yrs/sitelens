@@ -1,0 +1,49 @@
+{
+ "next.js": [
+  {
+   "cve": "CVE-2025-29927",
+   "affected": "<14.2.25",
+   "title": "Middleware 鉴权绕过"
+  },
+  {
+   "cve": "CVE-2024-34351",
+   "affected": "<14.1.1",
+   "title": "图片优化 SSRF"
+  }
+ ],
+ "log4j": [
+  {
+   "cve": "CVE-2021-44228",
+   "affected": ">=2.0-beta9,<2.15.0",
+   "title": "Log4Shell JNDI RCE"
+  }
+ ],
+ "spring": [
+  {
+   "cve": "CVE-2022-22965",
+   "affected": ">=5.3.0,<5.3.18",
+   "title": "Spring4Shell RCE"
+  }
+ ],
+ "fastjson": [
+  {
+   "cve": "CVE-2022-25845",
+   "affected": "<1.2.83",
+   "title": "autoType 反序列化绕过"
+  }
+ ],
+ "shiro": [
+  {
+   "cve": "CVE-2016-4437",
+   "affected": "<=1.2.4",
+   "title": "rememberMe 反序列化 RCE"
+  }
+ ],
+ "drupal": [
+  {
+   "cve": "CVE-2018-7600",
+   "affected": "<7.58",
+   "title": "Drupalgeddon2 RCE"
+  }
+ ]
+}

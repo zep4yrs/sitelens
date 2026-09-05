@@ -1,0 +1,245 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#fafafa">
+<title>产品介绍 — SiteLens 站点透视</title>
+<meta name="description" content="SiteLens 是一个本地运行的全类别验证型 Web 漏洞扫描器：2850+ 产品指纹、2613 条社区验证模板、11024 条漏洞情报三级判定，覆盖 TLS/DNS 网络层检测与源码审计。">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<script>if(localStorage.getItem("sitelens-theme")==="dark")document.documentElement.classList.add("dark")</script>
+<style>
+  /* ---------- 页面专属样式（公共组件由 /js/common.js 注入） ---------- */
+  .ab-hero{padding:44px 0 8px}
+  .ab-hero h1{font-family:var(--font-mono);font-size:38px;line-height:1.28;font-weight:700;margin:14px 0 14px}
+  .ab-hero h1 .accent{background:linear-gradient(transparent 62%,color-mix(in srgb,var(--primary) 22%,transparent) 0)}
+  .ab-hero .lead{color:var(--muted-fg);font-size:15.5px;max-width:40em;margin:0 0 24px}
+  .ab-cta{display:flex;gap:10px;flex-wrap:wrap;margin:0 0 30px}
+  .ab-stats{display:flex;gap:34px;flex-wrap:wrap;border-top:1px dashed var(--border);padding-top:22px}
+  .ab-stats div{display:flex;flex-direction:column}
+  .ab-stats b{font-family:var(--font-mono);font-size:24px;font-weight:700}
+  .ab-stats span{font-size:12.5px;color:var(--muted-fg)}
+
+  .ab-sec{padding:44px 0 6px}
+  .ab-sec h2{font-family:var(--font-mono);font-size:24px;font-weight:700;margin:0 0 8px}
+  .ab-sec>.sub{color:var(--muted-fg);font-size:14px;margin:0 0 26px}
+
+  /* 能力卡：带真实入口 */
+  .ab-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(290px,1fr));gap:16px}
+  .ab-card{background:var(--card);border:1px solid var(--border);border-radius:10px;padding:20px;
+    box-shadow:var(--shadow-2xs);transition:box-shadow .2s,transform .2s}
+  .ab-card:hover{box-shadow:var(--shadow-md);transform:translateY(-2px)}
+  .ab-card h3{margin:0 0 8px;font-size:15.5px}
+  .ab-card p{margin:0 0 12px;color:var(--muted-fg);font-size:13px;line-height:1.8}
+  .ab-card .go{font-size:13px;color:var(--info)}
+  .ab-card .go:hover{text-decoration:underline}
+  .ab-card b.mono{font-family:var(--font-mono)}
+
+  /* 工作流程 */
+  .ab-flow{display:grid;grid-template-columns:repeat(auto-fill,minmax(290px,1fr));gap:16px}
+  .ab-step .no{font-family:var(--font-mono);font-size:28px;font-weight:700;
+    color:color-mix(in srgb,var(--primary) 30%,transparent)}
+  .ab-step h3{margin:6px 0 6px;font-size:15px}
+  .ab-step p{margin:0;color:var(--muted-fg);font-size:13px;line-height:1.8}
+
+  /* 扫描器纪律 */
+  .ab-trust{display:grid;grid-template-columns:repeat(auto-fill,minmax(290px,1fr));gap:16px}
+  .ab-trust .ab-card h3{color:var(--ok)}
+
+  /* 部署 */
+  .ab-deploy{display:grid;grid-template-columns:repeat(auto-fill,minmax(290px,1fr));gap:16px}
+  .ab-deploy .ab-card ol{margin:0;padding-left:20px;color:var(--muted-fg);font-size:13px;line-height:2}
+  pre.ab-code{background:var(--muted);border:1px solid var(--border);border-radius:var(--radius);
+    padding:10px 12px;font-family:var(--font-mono);font-size:12.5px;overflow-x:auto;margin:8px 0 0}
+
+  .ab-band{margin-top:44px;padding:44px 24px;text-align:center;border:1px solid var(--border);
+    border-radius:12px;background:var(--muted)}
+  .ab-band h2{font-family:var(--font-mono);font-size:22px;margin:0 0 8px}
+  .ab-band p{color:var(--muted-fg);font-size:14px;margin:0 0 20px}
+</style>
+</head>
+<body>
+<script src="/js/common.js"></script>
+
+<main class="page">
+
+  <!-- ================= 首屏：一句话定位 + 一个主按钮 + 真实数字 ================= -->
+  <section class="ab-hero">
+    <span class="badge ok fade-up">本地运行 · 数据不出机器 · 免费使用</span>
+    <h1 class="fade-up">从指纹到源码，<br>一次扫描完成<span class="accent">网站安全体检</span></h1>
+    <p class="lead fade-up">SiteLens 是一个全类别验证型 Web 漏洞扫描器，完全运行在你自己的电脑上：
+       被动识别 2850+ 产品指纹，主动验证疑似漏洞，关联 11000+ 条情报并给出三级判定，
+       覆盖 TLS / DNS 网络层与源码静态审计——每条结论都附原始证据，可逐条核对。</p>
+    <div class="ab-cta fade-up">
+      <button class="btn" onclick="location.href='/app'">打开扫描工作台 →</button>
+      <button class="btn ghost" onclick="document.getElementById('flow').scrollIntoView()">它是怎么工作的</button>
+    </div>
+    <div class="ab-stats fade-up">
+      <div><b id="st-tech">2850+</b><span>产品指纹</span></div>
+      <div><b>2613</b><span>Nuclei 验证模板</span></div>
+      <div><b id="st-vuln">11024</b><span>漏洞情报</span></div>
+      <div><b>1695</b><span>KEV 在野利用</span></div>
+    </div>
+  </section>
+
+  <!-- ================= 五类能力：按「你要做什么」分组，每张卡都有入口 ================= -->
+  <section class="ab-sec">
+    <h2>五类能力，覆盖一次完整的安全评估</h2>
+    <p class="sub">不装多个工具、不来回导数据：指纹、验证、情报、网络层、源码，全部在同一个工作台里完成。</p>
+    <div class="ab-grid">
+      <div class="ab-card"><h3>被动指纹识别</h3>
+        <p><b class="mono">7</b> 个检测器并行取证（响应头 / Cookie / meta / DOM / 脚本 / 表达式 / bundle 签名），<b class="mono">2850+</b> 条指纹、<b class="mono">78</b> 个类别，识别结果标注置信度与命中来源。</p>
+        <a class="go" href="/app">打开工作台 →</a></div>
+      <div class="ab-card"><h3>漏洞主动验证</h3>
+        <p><b class="mono">2613</b> 条 Nuclei 社区模板按指纹结果路由调度，外加 <b class="mono">35</b> 条自研无害 check。只有真实发出请求并命中响应特征的，才列为「已验证漏洞」。</p>
+        <a class="go" href="/app">扫一个试试 →</a></div>
+      <div class="ab-card"><h3>漏洞情报三级判定</h3>
+        <p><b class="mono">11024</b> 条情报按组件自动关联；版本号落入 OSV 区间才判「确认受影响」，否则给出「可能 / 不受影响」；KEV 在野利用红标提醒。</p>
+        <a class="go" href="/app">看一次判定 →</a></div>
+      <div class="ab-card"><h3>网络层检测</h3>
+        <p>TLS 证书过期 / 自签名 / 弱协议只读检测，SPF / DMARC / MX 邮件安全审计，6 个常见端口 banner 服务识别（<b class="mono">11966</b> 条 nmap 风格指纹）。</p>
+        <a class="go" href="/app#netsec">跑一次网络体检 →</a></div>
+      <div class="ab-card"><h3>源码静态审计</h3>
+        <p>上传源码或 zip 包：<b class="mono">16</b> 条危险规则扫描 + Python 污点数据流分析（AST 级 source → sink 追踪），纯本地解析，审计完即删。</p>
+        <a class="go" href="/audit">审计一份源码 →</a></div>
+      <div class="ab-card"><h3>授权专属模块</h3>
+        <p>登录爆破独立成模块、不混入常规扫描链路；目录探测、子域名枚举、主动路径指纹等主动能力默认关闭，显式选择等级并确认授权后才启用。</p>
+        <a class="go" href="/app#loginbrute">了解登录爆破 →</a></div>
+    </div>
+  </section>
+
+  <!-- ================= 工作流程 ================= -->
+  <section class="ab-sec" id="flow">
+    <h2>一次扫描背后发生了什么</h2>
+    <p class="sub">六个阶段实时可见，跳过营销话术——每一步都是可核对的技术动作。</p>
+    <div class="ab-flow">
+      <div class="ab-step"><div class="no">01</div><h3>目标校验</h3>
+        <p>协议白名单 + DNS 解析后逐 IP 校验，拒绝内网 / 环回 / 保留地址，防 SSRF 与 DNS 重绑定——工具自己不会被当成跳板。</p></div>
+      <div class="ab-step"><div class="no">02</div><h3>采集解析</h3>
+        <p>全局限速、UA 自报身份，先读 robots.txt 再抓取；BeautifulSoup 把页面拆成 meta / 脚本 / DOM 命中等结构化证据。</p></div>
+      <div class="ab-step"><div class="no">03</div><h3>指纹识别</h3>
+        <p>7 个检测器对证据并行匹配，多来源独立命中自动提升置信度并去重合并，短词加边界防误报。</p></div>
+      <div class="ab-step"><div class="no">04</div><h3>模板验证</h3>
+        <p>识别出什么产品就路由什么专项模板：MoE 式语义路由让 2613 条模板长期轮转覆盖，不做无意义空跑。</p></div>
+      <div class="ab-step"><div class="no">05</div><h3>情报关联</h3>
+        <p>版本号与 OSV 区间做语义化比较（支持通配），三级判定拒绝「同名就报漏洞」的粗放误报，KEV 红标标出在野利用。</p></div>
+      <div class="ab-step"><div class="no">06</div><h3>结论交付</h3>
+        <p>安全响应头评分（A+–F + 中文修复建议）、已验证漏洞汇总；结果存入本地 PostgreSQL，可导出 JSON / CSV / 宽表 / HTML 报告。</p></div>
+    </div>
+  </section>
+
+  <!-- ================= 数据规模与来源（只放可核对的证据） ================= -->
+  <section class="ab-sec">
+    <h2>数据规模与来源</h2>
+    <p class="sub">所有数字都来自本地数据库，页面上写的和库里查到的一致。</p>
+    <div class="tbl-wrap">
+      <table class="list">
+        <thead><tr><th>数据</th><th>规模</th><th>来源</th><th>用在哪</th></tr></thead>
+        <tbody>
+          <tr><td>产品指纹</td><td class="mono">2850 条 · 78 类别</td><td>自建精编 369 + TscanPlus 社区库 2481</td><td>被动指纹识别</td></tr>
+          <tr><td>验证模板</td><td class="mono">2613 条</td><td>Nuclei Templates（MIT）</td><td>漏洞主动验证</td></tr>
+          <tr><td>漏洞情报</td><td class="mono">11024 条</td><td>afrog / xray / TscanPlus POC 元数据</td><td>情报关联（载荷不落盘不执行）</td></tr>
+          <tr><td>版本区间</td><td class="mono">1188 条</td><td>OSV.dev（Apache-2.0）</td><td>「确认 / 可能 / 不受影响」三级判定</td></tr>
+          <tr><td>在野利用</td><td class="mono">1695 条</td><td>CISA KEV（官方 JSON）</td><td>情报面板红标</td></tr>
+          <tr><td>CVE 索引</td><td class="mono">22133 个</td><td>微软安全公告去重</td><td>按组件关联公告</td></tr>
+          <tr><td>服务指纹</td><td class="mono">11966 条</td><td>nmap 风格社区库</td><td>端口服务识别（默认关）</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="hint">情报自动更新：启动守护线程每 24h 拉取 OSV 区间与 CISA KEV，可在配置中一键关闭。</p>
+  </section>
+
+  <!-- ================= 横向对比（只写可核对的事实） ================= -->
+  <section class="ab-sec">
+    <h2>和单独装一个工具有什么区别</h2>
+    <p class="sub">SiteLens 站在开源社区肩膀上，把它们串成一条流水线，而不是重新发明每一个轮子。</p>
+    <div class="tbl-wrap">
+      <table class="list">
+        <thead><tr><th>维度</th><th>SiteLens</th><th>Nuclei</th><th>Wappalyzer</th><th>商业扫描器</th></tr></thead>
+        <tbody>
+          <tr><td>技术指纹</td><td class="mono">2850 产品 · 78 类别</td><td>无</td><td class="mono">3000+ 技术</td><td>有</td></tr>
+          <tr><td>漏洞验证</td><td>模板路由 + 无害 check</td><td class="mono">7000+ 模板</td><td>无</td><td>完整</td></tr>
+          <tr><td>漏洞情报</td><td>三级版本判定 + KEV</td><td>无</td><td>无</td><td>部分</td></tr>
+          <tr><td>网络层检测</td><td>TLS / SPF / DMARC / 端口</td><td>无</td><td>无</td><td>完整</td></tr>
+          <tr><td>源码审计</td><td>规则扫描 + 污点分析</td><td>无</td><td>无</td><td>无</td></tr>
+          <tr><td>数据归属</td><td>全量存本地 PostgreSQL</td><td>—</td><td>云服务</td><td>云 / 授权码</td></tr>
+          <tr><td>价格</td><td>免费</td><td>免费</td><td>付费</td><td class="mono">$$$</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- ================= 扫描器纪律 ================= -->
+  <section class="ab-sec">
+    <h2>扫描器的纪律</h2>
+    <p class="sub">安全工具首先要让人放心把它对准目标。这六条写进了代码，不是口号。</p>
+    <div class="ab-trust">
+      <div class="ab-card"><h3>✓ 只读无害</h3><p>Check 库只收只读类检测：不投破坏性 payload、不写数据、不打暴力点；POC 载荷在导入期即丢弃，不落盘、不执行。</p></div>
+      <div class="ab-card"><h3>✓ 主动默认关</h3><p>主动验证、目录探测等模块默认关闭，需显式选择扫描等级并确认授权提示；登录爆破独立保留，不混入任何默认链路。</p></div>
+      <div class="ab-card"><h3>✓ 礼貌访问</h3><p>全局限速（默认 0.4s 间隔）、UA 自报家门（SiteLens/1.0）、并发硬编码封顶、扫描前先读 robots.txt。</p></div>
+      <div class="ab-card"><h3>✓ SSRF 防护内置</h3><p>协议白名单 + 主机黑名单 + DNS 解析后逐 IP 校验，环回 / 私有 / 链路本地 / 保留地址一律拒绝。</p></div>
+      <div class="ab-card"><h3>✓ 数据不出本机</h3><p>扫描结果、知识库、历史记录全部存本地 PostgreSQL，不依赖云服务；SQL 全部参数绑定，通过静态安全审计。</p></div>
+      <div class="ab-card"><h3>✓ 来源透明</h3><p>Nuclei、TscanPlus、OSV.dev、CISA KEV 等开源数据源全部署名；每条结论附原始证据，可逐条人工复核。</p></div>
+    </div>
+  </section>
+
+  <!-- ================= 三步部署 ================= -->
+  <section class="ab-sec">
+    <h2>三步跑起来</h2>
+    <p class="sub">Python 3.10+ 与 PostgreSQL，全部本地组件，无需注册任何账号。</p>
+    <div class="ab-deploy">
+      <div class="ab-card"><h3>① 装依赖</h3>
+        <pre class="ab-code">pip install -r requirements.txt</pre>
+        <p style="margin-top:10px">Flask 3 · psycopg2 · requests · BeautifulSoup4 · PyYAML。</p></div>
+      <div class="ab-card"><h3>② 配数据库</h3>
+        <p>项目根目录 .env 写入 <span class="mono">SLENS_DB_*</span> 连接参数；首次启动自动建表并播种指纹知识库。</p></div>
+      <div class="ab-card"><h3>③ 启动</h3>
+        <pre class="ab-code">python app.py                 # Web 工作台
+python main.py scan &lt;url&gt;     # 命令行扫描
+python main.py scan &lt;url&gt; --full   # 含主动模块，仅限授权目标</pre></div>
+    </div>
+  </section>
+
+  <!-- ================= FAQ ================= -->
+  <section class="ab-sec">
+    <h2>常见问题</h2>
+    <div class="ab-grid" style="margin-top:18px">
+      <div class="ab-card"><h3>「已验证漏洞」和「漏洞情报」有什么区别？</h3>
+        <p>漏洞情报是「你用的这个组件，历史上存在过这些已知漏洞」，由识别结果自动关联，属于提示；已验证漏洞是引擎真实发出检测请求、拿到命中响应后的结论，附原始证据，属于证明。两者在结果里分开呈现。</p></div>
+      <div class="ab-card"><h3>扫描会影响目标网站吗？</h3>
+        <p>被动指纹只抓取正常可访问的页面；主动验证全部使用只读无害 check（例如请求 /.git/HEAD 判断仓库泄露），不注入破坏性 payload，且全局限速。即便如此，也请只对拥有或获授权的目标发起扫描。</p></div>
+      <div class="ab-card"><h3>需要联网吗？数据会上传吗？</h3>
+        <p>扫描目标需要联网，工具本身完全本地：Web 服务、数据库、报告导出都在你机器上。情报自动更新（OSV / KEV）默认每 24h 拉取一次，可随时关闭。</p></div>
+      <div class="ab-card"><h3>能扫登录后才可见的页面吗？</h3>
+        <p>可以。扫描选项支持注入 Cookie 会话，爬取与检测带着会话执行，覆盖登录后才暴露的攻击面；认证前后的结果可分别查看。</p></div>
+      <div class="ab-card"><h3>识别结果准确吗？</h3>
+        <p>每条技术标注置信度与命中证据（哪个响应头、哪个脚本、哪个 DOM 节点），多来源独立命中会提升置信度；情报侧用版本区间做三级判定，避免同名即报漏洞的误报。你可以逐条点开核对。</p></div>
+      <div class="ab-card"><h3>怎么接入我自己的流程？</h3>
+        <p>扫描、历史、导出全部提供 REST API（Token 鉴权），可脚本化批量扫描；结果支持 JSON / 明细 CSV / 78 列宽表 CSV / 单文件 HTML 报告导出。</p></div>
+    </div>
+  </section>
+
+  <!-- ================= CTA ================= -->
+  <section class="ab-band">
+    <h2>输入一个网址，30 秒看到第一份报告</h2>
+    <p>无需注册、无需上传数据，输入一个你授权分析的网址即可。</p>
+    <button class="btn" onclick="location.href='/app'">打开扫描工作台 →</button>
+  </section>
+
+  <footer style="padding:30px 0;text-align:center;color:var(--muted-fg);font-size:12.5px;line-height:2">
+    sitelens · 全类别验证型 Web 漏洞扫描器<br>
+    本工具仅用于授权的安全研究与学习，请遵守目标站点的 robots 与服务条款
+  </footer>
+
+</main>
+
+<script>
+/* 首屏数字：优先用库里的实时值，取不到就用静态缺省（与表格数据一致） */
+api.get("/api/stats").then(function (s) {
+  if (s.technologies) document.getElementById("st-tech").textContent = s.technologies.toLocaleString();
+  if (s.vulns) document.getElementById("st-vuln").textContent = s.vulns.toLocaleString();
+}).catch(function () {});
+</script>
+</body>
+</html>

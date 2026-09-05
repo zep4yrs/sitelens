@@ -1,0 +1,298 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>扫描历史 — SiteLens</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<script>if(localStorage.getItem("sitelens-theme")==="dark")document.documentElement.classList.add("dark")</script>
+<style>
+  .search-row{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:14px}
+  .search-row .tb{flex:1;min-width:220px}
+  .detail{display:none;margin-top:22px;border:1px solid var(--border);border-radius:12px;
+    background:var(--card);padding:22px;min-height:40vh}
+  .detail .d-head{display:flex;align-items:center;gap:12px;margin-bottom:6px;flex-wrap:wrap}
+  .detail .d-head .t{font-family:var(--font-mono);font-size:16px;font-weight:700}
+  .detail .d-head .right{margin-left:auto;display:flex;gap:8px;flex-wrap:wrap}
+  .tech-group{margin-bottom:14px}
+  .tech-group .gname{font-size:12px;color:var(--muted-fg);margin-bottom:6px}
+  .tech-list{display:flex;flex-wrap:wrap;gap:8px}
+  .tech-list .ver{color:var(--info);font-weight:600}
+  .vulns{width:100%;border-collapse:collapse;font-size:13.5px}
+  .vulns th{font-family:var(--font-mono);font-size:12px;color:var(--muted-fg);text-align:left;
+    padding:8px 12px;border-bottom:1px solid var(--border)}
+  .vulns td{padding:9px 12px;border-bottom:1px solid color-mix(in srgb,var(--border) 55%,transparent);
+    vertical-align:top}
+  .diff-box{margin-bottom:16px;background:var(--muted);border:1px solid var(--border);
+    border-radius:10px;padding:14px 18px;font-size:13px;line-height:2;display:none}
+  input.diffpick{accent-color:var(--primary)}
+  td.host-cell{white-space:nowrap}
+</style>
+</head>
+<body>
+<script src="/js/common.js"></script>
+
+<main class="page">
+  <h1>扫描历史</h1>
+  <p class="sub">所有结果存于本地 PostgreSQL。支持「哪些站用了某技术」反查、双记录 diff 对比与多格式导出。</p>
+
+  <div class="tabs">
+    <button class="tab active" data-tab="scans" onclick="switchTab('scans')">扫描历史</button>
+    <button class="tab" data-tab="verified" onclick="switchTab('verified')">已验证漏洞汇总</button>
+  </div>
+
+  <!-- ============ 页签 1：扫描历史 ============ -->
+  <section class="tabpanel active" id="tab-scans">
+    <div class="search-row">
+      <input class="tb mono" id="q" placeholder="按技术检索，如：Next.js / Nginx / WordPress …">
+      <button class="btn small" onclick="load()">检索</button>
+      <button class="btn ghost small" onclick="document.getElementById('q').value='';load()">全部</button>
+      <button class="btn ghost small" onclick="doDiff()">对比勾选的两条</button>
+    </div>
+    <div class="diff-box" id="diff"></div>
+
+    <div class="tbl-wrap">
+      <table class="list">
+        <thead><tr>
+          <th></th><th>时间</th><th>站点</th><th>标题</th><th>技术</th><th>漏洞</th><th>安全头</th><th>操作</th>
+        </tr></thead>
+        <tbody id="rows"><tr><td colspan="8" class="muted">加载中…</td></tr></tbody>
+      </table>
+    </div>
+
+    <div class="detail" id="detail"></div>
+  </section>
+
+  <!-- ============ 页签 2：已验证漏洞汇总 ============ -->
+  <section class="tabpanel" id="tab-verified">
+    <p class="sub" style="margin-top:0">历史扫描中由验证型 Check 与 Nuclei 模板实际命中的漏洞，跨扫描汇总展示。</p>
+    <div id="v-out"><p class="muted" style="font-size:13px">加载中…</p></div>
+  </section>
+</main>
+
+<script>
+function switchTab(name) {
+  document.querySelectorAll(".tab").forEach(function (t) {
+    t.classList.toggle("active", t.getAttribute("data-tab") === name);
+  });
+  document.querySelectorAll(".tabpanel").forEach(function (p) {
+    p.classList.toggle("active", p.id === "tab-" + name);
+  });
+  if (location.hash !== "#" + name) history.replaceState(null, "", "#" + name);
+  if (window.slUpdateNav) window.slUpdateNav();
+  if (name === "verified") loadVerified();
+}
+window.addEventListener("hashchange", function () {
+  var h = (location.hash || "#scans").slice(1);
+  if (["scans", "verified"].indexOf(h) >= 0) switchTab(h);
+});
+var initialTab = (location.hash || "#scans").slice(1);
+if (["scans", "verified"].indexOf(initialTab) >= 0) switchTab(initialTab);
+
+document.getElementById("q").addEventListener("keydown", function (e) {
+  if (e.key === "Enter") load();
+});
+
+/* ================= 扫描历史 ================= */
+function load() {
+  var q = document.getElementById("q").value.trim();
+  var url = "/api/history?limit=100" + (q ? "&tech=" + encodeURIComponent(q) : "");
+  api.get(url).then(function (r) { renderRows(r.scans || []); });
+}
+
+function renderRows(scans) {
+  var tb = document.getElementById("rows");
+  if (!scans.length) {
+    tb.innerHTML = '<tr><td colspan="8" class="muted">暂无记录</td></tr>';
+    return;
+  }
+  tb.innerHTML = scans.map(function (s) {
+    var time = String(s.scanned_at).replace("T", " ").slice(0, 16);
+    var grade = s.security_grade || "-";
+    var gcls = (grade === "F" || grade === "D") ? "danger" : (grade === "C" ? "warn" : "ok");
+    return "<tr>" +
+      '<td><input type="checkbox" class="diffpick" value="' + s.id + '"></td>' +
+      '<td class="mono muted" style="font-size:12px;white-space:nowrap">' + esc(time) + "</td>" +
+      '<td class="host-cell"><span class="host" onclick="openDetail(' + s.id + ')">' + esc(s.host) + "</span></td>" +
+      "<td>" + esc(String(s.title || "-").slice(0, 36)) + "</td>" +
+      '<td class="mono">' + s.tech_count + "</td>" +
+      "<td>" + (s.vuln_count ? '<span class="badge danger">' + s.vuln_count + "</span>" : "0") + "</td>" +
+      '<td><span class="badge ' + gcls + '">' + esc(grade) + "</span></td>" +
+      '<td style="white-space:nowrap">' +
+      '<button class="btn ghost small" onclick="openDetail(' + s.id + ')">详情</button> ' +
+      '<button class="btn ghost small" onclick="exportAs(' + s.id + ',\'wide\')">宽表</button> ' +
+      '<button class="btn ghost small" onclick="exportAs(' + s.id + ',\'csv\')">CSV</button> ' +
+      '<button class="btn ghost small" onclick="delScan(' + s.id + ')">删</button></td>' +
+      "</tr>";
+  }).join("");
+}
+
+/* ---------------- 详情（原地内嵌展开，不跳页） ---------------- */
+var CAT_NAMES = {};
+api.get("/api/categories").then(function (r) {
+  r.categories.forEach(function (c) { CAT_NAMES[c.id] = c.name; });
+}).catch(function () {});
+
+function openDetail(id) {
+  var box = document.getElementById("detail");
+  box.style.display = "block";
+  box.innerHTML = '<div class="skeleton" style="height:70px;margin-bottom:12px"></div>' +
+    '<div class="skeleton" style="height:120px"></div>';
+  box.scrollIntoView({ behavior: "smooth", block: "nearest" });
+  api.get("/api/history/" + id).then(function (row) {
+    renderDetail(row.result, row.id, row.url);
+  }).catch(function (e) {
+    box.innerHTML = '<p style="color:var(--danger);font-size:13.5px">' + esc(e.message) + "</p>";
+  });
+}
+
+function renderDetail(r, scanId, url) {
+  var html = '<div class="d-head"><span class="t">记录 #' + esc(scanId) + "</span>" +
+    '<span class="mono muted" style="font-size:12.5px;word-break:break-all">' + esc(url || r.url || "") + "</span>" +
+    '<span class="right">' +
+    '<button class="btn ghost small" onclick="exportAs(' + scanId + ',\'json\')">JSON</button>' +
+    '<button class="btn ghost small" onclick="exportAs(' + scanId + ',\'wide\')">宽表 CSV</button>' +
+    '<button class="btn ghost small" onclick="exportAs(' + scanId + ',\'html\')">HTML 报告</button>' +
+    "</span></div>";
+
+  var sec = r.security || {};
+  var grade = sec.grade || "-";
+  var gcls = (grade === "F" || grade === "D") ? "danger" : (grade === "C" ? "warn" : "ok");
+  html += '<div class="summary">' +
+    cell("Host", r.host) + cell("标题", r.title || "-") + cell("IP", r.ip || "-") +
+    cell("响应", (r.response_time_ms || 0) + " ms") + cell("耗时", (r.duration || 0) + " s") +
+    '<div class="cell"><span>安全响应头</span><b><span class="badge ' + gcls + '">' +
+    esc(grade) + " " + (sec.score || 0) + "分</span></b></div></div>";
+
+  var techs = r.technologies || [];
+  html += '<div class="sec-title">指纹识别 <span class="count">' + techs.length + " 项</span></div>";
+  if (techs.length) {
+    var groups = {};
+    techs.forEach(function (t) {
+      (t.categories && t.categories.length ? t.categories : ["misc"]).forEach(function (c) {
+        (groups[c] = groups[c] || []).push(t);
+      });
+    });
+    Object.keys(groups).forEach(function (cat) {
+      html += '<div class="tech-group"><div class="gname">' + esc(CAT_NAMES[cat] || cat) + "</div>" +
+        '<div class="tech-list">' + groups[cat].map(function (t) {
+          return '<span class="badge">' + esc(t.name) +
+            (t.version ? ' <span class="ver">v' + esc(t.version) + "</span>" : "") + "</span>";
+        }).join("") + "</div></div>";
+    });
+  }
+
+  var ver = r.verified || [];
+  html += '<div class="sec-title">已验证漏洞 <span class="count">' + ver.length + " 条</span></div>";
+  if (ver.length) {
+    html += '<div class="tbl-wrap"><table class="vulns"><tr><th>严重度</th><th>检测项</th><th>命中地址</th><th>修复建议</th></tr>';
+    ver.forEach(function (v) {
+      html += "<tr><td>" + sevBadge(v.severity) + "</td>" +
+        '<td class="mono">' + esc(v.check) + " " + esc(v.title) + "</td>" +
+        '<td class="mono" style="font-size:12px;word-break:break-all">' + esc(v.url) + "</td>" +
+        "<td>" + esc(v.advice) + "</td></tr>";
+    });
+    html += "</table></div>";
+  }
+
+  var vulns = r.vulnerabilities || [];
+  html += '<div class="sec-title">漏洞情报关联 <span class="count">' + vulns.length + " 条</span></div>";
+  if (vulns.length) {
+    html += '<div class="tbl-wrap"><table class="vulns"><tr><th>严重度</th><th>判定</th><th>涉及技术</th><th>漏洞</th><th>来源</th></tr>';
+    vulns.slice(0, 40).forEach(function (v) {
+      var name = esc(v.name || v.title || v.cve || "");
+      if (v.ref) name = '<a href="' + esc(v.ref) + '" target="_blank" rel="noopener">' + name + "</a>";
+      var lv = v.level === "confirmed" ? '<span class="badge danger">确认受影响</span>'
+        : v.level === "possible" ? '<span class="badge warn">可能受影响</span>' : "";
+      html += "<tr><td>" + sevBadge(v.severity, v.severity_zh) + "</td><td>" + lv + "</td>" +
+        '<td class="mono">' + esc(v.tech) + "</td>" +
+        "<td>" + (v.cve ? '<span class="mono">' + esc(v.cve) + "</span> " : "") + name + "</td>" +
+        '<td class="mono">' + esc(v.src) + "</td></tr>";
+    });
+    html += "</table></div>";
+    if (vulns.length > 40) html += '<p class="hint">… 其余 ' + (vulns.length - 40) + " 条见导出文件</p>";
+  }
+
+  var ex = r.extras || {};
+  var titles = { active_fp: "主动路径指纹", dir_scan: "目录探测", subdomain: "子域名",
+                 service: "端口服务", netsec: "TLS / DNS 安全", weak_audit: "登录爆破结果",
+                 webshell: "WebShell 路径探测", jsmap: "JS 攻击面", dast: "DAST 检测" };
+  Object.keys(ex).forEach(function (key) {
+    var items = ex[key] || [];
+    html += '<div class="sec-title">' + esc(titles[key] || key) +
+      ' <span class="count">' + items.length + "</span></div>";
+    if (!items.length) return;
+    html += '<div class="extras-box mono">';
+    items.forEach(function (it) { html += extrasLine(key, it) + "<br>"; });
+    html += "</div>";
+  });
+
+  document.getElementById("detail").innerHTML = html;
+}
+
+function cell(k, v) {
+  return '<div class="cell"><span>' + esc(k) + '</span><b class="mono">' + esc(v) + "</b></div>";
+}
+
+function exportAs(id, fmt) { location.href = "/api/export/" + id + "?fmt=" + fmt; }
+
+function delScan(id) {
+  if (!confirm("删除扫描记录 #" + id + "？（含技术明细，不可恢复）")) return;
+  fetch("/api/history/" + id, { method: "DELETE" }).then(load);
+}
+
+/* ---------------- diff 对比 ---------------- */
+function doDiff() {
+  var picked = [...document.querySelectorAll(".diffpick:checked")].map(function (c) { return c.value; });
+  var box = document.getElementById("diff");
+  if (picked.length !== 2) {
+    box.style.display = "block";
+    box.innerHTML = '<span style="color:var(--warn)">请勾选恰好两条记录进行对比</span>';
+    return;
+  }
+  api.get("/api/diff?a=" + picked[0] + "&b=" + picked[1]).then(function (d) {
+    var html = "<p class='mono'>" + esc(d.a.host) + " (" + esc(d.a.scanned_at) + ") ⇄ " +
+      esc(d.b.host) + " (" + esc(d.b.scanned_at) + ")</p>";
+    html += "<p><b>新增 " + d.added.length + "：</b>" +
+      (d.added.map(function (t) { return esc(t.name) + (t.version ? " v" + t.version : ""); })
+        .join("、") || "无") + "</p>";
+    html += "<p><b>消失 " + d.removed.length + "：</b>" +
+      (d.removed.map(function (t) { return esc(t.name); }).join("、") || "无") + "</p>";
+    html += "<p><b>版本变化 " + d.version_changed.length + "：</b>" +
+      (d.version_changed.map(function (t) {
+        return esc(t.name) + " " + esc(t.from || "-") + " → " + esc(t.to || "-");
+      }).join("、") || "无") + "</p>";
+    box.innerHTML = html;
+    box.style.display = "block";
+  });
+}
+
+/* ================= 已验证漏洞汇总 ================= */
+function loadVerified() {
+  var out = document.getElementById("v-out");
+  api.get("/api/verified?limit=200").then(function (r) {
+    var items = r.items || [];
+    if (!items.length) {
+      out.innerHTML = '<p class="muted" style="font-size:13.5px">暂无已验证漏洞记录——去工作台扫一个站点吧。</p>';
+      return;
+    }
+    var html = '<div class="tbl-wrap"><table class="list"><tr><th>严重度</th><th>检测项</th><th>站点</th><th>命中地址</th><th>扫描时间</th></tr>';
+    items.forEach(function (v) {
+      html += "<tr><td>" + sevBadge(v.severity) + "</td>" +
+        '<td class="mono">' + esc(v.check) + '<br><span class="hint" style="margin:0">' + esc(v.title || "") + "</span></td>" +
+        '<td class="mono">' + esc(v.host) + '</td>' +
+        '<td class="mono" style="font-size:12px;word-break:break-all">' + esc(v.url || "") + "</td>" +
+        '<td class="mono muted" style="font-size:12px;white-space:nowrap">' +
+        esc(String(v.scanned_at).replace("T", " ").slice(0, 16)) + "</td></tr>";
+    });
+    out.innerHTML = html + "</table></div>";
+  }).catch(function (e) {
+    out.innerHTML = '<p style="color:var(--danger);font-size:13.5px">' + esc(e.message) + "</p>";
+  });
+}
+
+load();
+</script>
+</body>
+</html>

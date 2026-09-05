@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>批量扫描 — SiteLens</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<script>if(localStorage.getItem("sitelens-theme")==="dark")document.documentElement.classList.add("dark")</script>
+<style>
+  .count-row{display:flex;align-items:center;gap:14px;margin-top:12px}
+  .count-row .n{font-family:var(--font-mono);font-size:13px;color:var(--muted-fg)}
+  .log-box{margin-top:16px;background:var(--card);border:1px solid var(--border);border-radius:10px;
+    padding:14px 18px;font-family:var(--font-mono);font-size:12.5px;line-height:2.1;
+    max-height:340px;overflow-y:auto;word-break:break-all;display:none}
+  .log-box .ok{color:var(--ok)}
+  .log-box .fail{color:var(--danger)}
+</style>
+</head>
+<body>
+<script src="/js/common.js"></script>
+
+<main class="page">
+  <h1>批量扫描</h1>
+  <p class="sub">每行一个 URL，最多 50 个。3 线程并发逐个扫描并入库，完成后可在历史页导出宽表 CSV。</p>
+
+  <textarea class="batch-box" id="urls" placeholder="https://example.com&#10;https://www.python.org&#10;https://books.toscrape.com"></textarea>
+  <div class="count-row">
+    <button class="btn" id="go" onclick="startBatch()">▶ 开始批量扫描</button>
+    <span class="n" id="n">0 / 50</span>
+    <span class="hint" style="margin:0" id="hint"></span>
+  </div>
+
+  <div class="progressbar" id="pw" style="display:none;max-width:520px"><i id="bar"></i></div>
+  <div class="log-box" id="log"></div>
+</main>
+
+<script>
+var box = document.getElementById("urls");
+box.addEventListener("input", updateCount);
+function updateCount() {
+  var urls = box.value.split("\n").map(function (s) { return s.trim(); }).filter(Boolean);
+  document.getElementById("n").textContent = urls.length + " / 50" + (urls.length > 50 ? "（超出部分将被忽略）" : "");
+}
+
+function startBatch() {
+  var urls = box.value.split("\n").map(function (s) { return s.trim(); }).filter(Boolean).slice(0, 50);
+  if (!urls.length) return;
+  document.getElementById("go").disabled = true;
+  document.getElementById("pw").style.display = "block";
+  document.getElementById("log").style.display = "block";
+  document.getElementById("log").innerHTML = "";
+  var logBox = document.getElementById("log");
+  var seen = {};
+
+  function addLog(line) {
+    if (!line || seen[line]) return;
+    seen[line] = 1;
+    var div = document.createElement("div");
+    var isFail = line.indexOf("失败") >= 0;
+    div.innerHTML = '<span class="' + (isFail ? "fail" : "ok") + '">' +
+      (isFail ? "✕" : "✓") + "</span> " + esc(line);
+    logBox.appendChild(div);
+    logBox.scrollTop = logBox.scrollHeight;
+  }
+
+  api.post("/api/batch", { urls: urls }).then(function (r) {
+    return new Promise(function (resolve, reject) {
+      var timer = setInterval(function () {
+        api.get("/api/job/" + r.job_id + "/results").then(function (job) {
+          document.getElementById("bar").style.width = (job.progress || 0) + "%";
+          addLog(job.message);
+          document.getElementById("hint").textContent =
+            (job.done || 0) + " / " + (job.total || urls.length) + " 已完成";
+          if (job.status === "done") { clearInterval(timer); resolve(job); }
+        }).catch(function (e) { clearInterval(timer); reject(e); });
+      }, 1200);
+    });
+  }).then(function () {
+    document.getElementById("go").disabled = false;
+    document.getElementById("hint").innerHTML =
+      '全部完成 · <a href="/history" style="color:var(--info)">→ 查看历史 / 导出宽表</a>';
+    toast("批量扫描完成", "ok");
+  }).catch(function (e) {
+    document.getElementById("go").disabled = false;
+    document.getElementById("hint").textContent = "失败：" + e.message;
+  });
+}
+</script>
+</body>
+</html>

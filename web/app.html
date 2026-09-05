@@ -1,0 +1,584 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>扫描工作台 — SiteLens</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<script>if(localStorage.getItem("sitelens-theme")==="dark")document.documentElement.classList.add("dark")</script>
+<style>
+  .scan-form{display:grid;grid-template-columns:1fr auto;gap:10px;margin-bottom:10px}
+  .scan-form .url-input{height:50px;font-size:15px}
+  .scan-form .btn{height:50px;padding:0 26px}
+  @media(max-width:760px){.scan-form{grid-template-columns:1fr}}
+  .opt-row{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:6px}
+  .opt-row label{display:flex;gap:6px;align-items:center;font-size:13px;color:var(--muted-fg);cursor:pointer}
+  .opt-row input[type=checkbox]{accent-color:var(--primary);width:15px;height:15px}
+  #hint.warn{color:var(--warn)}
+
+  /* 自定义下拉（扫描等级 / 验证码） */
+  .cdd{position:relative;width:300px}
+  .cdd-btn{display:flex;align-items:center;gap:8px;width:100%;height:38px;padding:0 6px 0 12px;
+    background:var(--input);border:1px solid var(--border);border-radius:var(--radius);
+    cursor:pointer;font-family:inherit;color:var(--foreground);text-align:left;
+    transition:border-color .2s,box-shadow .2s}
+  .cdd-btn:hover{border-color:color-mix(in srgb,var(--primary) 45%,var(--border))}
+  .cdd.open .cdd-btn{border-color:var(--ring);box-shadow:0 0 0 3px color-mix(in srgb,var(--ring) 18%,transparent)}
+  .cdd-label{display:flex;align-items:baseline;gap:8px;flex:1;min-width:0}
+  .cdd-label b{font-size:13.5px;font-weight:600;white-space:nowrap}
+  .cdd-label .cdd-desc{font-size:11.5px;color:var(--muted-fg);white-space:nowrap;
+    overflow:hidden;text-overflow:ellipsis}
+  .cdd-chev{width:15px;height:15px;flex:none;color:var(--muted-fg);transition:transform .2s}
+  .cdd.open .cdd-chev{transform:rotate(180deg)}
+  .cdd-pop{position:absolute;top:calc(100% + 6px);left:0;z-index:50;width:max-content;min-width:100%;
+    max-width:min(360px,calc(100vw - 60px));background:var(--card);border:1px solid var(--border);
+    border-radius:10px;box-shadow:var(--shadow-md);padding:5px;display:none}
+  .cdd.open .cdd-pop{display:block;animation:sl-fadeUp .18s ease}
+  .cdd-opt{display:flex;flex-direction:column;gap:1px;width:100%;text-align:left;padding:8px 12px;
+    border:none;background:none;border-radius:7px;cursor:pointer;font-family:inherit;
+    color:var(--foreground);position:relative}
+  .cdd-opt b{font-size:13px;font-weight:600}
+  .cdd-opt span{font-size:11.5px;color:var(--muted-fg)}
+  .cdd-opt:hover{background:var(--accent)}
+  .cdd-opt.active{background:var(--secondary)}
+  .cdd-opt.active b{color:var(--primary)}
+  .cdd-opt.active::before{content:"";position:absolute;left:0;top:9px;bottom:9px;width:3px;
+    border-radius:0 3px 3px 0;background:var(--primary)}
+  .dark .cdd-opt.active b{color:var(--primary)}
+
+  .livebox{margin-top:18px}
+  .lv-head{font-family:var(--font-mono);font-weight:700;font-size:14px;margin-bottom:10px}
+  .stage{display:flex;gap:10px;align-items:center;font-size:13.5px;color:var(--muted-fg);padding:4px 0}
+  .stage .s-ico{font-family:var(--font-mono);width:16px;text-align:center}
+  .stage.done{color:var(--foreground)}
+  .stage.done .s-ico{color:var(--ok)}
+  .lv-meta{margin-top:12px;font-size:12.5px;color:var(--muted-fg)}
+  .lv-meta b{font-family:var(--font-mono)}
+
+  .statusline{display:flex;gap:14px;align-items:center;font-family:var(--font-mono);font-size:12.5px;
+    color:var(--muted-fg);margin-top:18px}
+
+  .tech-group{margin-bottom:14px}
+  .tech-group .gname{font-size:12px;color:var(--muted-fg);margin-bottom:6px}
+  .tech-list{display:flex;flex-wrap:wrap;gap:8px}
+  .tech-list .badge{padding:5px 12px;font-size:12.5px}
+  .tech-list .ver{color:var(--info);font-weight:600}
+  .tech-list .ev{cursor:help;color:var(--muted-fg);font-size:11px}
+  .conf{display:inline-block;width:36px;height:4px;border-radius:999px;background:var(--secondary);overflow:hidden}
+  .conf i{display:block;height:100%;background:var(--ok)}
+
+  .vulns{width:100%;border-collapse:collapse;font-size:13.5px}
+  .vulns th{font-family:var(--font-mono);font-size:12px;color:var(--muted-fg);text-align:left;
+    padding:8px 12px;border-bottom:1px solid var(--border)}
+  .vulns td{padding:9px 12px;border-bottom:1px solid color-mix(in srgb,var(--border) 55%,transparent);
+    vertical-align:top}
+
+  .netsec-form{display:flex;gap:10px;max-width:640px}
+  .netsec-form .url-input{height:46px}
+  .netsec-form .btn{height:46px;padding:0 22px}
+
+  .brute-grid{display:grid;grid-template-columns:1fr 1fr;gap:16px;max-width:860px}
+  @media(max-width:820px){.brute-grid{grid-template-columns:1fr}}
+  .brute-box .m-label{font-size:12px;color:var(--muted-fg);margin:0 0 6px}
+  .cap-row{display:flex;gap:8px}
+  .cap-row .sel{flex:1}
+  #lb-preview{width:100%;height:300px;border:1px solid var(--border);border-radius:10px;background:#fff;
+    margin:12px 0;display:none}
+  .auth-row{display:flex;gap:8px;align-items:center;font-size:13.5px;margin:16px 0}
+  .auth-row input{accent-color:var(--danger);width:16px;height:16px}
+</style>
+</head>
+<body>
+<script src="/js/common.js"></script>
+
+<main class="page">
+  <h1>扫描工作台</h1>
+  <p class="sub">输入授权目标，递进式等级选择。主动模块默认关闭，仅限自有或已书面授权的目标。</p>
+
+  <div class="tabs">
+    <button class="tab active" data-tab="scan" onclick="switchTab('scan')">综合扫描</button>
+    <button class="tab" data-tab="netsec" onclick="switchTab('netsec')">网络层检测</button>
+    <button class="tab" data-tab="loginbrute" onclick="switchTab('loginbrute')">登录爆破</button>
+  </div>
+
+  <!-- ============ 页签 1：综合扫描 ============ -->
+  <section class="tabpanel active" id="tab-scan">
+    <div class="scan-form">
+      <input class="url-input" id="url" placeholder="https://example.com" autocomplete="off">
+      <button class="btn" id="go" onclick="startScan()">▶ 开始扫描</button>
+    </div>
+    <div class="opt-row">
+      <div class="cdd" id="level" data-value="standard">
+        <button type="button" class="cdd-btn">
+          <span class="cdd-label"><b>标准识别</b><span class="cdd-desc">同域浅爬取 · 约 15 秒</span></span>
+          <svg class="cdd-chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>
+        </button>
+        <div class="cdd-pop">
+          <button type="button" class="cdd-opt" data-v="quick"><b>快速识别</b><span>仅首页被动指纹 · 约 5 秒</span></button>
+          <button type="button" class="cdd-opt active" data-v="standard"><b>标准识别</b><span>同域浅爬取 · 约 15 秒</span></button>
+          <button type="button" class="cdd-opt" data-v="deep"><b>深度识别</b><span>+主动路径指纹 +端口服务 +DAST · 约 40 秒</span></button>
+          <button type="button" class="cdd-opt" data-v="full"><b>全面识别</b><span>+目录探测 +子域名 +WebShell · 数分钟</span></button>
+        </div>
+      </div>
+      <input class="tb" id="opt-cookie" style="flex:1;min-width:200px" placeholder="认证会话（可选）Cookie: session=…" autocomplete="off">
+      <label><input type="checkbox" id="opt-ua"> 浏览器 UA（应对按 UA 降级的站点）</label>
+    </div>
+    <p class="hint" id="hint"></p>
+
+    <div class="statusline">
+      <span id="st-state">idle</span>
+      <span id="st-msg">等待目标</span>
+      <span style="margin-left:auto" id="st-time"></span>
+    </div>
+    <div class="progressbar" id="pw" style="display:none"><i id="bar"></i></div>
+
+    <div id="idle-wrap">
+      <div class="empty"><span class="big">◎</span>输入目标网址开始扫描</div>
+    </div>
+    <div id="result"></div>
+  </section>
+
+  <!-- ============ 页签 2：网络层检测 ============ -->
+  <section class="tabpanel" id="tab-netsec">
+    <p class="sub" style="margin-top:0">TLS 证书 + DNS 邮件安全，纯只读检测，无需全量扫描。</p>
+    <div class="netsec-form">
+      <input class="url-input" id="ns-host" placeholder="example.com" autocomplete="off">
+      <button class="btn" id="ns-go" onclick="runNetsec()">▶ 开始检测</button>
+    </div>
+    <div id="ns-out" style="margin-top:18px"></div>
+  </section>
+
+  <!-- ============ 页签 3：登录爆破 ============ -->
+  <section class="tabpanel" id="tab-loginbrute">
+    <p class="sub" style="margin-top:0">字典爆破登录页弱口令。<b>仅限已获得书面授权的目标。</b></p>
+    <div class="brute-grid">
+      <div class="brute-box">
+        <p class="m-label">登录页 URL</p>
+        <input class="url-input" id="lb-url" style="height:42px;font-size:13.5px"
+               placeholder="https://target.com/login" autocomplete="off">
+        <div class="toolbar" style="margin:10px 0 0">
+          <button class="btn ghost small" id="lb-pv-btn" onclick="togglePreview()">显示登录页预览</button>
+          <span class="hint" style="margin:0">目标站禁止内嵌时预览为空白，属正常现象</span>
+        </div>
+        <div class="auth-row">
+          <input type="checkbox" id="lb-authed">
+          <label for="lb-authed">我确认已获得对该目标进行弱口令测试的<b>书面授权</b></label>
+        </div>
+        <div class="toolbar">
+          <button class="btn" id="lb-go" onclick="runBrute()" disabled>▶ 开始爆破</button>
+          <span class="mono hint" id="lb-st" style="margin:0">需要勾选授权确认</span>
+        </div>
+        <div class="progressbar" id="lb-pw" style="display:none;max-width:480px"><i id="lb-bar"></i></div>
+      </div>
+      <div class="brute-box">
+        <p class="m-label">验证码处理（可选）</p>
+        <div class="cap-row">
+          <div class="cdd" id="lb-cap" data-value="none" style="width:220px">
+            <button type="button" class="cdd-btn">
+              <span class="cdd-label"><b>无验证码</b><span class="cdd-desc">直接提交</span></span>
+              <svg class="cdd-chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>
+            </button>
+            <div class="cdd-pop">
+              <button type="button" class="cdd-opt active" data-v="none"><b>无验证码</b><span>直接提交用户名密码</span></button>
+              <button type="button" class="cdd-opt" data-v="digits"><b>数字 / 字母识别</b><span>ddddocr 本地 OCR</span></button>
+              <button type="button" class="cdd-opt" data-v="calc"><b>算术计算</b><span>OCR 识别 + 四则求值</span></button>
+              <button type="button" class="cdd-opt" data-v="click"><b>图像点选</b><span>检测框坐标提交</span></button>
+            </div>
+          </div>
+          <input class="tb" id="lb-cap-field" placeholder="字段名，留空自动识别" style="flex:1">
+        </div>
+        <p class="hint">OCR 依赖 ddddocr 本地推理；点选按首框坐标提交；滑块暂不支持。识别仅用于授权测试。</p>
+      </div>
+    </div>
+    <iframe id="lb-preview" sandbox="allow-forms allow-same-origin"></iframe>
+    <div id="lb-out"></div>
+  </section>
+</main>
+
+<script>
+/* ================= 页签路由（hash 持久化 + 侧栏高亮联动） ================= */
+function switchTab(name) {
+  document.querySelectorAll(".tab").forEach(function (t) {
+    t.classList.toggle("active", t.getAttribute("data-tab") === name);
+  });
+  document.querySelectorAll(".tabpanel").forEach(function (p) {
+    p.classList.toggle("active", p.id === "tab-" + name);
+  });
+  if (location.hash !== "#" + name) history.replaceState(null, "", "#" + name);
+  if (window.slUpdateNav) window.slUpdateNav();
+}
+window.addEventListener("hashchange", function () {
+  var h = (location.hash || "#scan").slice(1);
+  if (["scan", "netsec", "loginbrute"].indexOf(h) >= 0) switchTab(h);
+});
+var initialTab = (location.hash || "#scan").slice(1);
+if (["scan", "netsec", "loginbrute"].indexOf(initialTab) >= 0) switchTab(initialTab);
+
+/* ================= 综合扫描 ================= */
+var currentScanId = null;
+var LEVELS = {
+  quick:    { deep: false },
+  standard: { deep: true },
+  deep:     { deep: true, active_fp: true, service_probe: true, checks: "core", dast: true },
+  full:     { deep: true, active_fp: true, dir_scan: true, dir_bypass: true,
+              subdomain: true, webshell: true, service_probe: true,
+              checks: "all", dast: true, netsec: true }
+};
+var EST = { base: 5, deep: 8, active_fp: 12, dir_scan: 180, dir_bypass: 40,
+            subdomain: 50, service_probe: 15, webshell: 120 };
+var STAGES = [
+  [3, "校验目标（SSRF 防护）"], [12, "采集首页"], [30, "解析证据 / 同域爬取"],
+  [50, "运行 7 个检测器"], [72, "验证引擎 + 安全响应头评分"], [80, "关联漏洞情报（三级判定）"],
+  [88, "可选主动模块"]
+];
+
+function estimateSeconds(options) {
+  var t = EST.base;
+  Object.keys(options).forEach(function (k) { if (options[k] && EST[k]) t += EST[k]; });
+  return t;
+}
+function fmtT(sec) {
+  sec = Math.max(0, Math.round(sec));
+  return sec >= 60 ? Math.floor(sec / 60) + " 分 " + (sec % 60) + " 秒" : sec + " 秒";
+}
+
+/* 自定义下拉组件（等级 / 验证码） */
+function initCDD(rootId, onPick) {
+  var root = document.getElementById(rootId);
+  var pop = root.querySelector(".cdd-pop");
+  root.querySelector(".cdd-btn").addEventListener("click", function (e) {
+    e.stopPropagation();
+    var willOpen = !root.classList.contains("open");
+    document.querySelectorAll(".cdd.open").forEach(function (r) { r.classList.remove("open"); });
+    if (willOpen) root.classList.add("open");
+  });
+  pop.addEventListener("click", function (e) { e.stopPropagation(); });
+  pop.querySelectorAll(".cdd-opt").forEach(function (opt) {
+    opt.addEventListener("click", function () {
+      pop.querySelectorAll(".cdd-opt").forEach(function (o) { o.classList.remove("active"); });
+      opt.classList.add("active");
+      root.setAttribute("data-value", opt.getAttribute("data-v"));
+      root.querySelector(".cdd-label").innerHTML =
+        "<b>" + esc(opt.querySelector("b").textContent) + "</b>" +
+        '<span class="cdd-desc">' + esc(opt.querySelector("span").textContent) + "</span>";
+      root.classList.remove("open");
+      if (onPick) onPick(opt.getAttribute("data-v"));
+    });
+  });
+  return { get value() { return root.getAttribute("data-value"); } };
+}
+document.addEventListener("click", function () {
+  document.querySelectorAll(".cdd.open").forEach(function (r) { r.classList.remove("open"); });
+});
+var levelDD = initCDD("level", function (v) {
+  document.getElementById("hint").textContent =
+    v === "full" ? "全面识别包含主动探测模块（目录 / 子域名 / WebShell），仅限自有或已授权目标。" : "";
+  document.getElementById("hint").className = v === "full" ? "hint warn" : "hint";
+});
+var capDD = initCDD("lb-cap");
+
+var liveTimer = null, liveStart = 0, liveEst = 0;
+function renderLivePanel(options) {
+  liveEst = estimateSeconds(options);
+  liveStart = Date.now();
+  var rows = STAGES.map(function (st, i) {
+    return '<div class="stage" id="stage-' + i + '"><span class="s-ico">○</span> ' + st[1] + "</div>";
+  }).join("");
+  document.getElementById("result").innerHTML =
+    '<div class="livebox card"><div class="lv-head">扫描进行中</div>' + rows +
+    '<div class="lv-meta">已用时 <b id="lv-elapsed">0 秒</b> · 预计剩余 <b id="lv-eta">' +
+    fmtT(liveEst) + "</b></div></div>";
+  liveTimer = setInterval(function () {
+    var el = (Date.now() - liveStart) / 1000;
+    var eta = document.getElementById("lv-eta");
+    var el2 = document.getElementById("lv-elapsed");
+    if (!eta) { clearInterval(liveTimer); return; }
+    el2.textContent = fmtT(el);
+    eta.textContent = fmtT(Math.max(liveEst - el, 3));
+  }, 1000);
+}
+function markStage(p) {
+  STAGES.forEach(function (st, i) {
+    var el = document.getElementById("stage-" + i);
+    if (el && p > st[0]) { el.querySelector(".s-ico").textContent = "✓"; el.classList.add("done"); }
+  });
+}
+function setProgress(p, msg) {
+  document.getElementById("bar").style.width = p + "%";
+  document.getElementById("st-state").textContent = "scanning";
+  document.getElementById("st-msg").textContent = msg || "";
+  markStage(p);
+}
+
+function startScan() {
+  var url = document.getElementById("url").value.trim();
+  if (!url) { document.getElementById("url").focus(); return; }
+  var options = Object.assign({}, LEVELS[levelDD.value] || { deep: true });
+  var ck = document.getElementById("opt-cookie").value.trim();
+  if (ck) options.auth_cookie = ck;
+  if (document.getElementById("opt-ua").checked) options.browser_ua = true;
+
+  document.getElementById("idle-wrap").style.display = "none";
+  document.getElementById("pw").style.display = "block";
+  document.getElementById("go").disabled = true;
+  renderLivePanel(options);
+  setProgress(3, "提交任务…");
+
+  /* 后端 /api/scan 从 body 顶层读取各选项（data.get("deep") 等），必须平铺不能嵌套 */
+  var payload = Object.assign({ url: url }, options);
+  api.post("/api/scan", payload)
+    .then(function (r) { return pollJob(r.job_id, setProgress); })
+    .then(function (job) {
+      document.getElementById("go").disabled = false;
+      if (liveTimer) clearInterval(liveTimer);
+      document.getElementById("st-state").textContent = "done";
+      document.getElementById("st-msg").textContent = "完成";
+      toast("扫描完成", "ok");
+      currentScanId = job.scan_id;
+      return api.get("/api/history/" + job.scan_id);
+    })
+    .then(function (row) { renderResult(row.result, row.id); })
+    .catch(function (e) {
+      document.getElementById("go").disabled = false;
+      if (liveTimer) clearInterval(liveTimer);
+      document.getElementById("st-state").textContent = "error";
+      document.getElementById("st-msg").textContent = e.message;
+      document.getElementById("result").innerHTML =
+        '<div class="empty"><span class="big">✕</span>' + esc(e.message) + "</div>";
+    });
+}
+
+function pollJob(jobId, onProgress) {
+  return new Promise(function (resolve, reject) {
+    var timer = setInterval(function () {
+      api.get("/api/job/" + jobId).then(function (job) {
+        if (job.status === "done") { clearInterval(timer); resolve(job); }
+        else if (job.status === "error") { clearInterval(timer); reject(new Error(job.message || "任务失败")); }
+        else if (onProgress) onProgress(job.progress || 0, job.message);
+      }).catch(function (e) { clearInterval(timer); reject(e); });
+    }, 1000);
+  });
+}
+
+/* ---------------- 结果渲染 ---------------- */
+var CAT_NAMES = {};
+api.get("/api/categories").then(function (r) {
+  r.categories.forEach(function (c) { CAT_NAMES[c.id] = c.name; });
+}).catch(function () {});
+
+function renderResult(r, scanId) {
+  var html = "";
+
+  var sec = r.security || {};
+  var grade = sec.grade || "-";
+  var gradeCls = (grade === "F" || grade === "D") ? "danger" : (grade === "C" ? "warn" : "ok");
+  html += '<div class="summary">' +
+    cell("Host", r.host) + cell("标题", r.title || "-") +
+    cell("IP", r.ip || "-") + cell("响应", (r.response_time_ms || 0) + " ms") +
+    cell("耗时", (r.duration || 0) + " s") +
+    '<div class="cell"><span>安全响应头</span><b><span class="badge ' + gradeCls + '">' +
+    esc(grade) + " " + (sec.score || 0) + "分</span></b></div></div>";
+
+  var techs = r.technologies || [];
+  html += '<div class="sec-title">指纹识别 <span class="count">' + techs.length + " 项</span>" +
+    '<span class="right">' + exportButtons() + "</span></div>";
+  if (techs.length) {
+    var groups = {};
+    techs.forEach(function (t) {
+      (t.categories && t.categories.length ? t.categories : ["misc"]).forEach(function (c) {
+        (groups[c] = groups[c] || []).push(t);
+      });
+    });
+    Object.keys(groups).forEach(function (cat) {
+      html += '<div class="tech-group"><div class="gname">' + esc(CAT_NAMES[cat] || cat) + "</div>" +
+        '<div class="tech-list">' + groups[cat].map(function (t) {
+          var ver = t.version ? '<span class="ver">v' + esc(t.version) + "</span>" : "";
+          var ev = (t.evidence && t.evidence.length)
+            ? '<span class="ev" title="' + esc(t.evidence.join("\n")) + '">ⓘ</span>' : "";
+          var conf = '<span class="conf"><i style="width:' + (t.confidence || 0) + '%"></i></span>';
+          return '<span class="badge">' + esc(t.name) + " " + ver + conf + ev + "</span>";
+        }).join("") + "</div></div>";
+    });
+  } else {
+    html += '<p class="muted" style="font-size:13px">未识别到技术组件。</p>';
+  }
+
+  var ver = r.verified || [];
+  html += '<div class="sec-title">已验证漏洞 <span class="count">' + ver.length +
+    " 条（探测请求实际命中）</span></div>";
+  if (ver.length) {
+    html += '<div class="tbl-wrap"><table class="vulns"><tr><th>严重度</th><th>检测项</th><th>命中地址</th><th>修复建议</th></tr>';
+    ver.forEach(function (v) {
+      html += "<tr><td>" + sevBadge(v.severity) + "</td>" +
+        '<td class="mono">' + esc(v.check) + " " + esc(v.title) + "</td>" +
+        '<td class="mono" style="font-size:12px;word-break:break-all">' + esc(v.url) +
+        "（" + esc(v.evidence) + "）</td><td>" + esc(v.advice) + "</td></tr>";
+    });
+    html += "</table></div>";
+  } else {
+    html += '<p class="muted" style="font-size:13px">无（本轮等级未运行验证检测或未命中）。</p>';
+  }
+
+  var vulns = r.vulnerabilities || [];
+  html += '<div class="sec-title">漏洞情报关联 <span class="count">' + vulns.length +
+    " 条（按组件关联的历史漏洞，非漏洞验证）</span></div>";
+  if (vulns.length) {
+    html += '<div class="tbl-wrap"><table class="vulns"><tr><th>严重度</th><th>判定</th><th>涉及技术</th><th>漏洞</th><th>类型</th><th>来源</th></tr>';
+    vulns.slice(0, 40).forEach(function (v) {
+      var name = esc(v.name || v.title || v.cve || "");
+      if (v.ref) name = '<a href="' + esc(v.ref) + '" target="_blank" rel="noopener">' + name + "</a>";
+      var lv = "";
+      if (v.level === "confirmed") lv = '<span class="badge danger">确认受影响</span>';
+      else if (v.level === "possible") lv = '<span class="badge warn">可能受影响</span>';
+      else if (v.level === "excluded") lv = '<span class="badge ok">不受影响</span>';
+      html += "<tr><td>" + sevBadge(v.severity, v.severity_zh) + "</td><td>" + lv + "</td>" +
+        '<td class="mono">' + esc(v.tech) + "</td>" +
+        "<td>" + (v.cve ? '<span class="mono">' + esc(v.cve) + "</span> " : "") + name + "</td>" +
+        "<td>" + esc(v.type || "-") + '</td><td class="mono">' + esc(v.src) + "</td></tr>";
+    });
+    html += "</table></div>";
+    if (vulns.length > 40)
+      html += '<p class="hint">… 其余 ' + (vulns.length - 40) + " 条见导出文件</p>";
+  } else {
+    html += '<p class="muted" style="font-size:13px">未命中已知漏洞情报。</p>';
+  }
+
+  var ex = r.extras || {};
+  var titles = { active_fp: "主动路径指纹", dir_scan: "目录探测", subdomain: "子域名",
+                 service: "端口服务", netsec: "TLS / DNS 安全", weak_audit: "登录爆破结果",
+                 webshell: "WebShell 路径探测", jsmap: "JS 攻击面", dast: "DAST 检测" };
+  Object.keys(ex).forEach(function (key) {
+    var items = ex[key] || [];
+    html += '<div class="sec-title">' + esc(titles[key] || key) +
+      ' <span class="count">' + items.length + "</span></div>";
+    if (!items.length) { html += '<p class="muted" style="font-size:13px">未发现。</p>'; return; }
+    html += '<div class="extras-box mono">';
+    items.forEach(function (it) { html += extrasLine(key, it) + "<br>"; });
+    html += "</div>";
+  });
+
+  document.getElementById("result").innerHTML = html;
+  if (scanId) document.getElementById("st-time").textContent = "记录 #" + scanId;
+}
+
+function cell(label, value) {
+  return '<div class="cell"><span>' + esc(label) + "</span><b>" + esc(value) + "</b></div>";
+}
+function exportButtons() {
+  return '<button class="btn ghost small" onclick="exportAs(\'json\')">JSON</button>' +
+    '<button class="btn ghost small" onclick="exportAs(\'csv\')">明细 CSV</button>' +
+    '<button class="btn ghost small" onclick="exportAs(\'wide\')">宽表 CSV</button>' +
+    '<button class="btn ghost small" onclick="exportAs(\'html\')">HTML 报告</button>';
+}
+window.exportAs = function (fmt) {
+  if (currentScanId) location.href = "/api/export/" + currentScanId + "?fmt=" + fmt;
+};
+
+/* ?url= 自动开扫（首页搜索框跳转入口） */
+(function () {
+  var q = new URLSearchParams(location.search).get("url");
+  if (q) {
+    document.getElementById("url").value = q;
+    startScan();
+  }
+})();
+
+/* ================= 网络层检测 ================= */
+function runNetsec() {
+  var host = document.getElementById("ns-host").value.trim();
+  if (!host) return;
+  document.getElementById("ns-go").disabled = true;
+  document.getElementById("ns-out").innerHTML =
+    '<div class="skeleton" style="height:60px"></div><p class="hint">检测中…（TLS 握手 + DNS 查询）</p>';
+  api.post("/api/netsec", { host: host }).then(function (r) {
+    document.getElementById("ns-go").disabled = false;
+    var hits = r.findings || [];
+    if (!hits.length) {
+      document.getElementById("ns-out").innerHTML =
+        '<p style="color:var(--ok);font-size:14px">✔ ' + esc(r.host) + " 未发现网络层安全问题</p>";
+      return;
+    }
+    var html = '<div class="tbl-wrap"><table class="list"><tr><th>严重度</th><th>检测项</th><th>证据</th><th>修复建议</th></tr>';
+    hits.forEach(function (h) {
+      html += "<tr><td>" + sevBadge(h.severity) + "</td>" +
+        '<td class="mono">' + esc(h.check) + '<br><span class="hint" style="margin:0">' + esc(h.title) + "</span></td>" +
+        '<td class="mono" style="font-size:12px;word-break:break-all">' + esc(h.url) +
+        (h.evidence ? "<br>" + esc(h.evidence) : "") + "</td>" +
+        "<td>" + esc(h.advice) + "</td></tr>";
+    });
+    document.getElementById("ns-out").innerHTML = html + "</table></div>";
+  }).catch(function (e) {
+    document.getElementById("ns-go").disabled = false;
+    document.getElementById("ns-out").innerHTML =
+      '<p style="color:var(--danger);font-size:13.5px">' + esc(e.message) + "</p>";
+  });
+}
+document.getElementById("ns-host").addEventListener("keydown", function (e) {
+  if (e.key === "Enter") runNetsec();
+});
+
+/* ================= 登录爆破 ================= */
+var lbAuth = document.getElementById("lb-authed");
+var lbGo = document.getElementById("lb-go");
+lbAuth.addEventListener("change", function () {
+  lbGo.disabled = !this.checked;
+  document.getElementById("lb-st").textContent = this.checked ? "" : "需要勾选授权确认";
+});
+
+var lbFrame = document.getElementById("lb-preview");
+function togglePreview() {
+  var url = document.getElementById("lb-url").value.trim();
+  if (!url) return;
+  if (lbFrame.style.display !== "block") {
+    lbFrame.src = url;
+    lbFrame.style.display = "block";
+    document.getElementById("lb-pv-btn").textContent = "隐藏预览";
+  } else {
+    lbFrame.style.display = "none";
+    document.getElementById("lb-pv-btn").textContent = "显示登录页预览";
+  }
+}
+
+function runBrute() {
+  var url = document.getElementById("lb-url").value.trim();
+  if (!url) return;
+  lbGo.disabled = true;
+  lbFrame.style.display = "none";
+  document.getElementById("lb-pw").style.display = "block";
+  document.getElementById("lb-out").innerHTML = "";
+  api.post("/api/loginbrute", {
+    url: url,
+    authorized: true,
+    captcha_type: capDD.value,
+    captcha_field: document.getElementById("lb-cap-field").value.trim() || "captcha"
+  }).then(function (r) {
+    return pollJob(r.job_id, function (p, msg) {
+      document.getElementById("lb-bar").style.width = p + "%";
+      document.getElementById("lb-st").textContent = msg || "";
+    });
+  }).then(function (job) {
+    lbGo.disabled = !lbAuth.checked;
+    lbFrame.style.display = "none";
+    var hits = (job.result && job.result.hits) || [];
+    if (!hits.length) {
+      document.getElementById("lb-out").innerHTML =
+        '<p style="color:var(--ok);font-size:14px">✔ 未命中弱口令（字典内无匹配）</p>';
+      return;
+    }
+    var html = '<p style="color:var(--danger);font-size:14px">⚠ 命中 ' + hits.length + " 组弱口令：</p>" +
+      '<div class="tbl-wrap"><table class="list"><tr><th>用户名</th><th>密码</th><th>提交地址</th></tr>';
+    hits.forEach(function (h) {
+      html += '<tr><td class="mono">' + esc(h.user) + '</td><td class="mono">' + esc(h.password) +
+        '</td><td class="mono" style="font-size:12px;word-break:break-all">' + esc(h.url) + "</td></tr>";
+    });
+    document.getElementById("lb-out").innerHTML = html + "</table></div>";
+  }).catch(function (e) {
+    lbGo.disabled = !lbAuth.checked;
+    document.getElementById("lb-out").innerHTML =
+      '<p style="color:var(--danger);font-size:13.5px">' + esc(e.message) + "</p>";
+  });
+}
+</script>
+</body>
+</html>

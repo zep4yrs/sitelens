@@ -1,0 +1,11 @@
+# Python
+__pycache__/
+*.pyc
+
+# 本机环境与运行时产物
+.env
+server.log
+.mimosa/
+
+# 可再生的大型数据（tools/fetch_nuclei.py + import_nuclei.py 可重新拉取转换）
+data/nuclei/

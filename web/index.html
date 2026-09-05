@@ -1,0 +1,217 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#fafafa">
+<title>SiteLens 站点透视 — 输入网址，看穿技术栈</title>
+<meta name="description" content="2850+ 产品指纹、78 个类别、11024 条漏洞情报、验证型检测引擎、DAST、网络层检测、源码审计。">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<script>if(localStorage.getItem("sitelens-theme")==="dark")document.documentElement.classList.add("dark")</script>
+<style>
+  .hero{display:grid;grid-template-columns:1.1fr .9fr;gap:48px;align-items:center;padding:36px 0 20px}
+  @media(max-width:1100px){.hero{grid-template-columns:1fr}}
+  .hero h1{font-family:var(--font-mono);font-size:42px;line-height:1.25;font-weight:700;margin:0 0 16px}
+  .hero h1 .accent{background:linear-gradient(transparent 62%,color-mix(in srgb,var(--primary) 22%,transparent) 0)}
+  .hero .sub{color:var(--muted-fg);font-size:15.5px;max-width:34em;margin:0 0 26px}
+  .search{display:flex;gap:10px;max-width:520px}
+  .search .url-input{height:52px;font-size:15.5px}
+  .examples{display:flex;gap:8px;margin-top:14px;flex-wrap:wrap}
+  .stats{display:flex;gap:34px;margin-top:30px;flex-wrap:wrap}
+  .stats div{display:flex;flex-direction:column}
+  .stats b{font-family:var(--font-mono);font-size:26px;font-weight:700}
+  .stats span{font-size:12.5px;color:var(--muted-fg)}
+
+  .demo-panel{background:var(--card);border:1px solid var(--border);border-radius:12px;
+    box-shadow:var(--shadow-md);overflow:hidden}
+  .demo-panel .bar{display:flex;align-items:center;gap:6px;padding:10px 14px;
+    border-bottom:1px solid var(--border);font-family:var(--font-mono);font-size:12px;color:var(--muted-fg)}
+  .demo-panel .bar i{width:10px;height:10px;border-radius:50%;background:var(--border)}
+  .demo-panel .bar i:first-child{background:color-mix(in srgb,var(--danger) 55%,transparent)}
+  .demo-panel .bar i:nth-child(2){background:color-mix(in srgb,var(--warn) 55%,transparent)}
+  .demo-panel .bar i:nth-child(3){background:color-mix(in srgb,var(--ok) 55%,transparent)}
+  .demo-panel .body{padding:16px 18px;font-family:var(--font-mono);font-size:12.5px;min-height:218px}
+  .demo-line{margin:2px 0;color:var(--muted-fg)}
+  .demo-line .p{color:var(--ok);margin-right:6px}
+  .demo-found{display:flex;flex-wrap:wrap;gap:6px;margin:10px 0}
+  .demo-progress{height:5px;background:var(--secondary);border-radius:999px;overflow:hidden;margin-top:12px}
+  .demo-progress i{display:block;height:100%;width:0;background:var(--primary);transition:width .6s ease}
+
+  .block{padding:54px 0}
+  .block .title{font-family:var(--font-mono);font-size:26px;font-weight:700;margin:0 0 8px;text-align:center}
+  .block .desc{text-align:center;color:var(--muted-fg);font-size:14px;margin:0 0 34px}
+  .grid3{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:16px}
+  .card.f{padding:20px;transition:box-shadow .2s,transform .2s}
+  .card.f:hover{box-shadow:var(--shadow-md);transform:translateY(-2px)}
+  .card.f .ico{width:40px;height:40px;display:grid;place-items:center;border:1px solid var(--border);
+    border-radius:var(--radius);margin-bottom:14px;color:var(--foreground);background:var(--muted)}
+  .card.f h3{margin:0 0 8px;font-size:15.5px}
+  .card.f p{margin:0;color:var(--muted-fg);font-size:13px;line-height:1.8}
+
+  .cta-band{text-align:center;padding:56px 20px;border-top:1px solid var(--border);border-bottom:1px solid var(--border);
+    background:var(--muted)}
+  .cta-band h2{font-family:var(--font-mono);font-size:24px;margin:0 0 8px}
+  .cta-band p{color:var(--muted-fg);margin:0 0 20px;font-size:14px}
+  footer{padding:30px;text-align:center;color:var(--muted-fg);font-size:12.5px;line-height:2}
+</style>
+</head>
+<body>
+<script src="/js/common.js"></script>
+
+<main class="page">
+
+  <!-- Hero：左文案 + 右演示终端 -->
+  <section class="hero">
+    <div>
+      <h1 class="fade-up">输入网址，<br>看穿它的<span class="accent">技术栈</span></h1>
+      <p class="sub fade-up">SiteLens 是全类别验证型 Web 漏洞扫描器：被动指纹 → 主动验证 → 情报关联 →
+        网络层检测 → 源码审计，一次输入完成 Web 安全评估全流程。</p>
+      <form class="search fade-up" onsubmit="goScan(event)">
+        <input class="url-input" id="url" placeholder="https://example.com" autocomplete="off" autofocus>
+        <button class="btn" type="submit">开始扫描</button>
+      </form>
+      <div class="examples fade-up">
+        <button class="chip" onclick="fill('https://www.text-well.com')">text-well.com</button>
+        <button class="chip" onclick="fill('https://www.python.org')">python.org</button>
+        <button class="chip" onclick="fill('https://books.toscrape.com')">books.toscrape.com</button>
+      </div>
+      <div class="stats fade-up">
+        <div><b id="st-tech">—</b><span>产品指纹</span></div>
+        <div><b id="st-cat">—</b><span>检测类别</span></div>
+        <div><b id="st-vuln">—</b><span>漏洞情报</span></div>
+        <div><b id="st-scan">—</b><span>历史扫描</span></div>
+      </div>
+    </div>
+
+    <div class="demo-panel fade-up">
+      <div class="bar"><i></i><i></i><i></i><span style="margin-left:8px">sitelens — 演示</span></div>
+      <div class="body">
+        <div class="demo-line"><span class="p">➜</span> <span id="demo-url">sitelens scan example.com</span></div>
+        <div id="demo-log"></div>
+        <div class="demo-found" id="demo-found"></div>
+        <div class="demo-progress"><i id="demo-bar"></i></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 六大能力 -->
+  <section class="block">
+    <h2 class="title">六大攻击面，一套扫描器</h2>
+    <p class="desc">从被动指纹到源码污点分析，覆盖 Web 安全评估全流程。</p>
+    <div class="grid3">
+      <div class="card f"><div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:20px;height:20px"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg></div>
+        <h3>被动指纹识别</h3>
+        <p><b class="mono" id="c-tech">2851</b> 产品指纹 × <b class="mono">78</b> 类别，七类检测器取证：响应头 / Cookie / meta / DOM / 脚本 / 表达式 / Bundle 签名。</p></div>
+      <div class="card f"><div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:20px;height:20px"><path d="M12 22s8-3 8-10V5l-8-3-8 3v7c0 7 8 10 8 10z"/><path d="m8.5 12 2.5 2.5 4.5-5"/></svg></div>
+        <h3>验证型检测引擎</h3>
+        <p>35 条自研无害 check + Nuclei 语义路由模板，.git 泄露 / Actuator / Swagger / 目录列表等命中即「已验证漏洞」。</p></div>
+      <div class="card f"><div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:20px;height:20px"><path d="M12 22s8-3 8-10V5l-8-3-8 3v7c0 7 8 10 8 10z"/></svg></div>
+        <h3>漏洞情报三级判定</h3>
+        <p><b class="mono" id="c-vuln">11024</b> 条情报 + OSV 版本区间：确认受影响 / 可能受影响 / 不受影响，KEV 在野利用红标。</p></div>
+      <div class="card f"><div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:20px;height:20px"><rect x="4" y="4" width="16" height="16" rx="2"/><path d="M9 9h6M9 13h6M9 17h4"/></svg></div>
+        <h3>认证扫描与安全评分</h3>
+        <p>Cookie 会话注入覆盖登录后攻击面；8 项安全响应头加权评分 A+–F，附中文修复建议。</p></div>
+      <div class="card f"><div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:20px;height:20px"><path d="M12 15V3"/><path d="m7 8 5-5 5 5"/><path d="M4 15v4a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-4"/></svg></div>
+        <h3>网络层检测与登录爆破</h3>
+        <p>TLS 证书 / 弱协议 / SPF·DMARC·MX 邮件安全只读检测；登录爆破为授权专属独立模块，支持验证码 OCR。</p></div>
+      <div class="card f"><div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:20px;height:20px"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg></div>
+        <h3>源码审计与导出</h3>
+        <p>上传源码 / zip 包做污点分析与危险函数检测，审计后即删；结果一键导出 JSON / CSV / 宽表 / HTML 报告。</p></div>
+    </div>
+  </section>
+
+  <!-- 可选主动模块 -->
+  <section class="block" style="padding-top:0">
+    <h2 class="title">主动模块，默认关闭</h2>
+    <p class="desc">递进式扫描等级：快速 → 标准 → 深度 → 全面。主动模块仅在高级别显式开启，仅限授权目标。</p>
+    <div class="grid3">
+      <div class="card f"><h3>目录探测</h3><p>精选 1888 条目录字典，软 404 基线过滤 + 403 绕过重试，可关闭。</p></div>
+      <div class="card f"><h3>子域名枚举</h3><p>10001 条子域名字典 DNS 并发解析，绘制站点边界。</p></div>
+      <div class="card f"><h3>端口服务识别</h3><p>6 常见端口 banner 探测，匹配 <b class="mono">11966</b> 条 nmap 风格服务指纹。</p></div>
+      <div class="card f"><h3>主动路径指纹</h3><p>FingerDir 38 产品特征路径，识别出产品才跑专项，不空跑。</p></div>
+      <div class="card f"><h3>WebShell 路径探测</h3><p>常见 WebShell 落点只读探测，命中即告警。</p></div>
+      <div class="card f"><h3>SSRF 防护内置</h3><p>协议白名单 + 主机黑名单 + DNS 逐 IP 校验，请求限速、UA 自报家门。</p></div>
+    </div>
+  </section>
+
+  <!-- CTA -->
+  <section class="cta-band">
+    <h2>现在就扫一个试试</h2>
+    <p>无需注册，输入一个你授权分析的网址即可。所有结果存于本地 PostgreSQL。</p>
+    <button class="btn" onclick="location.href='/app'">打开扫描工作台 →</button>
+  </section>
+
+  <footer>
+    sitelens · 全类别验证型 Web 漏洞扫描器<br>
+    本工具仅用于授权的安全研究与学习，请遵守目标站点的 robots 与服务条款
+  </footer>
+
+</main>
+
+<script>
+function goScan(e) {
+  e.preventDefault();
+  var url = document.getElementById("url").value.trim();
+  if (!url) return;
+  location.href = "/app?url=" + encodeURIComponent(url);
+}
+function fill(u) { document.getElementById("url").value = u; }
+
+/* 实时统计 */
+api.get("/api/stats").then(function (s) {
+  document.getElementById("st-tech").textContent = (s.technologies || 0).toLocaleString();
+  document.getElementById("st-cat").textContent = s.categories || 0;
+  document.getElementById("st-vuln").textContent = (s.vulns || 0).toLocaleString();
+  document.getElementById("st-scan").textContent =
+    (s.history && s.history.scans) || 0;
+  document.getElementById("c-tech").textContent = (s.technologies || 0).toLocaleString();
+  document.getElementById("c-vuln").textContent = (s.vulns || 0).toLocaleString();
+}).catch(function () {});
+
+/* hero 演示动画（纯本地脚本，无网络请求） */
+(function () {
+  var demoTech = ["Next.js", "React", "Tailwind CSS", "Radix UI", "Google Analytics",
+    "Microsoft Clarity", "Cloudflare", "Vercel", "Stripe", "Google Font API", "Lucide Icons"];
+  var demoSteps = [
+    "fetch https://example.com … 200 OK",
+    "解析响应头 / Cookie / meta …",
+    "BeautifulSoup 提取脚本与 DOM 证据",
+    "运行 7 个检测器 × 2851 指纹",
+    "验证引擎 + 情报三级判定 + 安全头评分"
+  ];
+  var log = document.getElementById("demo-log");
+  var found = document.getElementById("demo-found");
+  var bar = document.getElementById("demo-bar");
+  var step = 0;
+  function nextStep() {
+    if (step < demoSteps.length) {
+      var line = document.createElement("div");
+      line.className = "demo-line";
+      line.innerHTML = '<span class="p">✓</span> ' + demoSteps[step];
+      log.appendChild(line);
+      bar.style.width = ((step + 1) / demoSteps.length * 80) + "%";
+      step++;
+      setTimeout(nextStep, 680);
+    } else {
+      demoTech.forEach(function (name, i) {
+        setTimeout(function () {
+          var b = document.createElement("span");
+          b.className = "badge ok";
+          b.textContent = name;
+          found.appendChild(b);
+          bar.style.width = (80 + (i + 1) / demoTech.length * 20) + "%";
+        }, i * 170);
+      });
+      setTimeout(start, 6800);
+    }
+  }
+  function start() {
+    log.innerHTML = ""; found.innerHTML = ""; bar.style.width = "0";
+    step = 0; setTimeout(nextStep, 400);
+  }
+  start();
+})();
+</script>
+</body>
+</html>

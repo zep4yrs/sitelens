@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>API 文档 — SiteLens</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<script>if(localStorage.getItem("sitelens-theme")==="dark")document.documentElement.classList.add("dark")</script>
+<style>
+  .sec{margin:0 0 26px}
+  .sec-title{display:flex;align-items:center;gap:10px;margin:0 0 8px;font-family:var(--font-mono);
+    font-size:14.5px;font-weight:600}
+  .method{display:inline-block;padding:2px 8px;border-radius:6px;font-size:11px;font-weight:700;
+    font-family:var(--font-mono);letter-spacing:.04em}
+  .method.post{color:var(--warn);border:1px solid color-mix(in srgb,var(--warn) 40%,transparent);
+    background:color-mix(in srgb,var(--warn) 8%,transparent)}
+  .method.get{color:var(--info);border:1px solid color-mix(in srgb,var(--info) 40%,transparent);
+    background:color-mix(in srgb,var(--info) 8%,transparent)}
+  .method.del{color:var(--danger);border:1px solid color-mix(in srgb,var(--danger) 40%,transparent);
+    background:color-mix(in srgb,var(--danger) 8%,transparent)}
+  .sec p{margin:0 0 8px;color:var(--muted-fg);font-size:13.5px}
+  pre.code{background:var(--card);border:1px solid var(--border);border-radius:10px;padding:14px 18px;
+    font-family:var(--font-mono);font-size:12.5px;line-height:1.9;overflow-x:auto;
+    color:var(--foreground);margin:0;white-space:pre}
+  h2.title{font-family:var(--font-mono);font-size:20px;margin:44px 0 14px}
+</style>
+</head>
+<body>
+<script src="/js/common.js"></script>
+
+<main class="page">
+  <h1>REST API</h1>
+  <p class="sub">全部接口同源访问，返回 JSON。扫描 / 批量 / 登录爆破为异步任务：提交后凭 job_id 轮询进度。
+    若服务端设置了 SLENS_API_TOKEN，/api/* 需携带 X-Token 请求头。</p>
+
+  <div class="sec">
+    <div class="sec-title"><span class="method post">POST</span>/api/scan</div>
+    <p>提交一次扫描（异步）。选项与 url 平铺在同一层 body（后端 data.get 顶层读取）：</p>
+    <pre class="code">{
+  "url": "https://example.com",
+  "deep": true,           // 同域浅爬取（默认开）
+  "active_fp": false,     // FingerDir 主动路径指纹
+  "dir_scan": false,      // 目录探测
+  "dir_bypass": false,    // 403 绕过重试（需 dir_scan）
+  "subdomain": false,     // 子域名枚举
+  "service_probe": false, // 端口服务识别
+  "browser_ua": false,    // 浏览器 UA 请求
+  "webshell": false,      // WebShell 路径探测
+  "netsec": false,        // 扫描内嵌 TLS / DNS 安全检测
+  "dast": false,          // DAST + JS 攻击面提取
+  "checks": "none",       // 验证引擎 none | core | all（all 追加 Nuclei 模板）
+  "auth_cookie": ""       // 认证会话 Cookie
+}
+→ { "job_id": "a1b2c3d4e5f6" }</pre>
+  </div>
+
+  <div class="sec">
+    <div class="sec-title"><span class="method get">GET</span>/api/job/&lt;job_id&gt;</div>
+    <p>轮询任务进度（扫描 / 登录爆破）：</p>
+    <pre class="code">{ "status": "running | done | error", "progress": 55,
+  "message": "运行 7 个检测器…", "scan_id": null }
+// status=done 时返回 scan_id；登录爆破完成时附 result.hits</pre>
+  </div>
+
+  <div class="sec">
+    <div class="sec-title"><span class="method post">POST</span>/api/batch</div>
+    <pre class="code">{ "urls": ["https://a.com", "https://b.com"] }   // 最多 50 个
+→ { "job_id": "…", "total": 2 }   // 轮询 /api/job/&lt;id&gt;/results</pre>
+  </div>
+
+  <div class="sec">
+    <div class="sec-title"><span class="method get">GET</span>/api/job/&lt;job_id&gt;/results</div>
+    <p>批量任务进度：{ status, progress, done, total, message }。</p>
+  </div>
+
+  <div class="sec">
+    <div class="sec-title"><span class="method post">POST</span>/api/audit</div>
+    <p>源码静态审计：multipart 上传字段 files（多文件 / zip / rar / 7z），同步返回报告，文件审计后即删：</p>
+    <pre class="code">{ "files": 12, "lines": 3401, "by_severity": {"high": 2, "medium": 5, "low": 9},
+  "findings": [{"severity": "high", "rule": "sql-inject", "title": "…",
+                "file": "a.py", "line": 12, "snippet": "…", "advice": "…"}] }</pre>
+  </div>
+
+  <div class="sec">
+    <div class="sec-title"><span class="method get">GET</span>/api/audit/demo</div>
+    <p>对内置「故意漏洞」示例代码运行全部审计规则（教学演示，样本从不执行）。</p>
+  </div>
+
+  <div class="sec">
+    <div class="sec-title"><span class="method get">GET</span>/api/history?limit=50&amp;tech=Next.js</div>
+    <p>扫描历史列表；tech 参数支持「哪些站用了某技术」反查（JOIN scan_techs 明细表）。</p>
+  </div>
+
+  <div class="sec">
+    <div class="sec-title"><span class="method get">GET</span>/api/history/&lt;scan_id&gt;</div>
+    <p>完整结果：technologies（含证据与版本）、verified（已验证漏洞）、vulnerabilities（情报三级判定）、
+      security（安全头评分）、extras（可选模块结果）。</p>
+  </div>
+
+  <div class="sec">
+    <div class="sec-title"><span class="method del">DELETE</span>/api/history/&lt;scan_id&gt;</div>
+    <p>删除一条扫描记录（含技术明细）。</p>
+  </div>
+
+  <div class="sec">
+    <div class="sec-title"><span class="method get">GET</span>/api/export/&lt;scan_id&gt;?fmt=json|csv|wide|html</div>
+    <p>导出。csv 为明细、wide 为 Wappalyzer 风格宽表（每类别一列）、html 为单文件离线报告。</p>
+  </div>
+
+  <div class="sec">
+    <div class="sec-title"><span class="method get">GET</span>/api/diff?a=1&amp;b=2</div>
+    <p>两次扫描差异对比：added / removed / version_changed。</p>
+  </div>
+
+  <div class="sec">
+    <div class="sec-title"><span class="method get">GET</span>/api/stats</div>
+    <pre class="code">{ "categories": 78, "technologies": 2851, "curated": 370, "tscan": 2481,
+  "vulns": 11024, "vuln_by_severity": {…},
+  "history": {"scans": 12, "hosts": 5, "avg_techs": 13.4},
+  "top_techs": [{"name": "Nginx", "n": 9}, …] }</pre>
+  </div>
+
+  <div class="sec">
+    <div class="sec-title"><span class="method get">GET</span>/api/categories</div>
+    <p>78 个检测类别（id / name / icon）。</p>
+  </div>
+
+  <div class="sec">
+    <div class="sec-title"><span class="method get">GET</span>/api/vuln-search?q=grafana</div>
+    <p>漏洞情报混合检索：trgm 粗筛（GIN 索引）→ 256 维哈希 TF-IDF 向量余弦重排，limit 40。</p>
+  </div>
+
+  <div class="sec">
+    <div class="sec-title"><span class="method get">GET</span>/api/verified?limit=100</div>
+    <p>跨扫描汇总全部已验证漏洞（验证型 Check + Nuclei 模板实际命中）。</p>
+  </div>
+
+  <div class="sec">
+    <div class="sec-title"><span class="method post">POST</span>/api/netsec</div>
+    <p>独立网络层检测（只读）：{ "host": "example.com" } → TLS 证书 / 弱协议 / SPF·DMARC·MX 检测结果。</p>
+  </div>
+
+  <div class="sec">
+    <div class="sec-title"><span class="method post">POST</span>/api/loginbrute</div>
+    <p>登录爆破（异步，授权专属，必须 authorized=true）：</p>
+    <pre class="code">{ "url": "https://target.com/login", "authorized": true,
+  "captcha_type": "none | digits | calc | click", "captcha_field": "captcha" }
+→ 轮询 /api/job/&lt;id&gt;，完成后 result.hits = [{"user": "…", "password": "…", "url": "…"}]</pre>
+  </div>
+
+  <h2 class="title">安全约定</h2>
+  <p class="muted" style="font-size:13.5px;line-height:2;max-width:72em">
+    目标 URL 仅接受 http/https；DNS 解析后命中环回、私有、链路本地、保留地址一律拒绝（SSRF 三层防护）。<br>
+    请求全局限速并携带 SiteLens/1.0 UA，遵循 robots.txt；主动模块默认关闭，仅限授权目标。<br>
+    登录爆破独立于扫描等级链路，需显式授权确认。<br>
+    数据库访问全部字面量 SQL + %s 参数绑定；zip 解包防路径穿越；POC 载荷不落盘、不执行。
+  </p>
+</main>
+</body>
+</html>

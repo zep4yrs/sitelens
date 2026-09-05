@@ -1,0 +1,81 @@
+{
+  "activeInfo": {
+    "bg": "rgba(0, 0, 0, 0)",
+    "color": "oklch(0.21 0.034 264.665)",
+    "fs": "10px",
+    "fw": "500"
+  },
+  "fixedEls": [],
+  "modeBtnInfo": {
+    "bg": "rgb(250, 250, 250)",
+    "cls": "inline-flex items-center justify-center whitespace-nowrap font-medium transition-all disabled:pointer-events-none disabled:opacity-50 [&_svg]:pointer-events-non",
+    "color": "rgb(26, 26, 26)",
+    "h": "32px",
+    "radius": "3.6px",
+    "w": "375.333px",
+    "weight": "500"
+  },
+  "panels": [],
+  "top": [
+    {
+      "cls": "",
+      "display": "block",
+      "flexDir": "row",
+      "gap": "normal",
+      "h": "720px"
+    },
+    {
+      "cls": "flex h-screen bg-background font-mono relative layout-container",
+      "display": "flex",
+      "flexDir": "row",
+      "gap": "normal",
+      "h": "720px"
+    },
+    {
+      "cls": "context-view",
+      "display": "none",
+      "flexDir": "row",
+      "gap": "normal",
+      "h": "auto"
+    },
+    {
+      "cls": "monaco-aria-container",
+      "display": "block",
+      "flexDir": "row",
+      "gap": "normal",
+      "h": "1px"
+    },
+    {
+      "cls": "monaco-alert",
+      "display": "block",
+      "flexDir": "row",
+      "gap": "normal",
+      "h": "0px"
+    },
+    {
+      "cls": "monaco-alert",
+      "display": "block",
+      "flexDir": "row",
+      "gap": "normal",
+      "h": "0px"
+    },
+    {
+      "cls": "monaco-status",
+      "display": "block",
+      "flexDir": "row",
+      "gap": "normal",
+      "h": "0px"
+    },
+    {
+      "cls": "monaco-status",
+      "display": "block",
+      "flexDir": "row",
+      "gap": "normal",
+      "h": "0px"
+    }
+  ],
+  "viewport": {
+    "h": 720,
+    "w": 1280
+  }
+}
