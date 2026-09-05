@@ -1,0 +1,8 @@
+admin
+root
+administrator
+user
+sa
+guest
+szhw
+lct

@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>情报库检索 — SiteLens</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<script>if(localStorage.getItem("sitelens-theme")==="dark")document.documentElement.classList.add("dark")</script>
+<style>
+  .search-row{display:flex;gap:10px;margin-bottom:16px;max-width:720px}
+  .search-row .url-input{height:46px}
+  .search-row .btn{height:46px;padding:0 22px}
+  .stats-row{display:flex;gap:24px;flex-wrap:wrap;margin-bottom:20px}
+  .stats-row div{display:flex;flex-direction:column}
+  .stats-row b{font-family:var(--font-mono);font-size:22px;font-weight:700}
+  .stats-row span{font-size:12px;color:var(--muted-fg)}
+</style>
+</head>
+<body>
+<script src="/js/common.js"></script>
+
+<main class="page">
+  <h1>漏洞情报库</h1>
+  <p class="sub">11024 条情报（afrog / xray / TscanPlus POC 元数据）+ OSV 版本区间 + KEV 在野利用名单，
+    支持产品名模糊与语义检索（PostgreSQL trgm GIN 索引 + 256 维向量余弦重排）。</p>
+
+  <div class="search-row">
+    <input class="url-input" id="q" placeholder="检索产品 / 关键词，如：wordpress、grafana、目录遍历" autocomplete="off">
+    <button class="btn" onclick="search()">检索</button>
+  </div>
+
+  <div class="stats-row" id="kb-stats" style="display:none">
+    <div><b id="kb-vulns">—</b><span>漏洞情报</span></div>
+    <div><b id="kb-high">—</b><span>高危及以上</span></div>
+    <div><b id="kb-tech">—</b><span>覆盖产品指纹</span></div>
+  </div>
+
+  <div id="out">
+    <div class="empty"><span class="big">⌕</span>输入关键词开始检索</div>
+  </div>
+</main>
+
+<script>
+api.get("/api/stats").then(function (s) {
+  document.getElementById("kb-stats").style.display = "flex";
+  document.getElementById("kb-vulns").textContent = (s.vulns || 0).toLocaleString();
+  var bySev = s.vuln_by_severity || {};
+  var high = 0;
+  Object.keys(bySev).forEach(function (k) {
+    if (k === "high" || k === "critical") high += bySev[k] || 0;
+  });
+  document.getElementById("kb-high").textContent = high ? high.toLocaleString() : "—";
+  document.getElementById("kb-tech").textContent = (s.technologies || 0).toLocaleString();
+}).catch(function () {});
+
+function search() {
+  var q = document.getElementById("q").value.trim();
+  if (!q) return;
+  document.getElementById("out").innerHTML =
+    '<div class="skeleton" style="height:80px"></div><p class="hint">检索中…</p>';
+  api.get("/api/vuln-search?q=" + encodeURIComponent(q)).then(function (r) {
+    var rows = r.results || [];
+    if (!rows.length) {
+      document.getElementById("out").innerHTML =
+        '<div class="empty"><span class="big">∅</span>无结果</div>';
+      return;
+    }
+    var html = '<div class="sec-title">检索结果 <span class="count">' + rows.length + " 条 · 语义相关度排序</span></div>" +
+      '<div class="tbl-wrap"><table class="list"><tr><th>严重度</th><th>CVE</th><th>产品</th><th>名称</th><th>类型</th><th>来源</th></tr>';
+    rows.forEach(function (v) {
+      var name = esc(v.name || "");
+      if (v.ref) name = '<a href="' + esc(v.ref) + '" target="_blank" rel="noopener" style="color:var(--info)">' + name + "</a>";
+      html += "<tr><td>" + sevBadge(v.severity) + "</td>" +
+        '<td class="mono">' + esc(v.cve || "-") + "</td>" +
+        '<td class="mono">' + esc(v.product || "-") + "</td>" +
+        "<td>" + name + "</td><td>" + esc(v.type || "-") + "</td>" +
+        '<td class="mono">' + esc(v.src) + "</td></tr>";
+    });
+    document.getElementById("out").innerHTML = html + "</table></div>";
+  }).catch(function (e) {
+    document.getElementById("out").innerHTML =
+      '<p style="color:var(--danger);font-size:13.5px">' + esc(e.message) + "</p>";
+  });
+}
+document.getElementById("q").addEventListener("keydown", function (e) {
+  if (e.key === "Enter") search();
+});
+</script>
+</body>
+</html>
