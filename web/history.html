@@ -156,6 +156,16 @@ function renderDetail(r, scanId, url) {
     '<button class="btn ghost small" onclick="exportAs(' + scanId + ',\'html\')">HTML 报告</button>' +
     "</span></div>";
 
+  /* 采集失败 / 被 WAF 拦截的说明（引擎 error 字段） */
+  if (r.error) {
+    html += '<div class="card" style="border-color:color-mix(in srgb,var(--warn) 50%,transparent);margin-bottom:16px">' +
+      '<b style="color:var(--warn)">⚠ ' + esc(r.error) + '</b>' +
+      (String(r.error).indexOf("403") >= 0
+        ? '<span class="hint" style="display:block;margin-top:4px">目标可能按 UA / WAF 拦截了扫描器。可在工作台勾选「浏览器 UA」后重新扫描。</span>'
+        : "") +
+      "</div>";
+  }
+
   var sec = r.security || {};
   var grade = sec.grade || "-";
   var gcls = (grade === "F" || grade === "D") ? "danger" : (grade === "C" ? "warn" : "ok");
