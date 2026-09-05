@@ -19,7 +19,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from scanner.db import Database  # noqa: E402
-from scanner.osv import osv_by_cve  # noqa: E402
+from scanner.osv import osv_by_cve, cvss_v3_score, cvss_label  # noqa: E402
 
 BATCH = 100
 
@@ -227,6 +227,11 @@ def full_sync(db, workers=16, progress=None, do_osv=True, do_ghsa=True):
                     vr = _norm_range(v.get("vulnerable_version_range"))
                     if vr:
                         parts.append(vr)
+            if not score and osv_r and len(osv_r) > 1 and osv_r[1]:
+                # GHSA 未给分时：用 OSV 的 CVSS 向量本地计分（无需 NVD）
+                vec_txt = osv_r[1]
+                score = cvss_v3_score(vec_txt)
+                sev = cvss_label(score)
             cur.execute("SELECT affected, sources FROM vuln_kb"
                         " WHERE cve = %s LIMIT 1", (cve,))
             row = cur.fetchone()
@@ -235,7 +240,12 @@ def full_sync(db, workers=16, progress=None, do_osv=True, do_ghsa=True):
             merged = _merge_ranges(row["affected"], parts)
             if merged:
                 n_ranges += 1
-            src_new = _merge_ranges(row["sources"], sources).replace("|", ",")
+            src_set = [s for s in (row["sources"] or "").replace("|", ",").split(",")
+                       if s.strip()]
+            for s in sources:
+                if s not in src_set:
+                    src_set.append(s)
+            src_new = ",".join(src_set)
             cur.execute(
                 "UPDATE vuln_kb SET affected = %s, sources = %s,"
                 " cvss_score = %s, cvss_sev = %s, cvss_vector_txt = %s"

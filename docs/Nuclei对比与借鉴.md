@@ -6,7 +6,8 @@
 ## 一、定位关系：不是竞品，是上下游
 
 - **Nuclei**（projectdiscovery/nuclei，MIT，Go）：漏洞检测**引擎**。YAML DSL 定义检测场景，
-  社区贡献 7,000+ 模板，覆盖 HTTP/DNS/TCP/SSL/WHOIS/WebSocket/无头浏览器等协议。
+  社区模板库持续增长（官方宣传 7,000+；本项目 `data/nuclei` 快照仅 http 目录即 **11,306** 个 yaml），
+  覆盖 HTTP/DNS/TCP/SSL/WHOIS/WebSocket/无头浏览器等协议。
 - **SiteLens**：验证型 Web 漏洞扫描器**工作台**。串起「指纹识别 → 情报关联 → 模板验证 → 报告交付」，
   验证环节运行着 Nuclei 社区模板的适配子集（当前 2,613 条）。
 
@@ -18,12 +19,28 @@
 
 | | SiteLens | Nuclei |
 |---|---|---|
-| 可运行模板 | 2,613 条（`data/nuclei_checks.json`） | 7,000+ 且持续增长 |
+| 可运行模板 | 2,613 条（`data/nuclei_checks.json`） | 模板库持续增长（官方宣传 7,000+，本地快照 http 目录 11,306） |
 | 支持的模板类型 | **单 GET** + path 仅 `{{BaseURL}}` 后缀 + status/word matchers（`tools/import_nuclei.py:20` 明确跳过 DSL/payload/二进制/interactsh） | 全 DSL：多请求链、payload fuzz、extractor、OOB、headless、JS/Code |
 | 执行模型 | 逐模板串行 GET（`scanner/checks.py:243 run_nuclei`），组间 OR / 组内 AND 子串匹配，软 404 基线 + 二次重放确认 | Go 高并发，默认 150 req/s，请求聚类 |
 | 实际吞吐 | 全局限速 0.4s（≈2.5 req/s）+ 3 扫描信号量 | 默认 150 req/s |
 
 **诚实口径：我们约 2.5 req/s vs 它默认 150 req/s，吞吐差约 60 倍；可运行的模板类型是它库里最简单的一类。**
+
+#### 模板漏斗：11,306 → 2,613（为什么只有这些能跑）
+
+对本地快照 `data/nuclei/http`（11,306 个 yaml）按特性统计（有重叠）：
+
+| 被跳过的原因 | 涉及模板数 | 对应我们运行器缺的能力 |
+|---|---|---|
+| `dsl:` 表达式匹配器 | 3,543 | 表达式求值引擎 |
+| `flow:` 多请求编排 | 1,101 | 多步骤请求状态机 |
+| `payloads:` 模糊测试 | 689 | 注入/迭代引擎 |
+| `interactsh` OOB 回连 | 543 | 外部回调服务器 |
+| POST 等非 GET 方法 | 181 | 单 GET 之外的请求方法 |
+| **实际转换入库** | **2,613** | 单 GET + 字面路径 + status/word 匹配 |
+
+扩大模板覆盖率的路径 = 给 `run_nuclei` 逐个补上述能力，每补一项即可解锁对应类别，
+其中「POST 支持」和「简单 DSL（比较运算符）」成本最低，OOB 成本最高（见 §三 P2）。
 
 ### 2.2 我们有、它没有的（代码核实）
 
