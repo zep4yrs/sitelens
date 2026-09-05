@@ -11,15 +11,20 @@ INTERVAL = 86400
 
 
 def run_update(db_factory):
-    """执行一轮 OSV 区间补全 + KEV 清单更新（复用 tools 管线的核心步骤）"""
-    from tools.update_intel import enrich_batch, flush
+    """执行一轮 OSV 区间补全（落库 SQL 与 tools/update_intel.main 内联版一致）"""
+    from tools.update_intel import enrich_batch
     db = db_factory()
     with db.transaction(dict_rows=True) as cur:
         cur.execute("SELECT DISTINCT cve FROM vuln_kb"
                     " WHERE cve <> '' AND (affected IS NULL OR affected = '')")
         cves = [r["cve"] for r in cur.fetchall()]
     got = enrich_batch(cves)
-    flush(db, [(c, "|".join(r[0]), r[1]) for c, r in got.items()])
+    with db.transaction() as cur:
+        for cve, (ranges, vector) in got.items():
+            cur.execute(
+                "UPDATE vuln_kb SET affected = %s, cvss_vec = %s"
+                " WHERE cve = %s AND (affected IS NULL OR affected = '')",
+                ("|".join(ranges), vector, cve))
 
     with db.transaction(dict_rows=True) as cur:
         cur.execute("SELECT COALESCE(SUM((affected <> '')::int),0) AS n FROM vuln_kb")

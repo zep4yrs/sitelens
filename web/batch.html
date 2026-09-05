@@ -27,6 +27,7 @@
   <textarea class="batch-box" id="urls" placeholder="https://example.com&#10;https://www.python.org&#10;https://books.toscrape.com"></textarea>
   <div class="count-row">
     <button class="btn" id="go" onclick="startBatch()">▶ 开始批量扫描</button>
+    <button class="btn ghost" id="cancel" onclick="cancelBatch()" style="display:none">取消</button>
     <span class="n" id="n">0 / 50</span>
     <span class="hint" style="margin:0" id="hint"></span>
   </div>
@@ -47,6 +48,7 @@ function startBatch() {
   var urls = box.value.split("\n").map(function (s) { return s.trim(); }).filter(Boolean).slice(0, 50);
   if (!urls.length) return;
   document.getElementById("go").disabled = true;
+  document.getElementById("cancel").style.display = "";
   document.getElementById("pw").style.display = "block";
   document.getElementById("log").style.display = "block";
   document.getElementById("log").innerHTML = "";
@@ -58,33 +60,54 @@ function startBatch() {
     seen[line] = 1;
     var div = document.createElement("div");
     var isFail = line.indexOf("失败") >= 0;
+    var isSkip = line.indexOf("跳过") >= 0;
     div.innerHTML = '<span class="' + (isFail ? "fail" : "ok") + '">' +
-      (isFail ? "✕" : "✓") + "</span> " + esc(line);
+      (isFail ? "✕" : isSkip ? "⊘" : "✓") + "</span> " + esc(line);
     logBox.appendChild(div);
     logBox.scrollTop = logBox.scrollHeight;
   }
 
   api.post("/api/batch", { urls: urls }).then(function (r) {
+    var jobId = r.job_id;
+    window.__batchJobId = jobId;
     return new Promise(function (resolve, reject) {
       var timer = setInterval(function () {
-        api.get("/api/job/" + r.job_id + "/results").then(function (job) {
+        api.get("/api/job/" + jobId + "/results").then(function (job) {
           document.getElementById("bar").style.width = (job.progress || 0) + "%";
           addLog(job.message);
           document.getElementById("hint").textContent =
-            (job.done || 0) + " / " + (job.total || urls.length) + " 已完成";
-          if (job.status === "done") { clearInterval(timer); resolve(job); }
+            (job.done || 0) + " / " + (job.total || urls.length) + " 已完成" +
+            (job.status === "cancelling" ? "（取消中…）" : "");
+          if (job.status === "done" || job.status === "cancelled") {
+            clearInterval(timer);
+            resolve(job);
+          }
         }).catch(function (e) { clearInterval(timer); reject(e); });
       }, 1200);
     });
-  }).then(function () {
+  }).then(function (job) {
     document.getElementById("go").disabled = false;
-    document.getElementById("hint").innerHTML =
-      '全部完成 · <a href="/history" style="color:var(--info)">→ 查看历史 / 导出宽表</a>';
-    toast("批量扫描完成", "ok");
+    document.getElementById("cancel").style.display = "none";
+    if (job.status === "cancelled") {
+      document.getElementById("hint").textContent = "批量已取消（未开始的 URL 已跳过）";
+      toast("批量已取消", "err");
+    } else {
+      document.getElementById("hint").innerHTML =
+        '全部完成 · <a href="/history" style="color:var(--info)">→ 查看历史 / 导出宽表</a>';
+      toast("批量扫描完成", "ok");
+    }
   }).catch(function (e) {
     document.getElementById("go").disabled = false;
+    document.getElementById("cancel").style.display = "none";
     document.getElementById("hint").textContent = "失败：" + e.message;
   });
+}
+
+function cancelBatch() {
+  var btn = document.getElementById("cancel");
+  btn.disabled = true;
+  btn.textContent = "取消中…";
+  api.post("/api/job/" + window.__batchJobId + "/cancel", {}).catch(function () {});
 }
 </script>
 </body>

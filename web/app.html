@@ -48,7 +48,10 @@
   .dark .cdd-opt.active b{color:var(--primary)}
 
   .livebox{margin-top:18px}
-  .lv-head{font-family:var(--font-mono);font-weight:700;font-size:14px;margin-bottom:10px}
+  .lv-head{font-family:var(--font-mono);font-weight:700;font-size:14px;margin-bottom:10px;
+    display:flex;align-items:center;gap:10px}
+  .lv-head .btn{margin-left:auto}
+  .cdd-opt.disabled{opacity:.45;cursor:not-allowed}
   .stage{display:flex;gap:10px;align-items:center;font-size:13.5px;color:var(--muted-fg);padding:4px 0}
   .stage .s-ico{font-family:var(--font-mono);width:16px;text-align:center}
   .stage.done{color:var(--foreground)}
@@ -188,7 +191,7 @@
           </div>
           <input class="tb" id="lb-cap-field" placeholder="字段名，留空自动识别" style="flex:1">
         </div>
-        <p class="hint">OCR 依赖 ddddocr 本地推理；点选按首框坐标提交；滑块暂不支持。识别仅用于授权测试。</p>
+        <p class="hint" id="lb-cap-hint">OCR 依赖 ddddocr 本地推理；点选按首框坐标提交；滑块暂不支持。识别仅用于授权测试。</p>
       </div>
     </div>
     <iframe id="lb-preview" sandbox="allow-forms allow-same-origin"></iframe>
@@ -217,6 +220,7 @@ if (["scan", "netsec", "loginbrute"].indexOf(initialTab) >= 0) switchTab(initial
 
 /* ================= 综合扫描 ================= */
 var currentScanId = null;
+var currentJobId = null;
 var LEVELS = {
   quick:    { deep: false },
   standard: { deep: true },
@@ -278,6 +282,22 @@ var levelDD = initCDD("level", function (v) {
 });
 var capDD = initCDD("lb-cap");
 
+/* 本机未装 ddddocr 时禁用需要 OCR 的验证码模式 */
+api.get("/api/captcha/capability").then(function (c) {
+  if (c.ocr) return;
+  document.querySelectorAll("#lb-cap .cdd-opt").forEach(function (o) {
+    if (o.dataset.v !== "none") {
+      o.classList.add("disabled");
+      o.disabled = true;
+      var desc = o.querySelector("span");
+      if (desc) desc.textContent += "（本机未装 ddddocr）";
+    }
+  });
+  var hint = document.getElementById("lb-cap-hint");
+  if (hint) hint.innerHTML =
+    '<span style="color:var(--warn)">⚠ 本机未安装 ddddocr，验证码识别模式不可用（pip install ddddocr 后重启生效）。</span>';
+}).catch(function () {});
+
 var liveTimer = null, liveStart = 0, liveEst = 0;
 function renderLivePanel(options) {
   liveEst = estimateSeconds(options);
@@ -286,7 +306,8 @@ function renderLivePanel(options) {
     return '<div class="stage" id="stage-' + i + '"><span class="s-ico">○</span> ' + st[1] + "</div>";
   }).join("");
   document.getElementById("result").innerHTML =
-    '<div class="livebox card"><div class="lv-head">扫描进行中</div>' + rows +
+    '<div class="livebox card"><div class="lv-head">扫描进行中' +
+    '<button class="btn ghost small" id="cancel-btn" onclick="cancelScan()">取消扫描</button></div>' + rows +
     '<div class="lv-meta">已用时 <b id="lv-elapsed">0 秒</b> · 预计剩余 <b id="lv-eta">' +
     fmtT(liveEst) + "</b></div></div>";
   liveTimer = setInterval(function () {
@@ -328,17 +349,27 @@ function startScan() {
   /* 后端 /api/scan 从 body 顶层读取各选项（data.get("deep") 等），必须平铺不能嵌套 */
   var payload = Object.assign({ url: url }, options);
   api.post("/api/scan", payload)
-    .then(function (r) { return pollJob(r.job_id, setProgress); })
+    .then(function (r) {
+      currentJobId = r.job_id;
+      return pollJob(r.job_id, setProgress);
+    })
     .then(function (job) {
       document.getElementById("go").disabled = false;
       if (liveTimer) clearInterval(liveTimer);
+      if (job.cancelled) {
+        document.getElementById("st-state").textContent = "cancelled";
+        document.getElementById("st-msg").textContent = "已取消";
+        document.getElementById("result").innerHTML =
+          '<div class="empty"><span class="big">⊘</span>扫描已取消（局部结果未入库）</div>';
+        return null;
+      }
       document.getElementById("st-state").textContent = "done";
       document.getElementById("st-msg").textContent = "完成";
       toast("扫描完成", "ok");
       currentScanId = job.scan_id;
       return api.get("/api/history/" + job.scan_id);
     })
-    .then(function (row) { renderResult(row.result, row.id); })
+    .then(function (row) { if (row) renderResult(row.result, row.id); })
     .catch(function (e) {
       document.getElementById("go").disabled = false;
       if (liveTimer) clearInterval(liveTimer);
@@ -354,11 +385,22 @@ function pollJob(jobId, onProgress) {
     var timer = setInterval(function () {
       api.get("/api/job/" + jobId).then(function (job) {
         if (job.status === "done") { clearInterval(timer); resolve(job); }
+        else if (job.status === "cancelled") {
+          clearInterval(timer); resolve({ cancelled: true, message: job.message });
+        }
         else if (job.status === "error") { clearInterval(timer); reject(new Error(job.message || "任务失败")); }
         else if (onProgress) onProgress(job.progress || 0, job.message);
       }).catch(function (e) { clearInterval(timer); reject(e); });
     }, 1000);
   });
+}
+
+function cancelScan() {
+  if (!currentJobId) return;
+  var btn = document.getElementById("cancel-btn");
+  if (btn) { btn.disabled = true; btn.textContent = "取消中…"; }
+  document.getElementById("st-msg").textContent = "取消中…";
+  api.post("/api/job/" + currentJobId + "/cancel", {}).catch(function () {});
 }
 
 /* ---------------- 结果渲染 ---------------- */

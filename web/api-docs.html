@@ -64,6 +64,17 @@
   </div>
 
   <div class="sec">
+    <div class="sec-title"><span class="method post">POST</span>/api/job/&lt;job_id&gt;/cancel</div>
+    <p>取消运行中的扫描 / 批量任务：引擎在阶段边界尽快停止；扫描取消后局部结果不入库，
+      批量取消后未开始的 URL 跳过。轮询到 status=cancelled 即为终态。</p>
+  </div>
+
+  <div class="sec">
+    <div class="sec-title"><span class="method get">GET</span>/api/captcha/capability</div>
+    <p>登录爆破验证码识别能力探测：{ "ocr": bool, "click": bool, "slider": bool }。</p>
+  </div>
+
+  <div class="sec">
     <div class="sec-title"><span class="method post">POST</span>/api/batch</div>
     <pre class="code">{ "urls": ["https://a.com", "https://b.com"] }   // 最多 50 个
 → { "job_id": "…", "total": 2 }   // 轮询 /api/job/&lt;id&gt;/results</pre>

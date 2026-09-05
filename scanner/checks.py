@@ -89,10 +89,12 @@ def _load_plugins():
 _load_plugins()
 
 
-def run_checks(fetcher, target, level="core", progress=None, include_ids=None):
+def run_checks(fetcher, target, level="core", progress=None, include_ids=None,
+               cancel_check=None):
     """执行 check 集。level: core（核心集）/ all（核心+扩展）。
 
     include_ids: 指纹联动强制包含的 check id（如 CMS 专项）。
+    cancel_check: 返回 True 时立即停止（用于扫描取消），返回已命中的部分结果。
     返回已验证漏洞列表；带软 404 基线过滤。
     """
     progress = progress or (lambda done, total, msg: None)
@@ -110,6 +112,8 @@ def run_checks(fetcher, target, level="core", progress=None, include_ids=None):
 
     hits, total = [], len(checks) + 1
     for i, (cid, _lv, path, match, title, sev, adv) in enumerate(checks):
+        if cancel_check and cancel_check():
+            break
         url = urljoin(target.url + "/", path.lstrip("/"))
         try:
             r = fetcher.get_small(url)
@@ -217,7 +221,7 @@ def _group_match(group, status, body_l, header_l):
     return True
 
 
-def run_nuclei(fetcher, target, rows, progress=None):
+def run_nuclei(fetcher, target, rows, progress=None, cancel_check=None):
     """执行 Nuclei 模板集：组间 OR、组内 AND；命中即已验证漏洞。"""
     progress = progress or (lambda done, total, msg: None)
     try:
@@ -227,6 +231,8 @@ def run_nuclei(fetcher, target, rows, progress=None):
     base_body = (base or {}).get("body", "")[:200].lower()
     hits = []
     for i, row in enumerate(rows):
+        if cancel_check and cancel_check():
+            break
         path = row.get("path") or "/"
         if not path.startswith("/") or path.startswith("//"):
             continue                      # 只允许站内相对路径，防伪造目标
