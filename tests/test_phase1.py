@@ -181,7 +181,7 @@ class TestCheckEngine(unittest.TestCase):
 
     def test_org_domain(self):
         from scanner.netsec import org_domain
-        self.assertEqual(org_domain("tools.feng-qiao.top"), "feng-qiao.top")
+        self.assertEqual(org_domain("tools.example.com"), "example.com")
         self.assertEqual(org_domain("blog.co.uk"), "blog.co.uk")
         self.assertEqual(org_domain("example.com"), "example.com")
 
@@ -293,7 +293,7 @@ class TestDastJudge(unittest.TestCase):
 
     def test_org_domain(self):
         from scanner.netsec import org_domain
-        self.assertEqual(org_domain("tools.feng-qiao.top"), "feng-qiao.top")
+        self.assertEqual(org_domain("tools.example.com"), "example.com")
         self.assertEqual(org_domain("blog.co.uk"), "blog.co.uk")
         self.assertEqual(org_domain("example.com"), "example.com")
 

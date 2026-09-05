@@ -27,7 +27,7 @@ import yaml
 ROOT = Path(__file__).resolve().parents[1]      # 项目根（tools/ 的上级）
 WL_DIR = ROOT / "data" / "wordlists"
 EXTRAS_DIR = ROOT / "data" / "asset-extras"
-ZIP_PATH = Path(r"D:\fengqiao\Documents\xwechat_files\wxid_nwhwu6j8n4di22_6ebb\msg\file\2026-09\漏洞收集(2).zip")
+ZIP_PATH = Path("漏洞收集(2).zip")   # 本地资产包路径：放到项目根目录，或改为你的实际路径
 
 sys.path.insert(0, str(ROOT))
 
