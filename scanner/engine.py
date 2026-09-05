@@ -121,7 +121,7 @@ class ScannerEngine:
                 nuclei_hits = checks_mod.run_nuclei(
                     self.fetcher, target,
                     checks_mod.select_nuclei(
-                        cap=80,
+                        cap=300,
                         tech_tags={t.name for t in result.technologies},
                         query_text=(result.title or "") + " "
                                    + " ".join(t.name for t in result.technologies)),
