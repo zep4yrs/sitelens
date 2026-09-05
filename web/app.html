@@ -412,6 +412,16 @@ api.get("/api/categories").then(function (r) {
 function renderResult(r, scanId) {
   var html = "";
 
+  /* 采集失败 / 被 WAF 拦截时给出明确原因与建议（引擎 error 字段） */
+  if (r.error) {
+    var is403 = String(r.error).indexOf("403") >= 0;
+    html += '<div class="card" style="border-color:color-mix(in srgb,var(--warn) 50%,transparent);margin-bottom:16px">' +
+      '<b style="color:var(--warn)">⚠ ' + esc(r.error) + '</b>' +
+      (is403 ? '<span class="hint" style="display:block;margin-top:4px">目标可能按 UA / WAF 拦截了扫描器（本工具默认自报 SiteLens/1.0）。' +
+        '可勾选上方「浏览器 UA」后重新扫描。</span>' : '') +
+      "</div>";
+  }
+
   var sec = r.security || {};
   var grade = sec.grade || "-";
   var gradeCls = (grade === "F" || grade === "D") ? "danger" : (grade === "C" ? "warn" : "ok");
