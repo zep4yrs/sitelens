@@ -19,8 +19,9 @@ DEFAULT_SUB_LIST = "data/wordlists/seclists/subdomains-5000.txt"
 PROBE_PORTS = [80, 443, 8080, 8443, 8000, 8888]
 
 
-def dir_scan(fetcher, target, progress=None, max_paths=300, bypass_403=False):
-    """目录探测：返回 [{path, status, size, title}]"""
+def dir_scan(fetcher, target, progress=None, max_paths=300, bypass_403=False,
+             cancel_check=None):
+    """目录探测：返回 [{url, status, size, title}]"""
     progress = progress or (lambda done, total, msg: None)
     wl = target_wordlist(DEFAULT_DIR_LIST, max_paths)
     total = len(wl)
@@ -32,6 +33,8 @@ def dir_scan(fetcher, target, progress=None, max_paths=300, bypass_403=False):
         soft404_sizes.add(base_resp["size"])
 
     for i, path in enumerate(wl):
+        if cancel_check and cancel_check():
+            break
         url = urljoin(target.url + "/", path)
         r = _try(fetcher, url)
         if r is None:
@@ -39,12 +42,13 @@ def dir_scan(fetcher, target, progress=None, max_paths=300, bypass_403=False):
         if r["status"] == 403 and bypass_403:
             r = _try(fetcher, url, headers={"X-Forwarded-For": "127.0.0.1"})
         if r and r["status"] in (200, 401, 403) and r["size"] not in soft404_sizes:
-            found.append(r)
+            # 只存判定所需字段，响应体/响应头不落库（历史表防膨胀）
+            found.append({k: r[k] for k in ("url", "status", "size", "title") if k in r})
         progress(i + 1, total, "目录探测 %s" % path)
     return found
 
 
-def subdomain_enum(host, progress=None, max_subs=2000, workers=20):
+def subdomain_enum(host, progress=None, max_subs=2000, workers=20, cancel_check=None):
     """子域名枚举：字典 + getaddrinfo 并发解析，返回 [{subdomain, ip}]"""
     progress = progress or (lambda done, total, msg: None)
     words = target_wordlist(DEFAULT_SUB_LIST, max_subs)
@@ -52,6 +56,8 @@ def subdomain_enum(host, progress=None, max_subs=2000, workers=20):
     found = []
 
     def resolve(word):
+        if cancel_check and cancel_check():
+            return None
         word = word.strip().lower().rstrip(".")
         if not word:
             return None
@@ -74,13 +80,15 @@ def subdomain_enum(host, progress=None, max_subs=2000, workers=20):
     return found
 
 
-def service_probe(host, kb_db, progress=None, ports=None, timeout=2.5):
+def service_probe(host, kb_db, progress=None, ports=None, timeout=2.5, cancel_check=None):
     """常见 Web 端口服务识别：banner 抓取 + nmap 风格指纹匹配"""
     progress = progress or (lambda done, total, msg: None)
     patterns = _load_service_patterns(kb_db)
     ports = ports or PROBE_PORTS
     found = []
     for i, port in enumerate(ports):
+        if cancel_check and cancel_check():
+            break
         banner, http_resp = _grab(host, port, timeout)
         blob = (banner + "\n" + http_resp)
         service, product, version = None, None, None
@@ -99,13 +107,16 @@ def service_probe(host, kb_db, progress=None, ports=None, timeout=2.5):
     return found
 
 
-def active_fingerprint(fetcher, target, fingerdir, progress=None, max_requests=30):
+def active_fingerprint(fetcher, target, fingerdir, progress=None, max_requests=30,
+                       cancel_check=None):
     """FingerDir 主动路径指纹：按产品探测特征路径并匹配响应特征"""
     progress = progress or (lambda done, total, msg: None)
     tasks = [(product, path) for product, spec in fingerdir.items()
              for path in spec.get("paths", [])][:max_requests]
     found = []
     for i, (product, path) in enumerate(tasks):
+        if cancel_check and cancel_check():
+            break
         spec = fingerdir[product]
         url = urljoin(target.url + "/", path.lstrip("/"))
         ev = _try_raw(fetcher, url)
@@ -274,7 +285,7 @@ def weak_audit(fetcher, target, progress=None, max_tries=120):
     return hits
 
 
-def webshell_probe(fetcher, target, progress=None, max_paths=200):
+def webshell_probe(fetcher, target, progress=None, max_paths=200, cancel_check=None):
     """WebShell 路径存活探测（默认关闭，仅限授权目标）：
 
     用漏洞收集包 WebShell 字典的路径清单逐个 GET，
@@ -284,6 +295,8 @@ def webshell_probe(fetcher, target, progress=None, max_paths=200):
     paths = _load_shell_paths()[:max_paths]
     found = []
     for i, path in enumerate(paths):
+        if cancel_check and cancel_check():
+            break
         url = target.url.rstrip("/") + "/" + path.lstrip("/")
         try:
             r = fetcher.get_small(url)

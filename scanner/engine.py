@@ -114,7 +114,8 @@ class ScannerEngine:
             result.set_verified(checks_mod.run_checks(
                 self.fetcher, target,
                 level=self.options["checks"], progress=self._progress,
-                include_ids=cms_ids))
+                include_ids=cms_ids,
+                cancel_check=lambda: self._cancelled))
             if self.options["checks"] == "all" and not self._cancelled:
                 self._progress(84, 100, "运行 Nuclei 社区模板子集…")
                 nuclei_hits = checks_mod.run_nuclei(
@@ -124,7 +125,8 @@ class ScannerEngine:
                         tech_tags={t.name for t in result.technologies},
                         query_text=(result.title or "") + " "
                                    + " ".join(t.name for t in result.technologies)),
-                    progress=self._progress)
+                    progress=self._progress,
+                    cancel_check=lambda: self._cancelled)
                 result.set_verified(result.verified + nuclei_hits)
 
         if self.options.get("netsec") and not self._cancelled:
@@ -233,33 +235,35 @@ class ScannerEngine:
                 tech.set_version(version)
 
     def _run_modules(self, target, result, start):
-        """按 options 运行可选模块（全部默认关闭）"""
+        """按 options 运行可选模块（全部默认关闭）；各模块支持取消检查点"""
         opts = self.options
         extras = {}
+        cancel = lambda: self._cancelled          # noqa: E731
         try:
-            if opts.get("active_fp") and self.registry.fingerdir:
+            if opts.get("active_fp") and self.registry.fingerdir and not self._cancelled:
                 self._progress(88, 100, "主动路径指纹…")
                 extras["active_fp"] = modules.active_fingerprint(
                     self.fetcher, target, self.registry.fingerdir,
-                    progress=self._progress)
-            if opts.get("dir_scan"):
+                    progress=self._progress, cancel_check=cancel)
+            if opts.get("dir_scan") and not self._cancelled:
                 self._progress(90, 100, "目录探测…")
                 extras["dir_scan"] = modules.dir_scan(
                     self.fetcher, target, progress=self._progress,
-                    bypass_403=bool(opts.get("dir_bypass")))
-            if opts.get("subdomain"):
+                    bypass_403=bool(opts.get("dir_bypass")), cancel_check=cancel)
+            if opts.get("subdomain") and not self._cancelled:
                 self._progress(93, 100, "子域名枚举…")
                 extras["subdomain"] = modules.subdomain_enum(
-                    target.host, progress=self._progress)
-            if opts.get("service_probe"):
+                    target.host, progress=self._progress, cancel_check=cancel)
+            if opts.get("service_probe") and not self._cancelled:
                 self._progress(96, 100, "端口服务识别…")
                 extras["service"] = modules.service_probe(
-                    target.host, self.registry.kb.db, progress=self._progress)
-            if opts.get("webshell"):
+                    target.host, self.registry.kb.db, progress=self._progress,
+                    cancel_check=cancel)
+            if opts.get("webshell") and not self._cancelled:
                 self._progress(97, 100, "WebShell 路径探测…")
                 extras["webshell"] = modules.webshell_probe(
-                    self.fetcher, target, progress=self._progress)
-            if opts.get("weak_audit"):
+                    self.fetcher, target, progress=self._progress, cancel_check=cancel)
+            if opts.get("weak_audit") and not self._cancelled:
                 self._progress(98, 100, "弱口令审计…")
                 extras["weak_audit"] = modules.weak_audit(
                     self.fetcher, target, progress=self._progress)

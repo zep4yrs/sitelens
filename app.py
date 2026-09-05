@@ -27,6 +27,16 @@ from scanner.target import TargetError
 WEB_DIR = str(_Path(__file__).resolve().parent / "web")
 
 APP_VERSION = "1.0.0"
+try:
+    # 优先取 git 标签，避免版本号与 tag 漂移
+    import subprocess as _sub
+    _t = _sub.run(["git", "describe", "--tags", "--abbrev=0"],
+                  capture_output=True, text=True, timeout=3,
+                  cwd=str(_Path(__file__).resolve().parent))
+    if _t.returncode == 0 and _t.stdout.strip():
+        APP_VERSION = _t.stdout.strip().lstrip("v")
+except Exception:
+    pass
 
 app = Flask(__name__, static_folder=None)
 
@@ -34,6 +44,13 @@ app = Flask(__name__, static_folder=None)
 @app.get("/api/version")
 def api_version():
     return jsonify({"name": "SiteLens", "version": APP_VERSION})
+
+
+@app.get("/api/captcha/capability")
+def api_captcha_capability():
+    """登录爆破验证码识别能力（ddddocr 是否可用）"""
+    from scanner.captcha import capability
+    return jsonify(capability())
 
 
 @app.after_request
@@ -69,6 +86,9 @@ _store = ScanStore(_db)
 _jobs = JobStore(_db)
 _exporter = Exporter(_registry)
 _scan_semaphore = threading.Semaphore(3)          # 最多 3 个并发扫描
+_engines = {}                                     # job_id -> ScannerEngine（支持取消）
+_cancel_requested = set()                         # 已请求取消的 job_id
+_batch_cancel = set()                             # 已请求取消的批量任务（未开始的 URL 跳过）
 
 
 def _new_engine(options, progress):
@@ -222,9 +242,15 @@ def _run_scan_job(job_id, url, options):
         _jobs.update(job_id, status="running", progress=done, message=msg)
 
     with _scan_semaphore:
+        engine = None
         try:
             engine = _new_engine(options, progress)
+            _engines[job_id] = engine
             result = engine.scan(url)
+            if job_id in _cancel_requested:
+                # 用户取消：局部结果不入库
+                _jobs.update(job_id, status="cancelled", message="已取消")
+                return
             scan_id = _store.save_scan(result, options=options)
             _jobs.update(job_id, status="done:%d" % scan_id,
                          progress=100, message="完成", done=1)
@@ -235,6 +261,9 @@ def _run_scan_job(job_id, url, options):
             traceback.print_exc()
             _jobs.update(job_id, status="error",
                          message="扫描异常：%s: %s" % (e.__class__.__name__, e))
+        finally:
+            _engines.pop(job_id, None)
+            _cancel_requested.discard(job_id)
 
 
 @app.post("/api/scan")
@@ -283,6 +312,25 @@ def api_job(job_id):
     return jsonify(out)
 
 
+@app.post("/api/job/<job_id>/cancel")
+def api_job_cancel(job_id):
+    """取消运行中的扫描 / 批量任务：引擎收到标志后在阶段边界尽快停止"""
+    job = _jobs.get(job_id)
+    if not job:
+        return jsonify({"error": "任务不存在"}), 404
+    st = job["status"]
+    if st.startswith("done") or st in ("cancelled", "error"):
+        return jsonify({"cancelled": False, "reason": "任务已结束"})
+    _cancel_requested.add(job_id)
+    engine = _engines.get(job_id)
+    if engine:
+        engine.cancel()
+    if job.get("kind") == "batch":
+        _batch_cancel.add(job_id)
+    _jobs.update(job_id, status="cancelling", message="取消中…")
+    return jsonify({"cancelled": True})
+
+
 @app.post("/api/batch")
 def api_batch():
     data = request.get_json(silent=True) or {}
@@ -299,18 +347,21 @@ def api_batch():
     counter = {"done": 0}
 
     def scan_one(url):
-        def progress(done, total, msg):
-            pass
+        if job_id in _batch_cancel:
+            line = "%s -> 已跳过（任务取消）" % url
+        else:
+            def progress(done, total, msg):
+                pass
 
-        try:
-            engine = _new_engine({"deep": True}, progress)
-            result = engine.scan(url)
-            _store.save_scan(result)
-            line = "%s -> 完成（%d 项技术）" % (url, len(result.technologies))
-        except TargetError as e:
-            line = "%s -> 失败（%s）" % (url, e)
-        except Exception as e:                        # noqa: BLE001
-            line = "%s -> 失败（%s）" % (url, e.__class__.__name__)
+            try:
+                engine = _new_engine({"deep": True}, progress)
+                result = engine.scan(url)
+                _store.save_scan(result)
+                line = "%s -> 完成（%d 项技术）" % (url, len(result.technologies))
+            except TargetError as e:
+                line = "%s -> 失败（%s）" % (url, e)
+            except Exception as e:                    # noqa: BLE001
+                line = "%s -> 失败（%s）" % (url, e.__class__.__name__)
         with lock:
             counter["done"] += 1
             done = counter["done"]
@@ -320,7 +371,13 @@ def api_batch():
     def worker():
         with concurrent.futures.ThreadPoolExecutor(max_workers=3) as pool:
             list(pool.map(scan_one, urls))
-        _jobs.update(job_id, status="done", message="批量完成")
+        _batch_cancel.discard(job_id)
+        if job_id in _cancel_requested:
+            _cancel_requested.discard(job_id)
+            _jobs.update(job_id, status="cancelled",
+                         message="批量已取消（未开始的 URL 已跳过）")
+        else:
+            _jobs.update(job_id, status="done", message="批量完成")
 
     threading.Thread(target=worker, daemon=True).start()
     return jsonify({"job_id": job_id, "total": len(urls)})
