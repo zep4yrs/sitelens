@@ -33,6 +33,7 @@
 | 基础认证弱口令 | scanner/modules.py | internal/loginbrute | 401 路径 Basic 字典尝试 |
 | 情报自动更新（KEV） | scanner/intel_update.py | internal/intel + server 守护 | CISA 公开源，缓存 data/state/kev_extra.json，间隔可配 |
 | 源码审计 16 规则 | scanner/audit.py | internal/audit | 正则改写为 RE2 兼容（去 lookahead） |
+| 污点数据流追踪（TAINT） | scanner/taint.py (AST) | internal/audit | TAINT-lite 行级近似：source→sink 变量追踪；无纯 Go Python 解析器，AST 级语义为诚实差距 |
 | 阈值配置体系 | — | internal/config | 全项目超时/并发/上限统一 .sitelens.yml 注册表（Python 版无此集中度） |
 | Web 服务 20 端点 | app.py (Flask) | internal/server | 契约逐键对齐，前端零改动；嵌入 web/ 单二进制 |
 | 历史存储 | scanner/db.py (PG) | internal/store | 改文件式 JSON：单二进制零依赖；字段契约对齐 |
