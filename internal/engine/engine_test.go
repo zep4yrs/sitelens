@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -141,6 +143,62 @@ func TestTechAccMerge(t *testing.T) {
 	if wp.Version != "6.4" {
 		t.Fatalf("版本应取首识别: %q", wp.Version)
 	}
+}
+
+func TestNucleiWiring(t *testing.T) {
+	srv := newEngineSite(t)
+	// 临时模板库：一条必然命中的 nuclei 模板（目标首页含 "engineSite" 标记词）
+	dir := t.TempDir()
+	tpl := `id: engine-site-marker
+info:
+  name: Engine Site Marker
+  severity: low
+  tags: enginesite
+http:
+  - method: GET
+    path:
+      - "{{BaseURL}}/"
+    matchers:
+      - type: word
+        words:
+          - "engineSiteMarkerXYZ"
+`
+	if err := os.WriteFile(filepath.Join(dir, "marker.yaml"), []byte(tpl), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// 目标页面写入标记词：newEngineSite 的页面不含它，这里单起一个
+	mux := http.NewServeMux()
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		strings.NewReader("<html>engineSiteMarkerXYZ present</html>").WriteTo(w)
+	})
+	site2 := httptest.NewServer(mux)
+	defer site2.Close()
+
+	cfg := config.Default()
+	cfg.Scan.Resolve = false
+	cfg.Scan.RateIntervalMS = 0
+	cfg.Store.DataDir = t.TempDir()
+	cfg.Checks.NucleiDir = dir
+	cfg.Checks.NucleiCap = 5
+	e := New(cfg, nil, nil)
+
+	res := e.Scan(site2.URL, Options{Checks: "all"}, nil, nil)
+	if res.Error != "" {
+		t.Fatalf("扫描报错: %s", res.Error)
+	}
+	found := false
+	for _, v := range res.Verified {
+		if v["src"] == "nuclei" {
+			found = true
+			if v["check"] != "nuclei-engine-site-marker" {
+				t.Fatalf("nuclei check id 异常: %v", v["check"])
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("nuclei 模板未命中: %+v", res.Verified)
+	}
+	_ = srv
 }
 
 // ---- helpers ----
