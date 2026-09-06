@@ -795,6 +795,10 @@ func (s *Server) hAuditDemo(w http.ResponseWriter, r *http.Request) {
 		"def get_user(uid):",
 		"    cur." + "execute" + "(" + q + "SELECT * FROM us" + "ers WHERE id = " + q + " + uid)",
 		"    return pickle." + "loads(data)",
+		"",
+		"def render(expr):",
+		"    user_expr = request.args.get(" + q + "expr" + q + ")",
+		"    eval(user_expr)",
 	}, "\n")
 	if err := os.WriteFile(filepath.Join(dir, "vulnerable_demo.py"),
 		[]byte(sample), 0o644); err != nil {
