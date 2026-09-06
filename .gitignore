@@ -19,3 +19,6 @@ docs/build/
 _issue_*.md
 _review_*.md
 data/intel_dump.json.gz
+
+# Go 运行时产物
+/data/state/
