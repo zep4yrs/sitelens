@@ -109,7 +109,9 @@ var sevRank = map[string]int{"critical": 0, "high": 1, "medium": 2, "low": 3, "i
 // Select 选子集（MoE 近似三路调度）：
 // ① tag 硬匹配置顶（severity 升序）；
 // ② 其余按与 queryText（页面标题 + 技术名）的词面重合度排序——
-//    向量语义路由的轻量近似（原版为 256 维 embedding 余弦）；
+//
+//	向量语义路由的轻量近似（原版为 256 维 embedding 余弦）；
+//
 // ③ 重合度为零的条目按游标轮转（cursor 由调用方持有，保证长期全覆盖）。
 func Select(entries []Entry, techTags map[string]bool, queryText string,
 	n int, cursor *int) []Entry {
