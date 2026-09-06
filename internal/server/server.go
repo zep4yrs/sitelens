@@ -106,6 +106,12 @@ func New(cfg *config.Config) (*Server, error) {
 		s.matcher = &sitelens.Matcher{}
 		s.eng = engine.New(cfg, nil, s.kb)
 	}
+	// KEV 本地缓存秒加载（网络拉取交给守护协程，不阻塞启动）
+	if s.kb != nil {
+		if entries, err := intel.LoadKEVExtra(filepath.Join(cfg.Store.DataDir, "kev_extra.json")); err == nil {
+			s.kb.MergeKEV(entries)
+		}
+	}
 	return s, nil
 }
 
@@ -161,6 +167,7 @@ func (s *Server) Handler() http.Handler {
 
 // Run 启动 HTTP 服务（Ctrl+C 优雅关闭）。
 func (s *Server) Run() error {
+	s.startKEVDaemon()
 	srv := &http.Server{
 		Addr:              s.cfg.Web.Listen,
 		Handler:           s.Handler(),
@@ -184,6 +191,37 @@ func (s *Server) Run() error {
 		return nil
 	}
 	return err
+}
+
+// startKEVDaemon 情报守护：立即拉取一次 KEV，此后按 update_hours 轮询。
+// 失败仅记日志（离线环境降级为静态知识库）。
+func (s *Server) startKEVDaemon() {
+	if s.kb == nil || s.cfg.Intel.UpdateHours <= 0 {
+		return
+	}
+	dest := filepath.Join(s.cfg.Store.DataDir, "kev_extra.json")
+	refresh := func() {
+		entries, err := intel.FetchKEV(intel.KEVFeedURL,
+			time.Duration(s.cfg.Netsec.TLSTimeoutSec+7)*time.Second)
+		if err != nil {
+			log.Printf("KEV 更新失败（降级用本地缓存）：%v", err)
+			return
+		}
+		added := s.kb.MergeKEV(entries)
+		if err := intel.SaveKEVExtra(dest, entries); err != nil {
+			log.Printf("KEV 缓存写入失败：%v", err)
+			return
+		}
+		log.Printf("KEV 更新完成：%d 条，新增 %d", len(entries), added)
+	}
+	go func() {
+		refresh()
+		ticker := time.NewTicker(time.Duration(s.cfg.Intel.UpdateHours) * time.Hour)
+		defer ticker.Stop()
+		for range ticker.C {
+			refresh()
+		}
+	}()
 }
 
 // ---- 中间件 ----

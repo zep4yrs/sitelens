@@ -87,6 +87,7 @@ type IntelConfig struct {
 	RangesPath       string `yaml:"ranges_path"`       // 精选区间文件路径
 	TechnologiesPath string `yaml:"technologies_path"` // 指纹规则文件路径
 	SearchLimit      int    `yaml:"search_limit"`      // /api/vuln-search 返回上限
+	UpdateHours      int    `yaml:"update_hours"`      // KEV 自动更新间隔（小时，0=关闭）
 }
 
 // NetsecConfig TLS/DNS 网络层检测。
@@ -175,6 +176,7 @@ func Default() *Config {
 			RangesPath:       "data/affected_ranges.json",
 			TechnologiesPath: "data/go/technologies.json",
 			SearchLimit:      40,
+			UpdateHours:      24,
 		},
 		Netsec: NetsecConfig{TLSTimeoutSec: 8, MailCheck: true},
 		LoginBrute: LoginBruteConfig{
@@ -263,6 +265,7 @@ func (c *Config) fillDefaults() {
 		c.Intel.TechnologiesPath = d.Intel.TechnologiesPath
 	}
 	fillInt(&c.Intel.SearchLimit, d.Intel.SearchLimit)
+	fillInt(&c.Intel.UpdateHours, d.Intel.UpdateHours)
 
 	fillInt(&c.Netsec.TLSTimeoutSec, d.Netsec.TLSTimeoutSec)
 
