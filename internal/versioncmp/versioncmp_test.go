@@ -10,10 +10,10 @@ func TestCmp(t *testing.T) {
 		{"6.4.2", "6.4.2", 0},
 		{"6.4.2", "6.4.3", -1},
 		{"6.4.3", "6.4.2", 1},
-		{"8.3", "8.3.7", -1},   // 短版本补零：8.3.0 < 8.3.7
+		{"8.3", "8.3.7", -1}, // 短版本补零：8.3.0 < 8.3.7
 		{"14.2.25", "14.1.1", 1},
 		{"10", "9.5", 1},
-		{"7-jre", "7", 0},      // 后缀忽略
+		{"7-jre", "7", 0}, // 后缀忽略
 	}
 	for _, c := range cases {
 		if got := Cmp(c.a, c.b); got != c.want {
@@ -34,7 +34,7 @@ func TestVersionIn(t *testing.T) {
 		{"6.4.2", "*", true},
 		{"6.4.2", "", false},
 		{"2.4.1", "<=2.4.1", true},
-		{"1.9.2", "!=1.9", true},   // 不等于 1.9 即在范围内
+		{"1.9.2", "!=1.9", true}, // 不等于 1.9 即在范围内
 	}
 	for _, c := range cases {
 		if got := VersionIn(c.version, c.affected); got != c.want {
@@ -50,8 +50,8 @@ func TestExtractVersion(t *testing.T) {
 		{"WordPress 6.4.2 Version 6.4.2", "version", "6.4.2"},
 		{"generator content=Hexo 4.2.0", "hexo", "4.2.0"},
 		{"Powered by xxCMS 管理后台", "xxcms", ""},
-		{"release 2026.04 notes", "release", "2026.04"},  // 带点是合法版本
-		{"build 20260401", "build", ""},                  // 无点长数字 = 工单号跳过
+		{"release 2026.04 notes", "release", "2026.04"}, // 带点是合法版本
+		{"build 20260401", "build", ""},                 // 无点长数字 = 工单号跳过
 		{"", "version", ""},
 	}
 	for _, c := range cases {

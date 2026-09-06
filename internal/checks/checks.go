@@ -14,9 +14,9 @@ import (
 
 // Match 单条 check 的匹配条件。
 type Match struct {
-	Status  int      `json:"s"`
+	Status   int      `json:"s"`
 	Contains []string `json:"c"`
-	Extract *struct {
+	Extract  *struct {
 		Keyword string `json:"keyword"`
 	} `json:"extract"`
 }
@@ -24,7 +24,7 @@ type Match struct {
 // Check 单条验证规则（id 唯一）。
 type Check struct {
 	ID     string
-	Lv     int    // 0 = 核心集（深度识别起运行），1 = 扩展集（全面识别运行）
+	Lv     int // 0 = 核心集（深度识别起运行），1 = 扩展集（全面识别运行）
 	Path   string
 	Match  Match
 	Title  string

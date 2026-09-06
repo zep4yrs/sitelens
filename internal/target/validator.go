@@ -28,8 +28,14 @@ func Validate(rawURL string, resolve bool) (string, string, int, error) {
 		return "", "", 0, &Error{"请输入网址"}
 	}
 	rawURL = strings.TrimSpace(rawURL)
-	if !strings.HasPrefix(strings.ToLower(rawURL), "http://") &&
-		!strings.HasPrefix(strings.ToLower(rawURL), "https://") {
+	// 显式带协议的按其协议判定（拒绝 ftp:// 等被误拼成 https://ftp 的隐患），
+	// 不带协议的默认补 https://
+	if i := strings.Index(rawURL, "://"); i >= 0 {
+		scheme := strings.ToLower(rawURL[:i])
+		if scheme != "http" && scheme != "https" {
+			return "", "", 0, &Error{"仅支持 http/https 协议"}
+		}
+	} else {
 		rawURL = "https://" + rawURL
 	}
 	u, err := url.Parse(rawURL)

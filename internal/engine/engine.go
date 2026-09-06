@@ -246,6 +246,9 @@ func (e *Engine) Scan(rawURL string, opts Options, onProgress progress, cancel f
 	return res
 }
 
+// ClientFor 导出客户端装配（登录爆破等模块复用同一套限速/UA/Cookie 配置）。
+func (e *Engine) ClientFor(opts Options) *httpx.Client { return e.newClient(opts) }
+
 // ---- 内部辅助 ----
 
 type crawlPage struct {

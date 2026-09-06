@@ -72,9 +72,10 @@ type DASTConfig struct {
 
 // IntelConfig 漏洞情报知识库。
 type IntelConfig struct {
-	DumpPath    string `yaml:"dump_path"`    // 知识库数据包路径
-	RangesPath  string `yaml:"ranges_path"`  // 精选区间文件路径
-	SearchLimit int    `yaml:"search_limit"` // /api/vuln-search 返回上限
+	DumpPath         string `yaml:"dump_path"`         // 知识库数据包路径
+	RangesPath       string `yaml:"ranges_path"`       // 精选区间文件路径
+	TechnologiesPath string `yaml:"technologies_path"` // 指纹规则文件路径
+	SearchLimit      int    `yaml:"search_limit"`      // /api/vuln-search 返回上限
 }
 
 // NetsecConfig TLS/DNS 网络层检测。
@@ -159,9 +160,10 @@ func Default() *Config {
 			MaxURLLen:        2048,
 		},
 		Intel: IntelConfig{
-			DumpPath:    "data/intel_dump.json.gz",
-			RangesPath:  "data/affected_ranges.json",
-			SearchLimit: 40,
+			DumpPath:         "data/intel_dump.json.gz",
+			RangesPath:       "data/affected_ranges.json",
+			TechnologiesPath: "data/go/technologies.json",
+			SearchLimit:      40,
 		},
 		Netsec: NetsecConfig{TLSTimeoutSec: 8, MailCheck: true},
 		LoginBrute: LoginBruteConfig{
@@ -241,6 +243,9 @@ func (c *Config) fillDefaults() {
 	}
 	if c.Intel.RangesPath == "" {
 		c.Intel.RangesPath = d.Intel.RangesPath
+	}
+	if c.Intel.TechnologiesPath == "" {
+		c.Intel.TechnologiesPath = d.Intel.TechnologiesPath
 	}
 	fillInt(&c.Intel.SearchLimit, d.Intel.SearchLimit)
 

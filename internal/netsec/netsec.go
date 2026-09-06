@@ -145,16 +145,16 @@ func CheckDNSMail(domain string) []Finding {
 	for _, spot := range spfSpots {
 		for _, r := range lookupTXT(spot) {
 			low := strings.ToLower(r)
-		seenSPF := map[string]bool{}
-		if strings.HasPrefix(low, "v=spf1") && !seenSPF[low] {
-			seenSPF[low] = true
-			hasSPF = true
-			hits = append(hits, Finding{
-				Check: "dns-spf", Title: "SPF 记录存在",
-				Severity: "info", URL: org,
-				Evidence: r[:minInt(120, len(r))], Advice: "",
-			})
-		}
+			seenSPF := map[string]bool{}
+			if strings.HasPrefix(low, "v=spf1") && !seenSPF[low] {
+				seenSPF[low] = true
+				hasSPF = true
+				hits = append(hits, Finding{
+					Check: "dns-spf", Title: "SPF 记录存在",
+					Severity: "info", URL: org,
+					Evidence: r[:minInt(120, len(r))], Advice: "",
+				})
+			}
 		}
 	}
 	if !hasSPF {
