@@ -113,7 +113,27 @@ type KB struct {
 	kev        map[string]bool
 	ranges     map[string][]CuratedRange
 	tscanCount int
+	fingerDir  []FingerDirRow
 }
+
+// FingerDirRow FingerDir 主动路径指纹行。
+type FingerDirRow struct {
+	Product string             `json:"product"`
+	Spec    FingerDirMatchSpec `json:"spec"`
+}
+
+// FingerDirMatchSpec 匹配规格（对齐 Python _spec_match 字段）。
+type FingerDirMatchSpec struct {
+	Paths           []string `json:"paths"`
+	Status          []int    `json:"status"`
+	ContentType     []string `json:"content_type"`
+	BodyContains    []string `json:"body_contains"`
+	HeaderContains  []string `json:"header_contains"`
+	BodyNotContains []string `json:"body_not_contains"`
+}
+
+// FingerDir 返回主动路径指纹集。
+func (k *KB) FingerDir() []FingerDirRow { return k.fingerDir }
 
 // Load 从知识库数据包与精选区间文件加载知识库。
 func Load(dumpGz, rangesJSON string) (*KB, error) {
@@ -137,15 +157,17 @@ func Load(dumpGz, rangesJSON string) (*KB, error) {
 				Impact    string `json:"impact"`
 				Date      string `json:"date"`
 			} `json:"cve_ms"`
-			KEV   []KevEntry `json:"kev"`
-			Tscan []struct{} `json:"tscan_fingerprints"` // 仅取条数供统计
+			KEV       []KevEntry     `json:"kev"`
+			Tscan     []struct{}     `json:"tscan_fingerprints"` // 仅取条数供统计
+			FingerDir []FingerDirRow `json:"fingerdir"`
 		} `json:"tables"`
 	}
 	if err := json.NewDecoder(gz).Decode(&box); err != nil {
 		return nil, err
 	}
 	kb := &KB{vulns: box.Tables.VulnKB, kev: map[string]bool{},
-		tscanCount: len(box.Tables.Tscan)}
+		tscanCount: len(box.Tables.Tscan),
+		fingerDir:  box.Tables.FingerDir}
 	for _, k := range box.Tables.KEV {
 		kb.kev[strings.ToUpper(k.CVE)] = true
 	}

@@ -237,7 +237,7 @@ func (e *Engine) Scan(rawURL string, opts Options, onProgress progress, cancel f
 
 	// 9) 主动模块（默认关，仅限授权目标）
 	var dirHits []modules.PageHit
-	if opts.DirScan || opts.Subdomain || opts.Webshell || opts.WeakAudit {
+	if opts.DirScan || opts.Subdomain || opts.Webshell || opts.WeakAudit || opts.ActiveFP {
 		ac := e.cfg.Active
 		if opts.Subdomain {
 			onProgress(86, "子域名枚举…")
@@ -252,6 +252,11 @@ func (e *Engine) Scan(rawURL string, opts Options, onProgress progress, cancel f
 		if opts.Webshell {
 			onProgress(88, "WebShell 探测…")
 			res.Extras["webshell"] = modules.WebshellProbe(client, baseURL, ac, nil, cancelled)
+		}
+		if opts.ActiveFP && e.kb != nil && len(e.kb.FingerDir()) > 0 {
+			onProgress(89, "FingerDir 主动指纹…")
+			res.Extras["active_fp"] = modules.ActiveFP(client, baseURL,
+				e.kb.FingerDir(), nil, cancelled, e.cfg.Active.FPMaxRequests)
 		}
 		if opts.WeakAudit {
 			// 基础认证弱口令：目录探测发现的 401 路径（表单弱口令走登录爆破端点）
