@@ -22,6 +22,10 @@ go build -o sitelens.exe ./cmd/sitelens
 # 使用自定义配置（全部阈值可选，见「配置」节）
 ./sitelens.exe -config .sitelens.yml serve
 
+# Docker（多阶段构建，distroless 静态镜像；扫描目标勿写 localhost）
+docker build -t sitelens .
+docker run --rm -p 5000:5000 -v sitelens-state:/app/data/state sitelens
+
 # 测试（全部离线可跑）
 go test ./...
 ```

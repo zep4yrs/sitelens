@@ -1,0 +1,20 @@
+# 构建上下文瘦身：只保留源码与运行数据
+.git
+.gitignore
+.env
+.env.example
+server*.log
+*.exe
+.mimosa/
+data/state/
+data/nuclei/
+docs/build/
+__pycache__/
+*.pyc
+CHANGELOG.md
+README.md
+docs/
+Dockerfile
+.dockerignore
+.sitelens.example.yml
+.sitelens.yml
