@@ -75,7 +75,7 @@ type Server struct {
 
 // New 装配服务（加载指纹库/知识库/历史存储/用户插件）。
 func New(cfg *config.Config) (*Server, error) {
-	s := &Server{cfg: cfg, jobs: store.NewJobManager(),
+	s := &Server{cfg: cfg, jobs: store.NewJobManagerWithCap(200),
 		sem: make(chan struct{}, cfg.Scan.MaxConcurrent)}
 	checks.ConfigurePlugins(cfg.Checks.PluginDir)
 	s.apiToken = os.Getenv("SLENS_API_TOKEN")
