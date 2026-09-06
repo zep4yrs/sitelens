@@ -217,11 +217,13 @@ func Convert(data []byte) []checks.Check {
 		cond = "or"
 	}
 
-	// 组转换：status → StatusAny；word body+and → Contains；word body+or → ContainsAny
+	// 组转换：status → StatusAny；word body+and → Contains；word body+or →
+	// ContainsAny；word header → HeaderContains（全包含语义）
 	type group struct {
 		status []int
 		wall   []string
 		wany   []string
+		h      []string
 	}
 	var groups []group
 	for _, m := range req.Matchers {
@@ -238,9 +240,9 @@ func Convert(data []byte) []checks.Check {
 				return nil
 			}
 			if strings.EqualFold(m.Part, "header") {
-				return nil // 头匹配未迁移，整模板跳过
-			}
-			if strings.ToLower(m.Condition) == "and" {
+				// 头匹配恒为全包含（对齐 Python g["h"] 行为）
+				g.h = words
+			} else if strings.ToLower(m.Condition) == "and" {
 				g.wall = words
 			} else {
 				g.wany = words
@@ -248,7 +250,7 @@ func Convert(data []byte) []checks.Check {
 		default:
 			return nil // dsl/binary/其他
 		}
-		if len(g.status) == 0 && len(g.wall) == 0 && len(g.wany) == 0 {
+		if len(g.status) == 0 && len(g.wall) == 0 && len(g.wany) == 0 && len(g.h) == 0 {
 			return nil
 		}
 		groups = append(groups, g)
@@ -259,14 +261,21 @@ func Convert(data []byte) []checks.Check {
 			merged.status = append(merged.status, g.status...)
 			merged.wall = append(merged.wall, g.wall...)
 			merged.wany = append(merged.wany, g.wany...)
+			merged.h = append(merged.h, g.h...)
 		}
 		// AND 语义下多组 status 各自独立列表语义有损，取交集语义由
 		// matchBody 的 StatusAny（任一）近似——仅当无词组时保留，
 		// 有词组时丢弃 status 条件（宁少报不误报）。
-		if len(merged.wall) > 0 || len(merged.wany) > 0 {
+		if len(merged.wall) > 0 || len(merged.wany) > 0 || len(merged.h) > 0 {
 			merged.status = nil
 		}
 		groups = []group{merged}
+	}
+	if len(groups) == 1 {
+		g := groups[0]
+		if len(g.status) == 0 && len(g.wall) == 0 && len(g.wany) == 0 && len(g.h) == 0 {
+			return nil
+		}
 	}
 
 	sev := strings.ToLower(doc.Info.Severity)
@@ -290,10 +299,11 @@ func Convert(data []byte) []checks.Check {
 			Lv:   1,
 			Path: suffix,
 			Match: checks.Match{
-				Status:      firstOrZero(g.status),
-				StatusAny:   g.status,
-				Contains:    g.wall,
-				ContainsAny: g.wany,
+				Status:         firstOrZero(g.status),
+				StatusAny:      g.status,
+				Contains:       g.wall,
+				ContainsAny:    g.wany,
+				HeaderContains: g.h,
 			},
 			Title:  name,
 			Sev:    sev,

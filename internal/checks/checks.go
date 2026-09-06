@@ -15,11 +15,12 @@ import (
 
 // Match 单条 check 的匹配条件。
 type Match struct {
-	Status      int      `json:"s"`              // 期望状态码（0 = 不限定）
-	StatusAny   []int    `json:"sany,omitempty"` // 状态码任一命中（Nuclei 组转换用）
-	Contains    []string `json:"c"`              // 正文须全部包含（AND）
-	ContainsAny []string `json:"cany,omitempty"` // 正文任一包含（OR，Nuclei 组转换用）
-	Extract     *struct {
+	Status         int      `json:"s"`              // 期望状态码（0 = 不限定）
+	StatusAny      []int    `json:"sany,omitempty"` // 状态码任一命中（Nuclei 组转换用）
+	Contains       []string `json:"c"`              // 正文须全部包含（AND）
+	ContainsAny    []string `json:"cany,omitempty"` // 正文任一包含（OR，Nuclei 组转换用）
+	HeaderContains []string `json:"h,omitempty"`    // 响应头区须全部包含（Nuclei 头匹配）
+	Extract        *struct {
 		Keyword string `json:"keyword"`
 	} `json:"extract"`
 }
