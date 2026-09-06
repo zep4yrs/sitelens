@@ -14,8 +14,7 @@ from urllib.parse import urljoin, urlparse
 
 from bs4 import BeautifulSoup
 
-# Cookie 属性提取：兼顾多 Set-Cookie 合并头（逗号+空格+name= 形态切分）
-_SET_COOKIE_SPLIT = re.compile(r",(?=[^;,]+?=)")
+# 多 Set-Cookie 合并头的逗号切分由 _split_set_cookie 的双向判据完成
 _ATTR_TRUE = re.compile(r"(?:^|;)\s*(httponly|secure)\s*(?=;|$)", re.I)
 _ATTR_VAL = re.compile(r"(?:^|[;,])\s*(samesite)\s*=\s*([a-z]+)", re.I)
 # 真实 Set-Cookie 头边界判据（双向）：
