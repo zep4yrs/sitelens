@@ -42,6 +42,7 @@ go test ./...
 | 安全评分 | 8 项安全响应头加权评分，A+–F 等级 + 中文修复建议 |
 | 被动检测 | Cookie 安全属性缺失 + 登录表单 CSRF token 缺失（零额外请求） |
 | 验证型 check | 41 条内置规则 + 用户插件（data/plugins/*.json 热加载）；CMS 指纹联动调度 |
+| Nuclei 子集 | 社区模板按已识别技术 tag 挑选（上限可配，默认 300）+ 轮转游标长期全覆盖；YAML 直接装载 |
 | 深度爬取 | 同域 BFS（robots.txt 遵循、页数/链接数/时长三重上限） |
 | 登录爆破 | 宽容表单解析（id/placeholder 推断）+ 失败基线判定 + 命中即停；**必须勾选授权确认** |
 | 源码审计 | 上传 zip/单文件，16 规则静态审计（zip-slip 防护、大小上限），内置演示样本 |
@@ -65,6 +66,8 @@ scan:
 checks:
   level: all                 # none | core | all
   plugin_dir: data/plugins   # 用户自定义 check 目录
+  nuclei_cap: 300            # Nuclei 子集数量上限
+  nuclei_dir: data/nuclei    # 模板库目录（目录不存在则自动跳过）
 crawler: { max_pages: 4, respect_robots: true, max_links_per_page: 80, timeout_sec: 60 }
 dast:
   max_params: 24             # 参数探测上限
