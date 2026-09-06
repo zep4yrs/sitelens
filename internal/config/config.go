@@ -66,6 +66,7 @@ type ChecksConfig struct {
 	DisabledIDs []string `yaml:"disabled_ids"` // 禁用的 check id 列表
 	PluginDir   string   `yaml:"plugin_dir"`   // 用户自定义 check 插件目录
 	NucleiCap   int      `yaml:"nuclei_cap"`   // Nuclei 模板子集数量上限
+	NucleiDir   string   `yaml:"nuclei_dir"`   // Nuclei 模板库目录（空 = 不装载）
 }
 
 // CrawlerConfig 同域爬取。
@@ -161,6 +162,7 @@ func Default() *Config {
 			Level:     "all",
 			PluginDir: "data/plugins",
 			NucleiCap: 300,
+			NucleiDir: "data/nuclei",
 		},
 		Crawler: CrawlerConfig{
 			MaxPages:        4,
@@ -250,6 +252,9 @@ func (c *Config) fillDefaults() {
 	}
 	if c.Checks.PluginDir == "" {
 		c.Checks.PluginDir = d.Checks.PluginDir
+	}
+	if c.Checks.NucleiDir == "" {
+		c.Checks.NucleiDir = d.Checks.NucleiDir
 	}
 
 	fillInt(&c.Crawler.MaxPages, d.Crawler.MaxPages)

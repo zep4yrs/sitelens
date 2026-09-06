@@ -53,11 +53,21 @@ func RunChecks(client *httpx.Client, targetURL string, level string,
 		inc[id] = true
 	}
 	var selected []Check
-	for _, c := range allChecks {
+	for _, c := range AllChecks() {
 		if level == "all" || c.Lv == 0 || inc[c.ID] {
 			selected = append(selected, c)
 		}
 	}
+	return RunList(client, targetURL, selected, cancelCheck, onProgress)
+}
+
+// RunList 执行给定 check 集（Nuclei 子集等外部规则装载入口）。
+func RunList(client *httpx.Client, targetURL string, list []Check,
+	cancelCheck func() bool, onProgress func(done, total int, msg string)) []Hit {
+	if onProgress == nil {
+		onProgress = func(int, int, string) {}
+	}
+	selected := list
 
 	baseSize, basePrefix := soft404Baseline(client, targetURL)
 
@@ -74,7 +84,7 @@ func RunChecks(client *httpx.Client, targetURL string, level string,
 			continue
 		}
 		body := stripEcho(resp.Body, u, chk.Path)
-		if !matchBody(chk.Match, body) {
+		if !matchBody(chk.Match, resp.Status, body) {
 			onProgress(i+1, total, chk.Path)
 			continue
 		}
@@ -92,7 +102,7 @@ func RunChecks(client *httpx.Client, targetURL string, level string,
 			continue
 		}
 		body2 := stripEcho(resp2.Body, u, chk.Path)
-		if !matchBody(chk.Match, body2) {
+		if !matchBody(chk.Match, resp2.Status, body2) {
 			onProgress(i+1, total, chk.Path)
 			continue
 		}
@@ -107,15 +117,41 @@ func RunChecks(client *httpx.Client, targetURL string, level string,
 	return hits
 }
 
-// matchBody 判定 body 是否满足 check 的包含条件。
-func matchBody(m Match, body string) bool {
-	if len(m.Contains) == 0 {
-		return m.Status != 404 && m.Status != 0
+// matchBody 判定：状态码（等值或任一列表）+ 正文包含。
+// Contains 为全包含（AND），ContainsAny 为任一包含（OR，Nuclei 组转换），
+// 两者可并存（都须满足各自语义）。
+// 修复：此前实际响应状态码从未参与比较，纯状态码 check 会对任何响应命中。
+func matchBody(m Match, status int, body string) bool {
+	if m.Status != 0 && status != m.Status {
+		return false
+	}
+	if len(m.StatusAny) > 0 {
+		okStatus := false
+		for _, s := range m.StatusAny {
+			if status == s {
+				okStatus = true
+				break
+			}
+		}
+		if !okStatus {
+			return false
+		}
+	}
+	if len(m.Contains) == 0 && len(m.ContainsAny) == 0 {
+		return true
 	}
 	for _, kw := range m.Contains {
 		if !strings.Contains(body, kw) {
 			return false
 		}
+	}
+	if len(m.ContainsAny) > 0 {
+		for _, kw := range m.ContainsAny {
+			if strings.Contains(body, kw) {
+				return true
+			}
+		}
+		return false
 	}
 	return true
 }
