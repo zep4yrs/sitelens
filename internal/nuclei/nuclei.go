@@ -22,6 +22,7 @@ import (
 // Entry 索引条目（轻量：不解析全量 YAML）。
 type Entry struct {
 	Path  string   `json:"path"` // 相对 dir
+	Name  string   `json:"name"` // 模板名（相关度排序用）
 	Tags  []string `json:"tags"`
 	Sev   string   `json:"sev"`
 	MTime int64    `json:"mtime"`
@@ -31,6 +32,7 @@ type Entry struct {
 var (
 	htags = regexp.MustCompile(`(?m)^tags:\s*(.+)$`)
 	hsev  = regexp.MustCompile(`(?m)^\s*severity:\s*(\S+)`)
+	hname = regexp.MustCompile(`(?m)^\s*name:\s*(.+)$`)
 )
 
 // Index 建立（或读取缓存的）模板索引。缓存失效策略：模板文件总数
@@ -78,6 +80,9 @@ func Index(dir, cachePath string) ([]Entry, error) {
 		} else {
 			e.Sev = "info"
 		}
+		if m := hname.FindStringSubmatch(head); m != nil {
+			e.Name = strings.TrimSpace(m[1])
+		}
 		entries = append(entries, e)
 	}
 	if cachePath != "" {
@@ -101,9 +106,13 @@ func readHead(path string, n int64) string {
 
 var sevRank = map[string]int{"critical": 0, "high": 1, "medium": 2, "low": 3, "info": 4}
 
-// Select 选子集：tag 硬匹配置顶（severity 升序），其余按游标轮转。
-// cursor 由调用方持有（跨扫描轮转，保证长期全覆盖）。
-func Select(entries []Entry, techTags map[string]bool, n int, cursor *int) []Entry {
+// Select 选子集（MoE 近似三路调度）：
+// ① tag 硬匹配置顶（severity 升序）；
+// ② 其余按与 queryText（页面标题 + 技术名）的词面重合度排序——
+//    向量语义路由的轻量近似（原版为 256 维 embedding 余弦）；
+// ③ 重合度为零的条目按游标轮转（cursor 由调用方持有，保证长期全覆盖）。
+func Select(entries []Entry, techTags map[string]bool, queryText string,
+	n int, cursor *int) []Entry {
 	if n <= 0 || len(entries) == 0 {
 		return nil
 	}
@@ -128,6 +137,43 @@ func Select(entries []Entry, techTags map[string]bool, n int, cursor *int) []Ent
 		}
 		return hit[i].Path < hit[j].Path
 	})
+	// ② 相关度排序（词面重合；查询词从目标标题 + 技术名提取），
+	//    零分条目保持原序排在后面，交给 ③ 轮转覆盖
+	qTerms := tokenize(queryText)
+	type scored struct {
+		e     Entry
+		score int
+	}
+	var ranked, zeros []scored
+	for _, e := range rest {
+		s := 0
+		if len(qTerms) > 0 {
+			text := strings.ToLower(e.Name + " " + strings.Join(e.Tags, " ") + " " + e.Path)
+			for _, q := range qTerms {
+				if strings.Contains(text, q) {
+					s++
+				}
+			}
+		}
+		if s > 0 {
+			ranked = append(ranked, scored{e, s})
+		} else {
+			zeros = append(zeros, scored{e, 0})
+		}
+	}
+	sort.SliceStable(ranked, func(i, j int) bool {
+		if ranked[i].score != ranked[j].score {
+			return ranked[i].score > ranked[j].score
+		}
+		return ranked[i].e.Path < ranked[j].e.Path
+	})
+	rest = rest[:0]
+	for _, r := range ranked {
+		rest = append(rest, r.e)
+	}
+	for _, z := range zeros {
+		rest = append(rest, z.e)
+	}
 	out := append([]Entry{}, hit...)
 	if len(out) < n && len(rest) > 0 {
 		start := 0
@@ -147,6 +193,27 @@ func Select(entries []Entry, techTags map[string]bool, n int, cursor *int) []Ent
 		out = out[:n]
 	}
 	return out
+}
+
+// tokenize 提取小写字母数字词（供词面重合度计算）。
+func tokenize(s string) []string {
+	var terms []string
+	cur := []rune{}
+	for _, r := range strings.ToLower(s) {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') {
+			cur = append(cur, r)
+		} else if len(cur) > 0 {
+			t := string(cur)
+			if len(t) >= 3 {
+				terms = append(terms, t)
+			}
+			cur = cur[:0]
+		}
+	}
+	if len(cur) >= 3 {
+		terms = append(terms, string(cur))
+	}
+	return terms
 }
 
 // ---- 模板 → check 转换（漏斗对齐 import_nuclei.convert） ----
