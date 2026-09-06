@@ -187,8 +187,6 @@ def api_audit():
     files = request.files.getlist("files")
     if not files:
         return jsonify({"error": "请选择要审计的源码文件或 zip 包"}), 400
-    if sum(f.content_length or 0 for f in files) > MAX_UPLOAD:
-        return jsonify({"error": "上传总量超过 200MB 上限"}), 400
     work = _Path(tempfile.mkdtemp(prefix="sitelens_audit_"))
     try:
         root = work
@@ -199,6 +197,8 @@ def api_audit():
             if not dest.resolve().is_relative_to(work.resolve()):
                 return jsonify({"error": "文件名非法"}), 400
             f.save(dest)
+            # 上传总量上限按实际落盘字节累计（FileStorage.content_length 恒为 0，
+            # 请求体总量已由 MAX_CONTENT_LENGTH 全局兜底）
             extracted_total += dest.stat().st_size
             if extracted_total > MAX_EXTRACTED:
                 return jsonify({"error": "解压内容超过 512MB 上限"}), 400
@@ -207,8 +207,11 @@ def api_audit():
                 ex.mkdir(exist_ok=True)
                 ex_base = ex.resolve()
                 with _zipfile.ZipFile(dest) as z:
-                    for m in z.namelist():
-                        if not (ex / m).resolve().is_relative_to(ex_base):
+                    # infolist() 返回 ZipInfo；namelist() 是纯字符串列表，
+                    # 用它访问 m.file_size 会 AttributeError（zip 上传必崩）
+                    for m in z.infolist():
+                        member = ex / m.filename
+                        if not member.resolve().is_relative_to(ex_base):
                             return jsonify({"error": "zip 内路径非法"}), 400
                         extracted_total += m.file_size
                         if extracted_total > MAX_EXTRACTED:
@@ -244,6 +247,8 @@ def css_files(filename):
     target = _Path(WEB_DIR).resolve() / "css" / filename
     if not str(target.resolve()).startswith(str(_Path(WEB_DIR).resolve())):
         return "Not Found", 404
+    if not target.is_file():
+        return "Not Found", 404
     return send_file(str(target), mimetype="text/css")
 
 
@@ -251,6 +256,8 @@ def css_files(filename):
 def js_files(filename):
     target = _Path(WEB_DIR).resolve() / "js" / filename
     if not str(target.resolve()).startswith(str(_Path(WEB_DIR).resolve())):
+        return "Not Found", 404
+    if not target.is_file():
         return "Not Found", 404
     return send_file(str(target), mimetype="application/javascript")
 
@@ -416,10 +423,12 @@ def api_job_results(job_id):
 
 # ---------------------------------------------------------------- 历史 / 导出
 def _safe_limit(default=50, cap=200):
-    """limit 参数解析：非数字/越界回退默认值，避免 500（不抛 400，尽量兜底可用）"""
+    """limit 参数解析：非数字/越界/负数一律回退默认值（不 500、不传给 SQL）"""
     raw = request.args.get("limit", "")
     try:
-        return min(int(raw), cap) if raw else default
+        if not raw:
+            return default
+        return max(1, min(int(raw), cap))     # 夹住下界：LIMIT 不接受负数/0
     except ValueError:
         return default
 
