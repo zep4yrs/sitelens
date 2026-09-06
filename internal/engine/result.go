@@ -4,6 +4,8 @@
 package engine
 
 import (
+	"strings"
+
 	"cnb.cool/feng-qiao/sitelens/internal/intel"
 	"cnb.cool/feng-qiao/sitelens/internal/security"
 )
@@ -102,6 +104,20 @@ func (a *techAcc) techHits() []intel.TechHit {
 		out = append(out, intel.TechHit{Name: t.Name, Version: t.Version})
 	}
 	return out
+}
+
+// refineVersion check 命中后回填技术版本（仅当该技术尚未识别出版本时）。
+// 这是情报关联从 possible 升级为 confirmed 的关键链路。
+func (a *techAcc) refineVersion(techName, version string) {
+	if techName == "" || version == "" {
+		return
+	}
+	for _, n := range a.order {
+		if strings.EqualFold(a.byName[n].Name, techName) && a.byName[n].Version == "" {
+			a.byName[n].Version = version
+			return
+		}
+	}
 }
 
 // verifiedMap 把各来源发现规整为统一键位的 map 条目。

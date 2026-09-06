@@ -83,6 +83,14 @@ func Index(dir, cachePath string) ([]Entry, error) {
 		if m := hname.FindStringSubmatch(head); m != nil {
 			e.Name = strings.TrimSpace(m[1])
 		}
+		if m := htags.FindStringSubmatch(head); m != nil {
+			for _, tg := range strings.Split(m[1], ",") {
+				tg = strings.TrimSpace(strings.ToLower(tg))
+				if tg != "" {
+					e.Tags = append(e.Tags, tg)
+				}
+			}
+		}
 		entries = append(entries, e)
 	}
 	if cachePath != "" {
