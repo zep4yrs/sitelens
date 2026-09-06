@@ -22,7 +22,11 @@
 | 版本比较 | scanner/version_cmp.py | internal/versioncmp | Parse/Cmp/VersionIn/ExtractVersion |
 | TLS/DNS 网络层 | scanner/netsec.py | internal/netsec | CheckTLS/CheckDNSMail/OrgDomain |
 | 登录爆破 | scanner/loginbrute.py | internal/loginbrute | 宽容表单解析 + 基线判定 + 授权闸 |
+| 目录探测（含 403 绕过） | scanner/modules.py | internal/modules | 软404 基线剔除 + 伪造来源头绕过一次 |
+| 子域名枚举 | scanner/modules.py | internal/modules | DNS 并发解析、解析器可注入便于离线测试 |
+| WebShell 探测 | scanner/modules.py | internal/modules | 200 且非空正文判定 |
 | 源码审计 16 规则 | scanner/audit.py | internal/audit | 正则改写为 RE2 兼容（去 lookahead） |
+| 阈值配置体系 | — | internal/config | 全项目超时/并发/上限统一 .sitelens.yml 注册表（Python 版无此集中度） |
 | Web 服务 20 端点 | app.py (Flask) | internal/server | 契约逐键对齐，前端零改动；嵌入 web/ 单二进制 |
 | 历史存储 | scanner/db.py (PG) | internal/store | 改文件式 JSON：单二进制零依赖；字段契约对齐 |
 | 作业管理 | scanner/db.py (PG) | internal/store | 内存态（作业不跨重启，Python 版跨重启但无实际消费方） |
@@ -37,10 +41,7 @@
 | --- | --- | --- |
 | ddddocr 验证码识别（digits/calc/click） | 未迁移：要求验证码的表单明确报错拒绝，不静默瞎打 | Go 侧接 onnxruntime 或保留 Python 分支专责此项 |
 | 源码审计污点分析（TAINT 数据流） | 未迁移：16 条规则静态匹配已可用 | Go 实现轻量 AST 污点（py 文本级先行） |
-| 目录探测（dir_scan + 403 绕过） | 未迁移 | 移植 fingerdir 38 条 + 软404 基线（check 包已有同款机制可复用） |
-| 子域名枚举（subdomain） | 未迁移 | Go 端 net.LookupHost + data/wordlists/subs_default.txt，工作量小 |
 | 端口服务识别（service_probe） | 未迁移：依赖 PG 中 11966 条 service_fp 指纹 | 导出 service_fp 至 JSON 后移植 |
-| WebShell 探测（webshell） | 未迁移：字典已在 data/wordlists/shell_default.txt | 移植为 checks 插件或独立模块，工作量小 |
 | JS 攻击面（jsmap：SourceMap 泄露/bundle 端点） | 未迁移 | 正则级实现可行，Go 侧优先级中 |
 | FingerDir 主动路径指纹（active_fp） | 未迁移：依赖 PG fingerdir 表 | 同 dir_scan 一并处理 |
 | Nuclei 模板子集（2613 条 MoE 路由） | 未迁移：dump 中 nuclei JSON 未接入 Go check 引擎 | 复用 checks 插件 JSON 通道直接装载 |
