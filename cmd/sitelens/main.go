@@ -23,6 +23,7 @@ import (
 
 func main() {
 	cfgPath := flag.String("config", ".sitelens.yml", "配置文件路径")
+	showVersion := flag.Bool("version", false, "输出版本号并退出")
 	flag.Usage = func() {
 		fmt.Fprintf(os.Stderr, `SiteLens Go 引擎
 
@@ -35,6 +36,10 @@ func main() {
 		flag.PrintDefaults()
 	}
 	flag.Parse()
+	if *showVersion {
+		fmt.Println("SiteLens " + server.Version)
+		return
+	}
 	args := flag.Args()
 	if len(args) < 1 {
 		flag.Usage()
