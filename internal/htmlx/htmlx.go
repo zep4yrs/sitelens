@@ -10,8 +10,11 @@ import (
 
 // Input 表单字段。
 type Input struct {
-	Name string
-	Type string
+	Name        string
+	Type        string
+	ID          string
+	Placeholder string
+	Value       string
 }
 
 // Form 页面表单。
@@ -160,14 +163,21 @@ func Parse(body string) *Doc {
 			}
 			iTag := region[istart : istart+iEnd+1]
 			in := Input{
-				Name: attrValue(iTag, "name"),
-				Type: strings.ToLower(attrValue(iTag, "type")),
+				Name:        attrValue(iTag, "name"),
+				Type:        strings.ToLower(attrValue(iTag, "type")),
+				ID:          attrValue(iTag, "id"),
+				Placeholder: attrValue(iTag, "placeholder"),
+				Value:       attrValue(iTag, "value"),
+			}
+			if in.Type == "" {
+				in.Type = "text"
 			}
 			if in.Type == "password" {
 				form.HasPassword = true
 				doc.HasPassword = true
 			}
-			if in.Name != "" {
+			// 无 name 但有 id/placeholder 的输入也收集（登录爆破按 id/placeholder 推断字段）
+			if in.Name != "" || in.ID != "" || in.Placeholder != "" {
 				form.Inputs = append(form.Inputs, in)
 			}
 			ipos = istart + iEnd + 1
