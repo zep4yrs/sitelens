@@ -52,7 +52,7 @@ func TestScanPipeline(t *testing.T) {
 
 	var msgs []string
 	res := e.Scan(srv.URL, Options{Deep: true, Passive: true, Checks: "none"},
-		func(p int, msg string) { msgs = append(msgs, msg) })
+		func(p int, msg string) { msgs = append(msgs, msg) }, nil)
 
 	if res.Error != "" {
 		t.Fatalf("扫描不应报错: %s", res.Error)
@@ -106,11 +106,11 @@ func TestScanPipeline(t *testing.T) {
 
 func TestScanBadTarget(t *testing.T) {
 	e := New(nil, nil, nil)
-	res := e.Scan("ftp://x", Options{}, nil)
+	res := e.Scan("ftp://x", Options{}, nil, nil)
 	if res.Error == "" {
 		t.Fatal("非法协议应报错")
 	}
-	res = e.Scan("", Options{}, nil)
+	res = e.Scan("", Options{}, nil, nil)
 	if res.Error == "" {
 		t.Fatal("空目标应报错")
 	}
@@ -119,7 +119,7 @@ func TestScanBadTarget(t *testing.T) {
 func TestScanUnreachable(t *testing.T) {
 	e := New(nil, nil, nil)
 	// 本机保留端口的未监听地址：连接失败进 Error 不 panic
-	res := e.Scan("http://127.0.0.1:1/", Options{Deep: false}, nil)
+	res := e.Scan("http://127.0.0.1:1/", Options{Deep: false}, nil, nil)
 	if res.Error == "" {
 		t.Fatal("不可达目标应报错")
 	}

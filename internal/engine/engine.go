@@ -61,10 +61,12 @@ func New(cfg *config.Config, matcher *sitelens.Matcher, kb *intel.KB) *Engine {
 }
 
 // Scan 执行扫描，异常统一进 Result.Error（消息可直接展示）。
-func (e *Engine) Scan(rawURL string, opts Options, onProgress progress) *Result {
+// cancel 非空时在阶段边界与 check 循环内轮询，返回 true 即尽快终止（局部结果仍返回）。
+func (e *Engine) Scan(rawURL string, opts Options, onProgress progress, cancel func() bool) *Result {
 	if onProgress == nil {
 		onProgress = func(int, string) {}
 	}
+	cancelled := func() bool { return cancel != nil && cancel() }
 	start := time.Now()
 	res := &Result{
 		ScannedAt:       time.Now().Format("2006-01-02 15:04:05"),
@@ -169,7 +171,7 @@ func (e *Engine) Scan(rawURL string, opts Options, onProgress progress) *Result 
 		if len(cmsIDs) > 0 {
 			onProgress(75, "CMS 联动专项 check…")
 		}
-		hits := checks.RunChecks(client, baseURL, opts.Checks, cmsIDs, nil,
+		hits := checks.RunChecks(client, baseURL, opts.Checks, cmsIDs, cancelled,
 			func(done, total int, msg string) {
 				if total > 0 {
 					onProgress(75+done*10/total, "check："+msg)
@@ -231,7 +233,7 @@ func (e *Engine) Scan(rawURL string, opts Options, onProgress progress) *Result 
 	}
 
 	// 10) 漏洞情报关联
-	if e.kb != nil {
+	if !cancelled() && e.kb != nil {
 		onProgress(92, "关联漏洞情报…")
 		techs := acc.techHits()
 		res.Vulnerabilities = append(res.Vulnerabilities, e.kb.Match(techs)...)
