@@ -138,16 +138,18 @@ func matchBody(m Match, status int, body string, headers map[string]string) bool
 		}
 	}
 	if len(m.Contains) > 0 {
+		low := strings.ToLower(body) // 对齐 Python：关键词/正文双降比较（不区分大小写）
 		for _, kw := range m.Contains {
-			if !strings.Contains(body, kw) {
+			if !strings.Contains(low, strings.ToLower(kw)) {
 				return false
 			}
 		}
 	}
 	if len(m.ContainsAny) > 0 {
+		low := strings.ToLower(body)
 		anyHit := false
 		for _, kw := range m.ContainsAny {
-			if strings.Contains(body, kw) {
+			if strings.Contains(low, strings.ToLower(kw)) {
 				anyHit = true
 				break
 			}
