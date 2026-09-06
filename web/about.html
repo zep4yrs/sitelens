@@ -101,7 +101,7 @@
         <p>TLS 证书过期 / 自签名 / 弱协议只读检测，SPF / DMARC / MX 邮件安全审计，6 个常见端口 banner 服务识别（<b class="mono">11966</b> 条 nmap 风格指纹）。</p>
         <a class="go" href="/app#netsec">跑一次网络体检 →</a></div>
       <div class="ab-card"><h3>源码静态审计</h3>
-        <p>上传源码或 zip 包：<b class="mono">16</b> 条危险规则扫描 + Python 污点数据流分析（AST 级 source → sink 追踪），纯本地解析，审计完即删。</p>
+        <p>上传源码或 zip 包：<b class="mono">16</b> 条危险规则静态扫描（危险函数 / SQL 拼接 / 硬编码密钥 / 弱哈希等），纯本地解析，审计完即删。</p>
         <a class="go" href="/audit">审计一份源码 →</a></div>
       <div class="ab-card"><h3>授权专属模块</h3>
         <p>登录爆破独立成模块、不混入常规扫描链路；目录探测、子域名枚举、主动路径指纹等主动能力默认关闭，显式选择等级并确认授权后才启用。</p>
@@ -125,7 +125,7 @@
       <div class="ab-step"><div class="no">05</div><h3>情报关联</h3>
         <p>版本号与 OSV 区间做语义化比较（支持通配），三级判定拒绝「同名就报漏洞」的粗放误报，KEV 红标标出在野利用。</p></div>
       <div class="ab-step"><div class="no">06</div><h3>结论交付</h3>
-        <p>安全响应头评分（A+–F + 中文修复建议）、已验证漏洞汇总；结果存入本地 PostgreSQL，可导出 JSON / CSV / 宽表 / HTML 报告。</p></div>
+        <p>安全响应头评分（A+–F + 中文修复建议）、已验证漏洞汇总；结果存本地文件，可导出 JSON / CSV / 宽表 / HTML 报告。</p></div>
     </div>
   </section>
 
@@ -162,8 +162,8 @@
           <tr><td>漏洞验证</td><td>模板路由 + 无害 check</td><td class="mono">7000+ 模板</td><td>无</td><td>完整</td></tr>
           <tr><td>漏洞情报</td><td>三级版本判定 + KEV</td><td>无</td><td>无</td><td>部分</td></tr>
           <tr><td>网络层检测</td><td>TLS / SPF / DMARC / 端口</td><td>无</td><td>无</td><td>完整</td></tr>
-          <tr><td>源码审计</td><td>规则扫描 + 污点分析</td><td>无</td><td>无</td><td>无</td></tr>
-          <tr><td>数据归属</td><td>全量存本地 PostgreSQL</td><td>—</td><td>云服务</td><td>云 / 授权码</td></tr>
+          <tr><td>源码审计</td><td>16 条规则静态扫描</td><td>无</td><td>无</td><td>无</td></tr>
+          <tr><td>数据归属</td><td>全量存本地文件</td><td>—</td><td>云服务</td><td>云 / 授权码</td></tr>
           <tr><td>价格</td><td>免费</td><td>免费</td><td>付费</td><td class="mono">$$$</td></tr>
         </tbody>
       </table>
@@ -179,7 +179,7 @@
       <div class="ab-card"><h3>✓ 主动默认关</h3><p>主动验证、目录探测等模块默认关闭，需显式选择扫描等级并确认授权提示；登录爆破独立保留，不混入任何默认链路。</p></div>
       <div class="ab-card"><h3>✓ 礼貌访问</h3><p>全局限速（默认 0.4s 间隔）、UA 自报家门（SiteLens/1.0）、并发硬编码封顶、扫描前先读 robots.txt。</p></div>
       <div class="ab-card"><h3>✓ SSRF 防护内置</h3><p>协议白名单 + 主机黑名单 + DNS 解析后逐 IP 校验，环回 / 私有 / 链路本地 / 保留地址一律拒绝。</p></div>
-      <div class="ab-card"><h3>✓ 数据不出本机</h3><p>扫描结果、知识库、历史记录全部存本地 PostgreSQL，不依赖云服务；SQL 全部参数绑定，通过静态安全审计。</p></div>
+      <div class="ab-card"><h3>✓ 数据不出本机</h3><p>扫描结果、知识库、历史记录全部存本机（历史为本地文件，单二进制零外部依赖），不依赖云服务。</p></div>
       <div class="ab-card"><h3>✓ 来源透明</h3><p>Nuclei、TscanPlus、OSV.dev、CISA KEV 等开源数据源全部署名；每条结论附原始证据，可逐条人工复核。</p></div>
     </div>
   </section>
@@ -187,17 +187,17 @@
   <!-- ================= 三步部署 ================= -->
   <section class="ab-sec">
     <h2>三步跑起来</h2>
-    <p class="sub">Python 3.10+ 与 PostgreSQL，全部本地组件，无需注册任何账号。</p>
+    <p class="sub">单个可执行文件，零外部依赖，无需注册任何账号。</p>
     <div class="ab-deploy">
       <div class="ab-card"><h3>① 装依赖</h3>
         <pre class="ab-code">pip install -r requirements.txt</pre>
-        <p style="margin-top:10px">Flask 3 · psycopg2 · requests · BeautifulSoup4 · PyYAML。</p></div>
+        <p style="margin-top:10px">Go 1.26 标准库 · 零第三方运行时依赖（仅 YAML 配置解析一个库）。</p></div>
       <div class="ab-card"><h3>② 配数据库</h3>
         <p>项目根目录 .env 写入 <span class="mono">SLENS_DB_*</span> 连接参数；首次启动自动建表并播种指纹知识库。</p></div>
       <div class="ab-card"><h3>③ 启动</h3>
-        <pre class="ab-code">python app.py                 # Web 工作台
-python main.py scan &lt;url&gt;     # 命令行扫描
-python main.py scan &lt;url&gt; --full   # 含主动模块，仅限授权目标</pre></div>
+        <pre class="ab-code">sitelens serve                # Web 工作台
+sitelens scan &lt;url&gt;          # 命令行扫描
+sitelens -config .sitelens.yml serve  # 自定义配置启动</pre></div>
     </div>
   </section>
 
