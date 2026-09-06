@@ -479,11 +479,11 @@ function renderResult(r, scanId) {
     html += '<div class="tbl-wrap"><table class="vulns"><tr><th>严重度</th><th>判定</th><th>涉及技术</th><th>漏洞</th><th>类型</th><th>来源</th></tr>';
     vulns.slice(0, 40).forEach(function (v) {
       var name = esc(v.name || v.title || v.cve || "");
-      if (v.ref) name = '<a href="' + esc(v.ref) + '" target="_blank" rel="noopener">' + name + "</a>";
+      if (v.ref) name = safeLink(v.ref, v.name || v.title || v.cve || "");
       var lv = "";
-      if (v.level === "confirmed") lv = '<span class="badge danger">确认受影响</span>';
-      else if (v.level === "possible") lv = '<span class="badge warn">可能受影响</span>';
-      else if (v.level === "excluded") lv = '<span class="badge ok">不受影响</span>';
+      if (v.verdict === "confirmed") lv = '<span class="badge danger">确认受影响</span>';
+      else if (v.verdict === "possible") lv = '<span class="badge warn">可能受影响</span>';
+      else if (v.verdict === "excluded") lv = '<span class="badge ok">不受影响</span>';
       html += "<tr><td>" + sevBadge(v.severity, v.severity_zh) + "</td><td>" + lv + "</td>" +
         '<td class="mono">' + esc(v.tech) + "</td>" +
         "<td>" + (v.cve ? '<span class="mono">' + esc(v.cve) + "</span> " : "") + name + "</td>" +

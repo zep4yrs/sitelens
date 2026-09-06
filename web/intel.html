@@ -84,7 +84,7 @@ function search() {
       '<div class="tbl-wrap"><table class="list"><tr><th>严重度</th><th>CVE</th><th>产品</th><th>名称</th><th>类型</th><th>来源</th></tr>';
     rows.forEach(function (v) {
       var name = esc(v.name || "");
-      if (v.ref) name = '<a href="' + esc(v.ref) + '" target="_blank" rel="noopener" style="color:var(--info)">' + name + "</a>";
+      if (v.ref) name = safeLink(v.ref, v.name || "");
       html += "<tr><td>" + sevBadge(v.severity) + "</td>" +
         '<td class="mono">' + esc(v.cve || "-") + "</td>" +
         '<td class="mono">' + esc(v.product || "-") + "</td>" +

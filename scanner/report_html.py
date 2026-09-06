@@ -39,7 +39,11 @@ def render_html(r):
         lines = []
         for it in items:
             if key == "dir_scan":
-                lines.append("%s → %s (%dB) %s" % (it.get("path"), it.get("status"), it.get("size"), it.get("title") or ""))
+                # 命中条目存的是完整 url（v1.0.2 起不含 path 字段）
+                u = it.get("url") or it.get("path") or ""
+                p = u.replace("://", " ", 1).split("/", 1)
+                loc = "/" + p[1] if len(p) > 1 else u
+                lines.append("%s → %s (%dB) %s" % (loc, it.get("status"), it.get("size"), it.get("title") or ""))
             elif key == "subdomain":
                 lines.append("%s → %s" % (it.get("subdomain"), it.get("ip")))
             elif key == "service":

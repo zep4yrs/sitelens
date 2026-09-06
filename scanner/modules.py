@@ -10,12 +10,15 @@
 """
 import concurrent.futures
 import socket
+from pathlib import Path
 from urllib.parse import urljoin, urlparse
 
 from .target import TargetError
 
-DEFAULT_DIR_LIST = "data/wordlists/seclists/web-content-common.txt"
-DEFAULT_SUB_LIST = "data/wordlists/seclists/subdomains-5000.txt"
+# 数据目录锚定到仓库根，任意 CWD 启动均可用
+DATA_DIR = str(Path(__file__).resolve().parents[1] / "data")
+DEFAULT_DIR_LIST = DATA_DIR + "/wordlists/seclists/web-content-common.txt"
+DEFAULT_SUB_LIST = DATA_DIR + "/wordlists/seclists/subdomains-5000.txt"
 PROBE_PORTS = [80, 443, 8080, 8443, 8000, 8888]
 
 
@@ -225,9 +228,9 @@ def _grab(host, port, timeout):
 
 
 # ---------------------------------------------------------------- 授权审计模块
-WEAK_USERS = "data/wordlists/weak_users.txt"
-WEAK_PASSWORDS = "data/wordlists/weak_passwords.txt"
-SHELL_LIST = "data/wordlists/shell_default.txt"
+WEAK_USERS = DATA_DIR + "/wordlists/weak_users.txt"
+WEAK_PASSWORDS = DATA_DIR + "/wordlists/weak_passwords.txt"
+SHELL_LIST = DATA_DIR + "/wordlists/shell_default.txt"
 
 
 def weak_audit(fetcher, target, progress=None, max_tries=120):

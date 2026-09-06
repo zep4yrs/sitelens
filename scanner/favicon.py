@@ -56,6 +56,10 @@ def mmh3_32(data, seed=0):
 
 
 def favicon_hash(icon_bytes):
-    """fofa icon_hash：base64 编码后取 mmh3"""
-    b64 = base64.encodebytes(icon_bytes)
+    """fofa icon_hash：base64 编码后取 mmh3。
+
+    用 b64encode（无换行）与 fofa 标准实现一致；encodebytes 每 76 字符
+    插入换行会导致大图标哈希不一致。
+    """
+    b64 = base64.b64encode(icon_bytes)
     return mmh3_32(b64)

@@ -97,17 +97,24 @@ class VulnMatcher:
     }
 
     def match_cve_ms(self, technologies, limit=40):
-        """微软安全公告索引关联（按组件名双向包含匹配）"""
+        """微软安全公告索引关联（按组件名双向包含匹配）。
+
+        cve_ms 表由资产包导入；空库部署时表不存在，静默跳过不阻塞扫描。
+        """
         out, seen = [], set()
         for tech in technologies:
             for name in {tech.name, self.MS_ALIASES.get(tech.name, "")} - {""}:
-                with self._kb.db.transaction(dict_rows=True) as cur:
-                    cur.execute(
-                        "SELECT cve, component, title, severity, impact FROM cve_ms"
-                        " WHERE position(lower(%s) in lower(component)) > 0"
-                        " ORDER BY cve DESC LIMIT %s",
-                        (name, 10))
-                    for r in cur.fetchall():
+                try:
+                    with self._kb.db.transaction(dict_rows=True) as cur:
+                        cur.execute(
+                            "SELECT cve, component, title, severity, impact FROM cve_ms"
+                            " WHERE position(lower(%s) in lower(component)) > 0"
+                            " ORDER BY cve DESC LIMIT %s",
+                            (name, 10))
+                        rows = cur.fetchall()
+                except Exception:
+                    return sorted(out, key=lambda v: SEV_ORDER.get(v["severity"], 4))[:limit]
+                for r in rows:
                         if r["cve"] in seen:
                             continue
                         seen.add(r["cve"])

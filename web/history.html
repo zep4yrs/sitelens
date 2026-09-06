@@ -212,9 +212,9 @@ function renderDetail(r, scanId, url) {
     html += '<div class="tbl-wrap"><table class="vulns"><tr><th>严重度</th><th>判定</th><th>涉及技术</th><th>漏洞</th><th>来源</th></tr>';
     vulns.slice(0, 40).forEach(function (v) {
       var name = esc(v.name || v.title || v.cve || "");
-      if (v.ref) name = '<a href="' + esc(v.ref) + '" target="_blank" rel="noopener">' + name + "</a>";
-      var lv = v.level === "confirmed" ? '<span class="badge danger">确认受影响</span>'
-        : v.level === "possible" ? '<span class="badge warn">可能受影响</span>' : "";
+      if (v.ref) name = safeLink(v.ref, v.name || v.title || v.cve || "");
+      var lv = v.verdict === "confirmed" ? '<span class="badge danger">确认受影响</span>'
+        : v.verdict === "possible" ? '<span class="badge warn">可能受影响</span>' : "";
       html += "<tr><td>" + sevBadge(v.severity, v.severity_zh) + "</td><td>" + lv + "</td>" +
         '<td class="mono">' + esc(v.tech) + "</td>" +
         "<td>" + (v.cve ? '<span class="mono">' + esc(v.cve) + "</span> " : "") + name + "</td>" +
@@ -249,7 +249,10 @@ function exportAs(id, fmt) { location.href = "/api/export/" + id + "?fmt=" + fmt
 
 function delScan(id) {
   if (!confirm("删除扫描记录 #" + id + "？（含技术明细，不可恢复）")) return;
-  fetch("/api/history/" + id, { method: "DELETE" }).then(load);
+  fetch("/api/history/" + id, { method: "DELETE" }).then(function () {
+    toast("已删除记录 #" + id, "ok");
+    load();
+  });
 }
 
 /* ---------------- diff 对比 ---------------- */
@@ -287,12 +290,13 @@ function loadVerified() {
       out.innerHTML = '<p class="muted" style="font-size:13.5px">暂无已验证漏洞记录——去工作台扫一个站点吧。</p>';
       return;
     }
-    var html = '<div class="tbl-wrap"><table class="list"><tr><th>严重度</th><th>检测项</th><th>站点</th><th>命中地址</th><th>扫描时间</th></tr>';
+    var html = '<div class="tbl-wrap"><table class="list"><tr><th>严重度</th><th>检测项</th><th>站点</th><th>命中地址</th><th>命中证据</th><th>扫描时间</th></tr>';
     items.forEach(function (v) {
       html += "<tr><td>" + sevBadge(v.severity) + "</td>" +
         '<td class="mono">' + esc(v.check) + '<br><span class="hint" style="margin:0">' + esc(v.title || "") + "</span></td>" +
         '<td class="mono">' + esc(v.host) + '</td>' +
         '<td class="mono" style="font-size:12px;word-break:break-all">' + esc(v.url || "") + "</td>" +
+        '<td class="mono muted" style="font-size:12px">' + esc(v.evidence || "") + '</td>' +
         '<td class="mono muted" style="font-size:12px;white-space:nowrap">' +
         esc(String(v.scanned_at).replace("T", " ").slice(0, 16)) + "</td></tr>";
     });

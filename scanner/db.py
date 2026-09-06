@@ -142,6 +142,14 @@ class Database:
                             embedding DOUBLE PRECISION[] DEFAULT NULL);
                         ALTER TABLE vuln_kb ADD COLUMN IF NOT EXISTS affected TEXT DEFAULT '';
                         ALTER TABLE vuln_kb ADD COLUMN IF NOT EXISTS cvss_vec TEXT DEFAULT '';
+                        ALTER TABLE vuln_kb ADD COLUMN IF NOT EXISTS sources TEXT DEFAULT '';
+                        ALTER TABLE vuln_kb ADD COLUMN IF NOT EXISTS cvss_score REAL DEFAULT 0;
+                        ALTER TABLE vuln_kb ADD COLUMN IF NOT EXISTS cvss_sev TEXT DEFAULT '';
+                        ALTER TABLE vuln_kb ADD COLUMN IF NOT EXISTS cvss_vector_txt TEXT DEFAULT '';
+                        CREATE TABLE IF NOT EXISTS cve_ms (
+                            id SERIAL PRIMARY KEY,
+                            cve TEXT, component TEXT, title TEXT,
+                            severity TEXT, impact TEXT, date TEXT);
                         CREATE TABLE IF NOT EXISTS kev (cve TEXT PRIMARY KEY, date_added TEXT DEFAULT '', ransomware TEXT DEFAULT '');
                         CREATE INDEX IF NOT EXISTS idx_vulnkb_cve ON vuln_kb(cve);
                         CREATE INDEX IF NOT EXISTS idx_vulnkb_sev ON vuln_kb(severity);
@@ -170,7 +178,6 @@ class Database:
                             conf    INT,
                             version TEXT);
                         CREATE INDEX IF NOT EXISTS idx_scan_techs_name ON scan_techs(name);
-                        ALTER TABLE jobs ADD COLUMN IF NOT EXISTS result JSONB;
                         CREATE TABLE IF NOT EXISTS jobs (
                             id         TEXT PRIMARY KEY,
                             kind       TEXT DEFAULT 'scan',
@@ -182,6 +189,7 @@ class Database:
                             payload    JSONB DEFAULT '{}'::jsonb,
                             created_at TIMESTAMPTZ DEFAULT now(),
                             updated_at TIMESTAMPTZ DEFAULT now());
+                        ALTER TABLE jobs ADD COLUMN IF NOT EXISTS result JSONB;
                     """)
                     conn.commit()
                 except psycopg2.Error:
@@ -315,15 +323,28 @@ class KnowledgeBase:
         可改为库内 <=> 排序（迁移 SQL 见 docs/开发文档.md）。
         """
         from .embedding import cosine, embed_text
-        with self.db.transaction(dict_rows=True) as cur:
-            cur.execute(
-                "SELECT id, src, name, product, cve, type, severity, ref, descr,"
-                " similarity(product, %s) AS sim FROM vuln_kb"
-                " WHERE similarity(product, %s) > 0.15"
-                "    OR position(lower(%s) in lower(name)) > 0"
-                " ORDER BY sim DESC LIMIT 120",
-                (text, text, text))
-            rows = [dict(r) for r in cur.fetchall()]
+        rows = []
+        try:
+            with self.db.transaction(dict_rows=True) as cur:
+                cur.execute(
+                    "SELECT id, src, name, product, cve, type, severity, ref, descr,"
+                    " similarity(product, %s) AS sim FROM vuln_kb"
+                    " WHERE similarity(product, %s) > 0.15"
+                    "    OR position(lower(%s) in lower(name)) > 0"
+                    " ORDER BY sim DESC LIMIT 120",
+                    (text, text, text))
+                rows = [dict(r) for r in cur.fetchall()]
+        except psycopg2.Error:
+            # pg_trgm 扩展不可用时降级为包含匹配，不阻塞检索
+            with self.db.transaction(dict_rows=True) as cur:
+                cur.execute(
+                    "SELECT id, src, name, product, cve, type, severity, ref, descr"
+                    " FROM vuln_kb"
+                    " WHERE position(lower(%s) in lower(product)) > 0"
+                    "    OR position(lower(%s) in lower(name)) > 0"
+                    " ORDER BY id DESC LIMIT 120",
+                    (text, text))
+                rows = [dict(r) for r in cur.fetchall()]
         if not rows:
             return []
         ids = [r["id"] for r in rows]
