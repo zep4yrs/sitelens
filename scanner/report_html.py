@@ -1,7 +1,6 @@
 # -*- coding: utf-8 -*-
 """单文件 HTML 扫描报告：内联全部样式，离线双击即可打开。"""
 import html
-import json
 
 
 def render_html(r):
@@ -22,9 +21,6 @@ def render_html(r):
 
     vuln_rows = []
     for v in (r.get("vulnerabilities") or [])[:60]:
-        ref = ""
-        if v.get("ref"):
-            ref = "<a href='%s' target='_blank' rel='noopener'>链接</a>" % esc(v["ref"])
         vuln_rows.append(
             "<tr><td><span class='sev sev-%s'>%s</span></td><td class='mono'>%s</td>"
             "<td>%s %s</td><td>%s</td><td class='mono small'>%s</td></tr>"

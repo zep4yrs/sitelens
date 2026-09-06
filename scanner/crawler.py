@@ -26,7 +26,6 @@ class SiteCrawler:
         results = [(first_evidence, first_signals)]
         queue = deque(self._same_site_links(first_signals.link_hrefs))
         seen = {first_evidence.final_url, first_evidence.url}
-        depth = 1
 
         while queue and len(results) < self._max_pages:
             raw_url = queue.popleft()

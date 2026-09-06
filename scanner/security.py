@@ -3,7 +3,6 @@
 对照 securityheaders.com 的思路，检查 7 个安全响应头是否配置，
 按重要性加权打分并给出 A-F 等级与中文修复建议。
 """
-from .models import Technology
 
 # (头名, 权重, 说明, 修复建议)
 CHECK_ITEMS = [

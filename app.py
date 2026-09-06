@@ -177,7 +177,6 @@ def api_audit():
     """源码静态审计：接收上传的源码文件 / zip 包，审计后立即删除。"""
     import shutil
     import tempfile
-    import uuid as _uuid
     import zipfile as _zipfile
     from pathlib import Path as _Path
     from scanner.audit import run_audit
@@ -302,6 +301,7 @@ def api_scan():
         "webshell": bool(data.get("webshell", False)),
         "netsec": bool(data.get("netsec", False)),
         "dast": bool(data.get("dast", False)),
+        "passive": bool(data.get("passive", False)),
         "checks": data.get("checks", "none"),
         "auth_cookie": str(data.get("auth_cookie") or "")[:1000],
     }
@@ -416,7 +416,7 @@ def api_job_results(job_id):
 
 # ---------------------------------------------------------------- 历史 / 导出
 def _safe_limit(default=50, cap=200):
-    """limit 参数解析：非数字/越界回退默认值，返回 400 而非 500"""
+    """limit 参数解析：非数字/越界回退默认值，避免 500（不抛 400，尽量兜底可用）"""
     raw = request.args.get("limit", "")
     try:
         return min(int(raw), cap) if raw else default

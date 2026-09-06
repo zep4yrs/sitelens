@@ -14,10 +14,12 @@ options 可选开关（默认全关，授权测试用）：
     dir_scan        目录探测          dir_bypass  403 绕过重试
     subdomain       子域名枚举        service_probe  端口服务识别
 """
+import re
 import time
 from urllib.parse import urljoin
 
 from . import checks as checks_mod
+from . import passive as passive_mod
 from . import netsec as netsec_mod
 from . import dast as dast_mod
 from . import jsmap as jsmap_mod
@@ -31,6 +33,7 @@ from .models import ScanResult, Technology
 from .registry import Registry
 from .security import assess_security
 from .target import ScanTarget, TargetError
+from .version_cmp import version_in
 from .vuln import VulnMatcher
 
 
@@ -52,12 +55,13 @@ class ScannerEngine:
         self._tscan = next((d for d in self._detectors
                             if isinstance(d, TscanDetector)), None)
         self._vulns = VulnMatcher(self.registry.kb)
+        self._ranges = getattr(self._vulns, "_ranges", {}) or {}
         self._resolve = resolve                 # 单测可关掉 DNS 解析
         self.options = dict({
             "deep": True, "active_fp": False, "dir_scan": False, "dir_bypass": False,
             "subdomain": False, "service_probe": False, "browser_ua": False,
             "weak_audit": False, "webshell": False, "checks": "none",
-            "auth_cookie": "", "netsec": False, "dast": False,
+            "auth_cookie": "", "netsec": False, "dast": False, "passive": False,
         }, **(options or {}))
         self._progress = progress or (lambda done, total, msg: None)
         self._cancelled = False
@@ -133,6 +137,16 @@ class ScannerEngine:
             self._progress(85, 100, "TLS / DNS 安全检测…")
             extras["netsec"] = netsec_mod.run_netsec(target.host)
 
+        if self.options.get("passive") and not self._cancelled:
+            self._progress(84, 100, "被动安全检测（Cookie 属性 / CSRF token）…")
+            p_hits = []
+            for ev, _ in pages:
+                p_hits.extend(passive_mod.run_passive(
+                    ev, ev.final_url or target.url))
+            for h in p_hits:
+                h.setdefault("src", "passive")
+            result.set_verified(result.verified + p_hits)
+
         if self.options.get("dast") and not self._cancelled:
             self._progress(86, 100, "JS 攻击面提取…")
             try:
@@ -153,9 +167,10 @@ class ScannerEngine:
             result.set_verified(result.verified + dast_hits)
         if not self._cancelled:                        # 7) 漏洞情报关联
             self._progress(85, 100, "关联漏洞情报…")
+            techs = self._apply_extracted_versions(result)
             result.set_vulnerabilities(
-                self._vulns.match(result.technologies)
-                + self._vulns.match_cve_ms(result.technologies))
+                self._vulns.match(techs)
+                + self._vulns.match_cve_ms(techs))
 
         self._run_modules(target, result, start)        # 8) 可选模块
 
@@ -233,6 +248,70 @@ class ScannerEngine:
                 tech = result.add_technology(tech)
                 tech.add_evidence(detector.SOURCE, detail)
                 tech.set_version(version)
+
+    def _apply_extracted_versions(self, result):
+        """验证线 → 情报线焊接：把 check/nuclei 抽取的版本号回填到对应技术。
+
+        规则：verified 项带 extracted_version 时，匹配出抽取来源 URL 中
+        提及技术名（check id/标题路径）的已识别技术；版本回填后按
+        affected_ranges / vuln_kb.affected 重算三级判定。仅当该技术此前
+        未识别出版本时回填（指纹识别的版本优先）。
+        返回可能已更新的技术列表。
+        """
+        techs = list(result.technologies)
+        by_name = {t.name.lower(): t for t in techs}
+        for h in result.verified:
+            ver = h.get("extracted_version")
+            if not ver:
+                continue
+            tech = self._match_tech_for_hit(h, by_name)
+            if tech is None or tech.version:
+                continue
+            tech.set_version(ver)
+            h["verdict_applied"] = "%s 版本回填 %s" % (tech.name, ver)
+            # 三级判定：抽取值直接喂 version_cmp（affected_ranges 命中 = confirmed）
+            verdict, r = self._range_verdict(tech.name, ver)
+            if verdict:
+                h["verdict"] = "confirmed"
+                h["verdict_detail"] = "%s %s 命中受影响区间 %s（%s）" % (
+                    tech.name, ver, r.get("affected", ""),
+                    r.get("cve") or r.get("title") or "intel-range")
+        return techs
+
+    # check id 中常见的产物名缩写 → 规范名（词边界匹配用）
+    TECH_ABBREVS = {"wp": "wordpress"}
+
+    def _match_tech_for_hit(self, hit, by_name):
+        """从 check id / 标题 / URL 中找出提及的已识别技术名。
+
+        词边界匹配（避免 "go" 误命中 "golang" 之类子串），
+        多词技术名要求全部词出现，单词支持常见缩写（wp → WordPress）。
+        多个命中取名字最长者。
+        """
+        text = " ".join(str(hit.get(k) or "") for k in
+                        ("check", "title", "url")).lower()
+        tokens = set(re.split(r"[^a-z0-9]+", text))
+        best = None
+        for name_l, tech in by_name.items():
+            if not name_l:
+                continue
+            words = name_l.split()
+            if len(words) > 1:
+                ok = all(w in tokens for w in words)
+            else:
+                ok = name_l in tokens or any(
+                    self.TECH_ABBREVS.get(t) == name_l for t in tokens)
+            if ok and (best is None or len(name_l) > len(best[0])):
+                best = (name_l, tech)
+        return best[1] if best else None
+
+    def _range_verdict(self, name, version):
+        """版本 + affected_ranges.json → confirmed/None（version_cmp 三级判定的独立入口）"""
+        ranges = self._ranges.get((name or "").lower(), [])
+        for r in ranges:
+            if version_in(version, r.get("affected", "")):
+                return "confirmed", r
+        return None, None
 
     def _run_modules(self, target, result, start):
         """按 options 运行可选模块（全部默认关闭）；各模块支持取消检查点"""
