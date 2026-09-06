@@ -10,13 +10,16 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 )
 
 // Match 单条 check 的匹配条件。
 type Match struct {
-	Status   int      `json:"s"`
-	Contains []string `json:"c"`
-	Extract  *struct {
+	Status      int      `json:"s"`              // 期望状态码（0 = 不限定）
+	StatusAny   []int    `json:"sany,omitempty"` // 状态码任一命中（Nuclei 组转换用）
+	Contains    []string `json:"c"`              // 正文须全部包含（AND）
+	ContainsAny []string `json:"cany,omitempty"` // 正文任一包含（OR，Nuclei 组转换用）
+	Extract     *struct {
 		Keyword string `json:"keyword"`
 	} `json:"extract"`
 }
@@ -102,6 +105,16 @@ var extractChecks = map[string][2]string{
 }
 
 var allChecks = builtinChecks()
+
+var pluginsOnce sync.Once
+
+// ConfigurePlugins 加载用户自定义 check（进程内幂等：仅首次生效）。
+// 服务启动 / CLI 入口调用一次即可。
+func ConfigurePlugins(dir string) {
+	pluginsOnce.Do(func() {
+		RegisterPlugins(LoadPlugins(dir))
+	})
+}
 
 // RegisterPlugins 合并用户自定义 check（规则用户化入口）。
 func RegisterPlugins(checks []Check) {

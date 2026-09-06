@@ -5,6 +5,7 @@ import (
 	"net"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"cnb.cool/feng-qiao/sitelens/internal/checks"
@@ -18,6 +19,7 @@ import (
 	"cnb.cool/feng-qiao/sitelens/internal/loginbrute"
 	"cnb.cool/feng-qiao/sitelens/internal/modules"
 	"cnb.cool/feng-qiao/sitelens/internal/netsec"
+	"cnb.cool/feng-qiao/sitelens/internal/nuclei"
 	"cnb.cool/feng-qiao/sitelens/internal/passive"
 	"cnb.cool/feng-qiao/sitelens/internal/security"
 	"cnb.cool/feng-qiao/sitelens/internal/sitelens"
@@ -186,6 +188,25 @@ func (e *Engine) Scan(rawURL string, opts Options, onProgress progress, cancel f
 				"check": h.Check, "title": h.Title, "severity": h.Severity,
 				"url": h.URL, "evidence": h.Evidence, "advice": h.Advice,
 			}))
+		}
+	}
+
+	// 6.5) Nuclei 社区模板子集（all 级别 + 模板库存在时）
+	if opts.Checks == "all" && !cancelled() && e.cfg.Checks.NucleiCap > 0 && e.cfg.Checks.NucleiDir != "" {
+		onProgress(84, "运行 Nuclei 社区模板子集…")
+		if nl := e.nucleiSubset(res.Technologies); len(nl) > 0 {
+			for _, h := range checks.RunList(client, baseURL, nl, cancelled,
+				func(done, total int, msg string) {
+					if total > 0 {
+						onProgress(84, fmt.Sprintf("nuclei %d/%d", done, total))
+					}
+				}) {
+				res.Verified = append(res.Verified, verifiedMap(map[string]any{
+					"check": h.Check, "title": h.Title, "severity": h.Severity,
+					"url": h.URL, "evidence": h.Evidence, "advice": h.Advice,
+					"src": "nuclei",
+				}))
+			}
 		}
 	}
 
@@ -373,6 +394,36 @@ func normalizeKey(u string) string { return strings.TrimSuffix(u, "/") }
 // wordlistPath 字典文件路径（wordlist_dir 下）。
 func wordlistPath(cfg *config.Config, name string) string {
 	return filepath.Join(cfg.Active.WordlistDir, name)
+}
+
+// nucleiCursor 跨扫描轮转游标（进程级：保证无 tag 信号的模板长期全覆盖）。
+var nucleiCursor int
+var nucleiMu sync.Mutex
+
+// nucleiSubset 按已识别技术挑选 Nuclei 模板并转换为 check。
+func (e *Engine) nucleiSubset(techs []Tech) []checks.Check {
+	entries, err := nuclei.Index(e.cfg.Checks.NucleiDir,
+		filepath.Join(e.cfg.Store.DataDir, "nuclei_index.json"))
+	if err != nil || len(entries) == 0 {
+		return nil
+	}
+	tags := map[string]bool{}
+	for _, t := range techs {
+		tags[strings.ToLower(t.Name)] = true
+	}
+	nucleiMu.Lock()
+	selected := nuclei.Select(entries, tags, e.cfg.Checks.NucleiCap, &nucleiCursor)
+	nucleiMu.Unlock()
+
+	var out []checks.Check
+	for _, ent := range selected {
+		cs, err := nuclei.LoadFile(filepath.Join(e.cfg.Checks.NucleiDir, filepath.FromSlash(ent.Path)))
+		if err != nil {
+			continue
+		}
+		out = append(out, cs...)
+	}
+	return out
 }
 
 // dastFetcher 把 httpx 客户端适配为 dast.Fetcher。

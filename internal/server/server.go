@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"cnb.cool/feng-qiao/sitelens/internal/audit"
+	"cnb.cool/feng-qiao/sitelens/internal/checks"
 	"cnb.cool/feng-qiao/sitelens/internal/config"
 	"cnb.cool/feng-qiao/sitelens/internal/engine"
 	"cnb.cool/feng-qiao/sitelens/internal/intel"
@@ -72,10 +73,11 @@ type Server struct {
 	techCnt  int
 }
 
-// New 装配服务（加载指纹库/知识库/历史存储）。
+// New 装配服务（加载指纹库/知识库/历史存储/用户插件）。
 func New(cfg *config.Config) (*Server, error) {
 	s := &Server{cfg: cfg, jobs: store.NewJobManager(),
 		sem: make(chan struct{}, cfg.Scan.MaxConcurrent)}
+	checks.ConfigurePlugins(cfg.Checks.PluginDir)
 	s.apiToken = os.Getenv("SLENS_API_TOKEN")
 	if s.apiToken == "" {
 		s.apiToken = cfg.Web.APIToken

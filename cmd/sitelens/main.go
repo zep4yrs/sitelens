@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"os"
 
+	"cnb.cool/feng-qiao/sitelens/internal/checks"
 	"cnb.cool/feng-qiao/sitelens/internal/config"
 	"cnb.cool/feng-qiao/sitelens/internal/engine"
 	"cnb.cool/feng-qiao/sitelens/internal/intel"
@@ -66,6 +67,7 @@ func main() {
 }
 
 func runScan(cfg *config.Config, rawURL string) {
+	checks.ConfigurePlugins(cfg.Checks.PluginDir)
 	matcher, err := sitelens.LoadMatcher(cfg.Intel.TechnologiesPath)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "警告：指纹库加载失败（%v），跳过指纹识别\n", err)
