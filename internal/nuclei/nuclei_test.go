@@ -4,7 +4,13 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"gopkg.in/yaml.v3"
 )
+
+func yamlUnmarshalForTest(in string, out *map[string]any) error {
+	return yaml.Unmarshal([]byte(in), out)
+}
 
 const goodTpl = `id: CVE-2020-26876
 info:
@@ -59,6 +65,10 @@ http:
 func TestConvertGoodTemplate(t *testing.T) {
 	cs := Convert([]byte(goodTpl))
 	if len(cs) != 1 {
+		var probe map[string]any
+		if err := yamlUnmarshalForTest(goodTpl, &probe); err != nil {
+			t.Fatalf("yaml 解析失败: %v", err)
+		}
 		t.Fatalf("应转换出 1 条: %d", len(cs))
 	}
 	c := cs[0]
@@ -68,8 +78,8 @@ func TestConvertGoodTemplate(t *testing.T) {
 	if c.Sev != "high" || c.Lv != 1 {
 		t.Fatalf("严重度/等级失败: %+v", c)
 	}
-	// and 条件：status 200 + 两个词全包含
-	if c.Match.Status != 200 || len(c.Match.Contains) != 2 {
+	// and 条件多组合并：有词组时按"宁少报"丢弃 status，仅保留全包含词
+	if c.Match.Status != 0 || len(c.Match.Contains) != 2 {
 		t.Fatalf("matchers-and 合并失败: %+v", c.Match)
 	}
 }
@@ -130,10 +140,11 @@ func TestIndexAndLoadRealLibrary(t *testing.T) {
 	if len(entries) < 1000 {
 		t.Fatalf("索引条目异常: %d", len(entries))
 	}
-	// 抽一条真实模板转换
-	sel := Select(entries, map[string]bool{"wordpress": true}, 5, nil)
+	// 抽 200 条转换：漏斗会按 Python 版同款规则拒绝相当比例
+	//（OSINT/外部 URL/interactsh/dsl 等），但应有可观的成功数
+	sel := Select(entries, map[string]bool{}, 200, nil)
 	if len(sel) == 0 {
-		t.Fatal("wordpress tag 应命中")
+		t.Fatal("选择器应返回条目")
 	}
 	loaded := 0
 	for _, e := range sel {
@@ -141,7 +152,8 @@ func TestIndexAndLoadRealLibrary(t *testing.T) {
 			loaded++
 		}
 	}
-	if loaded == 0 {
-		t.Fatal("真实模板至少应转换出 1 条")
+	t.Logf("抽样 %d 条，漏斗通过 %d 条", len(sel), loaded)
+	if loaded < 10 {
+		t.Fatalf("漏斗通过数异常偏低: %d/%d", loaded, len(sel))
 	}
 }
