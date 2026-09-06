@@ -41,6 +41,7 @@ type ActiveConfig struct {
 	SubMaxWords   int    `yaml:"sub_max_words"`   // 子域名字典截取上限
 	SubWorkers    int    `yaml:"sub_workers"`     // 子域名并发解析数
 	ShellMaxPaths int    `yaml:"shell_max_paths"` // WebShell 探测路径上限
+	FPMaxRequests int    `yaml:"fp_max_requests"` // FingerDir 主动指纹请求上限
 	WordlistDir   string `yaml:"wordlist_dir"`    // 字典目录
 }
 
@@ -196,7 +197,7 @@ func Default() *Config {
 		Store:   StoreConfig{DataDir: "data/state", MaxRecords: 500},
 		Active: ActiveConfig{
 			DirMaxPaths: 300, SubMaxWords: 2000, SubWorkers: 20,
-			ShellMaxPaths: 200, WordlistDir: "data/wordlists",
+			ShellMaxPaths: 200, FPMaxRequests: 30, WordlistDir: "data/wordlists",
 		},
 	}
 }
@@ -299,6 +300,7 @@ func (c *Config) fillDefaults() {
 	fillInt(&c.Active.SubMaxWords, d.Active.SubMaxWords)
 	fillInt(&c.Active.SubWorkers, d.Active.SubWorkers)
 	fillInt(&c.Active.ShellMaxPaths, d.Active.ShellMaxPaths)
+	fillInt(&c.Active.FPMaxRequests, d.Active.FPMaxRequests)
 	if c.Active.WordlistDir == "" {
 		c.Active.WordlistDir = d.Active.WordlistDir
 	}

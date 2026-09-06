@@ -17,6 +17,7 @@ import (
 	"cnb.cool/feng-qiao/sitelens/internal/config"
 	"cnb.cool/feng-qiao/sitelens/internal/htmlx"
 	"cnb.cool/feng-qiao/sitelens/internal/httpx"
+	"cnb.cool/feng-qiao/sitelens/internal/intel"
 )
 
 // PageHit 一条路径探测命中（目录 / WebShell 共用行结构）。
@@ -207,4 +208,104 @@ func SubdomainEnumWith(domain string, cfg config.ActiveConfig,
 // FormatHits 汇总行文本（进度消息用）。
 func FormatHit(h PageHit) string {
 	return fmt.Sprintf("%s -> %d (%dB)", h.Path, h.Status, h.Size)
+}
+
+// FPHit FingerDir 主动指纹命中。
+type FPHit struct {
+	Product string `json:"product"`
+	Path    string `json:"path"`
+	Status  int    `json:"status"`
+}
+
+// ActiveFP FingerDir 主动路径指纹：对精编 spec 路径逐个探测，
+// status/body_contains/body_not_contains/content_type/header_contains
+// 声明的条件全命中才算（对齐 Python _spec_match）。maxRequests 为请求上限。
+func ActiveFP(client *httpx.Client, baseURL string,
+	rows []intel.FingerDirRow, progress func(done, total int, msg string),
+	cancel func() bool, maxRequests int) []FPHit {
+	if maxRequests <= 0 {
+		maxRequests = 30
+	}
+	base := strings.TrimRight(baseURL, "/")
+	total := 0
+	for _, r := range rows {
+		total += len(r.Spec.Paths)
+	}
+	if total > maxRequests {
+		total = maxRequests
+	}
+	done := 0
+	hits := []FPHit{}
+	for _, row := range rows {
+		for _, p := range row.Spec.Paths {
+			if done >= maxRequests {
+				return hits
+			}
+			if cancel != nil && cancel() {
+				return hits
+			}
+			u := base + p
+			r, err := client.GetDirect(u)
+			done++
+			if err == nil && r != nil && specMatch(r, row.Spec) {
+				hits = append(hits, FPHit{Product: row.Product, Path: p, Status: r.Status})
+			}
+			if progress != nil {
+				progress(done, total, row.Product)
+			}
+		}
+	}
+	return hits
+}
+
+// specMatch 全部声明条件均须满足。
+func specMatch(r *httpx.Response, spec intel.FingerDirMatchSpec) bool {
+	if len(spec.Status) > 0 {
+		okStatus := false
+		for _, s := range spec.Status {
+			if r.Status == s {
+				okStatus = true
+				break
+			}
+		}
+		if !okStatus {
+			return false
+		}
+	}
+	low := strings.ToLower(r.Body)
+	for _, kw := range spec.BodyContains {
+		if !strings.Contains(low, strings.ToLower(kw)) {
+			return false
+		}
+	}
+	for _, kw := range spec.BodyNotContains {
+		if strings.Contains(low, strings.ToLower(kw)) {
+			return false
+		}
+	}
+	ct := ""
+	for k, v := range r.Headers {
+		if strings.EqualFold(k, "Content-Type") {
+			ct = v
+			break
+		}
+	}
+	for _, kw := range spec.ContentType {
+		if !strings.Contains(strings.ToLower(ct), strings.ToLower(kw)) {
+			return false
+		}
+	}
+	for _, kw := range spec.HeaderContains {
+		found := false
+		for k, v := range r.Headers {
+			if strings.Contains(strings.ToLower(k+"="+v), strings.ToLower(kw)) {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return false
+		}
+	}
+	return true
 }
