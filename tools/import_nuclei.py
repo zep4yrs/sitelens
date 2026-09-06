@@ -30,6 +30,7 @@ def convert(doc):
     http = doc.get("http")
     if not tid or not name or not isinstance(http, list):
         return None
+    rec_extract = None
     req = http[0]
     if str(req.get("method", "GET")).upper() != "GET":
         return None
@@ -81,15 +82,26 @@ def convert(doc):
                     merged.setdefault(k, []).extend(v)
         groups = [merged]
 
+    extract = doc.get("extract")
+    if isinstance(extract, dict) and extract:
+        keep = extract.get("kic") if isinstance(extract.get("kic"), dict) else None
+        ext = keep if isinstance(keep, dict) else extract
+        kw = [str(v) for v in (ext.get("k") or []) if str(v).strip()]
+        if kw:
+            rec_extract = {"keyword": kw[0].lower()}
+
     tags = info.get("tags") or []
     if isinstance(tags, str):
         tags = tags.split(",")
     tags = [str(t).strip() for t in tags if str(t).strip()]
-    return {
+    rec = {
         "id": str(tid), "name": str(name)[:120], "sev": sev,
         "tags": tags[:6], "method": "GET", "path": suffix,
         "groups": groups,
     }
+    if rec_extract:
+        rec["extract"] = rec_extract
+    return rec
 
 
 def main():
