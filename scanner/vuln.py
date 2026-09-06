@@ -115,16 +115,16 @@ class VulnMatcher:
                 except Exception:
                     return sorted(out, key=lambda v: SEV_ORDER.get(v["severity"], 4))[:limit]
                 for r in rows:
-                        if r["cve"] in seen:
-                            continue
-                        seen.add(r["cve"])
-                        sev = (r["severity"] or "").lower()
-                        out.append({
-                            "tech": tech.name,
-                            "cve": r["cve"], "title": r["title"], "component": r["component"],
-                            "severity": sev,
-                            "severity_zh": SEV_ZH.get(sev, sev),
-                            "src": "ms-bulletin", "ref": "", "type": r["impact"] or "",
-                        })
+                    if r["cve"] in seen:
+                        continue
+                    seen.add(r["cve"])
+                    sev = (r["severity"] or "").lower()
+                    out.append({
+                        "tech": tech.name,
+                        "cve": r["cve"], "title": r["title"], "component": r["component"],
+                        "severity": sev,
+                        "severity_zh": SEV_ZH.get(sev, sev),
+                        "src": "ms-bulletin", "ref": "", "type": r["impact"] or "",
+                    })
         out.sort(key=lambda v: SEV_ORDER.get(v["severity"], 4))
         return out[:limit]
