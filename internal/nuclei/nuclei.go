@@ -62,22 +62,20 @@ func Index(dir, cachePath string) ([]Entry, error) {
 		if serr != nil || st.Size() > 512*1024 {
 			continue
 		}
+		rel, rerr := filepath.Rel(dir, f)
+		if rerr != nil {
+			continue
+		}
+		rel = filepath.ToSlash(rel)
 		head := readHead(f, 4096)
 		e := Entry{
-			Path:  filepath.ToSlash(filepath.Base(f)),
-			Sev:   strings.ToLower(hsev.FindStringSubmatch(head)[1]),
+			Path:  rel,
 			MTime: st.ModTime().Unix(),
 			Size:  st.Size(),
 		}
-		if m := htags.FindStringSubmatch(head); m != nil {
-			for _, t := range strings.Split(m[1], ",") {
-				t = strings.TrimSpace(t)
-				if t != "" {
-					e.Tags = append(e.Tags, strings.ToLower(t))
-				}
-			}
-		}
-		if e.Sev == "" {
+		if m := hsev.FindStringSubmatch(head); m != nil {
+			e.Sev = strings.ToLower(m[1])
+		} else {
 			e.Sev = "info"
 		}
 		entries = append(entries, e)
@@ -136,11 +134,13 @@ func Select(entries []Entry, techTags map[string]bool, n int, cursor *int) []Ent
 		if cursor != nil {
 			start = *cursor % len(rest)
 		}
+		consumed := 0
 		for i := 0; i < len(rest) && len(out) < n; i++ {
 			out = append(out, rest[(start+i)%len(rest)])
+			consumed++
 		}
 		if cursor != nil {
-			*cursor = (start + len(rest)) % len(rest)
+			*cursor = (start + consumed) % len(rest)
 		}
 	}
 	if len(out) > n {
@@ -169,9 +169,10 @@ type tplHTTP struct {
 type tplDoc struct {
 	ID   string `yaml:"id"`
 	Info struct {
-		Name     string   `yaml:"name"`
-		Severity string   `yaml:"severity"`
-		Tags     []string `yaml:"tags"`
+		Name     string `yaml:"name"`
+		Severity string `yaml:"severity"`
+		// Tags 可能是逗号字符串或列表（Nuclei 两种形态都有），转换不消费它，
+		// 不声明字段以免 yaml 类型不匹配导致整模板解析失败
 	} `yaml:"info"`
 	HTTP []tplHTTP `yaml:"http"`
 }
