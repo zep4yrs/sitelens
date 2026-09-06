@@ -49,6 +49,8 @@
   "webshell": false,      // WebShell 路径探测
   "netsec": false,        // 扫描内嵌 TLS / DNS 安全检测
   "dast": false,          // DAST + JS 攻击面提取
+  "passive": false,       // 被动安全检测（Cookie 属性 / CSRF token，零额外请求）
+  "weak_audit": false,    // 基础认证弱口令审计（需 dir_scan 发现 401 路径）
   "checks": "none",       // 验证引擎 none | core | all（all 追加 Nuclei 模板）
   "auth_cookie": ""       // 认证会话 Cookie
 }
