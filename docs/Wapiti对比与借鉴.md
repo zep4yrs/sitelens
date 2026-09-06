@@ -1,5 +1,8 @@
 # SiteLens × Wapiti 同栈对比分析（补充 Nuclei 对比）
 
+> 注：本文成文于 Python 实现阶段，其中的实现细节描述对应 python 分支；
+> 当前主干为 Go 版，功能现状以 docs/Go迁移对照表.md 为准。
+
 > 口径：2026-09-05 基于 wapiti-scanner/wapiti 仓库**实际代码**核对（GitHub API 抓取仓库树 +
 > mod_nikto / mod_wapp / mod_takeover / wappalyzer 源码片段），SiteLens 侧为本地库内实测。
 > Wapiti：GPL-2.0 · Python（httpx/asyncio）· 1,860 stars · 最后推送 2026-08-19（持续维护，支持 Python 3.12–3.14）。

@@ -138,8 +138,8 @@ func TestScanJobFlow(t *testing.T) {
 		t.Fatalf("详情异常: %v", detail)
 	}
 
-	// 导出
-	for _, fmtK := range []string{"json", "csv", "wide"} {
+	// 导出（含 HTML 报告）
+	for _, fmtK := range []string{"json", "csv", "wide", "html"} {
 		resp, err := http.Get(api.URL + "/api/export/1?fmt=" + fmtK)
 		if err != nil {
 			t.Fatal(err)
