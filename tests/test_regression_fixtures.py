@@ -84,8 +84,6 @@ class _Fixed:
         return r
 
 
-if __name__ == "__main__":
-    unittest.main()
 
 
 class TestXxCmsRange(unittest.TestCase):
@@ -146,3 +144,47 @@ class TestXxCmsRange(unittest.TestCase):
                                      t, level="all")
         self.assertEqual([h["check"] for h in hits if h["check"] in (
             "bak-site", "bak-dump", "admin-path", "phpinfo")], [])
+
+class TestXxCmsFixture(unittest.TestCase):
+    """xxCMS 类演示靶场样本：泛 PHP 内容管理站（非 DVWA/pikachu）。
+
+    特征：后台 /admin/、登录入口 /login、phpinfo 探针、
+    站点整包 www.zip、数据库 dump.sql —— 验证这类"备份/探针/后台"
+    泄露在通用 check 引擎下能被独立检出。
+    """
+
+    def _run(self, pages):
+        t = ScanTarget("https://xxcms.example.com", resolve=False)
+        return checks_mod.run_checks(FakeRangeFetcher(pages), t, level="all",
+                                     include_ids=None)
+
+    def test_xxcms_style_hits(self):
+        """xxCMS 演示样本：五类泄露检出"""
+        pages = {
+            "/admin/": (200, "<html><title>xxCMS 后台管理</title></html>"),
+            "/login": (200, "<form action='/do-login'><input name='u'></form>"),
+            "/phpinfo.php": (200, "phpinfo() PHP Version 7.4.33"),
+            "/www.zip": (200, "PK\x03\x04源码整包站点备份"),
+            "/dump.sql": (200, "CREATE TABLE xxcms_users;"),
+        }
+        hits = {h["check"] for h in self._run(pages)}
+        self.assertIn("admin-path", hits)     # 后台入口
+        self.assertIn("login-root", hits)     # 登录入口
+        self.assertIn("phpinfo", hits)        # phpinfo 探针
+        self.assertIn("bak-site", hits)       # www.zip 站点整包
+        self.assertIn("bak-dump", hits)       # dump.sql
+
+    def test_xxcms_no_backup_no_false_positive(self):
+        """干净 xxCMS 样本：不误报备份/探针/后台泄露"""
+        pages = {
+            "/": (200, "<html><title>xxCMS 官网</title><body>normal</body></html>"),
+            "/index.php": (200, "<html><title>首页</title></html>"),
+            "/article.php?id=1": (200, "<html><article>hello</article></html>"),
+        }
+        hits = {h["check"] for h in self._run(pages)}
+        for leak in ("bak-site", "bak-dump", "phpinfo", "bak-config",
+                     "git-leak", "env-leak"):
+            self.assertNotIn(leak, hits, "%s 不应在干净样本上误报" % leak)
+
+if __name__ == "__main__":
+    unittest.main()
