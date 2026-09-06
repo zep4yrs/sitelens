@@ -155,3 +155,20 @@ func TestJobs(t *testing.T) {
 		t.Fatal("不存在作业应返回 nil")
 	}
 }
+
+func TestJobManagerEviction(t *testing.T) {
+	m := NewJobManagerWithCap(3)
+	for i := 0; i < 5; i++ {
+		m.Create(fmt.Sprintf("j%d", i), "scan", nil, 1)
+	}
+	for _, gone := range []string{"j0", "j1"} {
+		if m.Get(gone) != nil {
+			t.Fatalf("最旧作业 %s 应被淘汰", gone)
+		}
+	}
+	for _, keep := range []string{"j2", "j3", "j4"} {
+		if m.Get(keep) == nil {
+			t.Fatalf("作业 %s 应保留", keep)
+		}
+	}
+}

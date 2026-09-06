@@ -268,13 +268,22 @@ type Job struct {
 
 // JobManager 作业注册表。
 type JobManager struct {
-	mu   sync.RWMutex
-	jobs map[string]*Job
+	mu    sync.RWMutex
+	jobs  map[string]*Job
+	order []string // 插入顺序（用于淘汰最旧作业）
+	max   int      // 保留上限（0 = 不限；长驻服务防内存缓慢增长）
 }
 
-// NewJobManager 创建作业管理器。
-func NewJobManager() *JobManager {
-	return &JobManager{jobs: map[string]*Job{}}
+// NewJobManager 创建作业管理器（不限量）。
+func NewJobManager() *JobManager { return &JobManager{jobs: map[string]*Job{}} }
+
+// NewJobManagerWithCap 创建带容量上限的作业管理器：超出后淘汰最旧作业。
+func NewJobManagerWithCap(maxJobs int) *JobManager {
+	m := &JobManager{jobs: map[string]*Job{}}
+	if maxJobs > 0 {
+		m.max = maxJobs
+	}
+	return m
 }
 
 // Create 注册新作业。
@@ -283,6 +292,14 @@ func (m *JobManager) Create(id, kind string, payload map[string]any, total int) 
 	defer m.mu.Unlock()
 	m.jobs[id] = &Job{ID: id, Kind: kind, Status: "pending",
 		Payload: payload, Total: total}
+	m.order = append(m.order, id)
+	if m.max > 0 {
+		for len(m.order) > m.max {
+			oldest := m.order[0]
+			m.order = m.order[1:]
+			delete(m.jobs, oldest)
+		}
+	}
 }
 
 // Update 非空字段更新（对齐 Python JobStore.update 的 COALESCE 语义）。
