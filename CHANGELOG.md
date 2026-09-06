@@ -10,7 +10,7 @@ Go 全量迁移完成：单二进制、零外部依赖（弃 PostgreSQL），Pyt
 - **验证型 check 扩展**：`Match.StatusAny/ContainsAny`（Nuclei 组语义，
   对 41 条内置规则向后兼容）
 - **Nuclei 子集装载**：模板库索引（头部快扫 + 缓存）+ 两路调度
-  （tag 硬匹配置顶按严重度排序、轮转游标长期全覆盖）；漏斗对齐
+  （tag 硬匹配置顶、词面相关度排序、轮转覆盖三路调度）；漏斗对齐
   import_nuclei.py（单 GET/{{BaseURL}}/status|word，interactsh 跳过）
 - **主动模块**：目录探测（软404 基线 + 403 绕过重试）、子域名枚举
   （DNS 并发、解析器可注入）、WebShell 探测、FingerDir 主动指纹
@@ -57,5 +57,5 @@ Go 全量迁移完成：单二进制、零外部依赖（弃 PostgreSQL），Pyt
 - 引擎取消：作业取消标志在阶段边界与 check 循环轮询生效
 
 ### 已知差距（详见 docs/Go迁移对照表.md）
-验证码 OCR（ddddocr）、Python 污点分析、语义向量路由（轮转游标近似）、
+验证码 OCR（ddddocr）、Python 污点分析、语义向量路由（词面重合度近似）、
 Nuclei 头匹配/dsl 匹配器。

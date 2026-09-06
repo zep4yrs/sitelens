@@ -27,7 +27,7 @@
 | WebShell 探测 | scanner/modules.py | internal/modules | 200 且非空正文判定 |
 | FingerDir 主动指纹 | scanner/modules.py | internal/modules | 38 条精编 spec 全条件判定（请求上限可配） |
 | 端口服务识别 | scanner/modules.py | internal/modules | 11966 条 banner 指纹；TLS 证书自实现校验（不跳过校验） |
-| Nuclei 模板子集 | tools/import_nuclei.py + scanner/checks.py | internal/nuclei | YAML 直接装载（word/status/头匹配；dsl 未迁移），两路调度，语义向量路由以轮转游标近似 |
+| Nuclei 模板子集 | tools/import_nuclei.py + scanner/checks.py | internal/nuclei | YAML 直接装载（word/status/头匹配；dsl 未迁移），三路调度：tag 置顶 + 词面相关度排序（向量语义的轻量近似）+ 轮转覆盖 |
 | 情报检索（trgm） | scanner/db.py | internal/intel.Search | product/name/CVE 相关度排序近似 |
 | JS 攻击面（jsmap） | scanner/jsmap.py | internal/jsmap | SourceMap 泄露 + API 端点枚举 |
 | 基础认证弱口令 | scanner/modules.py | internal/loginbrute | 401 路径 Basic 字典尝试 |
