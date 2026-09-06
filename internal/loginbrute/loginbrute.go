@@ -14,6 +14,7 @@ import (
 	"net/url"
 	"os"
 	"strings"
+	"time"
 
 	"cnb.cool/feng-qiao/sitelens/internal/htmlx"
 	"cnb.cool/feng-qiao/sitelens/internal/httpx"
@@ -153,8 +154,9 @@ type Hit struct {
 
 // BasicAuthBrute 对一组 401 路径做 HTTP Basic 弱口令尝试（命中即停/路径）。
 // 凭据来自外部字典文件（调用方 LoadList），代码不内嵌任何可用凭据组合。
+// intervalMS 为相邻尝试的间隔（对目标限速，0 = 不间隔）。
 func BasicAuthBrute(client *httpx.Client, urls []string, users, passwords []string,
-	maxTries int, onProgress func(done, total int, msg string)) []Hit {
+	maxTries int, intervalMS int, onProgress func(done, total int, msg string)) []Hit {
 	if onProgress == nil {
 		onProgress = func(int, int, string) {}
 	}
@@ -180,7 +182,8 @@ func BasicAuthBrute(client *httpx.Client, urls []string, users, passwords []stri
 	done := 0
 	var hits []Hit
 	for _, u := range urls {
-		for _, c := range combos {
+		for ci, c := range combos {
+			sleepInterval(intervalMS, ci)
 			token := base64.StdEncoding.EncodeToString([]byte(c.u + ":" + c.pw))
 			r, err := client.GetFollowWith(u, map[string]string{"Authorization": "Basic " + token})
 			done++
@@ -194,6 +197,13 @@ func BasicAuthBrute(client *httpx.Client, urls []string, users, passwords []stri
 	return hits
 }
 
+// sleepInterval 相邻尝试间隔（首个尝试前不休眠；0 = 不间隔）。
+func sleepInterval(intervalMS, attemptIndex int) {
+	if intervalMS > 0 && attemptIndex > 0 {
+		time.Sleep(time.Duration(intervalMS) * time.Millisecond)
+	}
+}
+
 // Poster 表单提交接口（由 httpx 适配）。
 type Poster interface {
 	PostForm(rawURL string, fields map[string]string) (status int, body string, err error)
@@ -201,9 +211,10 @@ type Poster interface {
 }
 
 // Brute 执行爆破：返回命中列表（命中一组即停，控制请求量）。
-// maxTries 为总尝试硬上限；captchaType 非空非 none 直接报错（Go 版未含 OCR）。
+// maxTries 为总尝试硬上限；intervalMS 为相邻尝试间隔（0 = 不间隔）；
+// captchaType 非空非 none 直接报错（Go 版未含 OCR）。
 func Brute(p Poster, pageURL string, users, passwords []string, maxTries int,
-	captchaType string, onProgress func(done, total int, msg string)) ([]Hit, error) {
+	intervalMS int, captchaType string, onProgress func(done, total int, msg string)) ([]Hit, error) {
 	if onProgress == nil {
 		onProgress = func(int, int, string) {}
 	}
@@ -247,6 +258,7 @@ func Brute(p Poster, pageURL string, users, passwords []string, maxTries int,
 
 	var hits []Hit
 	for i, c := range combos {
+		sleepInterval(intervalMS, i)
 		fields := map[string]string{}
 		for k, v := range form.Hidden {
 			fields[k] = v

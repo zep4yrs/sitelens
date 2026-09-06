@@ -303,7 +303,7 @@ func (e *Engine) Scan(rawURL string, opts Options, onProgress progress, cancel f
 				pwds := loginbrute.LoadList(
 					wordlistPath(e.cfg, "weak_passwords.txt"), e.cfg.LoginBrute.MaxPasswords)
 				for _, h := range loginbrute.BasicAuthBrute(client, urls401, users, pwds,
-					e.cfg.LoginBrute.MaxTries, nil) {
+					e.cfg.LoginBrute.MaxTries, e.cfg.LoginBrute.IntervalMS, nil) {
 					res.Verified = append(res.Verified, verifiedMap(map[string]any{
 						"check": "weak-basic-auth", "title": "基础认证弱口令",
 						"severity": "high", "url": h.URL,
