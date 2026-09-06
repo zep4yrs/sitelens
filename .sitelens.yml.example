@@ -1,0 +1,34 @@
+# SiteLens 配置文件（.sitelens.yml）
+# 复制为 .sitelens.yml 或放项目根目录即可生效
+
+scan:
+  rate_interval_ms: 400       # 请求最小间隔（毫秒）
+  timeout_sec: 15             # 请求超时（秒）
+  max_hops: 6                 # 重定向最大跳数
+  # user_agent: "MyScanner/1.0"  # 自定义 UA（默认 SiteLens/x.y）
+  max_params: 15              # DAST 参数探测上限
+
+checks:
+  level: "all"                # core（核心集）| all（核心+扩展）
+  plugin_dir: "data/plugins"  # 用户自定义 check 目录
+  # disabled_ids:             # 禁用的 check id 列表
+  #   - wp-xmlrpc
+
+web:
+  listen: "127.0.0.1:5000"   # Web 工作台监听地址
+
+intel:
+  dump_path: "data/intel_dump.json.gz"
+  ranges_path: "data/affected_ranges.json"
+
+dast:
+  enabled: true
+  max_params: 15
+
+modules:                      # 可选模块（默认全关）
+  subdomain: false            # 子域名枚举
+  dir_scan: false             # 目录探测
+  webshell: false             # WebShell 探测
+  service_probe: false        # 端口服务识别
+  netsec: false               # TLS/DNS 安全
+  browser_ua: false           # 浏览器 UA
