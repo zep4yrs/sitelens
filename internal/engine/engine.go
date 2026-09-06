@@ -3,6 +3,7 @@ package engine
 import (
 	"fmt"
 	"net"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -14,6 +15,7 @@ import (
 	"cnb.cool/feng-qiao/sitelens/internal/httpx"
 	"cnb.cool/feng-qiao/sitelens/internal/intel"
 	"cnb.cool/feng-qiao/sitelens/internal/jsmap"
+	"cnb.cool/feng-qiao/sitelens/internal/loginbrute"
 	"cnb.cool/feng-qiao/sitelens/internal/modules"
 	"cnb.cool/feng-qiao/sitelens/internal/netsec"
 	"cnb.cool/feng-qiao/sitelens/internal/passive"
@@ -234,7 +236,8 @@ func (e *Engine) Scan(rawURL string, opts Options, onProgress progress, cancel f
 	}
 
 	// 9) 主动模块（默认关，仅限授权目标）
-	if opts.DirScan || opts.Subdomain || opts.Webshell {
+	var dirHits []modules.PageHit
+	if opts.DirScan || opts.Subdomain || opts.Webshell || opts.WeakAudit {
 		ac := e.cfg.Active
 		if opts.Subdomain {
 			onProgress(86, "子域名枚举…")
@@ -243,11 +246,41 @@ func (e *Engine) Scan(rawURL string, opts Options, onProgress progress, cancel f
 		}
 		if opts.DirScan {
 			onProgress(87, "目录探测…")
-			res.Extras["dir"] = modules.DirScan(client, baseURL, ac, nil, cancelled)
+			dirHits = modules.DirScan(client, baseURL, ac, nil, cancelled)
+			res.Extras["dir"] = dirHits
 		}
 		if opts.Webshell {
 			onProgress(88, "WebShell 探测…")
 			res.Extras["webshell"] = modules.WebshellProbe(client, baseURL, ac, nil, cancelled)
+		}
+		if opts.WeakAudit {
+			// 基础认证弱口令：目录探测发现的 401 路径（表单弱口令走登录爆破端点）
+			var urls401 []string
+			for _, h := range dirHits {
+				if h.Status == 401 {
+					urls401 = append(urls401, h.URL)
+					if len(urls401) >= 3 {
+						break
+					}
+				}
+			}
+			if len(urls401) > 0 {
+				onProgress(89, "基础认证弱口令审计…")
+				users := loginbrute.LoadList(
+					wordlistPath(e.cfg, "weak_users.txt"), e.cfg.LoginBrute.MaxUsers)
+				pwds := loginbrute.LoadList(
+					wordlistPath(e.cfg, "weak_passwords.txt"), e.cfg.LoginBrute.MaxPasswords)
+				for _, h := range loginbrute.BasicAuthBrute(client, urls401, users, pwds,
+					e.cfg.LoginBrute.MaxTries, nil) {
+					res.Verified = append(res.Verified, verifiedMap(map[string]any{
+						"check": "weak-basic-auth", "title": "基础认证弱口令",
+						"severity": "high", "url": h.URL,
+						"evidence": "用户 " + h.User + " 弱口令命中",
+						"advice":   "改用强口令并禁用 HTTP Basic；启用登录失败限制",
+						"src":      "weak", "type": h.Type,
+					}))
+				}
+			}
 		}
 	}
 
@@ -325,6 +358,11 @@ func lookupIP(host string) string {
 }
 
 func normalizeKey(u string) string { return strings.TrimSuffix(u, "/") }
+
+// wordlistPath 字典文件路径（wordlist_dir 下）。
+func wordlistPath(cfg *config.Config, name string) string {
+	return filepath.Join(cfg.Active.WordlistDir, name)
+}
 
 // dastFetcher 把 httpx 客户端适配为 dast.Fetcher。
 type dastFetcher struct{ c *httpx.Client }
