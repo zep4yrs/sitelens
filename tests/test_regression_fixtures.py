@@ -86,3 +86,63 @@ class _Fixed:
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestXxCmsRange(unittest.TestCase):
+    """xxCMS 类演示靶场：PHP CMS 常见暴露面回归断言。
+
+    样本特征：/admin/ 后台、登录页、phpinfo 探针、www.zip 站点整包、
+    dump.sql 数据库备份——五类应全部检出；干净样本不误报。
+    """
+
+    def _run(self, pages, level="all"):
+        t = ScanTarget("https://xxcms.example.com", resolve=False)
+        return checks_mod.run_checks(FakeRangeFetcher(pages), t, level=level)
+
+    def test_xxcms_style_hits(self):
+        """xxCMS 演示站：后台 / admin.php + 五类敏感项全检出"""
+        pages = {
+            "/admin/": (200, "<title>xxCMS 管理后台</title>"),
+            "/admin.php": (200, "<title>xxCMS</title>"),
+            "/login.php": (200, "<form>user_login password</form>"),
+            "/phpinfo.php": (200, "phpinfo() PHP Version 7.4.30"),
+            "/www.zip": (200, "PK\x03\x04"),
+            "/dump.sql": (200, "CREATE TABLE xxcms_user"),
+        }
+        hits = {h["check"] for h in self._run(pages, level="all")}
+        self.assertIn("admin-path", hits)      # /admin/ 后台
+        self.assertIn("phpinfo", hits)         # phpinfo 探针
+        self.assertIn("bak-site", hits)        # www.zip 站点整包
+        self.assertIn("bak-dump", hits)        # dump.sql 备份
+        # 不存在则不误报
+        self.assertNotIn("git-leak", hits)
+        self.assertNotIn("swagger", hits)
+
+    def test_xxcms_no_backup_no_false_positive(self):
+        """干净样本：无备份/phpinfo 时不应误报"""
+        pages = {
+            "/": (200, "<html>xxCMS home</html>"),
+            "/index.php": (200, "<html>xxCMS</html>"),
+        }
+        hits = {h["check"] for h in self._run(pages, level="all")}
+        self.assertNotIn("bak-site", hits)
+        self.assertNotIn("bak-dump", hits)
+        self.assertNotIn("phpinfo", hits)
+        self.assertNotIn("git-leak", hits)
+
+    def test_xxcms_clean_does_not_flag_backup_when_absent(self):
+        """xxCMS 干净样本：soft404 基线过滤后 admin 等正常目录不误报备份"""
+        notfound = "404 not found page"
+        pages = {
+            "/admin/": (200, notfound),
+            "/www.zip": (200, notfound),
+            "/dump.sql": (200, notfound),
+            "/phpinfo.php": (200, notfound),
+        }
+        f = FakeRangeFetcher(pages)
+        f.baseline = {"status": 200, "size": len(notfound), "body": notfound}
+        t = ScanTarget("https://xxcms.example.com", resolve=False)
+        hits = checks_mod.run_checks(_Fixed(f, baseline=(200, notfound)),
+                                     t, level="all")
+        self.assertEqual([h["check"] for h in hits if h["check"] in (
+            "bak-site", "bak-dump", "admin-path", "phpinfo")], [])

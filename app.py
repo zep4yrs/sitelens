@@ -207,8 +207,8 @@ def api_audit():
                 ex.mkdir(exist_ok=True)
                 ex_base = ex.resolve()
                 with _zipfile.ZipFile(dest) as z:
-                    for m in z.namelist():
-                        if not (ex / m).resolve().is_relative_to(ex_base):
+                    for m in z.infolist():
+                        if not (ex / m.filename).resolve().is_relative_to(ex_base):
                             return jsonify({"error": "zip 内路径非法"}), 400
                         extracted_total += m.file_size
                         if extracted_total > MAX_EXTRACTED:
@@ -419,7 +419,7 @@ def _safe_limit(default=50, cap=200):
     """limit 参数解析：非数字/越界回退默认值，避免 500（不抛 400，尽量兜底可用）"""
     raw = request.args.get("limit", "")
     try:
-        return min(int(raw), cap) if raw else default
+        return max(1, min(int(raw), cap)) if raw else default
     except ValueError:
         return default
 
