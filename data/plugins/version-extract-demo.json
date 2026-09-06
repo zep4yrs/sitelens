@@ -1,0 +1,19 @@
+[
+  {
+    "id": "wp-version-leak-readme",
+    "lv": 1,
+    "p": "/readme.html",
+    "m": {
+      "s": 200,
+      "c": [
+        "WordPress"
+      ],
+      "extract": {
+        "keyword": "version"
+      }
+    },
+    "title": "WordPress 版本泄露（readme.html 版本抽取）",
+    "sev": "low",
+    "advice": "删除 readme.html 或关闭版本回显"
+  }
+]

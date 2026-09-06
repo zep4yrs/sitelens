@@ -227,7 +227,7 @@ var LEVELS = {
   deep:     { deep: true, active_fp: true, service_probe: true, checks: "core", dast: true },
   full:     { deep: true, active_fp: true, dir_scan: true, dir_bypass: true,
               subdomain: true, webshell: true, service_probe: true,
-              checks: "all", dast: true, netsec: true }
+              checks: "all", dast: true, netsec: true, passive: true }
 };
 var EST = { base: 5, deep: 8, active_fp: 12, dir_scan: 180, dir_bypass: 40,
             subdomain: 50, service_probe: 15, webshell: 120 };
@@ -499,7 +499,8 @@ function renderResult(r, scanId) {
   var ex = r.extras || {};
   var titles = { active_fp: "主动路径指纹", dir_scan: "目录探测", subdomain: "子域名",
                  service: "端口服务", netsec: "TLS / DNS 安全", weak_audit: "登录爆破结果",
-                 webshell: "WebShell 路径探测", jsmap: "JS 攻击面", dast: "DAST 检测" };
+                 webshell: "WebShell 路径探测", jsmap: "JS 攻击面", dast: "DAST 检测",
+                 passive: "被动安全检测" };
   Object.keys(ex).forEach(function (key) {
     var items = ex[key] || [];
     html += '<div class="sec-title">' + esc(titles[key] || key) +
