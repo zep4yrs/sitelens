@@ -27,6 +27,8 @@
 | WebShell 探测 | scanner/modules.py | internal/modules | 200 且非空正文判定 |
 | FingerDir 主动指纹 | scanner/modules.py | internal/modules | 38 条精编 spec 全条件判定（请求上限可配） |
 | 端口服务识别 | scanner/modules.py | internal/modules | 11966 条 banner 指纹；TLS 证书自实现校验（不跳过校验） |
+| Nuclei 模板子集 | tools/import_nuclei.py + scanner/checks.py | internal/nuclei | YAML 直接装载（漏斗对齐原版，抽样通过率约 10% vs 原版 23%，头匹配/dsl 未迁移）；两路调度，语义向量路由以轮转游标近似 |
+| 情报检索（trgm） | scanner/db.py | internal/intel.Search | product/name/CVE 相关度排序近似 |
 | JS 攻击面（jsmap） | scanner/jsmap.py | internal/jsmap | SourceMap 泄露 + API 端点枚举 |
 | 基础认证弱口令 | scanner/modules.py | internal/loginbrute | 401 路径 Basic 字典尝试 |
 | 情报自动更新（KEV） | scanner/intel_update.py | internal/intel + server 守护 | CISA 公开源，缓存 data/state/kev_extra.json，间隔可配 |
@@ -46,7 +48,6 @@
 | --- | --- | --- |
 | ddddocr 验证码识别（digits/calc/click） | 未迁移：要求验证码的表单明确报错拒绝，不静默瞎打 | Go 侧接 onnxruntime 或保留 Python 分支专责此项 |
 | 源码审计污点分析（TAINT 数据流） | 未迁移：16 条规则静态匹配已可用 | Go 实现轻量 AST 污点（py 文本级先行） |
-| Nuclei 模板子集（2613 条 MoE 路由） | 未迁移：dump 中 nuclei JSON 未接入 Go check 引擎 | 复用 checks 插件 JSON 通道直接装载 |
 | PostgreSQL 知识库/检索（trgm） | 设计性替代：Go 用内存索引 + 文件存储 | 不回迁；trgm 检索以相关度排序近似 |
 | 敏感信息审计（weak_audit 表单部分） | 部分迁移：Basic 认证已入引擎；表单弱口令由独立登录爆破端点承载（宽容解析优于原版常见字段枚举） | 保持现状 |
 ## 迁移中发现并修复的原版问题
