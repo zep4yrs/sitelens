@@ -46,7 +46,7 @@ loginbrute:                  # 仅限授权目标；前端需勾选授权确认
   max_users: 8
   max_passwords: 50
   interval_ms: 150
-  max_concurrent: 2
+  # max_concurrent 为保留键：爆破刻意顺序执行（降低触发账户锁定风险）
 
 audit:
   max_archive_mb: 20

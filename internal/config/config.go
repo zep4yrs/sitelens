@@ -103,11 +103,13 @@ type NetsecConfig struct {
 
 // LoginBruteConfig 登录爆破（仅限授权目标）。
 type LoginBruteConfig struct {
-	MaxTries      int `yaml:"max_tries"`      // 总尝试次数上限
-	MaxUsers      int `yaml:"max_users"`      // 用户名字典截取上限
-	MaxPasswords  int `yaml:"max_passwords"`  // 密码字典截取上限
-	IntervalMS    int `yaml:"interval_ms"`    // 相邻尝试间隔（毫秒）
-	MaxConcurrent int `yaml:"max_concurrent"` // 并发尝试数
+	MaxTries     int `yaml:"max_tries"`     // 总尝试次数上限
+	MaxUsers     int `yaml:"max_users"`     // 用户名字典截取上限
+	MaxPasswords int `yaml:"max_passwords"` // 密码字典截取上限
+	IntervalMS   int `yaml:"interval_ms"`   // 相邻尝试间隔（毫秒）
+	// MaxConcurrent 为保留键：爆破刻意顺序执行（降低触发账户锁定的
+	// 风险），保留键位以兼容历史配置文件，当前版本不消费。
+	MaxConcurrent int `yaml:"max_concurrent"`
 }
 
 // AuditConfig 源码审计。
