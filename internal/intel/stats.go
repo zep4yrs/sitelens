@@ -65,7 +65,7 @@ func (k *KB) Search(q string, limit int) []SearchResult {
 		return []SearchResult{}
 	}
 	type scored struct {
-		r    SearchResult
+		r     SearchResult
 		score int
 	}
 	var hits []scored

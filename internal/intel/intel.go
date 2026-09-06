@@ -64,24 +64,24 @@ type TechHit struct {
 
 // Finding 一条情报关联结论。
 type Finding struct {
-	ID         int64  `json:"id"`
-	Tech       string `json:"tech"`
-	Version    string `json:"version"`
-	Src        string `json:"src"`
-	Name       string `json:"name"`
-	Title      string `json:"title"`
-	Product    string `json:"product"`
-	CVE        string `json:"cve"`
-	Type       string `json:"type"`
+	ID         int64   `json:"id"`
+	Tech       string  `json:"tech"`
+	Version    string  `json:"version"`
+	Src        string  `json:"src"`
+	Name       string  `json:"name"`
+	Title      string  `json:"title"`
+	Product    string  `json:"product"`
+	CVE        string  `json:"cve"`
+	Type       string  `json:"type"`
 	Severity   string  `json:"severity"`
 	SeverityZh string  `json:"severity_zh"`
 	CVSSScore  float64 `json:"cvss_score"`
 	CVSSSev    string  `json:"cvss_sev"`
-	Ref        string `json:"ref"`
-	Desc       string `json:"desc"`
-	Verdict    string `json:"verdict"` // confirmed | possible
-	Affected   string `json:"affected"`
-	KEV        bool   `json:"kev"`
+	Ref        string  `json:"ref"`
+	Desc       string  `json:"desc"`
+	Verdict    string  `json:"verdict"` // confirmed | possible
+	Affected   string  `json:"affected"`
+	KEV        bool    `json:"kev"`
 }
 
 var severityOrder = map[string]int{
@@ -107,11 +107,12 @@ func severityZhOf(sev string) string {
 
 // KB 漏洞情报知识库（内存索引，扫描主路径）。
 type KB struct {
-	vulns  []Entry
-	cveMs  []CVEMsRow
-	index  map[string][]*Entry
-	kev    map[string]bool
-	ranges map[string][]CuratedRange
+	vulns      []Entry
+	cveMs      []CVEMsRow
+	index      map[string][]*Entry
+	kev        map[string]bool
+	ranges     map[string][]CuratedRange
+	tscanCount int
 }
 
 // Load 从知识库数据包与精选区间文件加载知识库。
@@ -129,20 +130,22 @@ func Load(dumpGz, rangesJSON string) (*KB, error) {
 		Tables struct {
 			VulnKB []Entry `json:"vuln_kb"`
 			CVEMs  []struct {
-				CVE      string `json:"cve"`
+				CVE       string `json:"cve"`
 				Component string `json:"component"`
-				Title    string `json:"title"`
-				Severity string `json:"severity"`
-				Impact   string `json:"impact"`
-				Date     string `json:"date"`
+				Title     string `json:"title"`
+				Severity  string `json:"severity"`
+				Impact    string `json:"impact"`
+				Date      string `json:"date"`
 			} `json:"cve_ms"`
-			KEV []KevEntry `json:"kev"`
+			KEV   []KevEntry `json:"kev"`
+			Tscan []struct{} `json:"tscan_fingerprints"` // 仅取条数供统计
 		} `json:"tables"`
 	}
 	if err := json.NewDecoder(gz).Decode(&box); err != nil {
 		return nil, err
 	}
-	kb := &KB{vulns: box.Tables.VulnKB, kev: map[string]bool{}}
+	kb := &KB{vulns: box.Tables.VulnKB, kev: map[string]bool{},
+		tscanCount: len(box.Tables.Tscan)}
 	for _, k := range box.Tables.KEV {
 		kb.kev[strings.ToUpper(k.CVE)] = true
 	}
