@@ -84,7 +84,7 @@ func RunList(client *httpx.Client, targetURL string, list []Check,
 			continue
 		}
 		body := stripEcho(resp.Body, u, chk.Path)
-		if !matchBody(chk.Match, resp.Status, body) {
+		if !matchBody(chk.Match, resp.Status, body, resp.Headers) {
 			onProgress(i+1, total, chk.Path)
 			continue
 		}
@@ -102,7 +102,7 @@ func RunList(client *httpx.Client, targetURL string, list []Check,
 			continue
 		}
 		body2 := stripEcho(resp2.Body, u, chk.Path)
-		if !matchBody(chk.Match, resp2.Status, body2) {
+		if !matchBody(chk.Match, resp2.Status, body2, resp2.Headers) {
 			onProgress(i+1, total, chk.Path)
 			continue
 		}
@@ -117,11 +117,11 @@ func RunList(client *httpx.Client, targetURL string, list []Check,
 	return hits
 }
 
-// matchBody 判定：状态码（等值或任一列表）+ 正文包含。
+// matchBody 判定：状态码（等值或任一列表）+ 正文包含 + 响应头包含。
 // Contains 为全包含（AND），ContainsAny 为任一包含（OR，Nuclei 组转换），
-// 两者可并存（都须满足各自语义）。
+// HeaderContains 对「名=值」合并区全包含，三者可并存（都须满足各自语义）。
 // 修复：此前实际响应状态码从未参与比较，纯状态码 check 会对任何响应命中。
-func matchBody(m Match, status int, body string) bool {
+func matchBody(m Match, status int, body string, headers map[string]string) bool {
 	if m.Status != 0 && status != m.Status {
 		return false
 	}
@@ -137,23 +137,46 @@ func matchBody(m Match, status int, body string) bool {
 			return false
 		}
 	}
-	if len(m.Contains) == 0 && len(m.ContainsAny) == 0 {
-		return true
-	}
-	for _, kw := range m.Contains {
-		if !strings.Contains(body, kw) {
-			return false
+	if len(m.Contains) > 0 {
+		for _, kw := range m.Contains {
+			if !strings.Contains(body, kw) {
+				return false
+			}
 		}
 	}
 	if len(m.ContainsAny) > 0 {
+		anyHit := false
 		for _, kw := range m.ContainsAny {
 			if strings.Contains(body, kw) {
-				return true
+				anyHit = true
+				break
 			}
 		}
-		return false
+		if !anyHit {
+			return false
+		}
+	}
+	if len(m.HeaderContains) > 0 {
+		joined := strings.ToLower(joinHeaders(headers))
+		for _, kw := range m.HeaderContains {
+			if !strings.Contains(joined, strings.ToLower(kw)) {
+				return false
+			}
+		}
 	}
 	return true
+}
+
+// joinHeaders 把响应头合并为「名: 值」多行串供头匹配。
+func joinHeaders(headers map[string]string) string {
+	var sb strings.Builder
+	for k, v := range headers {
+		sb.WriteString(k)
+		sb.WriteString(": ")
+		sb.WriteString(v)
+		sb.WriteByte('\n')
+	}
+	return sb.String()
 }
 
 // stripEcho 剔除响应中回显的请求 URL 与路径（防自指误报）。
