@@ -690,8 +690,10 @@ func (s *Server) hLoginBrute(w http.ResponseWriter, r *http.Request) {
 	}
 	go func() {
 		f := &httpPoster{c: s.eng.ClientFor(scanOptions(body))}
-		users := loginbrute.LoadList("data/wordlists/weak_users.txt", s.cfg.LoginBrute.MaxUsers)
-		pwds := loginbrute.LoadList("data/wordlists/weak_passwords.txt", s.cfg.LoginBrute.MaxPasswords)
+		users := loginbrute.LoadList(
+			filepath.Join(s.cfg.Active.WordlistDir, "weak_users.txt"), s.cfg.LoginBrute.MaxUsers)
+		pwds := loginbrute.LoadList(
+			filepath.Join(s.cfg.Active.WordlistDir, "weak_passwords.txt"), s.cfg.LoginBrute.MaxPasswords)
 		s.jobs.Update(jobID, func(j *store.Job) { j.Status = "running" })
 		hits, err := loginbrute.Brute(f, urlStr, users, pwds,
 			s.cfg.LoginBrute.MaxTries, s.cfg.LoginBrute.IntervalMS, captchaType,
