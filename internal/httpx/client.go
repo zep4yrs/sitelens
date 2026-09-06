@@ -121,6 +121,11 @@ func (c *Client) newRequest(method, rawURL string) (*http.Request, error) {
 // GetFollow 手动跟随重定向的 GET：每一跳都过 target.Validate SSRF 校验
 // （协议白名单 + DNS 解析 + 私网拒绝）。返回最终到达的响应。
 func (c *Client) GetFollow(rawURL string) (*Response, error) {
+	return c.GetFollowWith(rawURL, nil)
+}
+
+// GetFollowWith 同 GetFollow，附加额外请求头（403 绕过重试等场景）。
+func (c *Client) GetFollowWith(rawURL string, extra map[string]string) (*Response, error) {
 	c.wait()
 	cur := rawURL
 	var resp *http.Response
@@ -129,6 +134,9 @@ func (c *Client) GetFollow(rawURL string) (*Response, error) {
 		req, rerr := c.newRequest(http.MethodGet, cur)
 		if rerr != nil {
 			return nil, &target.Error{Msg: "URL 构造失败"}
+		}
+		for k, v := range extra {
+			req.Header.Set(k, v)
 		}
 		resp, err = c.http.Do(req)
 		if err != nil {
