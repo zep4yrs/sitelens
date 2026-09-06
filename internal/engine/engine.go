@@ -13,6 +13,7 @@ import (
 	"cnb.cool/feng-qiao/sitelens/internal/htmlx"
 	"cnb.cool/feng-qiao/sitelens/internal/httpx"
 	"cnb.cool/feng-qiao/sitelens/internal/intel"
+	"cnb.cool/feng-qiao/sitelens/internal/jsmap"
 	"cnb.cool/feng-qiao/sitelens/internal/modules"
 	"cnb.cool/feng-qiao/sitelens/internal/netsec"
 	"cnb.cool/feng-qiao/sitelens/internal/passive"
@@ -200,8 +201,21 @@ func (e *Engine) Scan(rawURL string, opts Options, onProgress progress, cancel f
 		}
 	}
 
-	// 8) DAST 参数级探测
+	// 8) DAST：JS 攻击面提取 + 参数级探测
 	if opts.DAST {
+		onProgress(83, "JS 攻击面提取…")
+		jsFind, jsEps := jsmap.Run(jsmap.NewFetcher(client), baseURL, doc, 4)
+		for _, f := range jsFind {
+			res.Verified = append(res.Verified, verifiedMap(map[string]any{
+				"check": f.Check, "title": f.Title, "severity": f.Severity,
+				"url": f.URL, "evidence": f.Evidence, "advice": f.Advice,
+				"src": "js",
+			}))
+		}
+		if len(jsEps) > 0 {
+			res.Extras["js"] = jsEps
+		}
+
 		onProgress(85, "参数级 DAST 探测…")
 		r := dast.New(dastFetcher{client}, dast.Options{
 			MaxParams:        e.cfg.DAST.MaxParams,
