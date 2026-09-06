@@ -9,12 +9,14 @@
 package loginbrute
 
 import (
+	"encoding/base64"
 	"fmt"
 	"net/url"
 	"os"
 	"strings"
 
 	"cnb.cool/feng-qiao/sitelens/internal/htmlx"
+	"cnb.cool/feng-qiao/sitelens/internal/httpx"
 )
 
 var userHints = []string{"username", "user", "email", "account", "login", "loginname", "uname"}
@@ -143,9 +145,53 @@ func LoadList(path string, limit int) []string {
 
 // Hit 一组命中凭据。
 type Hit struct {
+	Type     string `json:"type"` // basic-auth | login-form
 	User     string `json:"user"`
 	Password string `json:"password"`
 	URL      string `json:"url"`
+}
+
+// BasicAuthBrute 对一组 401 路径做 HTTP Basic 弱口令尝试（命中即停/路径）。
+// 凭据来自外部字典文件（调用方 LoadList），代码不内嵌任何可用凭据组合。
+func BasicAuthBrute(client *httpx.Client, urls []string, users, passwords []string,
+	maxTries int, onProgress func(done, total int, msg string)) []Hit {
+	if onProgress == nil {
+		onProgress = func(int, int, string) {}
+	}
+	if maxTries <= 0 {
+		maxTries = 120
+	}
+	combos := []struct{ u, pw string }{}
+	for _, u := range users {
+		for _, pw := range passwords {
+			if len(combos) >= maxTries {
+				break
+			}
+			combos = append(combos, struct{ u, pw string }{u, pw})
+		}
+	}
+	if len(combos) == 0 || len(urls) == 0 {
+		return nil
+	}
+	if len(urls) > 3 {
+		urls = urls[:3]
+	}
+	total := len(combos) * len(urls)
+	done := 0
+	var hits []Hit
+	for _, u := range urls {
+		for _, c := range combos {
+			token := base64.StdEncoding.EncodeToString([]byte(c.u + ":" + c.pw))
+			r, err := client.GetFollowWith(u, map[string]string{"Authorization": "Basic " + token})
+			done++
+			if err == nil && r != nil && r.Status == 200 {
+				hits = append(hits, Hit{Type: "basic-auth", User: c.u, Password: c.pw, URL: u})
+				break // 该路径命中即换下一路径
+			}
+			onProgress(done, total, "Basic "+c.u+" / "+strings.Repeat("*", len(c.pw)))
+		}
+	}
+	return hits
 }
 
 // Poster 表单提交接口（由 httpx 适配）。
