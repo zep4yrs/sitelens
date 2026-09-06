@@ -18,6 +18,62 @@ from bs4 import BeautifulSoup
 _SET_COOKIE_SPLIT = re.compile(r",(?=[^;,]+?=)")
 _ATTR_TRUE = re.compile(r"(?:^|;)\s*(httponly|secure)\s*(?=;|$)", re.I)
 _ATTR_VAL = re.compile(r"(?:^|[;,])\s*(samesite)\s*=\s*([a-z]+)", re.I)
+# 真实 Set-Cookie 头边界判据（双向）：
+# ① 逗号后形如 name=...，name 为合法 cookie token，且其属性区只含标准属性；
+# ② 逗号前的片段是「属性收尾」（bare HttpOnly/Secure 或 Path=/ 等属性值，
+#    或 Expires 日期 GMT 结尾）——值内的 ",name=x"（如 "t=foo,bar=baz"、
+#    'cfg="a,b=c"'）不满足 ②，不再过切产生幽灵 cookie。
+_SET_COOKIE_SPLIT = re.compile(r",(?=[^;,]+?=)")
+_COOKIE_NAME_OK = re.compile(r"^[^\x00-\x20()<>@,;:\\\"/\[\]?={}\x7f]+$")
+_BARE_ATTR = re.compile(r"^(?:httponly|secure)$", re.I)
+_VAL_ATTR = re.compile(r"^(?:path|domain|expires|max-age|samesite)\s*=", re.I)
+_KNOWN_ATTR = re.compile(
+    r"^\s*(?:(?:path|domain|expires|max-age|samesite)\s*=[^;]*"
+    r"|httponly|secure)\s*$", re.I)
+_GMT_END = re.compile(r"\b\d{1,2}:\d{2}:\d{2}\s+GMT\s*$", re.I)
+
+
+def _prev_is_attr_end(raw, comma_pos):
+    """逗号前的片段是否以上一条 cookie 的属性收尾（从上一个 ; 起算）"""
+    frag = raw[:comma_pos]
+    cut = frag.rfind(";")
+    frag = frag[cut + 1:] if cut >= 0 else frag
+    if _GMT_END.search(frag):          # Expires=Wed, 21 Oct ... GMT
+        return True
+    frag = frag.strip()
+    return bool(frag) and (_BARE_ATTR.match(frag) or _VAL_ATTR.match(frag))
+
+
+def _looks_like_new_cookie(tail):
+    """逗号后的 tail 是否形如新 Set-Cookie 头：合法 name + 纯标准属性区"""
+    eq = tail.find("=")
+    if eq < 0:
+        return False
+    if not _COOKIE_NAME_OK.match(tail[:eq].strip()):
+        return False
+    rest = tail[eq + 1:]
+    semi = rest.find(";")
+    attrs = "" if semi < 0 else rest[semi + 1:]
+    if not attrs.strip():
+        return True
+    return all(_KNOWN_ATTR.match(t) for t in attrs.split(";") if t.strip())
+
+
+def _split_set_cookie(raw):
+    """按真实头边界切分合并的 Set-Cookie 值，避免切开值内逗号。
+
+    仅当「逗号前是属性收尾 + 逗号后是新 cookie 轮廓」同时成立才认定
+    为头边界；否则视为值内字面逗号并入当前段。方向上宁可漏切（少报）
+    不可过切（幽灵 cookie 假阳性）。
+    """
+    parts, start = [], 0
+    for m in _SET_COOKIE_SPLIT.finditer(raw):
+        if _looks_like_new_cookie(raw[m.end():]) and \
+                _prev_is_attr_end(raw, m.start()):
+            parts.append(raw[start:m.start()])
+            start = m.end()
+    parts.append(raw[start:])
+    return parts
 
 
 def _extract_cookies(evidence):
@@ -30,7 +86,7 @@ def _extract_cookies(evidence):
     seen = set()
     raw = evidence.header("Set-Cookie") or evidence.header("set-cookie")
     if raw:
-        for part in _SET_COOKIE_SPLIT.split(raw):
+        for part in _split_set_cookie(raw):
             part = part.strip()
             if not part or "=" not in part:
                 continue
