@@ -1,0 +1,258 @@
+// Package crawler 同域浅爬取：从首页出发广度优先收集同源页面。
+//
+// 遵循 robots.txt（可配置关闭）；链接按「绝对地址去重」；
+// 页数 / 每页链接数 / 阶段总时长三重上限，全部来自 config.CrawlerConfig。
+// 产出 Page 供引擎逐页跑指纹，链接与表单供 DAST 选择探测点。
+package crawler
+
+import (
+	"net/url"
+	"strings"
+	"time"
+
+	"cnb.cool/feng-qiao/sitelens/internal/config"
+	"cnb.cool/feng-qiao/sitelens/internal/htmlx"
+	"cnb.cool/feng-qiao/sitelens/internal/httpx"
+)
+
+// Page 一页采集结果。
+type Page struct {
+	URL      string
+	FinalURL string
+	Status   int
+	Headers  map[string]string
+	Body     string
+	Title    string
+}
+
+// Form 暴露给引擎的表单（与 htmlx.Form 解耦，避免引擎依赖解析细节）。
+type Form struct {
+	Action string
+	Method string
+	HasPwd bool
+	Fields int
+}
+
+// Result 爬取汇总。
+type Result struct {
+	Pages         []Page
+	ParamLinks    []string // 带查询参数的链接（DAST 探测点）
+	AllLinks      []string // 全部同域链接
+	Forms         []Form
+	RobotsHonored bool
+}
+
+// Crawler 爬取器。
+type Crawler struct {
+	client   *httpx.Client
+	opts     config.CrawlerConfig
+	homeHost string
+	disallow []string // robots Disallow 前缀
+	start    time.Time
+}
+
+// New 创建爬取器；homeURL 用于确定同域边界。
+func New(client *httpx.Client, opts config.CrawlerConfig, homeURL string) *Crawler {
+	if opts.MaxPages <= 0 {
+		opts.MaxPages = 4
+	}
+	if opts.MaxLinksPerPage <= 0 {
+		opts.MaxLinksPerPage = 80
+	}
+	host := ""
+	if u, err := url.Parse(homeURL); err == nil {
+		host = strings.ToLower(u.Host)
+	}
+	return &Crawler{client: client, opts: opts, homeHost: host, start: time.Now()}
+}
+
+// Crawl 从首页响应开始爬取（首页已由引擎采到，直接复用不重复请求）。
+func (c *Crawler) Crawl(home *httpx.Response) *Result {
+	res := &Result{}
+	if home == nil {
+		return res
+	}
+	if c.opts.RespectRobots {
+		res.RobotsHonored = true
+		c.loadRobots(home.FinalURL)
+	}
+
+	visited := map[string]bool{}
+	queue := []*httpx.Response{home}
+	queued := map[string]bool{normalize(home.FinalURL): true}
+
+	for len(queue) > 0 && len(res.Pages) < c.opts.MaxPages {
+		resp := queue[0]
+		queue = queue[1:]
+
+		key := normalize(resp.FinalURL)
+		if visited[key] {
+			continue
+		}
+		visited[key] = true
+
+		doc := htmlx.Parse(resp.Body)
+		res.Pages = append(res.Pages, Page{
+			URL:      resp.FinalURL,
+			FinalURL: resp.FinalURL,
+			Status:   resp.Status,
+			Headers:  resp.Headers,
+			Body:     resp.Body,
+			Title:    doc.Title,
+		})
+
+		// 收集表单与带参链接（任意已访问页都算攻击面）
+		base, _ := url.Parse(resp.FinalURL)
+		for _, f := range doc.Forms {
+			act := f.Action
+			if base != nil && act != "" {
+				if ru, err := base.Parse(act); err == nil {
+					act = ru.String()
+				}
+			}
+			res.Forms = append(res.Forms, Form{
+				Action: act, Method: f.Method,
+				HasPwd: f.HasPassword, Fields: len(f.Inputs),
+			})
+		}
+
+		// 链接解析：同域 + http(s) 才入队
+		budget := c.opts.MaxLinksPerPage
+		for _, href := range doc.Links {
+			if budget <= 0 {
+				break
+			}
+			abs := c.resolve(base, href)
+			if abs == "" {
+				continue
+			}
+			res.AllLinks = append(res.AllLinks, abs)
+			if strings.Contains(abs, "?") {
+				res.ParamLinks = append(res.ParamLinks, abs)
+			}
+			budget--
+			k := normalize(abs)
+			if queued[k] || visited[k] || !c.allowed(abs) {
+				continue
+			}
+			if len(res.Pages)+len(queue) >= c.opts.MaxPages {
+				continue
+			}
+			queued[k] = true
+			if c.timedOut() {
+				continue // 阶段超时：不再抓新页，已抓到的照常处理
+			}
+			next, err := c.client.GetFollow(abs)
+			if err != nil || next == nil {
+				continue
+			}
+			queue = append(queue, next)
+		}
+	}
+	return res
+}
+
+// timedOut 阶段时长是否已用尽（TimeoutSec=0 表示不限）。
+func (c *Crawler) timedOut() bool {
+	return c.opts.TimeoutSec > 0 && time.Since(c.start) > time.Duration(c.opts.TimeoutSec)*time.Second
+}
+
+// resolve 以 base 解析相对链接，仅保留同域 http(s) 绝对地址。
+func (c *Crawler) resolve(base *url.URL, href string) string {
+	href = strings.TrimSpace(href)
+	if href == "" || strings.HasPrefix(href, "#") ||
+		strings.HasPrefix(href, "javascript:") ||
+		strings.HasPrefix(href, "mailto:") ||
+		strings.HasPrefix(href, "tel:") {
+		return ""
+	}
+	ref, err := url.Parse(href)
+	if err != nil {
+		return ""
+	}
+	if base == nil {
+		return ""
+	}
+	abs := base.ResolveReference(ref)
+	if abs.Host == "" || strings.ToLower(abs.Host) != c.homeHost {
+		return ""
+	}
+	if abs.Scheme != "http" && abs.Scheme != "https" {
+		return ""
+	}
+	abs.Fragment = ""
+	return abs.String()
+}
+
+// normalize 去掉 fragment 与末尾斜杠差异，作为去重键。
+func normalize(raw string) string {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return raw
+	}
+	u.Fragment = ""
+	s := u.String()
+	if strings.HasSuffix(s, "/") && u.RequestURI() == "/" {
+		return s
+	}
+	return strings.TrimSuffix(s, "/")
+}
+
+// allowed robots.txt Disallow 前缀检查。
+func (c *Crawler) allowed(raw string) bool {
+	if !c.opts.RespectRobots || len(c.disallow) == 0 {
+		return true
+	}
+	u, err := url.Parse(raw)
+	if err != nil {
+		return false
+	}
+	path := u.Path
+	if path == "" {
+		path = "/"
+	}
+	for _, p := range c.disallow {
+		if p == "" {
+			continue
+		}
+		if strings.HasPrefix(path, p) {
+			return false
+		}
+	}
+	return true
+}
+
+// loadRobots 拉取并解析 robots.txt 的 User-agent: * 段 Disallow 规则。
+// 拉取失败视为无限制（内网靶场常见无 robots）。
+func (c *Crawler) loadRobots(homeURL string) {
+	u, err := url.Parse(homeURL)
+	if err != nil {
+		return
+	}
+	rb := u.Scheme + "://" + u.Host + "/robots.txt"
+	resp, err := c.client.GetDirect(rb)
+	if err != nil || resp == nil || resp.Status != 200 {
+		return
+	}
+	inStar := false
+	for _, line := range strings.Split(resp.Body, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		idx := strings.Index(line, ":")
+		if idx < 0 {
+			continue
+		}
+		key := strings.ToLower(strings.TrimSpace(line[:idx]))
+		val := strings.TrimSpace(line[idx+1:])
+		switch key {
+		case "user-agent":
+			inStar = val == "*"
+		case "disallow":
+			if inStar {
+				c.disallow = append(c.disallow, val)
+			}
+		}
+	}
+}
