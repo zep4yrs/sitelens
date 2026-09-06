@@ -195,7 +195,7 @@ func (e *Engine) Scan(rawURL string, opts Options, onProgress progress, cancel f
 	// 6.5) Nuclei 社区模板子集（all 级别 + 模板库存在时）
 	if opts.Checks == "all" && !cancelled() && e.cfg.Checks.NucleiCap > 0 && e.cfg.Checks.NucleiDir != "" {
 		onProgress(84, "运行 Nuclei 社区模板子集…")
-		if nl := e.nucleiSubset(res.Technologies); len(nl) > 0 {
+		if nl := e.nucleiSubset(res.Technologies, res.Title); len(nl) > 0 {
 			for _, h := range checks.RunList(client, baseURL, nl, cancelled,
 				func(done, total int, msg string) {
 					if total > 0 {
@@ -402,18 +402,22 @@ var nucleiCursor int
 var nucleiMu sync.Mutex
 
 // nucleiSubset 按已识别技术挑选 Nuclei 模板并转换为 check。
-func (e *Engine) nucleiSubset(techs []Tech) []checks.Check {
+func (e *Engine) nucleiSubset(techs []Tech, pageTitle string) []checks.Check {
 	entries, err := nuclei.Index(e.cfg.Checks.NucleiDir,
 		filepath.Join(e.cfg.Store.DataDir, "nuclei_index.json"))
 	if err != nil || len(entries) == 0 {
 		return nil
 	}
 	tags := map[string]bool{}
+	var names []string
 	for _, t := range techs {
 		tags[strings.ToLower(t.Name)] = true
+		names = append(names, t.Name)
 	}
+	// 相关度查询文本：技术名 + 页面标题（模板名/tag 词面重合排序）
+	query := strings.Join(names, " ") + " " + pageTitle
 	nucleiMu.Lock()
-	selected := nuclei.Select(entries, tags, e.cfg.Checks.NucleiCap, &nucleiCursor)
+	selected := nuclei.Select(entries, tags, query, e.cfg.Checks.NucleiCap, &nucleiCursor)
 	nucleiMu.Unlock()
 
 	var out []checks.Check
