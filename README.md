@@ -1,99 +1,127 @@
-# SiteLens 站点透视 — 网站技术指纹识别系统
+# SiteLens 站点透视 — 网站技术指纹识别与漏洞关联系统（Go 版）
 
-> 输入网址，看穿技术栈：**2850+ 产品指纹 / 78 个类别 / 11024 条漏洞情报 / 22133 个 CVE 索引**，
-> 外加安全响应头评分、批量扫描与 Wappalyzer 风格宽表导出。
+> 输入网址，看穿技术栈：**370 条精编指纹 / 72 个类别 / 11024 条漏洞情报 / 34931 个微软公告 CVE / 1695 条 KEV 在野利用**，
+> 外加参数级 DAST 主动探测、安全响应头评分、源码审计、登录爆破、批量扫描与 Wappalyzer 风格宽表导出。
+> **单二进制交付，零外部依赖（不再需要 PostgreSQL）。**
 
-![stack](https://img.shields.io/badge/Python-3.10+-blue)
-![stack](https://img.shields.io/badge/Flask-3.x-green)
-![stack](https://img.shields.io/badge/PostgreSQL-18-blue)
+![stack](https://img.shields.io/badge/Go-1.26-blue)
+![stack](https://img.shields.io/badge/frontend-零构建-lightgrey)
 
 ## 快速开始
 
 ```bash
-# 0) 准备数据库（PostgreSQL 12+，推荐 18）：只需创建空库，表会自动创建
-#    psql -U postgres -c "CREATE DATABASE sitelens;"
+# 构建（或直接使用仓库内 sitelens.exe）
+go build -o sitelens.exe ./cmd/sitelens
 
-# 1) 安装依赖（Python 3.10+）
-pip install -r requirements.txt
+# 启动 Web 服务（默认 127.0.0.1:5000；旧 Python 服务若占用端口请在配置中换端口）
+./sitelens.exe serve
 
-# 2) 配置数据库连接：复制 .env.example 为 .env，填入 SLENS_DB_PASSWORD
-#    SLENS_DB_HOST / SLENS_DB_PORT / SLENS_DB_USER / SLENS_DB_PASSWORD / SLENS_DB_NAME=sitelens
+# 命令行全流水线扫描（JSON 输出到 stdout，摘要到 stderr）
+./sitelens.exe scan https://example.com
 
-# 3) 初始化知识库：自动建表 + 播种精编指纹 + 加载知识库数据包
-#    （11024 条漏洞情报/版本区间/CVSS/KEV 全部就位，无需任何外部资产）
-python tools/import_assets.py
+# 使用自定义配置（全部阈值可选，见「配置」节）
+./sitelens.exe -config .sitelens.yml serve
 
-# 4) 启动
-python app.py                     # http://127.0.0.1:5000
-python main.py scan https://example.com        # 命令行扫描
-python main.py scan <url> --full               # 含全部主动模块（仅限授权目标）
-python -m unittest discover -s tests -v        # 测试（离线可跑）
+# 测试（全部离线可跑）
+go test ./...
 ```
+
+数据文件（自动降级：缺失时对应能力关闭，服务照常启动）：
+- `data/go/technologies.json` 精编指纹规则
+- `data/intel_dump.json.gz` 漏洞情报知识库
+- `data/affected_ranges.json` 精选版本区间
+- `data/wordlists/` 弱口令字典（登录爆破用，仅限授权目标）
 
 ## 功能总览
 
 | 模块 | 说明 |
 | --- | --- |
-| 技术指纹 | 6 个检测器多态运行：响应头 / Cookie / meta / DOM 选择器 / 脚本 / TscanPlus 表达式 |
-| 版本识别 | 响应头、generator、脚本文件名中的版本号正则捕获（如 nginx/1.24.0） |
-| 漏洞情报 | 识别结果关联 11024 条漏洞情报（afrog/xray/TscanPlus POC 元数据）+ 22133 个微软公告 CVE |
+| 技术指纹 | 证据通道：响应头 / Cookie / meta / HTML 正则 / 脚本 src / 内联 JS；跨页合并去重，独立命中置信 +5 |
+| 漏洞情报 | 三级判定：confirmed（版本落在区间）/ possible（同名无版本）/ excluded（区间外不输出）；KEV 红标；微软公告 CVE 关联 |
+| 主动 DAST | 反射 XSS / 报错 SQLi（基线剔除误报）/ 时间盲注（双确认）/ 开放重定向 / 目录遍历；请求总量硬上限 |
 | 安全评分 | 8 项安全响应头加权评分，A+–F 等级 + 中文修复建议 |
-| 深度爬取 | 同域浅爬（BFS ≤4 页）合并证据提高检出率 |
-| 批量/导出 | 批量 ≤50 站点；导出 JSON / 明细 CSV / 宽表 CSV（每类别一列，` ; ` 分隔） |
-| 主动模块 | 目录探测（软404 基线 + 403 绕过可选）、子域名枚举、端口服务识别、主动路径指纹、登录爆破、WebShell 探测 —— **默认关闭，仅限授权目标** |
-| JS 攻击面 | SourceMap 泄露检测 + bundle 内 API 端点枚举 |
-| 认证扫描 | Cookie 会话注入，覆盖登录后攻击面 |
+| 被动检测 | Cookie 安全属性缺失 + 登录表单 CSRF token 缺失（零额外请求） |
+| 验证型 check | 41 条内置规则 + 用户插件（data/plugins/*.json 热加载）；CMS 指纹联动调度 |
+| 深度爬取 | 同域 BFS（robots.txt 遵循、页数/链接数/时长三重上限） |
+| 登录爆破 | 宽容表单解析（id/placeholder 推断）+ 失败基线判定 + 命中即停；**必须勾选授权确认** |
+| 源码审计 | 上传 zip/单文件，16 规则静态审计（zip-slip 防护、大小上限），内置演示样本 |
 | 网络层检测 | TLS 证书过期/自签名/旧协议 + SPF/DMARC/MX 邮件安全 |
-| 源码审计 | 上传源码/zip，16 规则静态审计 + Python 污点数据流分析（TAINT） |
-| 情报自动更新 | 启动守护线程每 24h 拉 OSV 区间与 CISA KEV 在野利用清单（SLENS_AUTO_UPDATE=0 关闭） |
-| MoE 式模板路由 | tag 联动置顶 → 语义向量排序 → 轮转游标，2613 模板长期全覆盖 |
-| 检索 | 「哪些站用了某技术」历史检索；漏洞情报 trgm 模糊检索 |
+| 批量/导出 | 批量 ≤50 站点（worker 并发可配）；导出 JSON / 明细 CSV / 宽表 CSV（BOM，Excel 直开） |
+| 认证扫描 | Cookie 会话注入（auth_cookie），覆盖登录后攻击面 |
+| SSRF 防护 | 协议白名单 + 保留主机黑名单 + DNS 解析逐 IP 私网校验 + 重定向逐跳复检 |
+| 检索 | 「哪些站用了某技术」历史检索；漏洞情报模糊检索（product/name/CVE 相关度排序） |
+
+## 配置（.sitelens.yml，未设置的项回退默认值）
+
+```yaml
+scan:
+  rate_interval_ms: 400      # 请求最小间隔（限速）
+  timeout_sec: 15            # 单请求超时
+  max_hops: 6                # 重定向跳数上限
+  max_body_mb: 3             # 正文留存上限
+  deep: true                 # 默认同域浅爬取
+  resolve: true              # SSRF DNS 校验强度
+  max_concurrent: 3          # 并发扫描任务数
+checks:
+  level: all                 # none | core | all
+  plugin_dir: data/plugins   # 用户自定义 check 目录
+crawler: { max_pages: 4, respect_robots: true, max_links_per_page: 80, timeout_sec: 60 }
+dast:
+  max_params: 24             # 参数探测上限
+  time_blind: true           # 时间盲注（双确认）
+  blind_threshold_ms: 3500
+  sleep_seconds: 4
+intel:
+  dump_path: data/intel_dump.json.gz
+  technologies_path: data/go/technologies.json
+  search_limit: 40
+netsec: { tls_timeout_sec: 8, mail_check: true }
+loginbrute: { max_tries: 400, max_users: 8, max_passwords: 50, interval_ms: 150, max_concurrent: 2 }
+audit: { max_archive_mb: 20, max_files: 800, max_file_kb: 512, max_findings_per_rule: 50 }
+batch: { max_urls: 50, workers: 3 }
+web:
+  listen: 127.0.0.1:5000
+  api_token: ""              # 非空则 /api/* 需 X-Token 头（也可用环境变量 SLENS_API_TOKEN）
+  history_limit: 50
+  history_cap: 200
+store: { data_dir: data/state, max_records: 500 }
+```
+
+## API
+
+全部端点见页面「API 文档」（/api-docs），与 Python 版契约一致：
+`/api/version /api/stats /api/categories /api/scan /api/job/{id}[/cancel|/results]
+/api/batch /api/history[/{id}] /api/export/{id}?fmt=json|csv|wide /api/diff
+/api/vuln-search /api/verified /api/netsec /api/loginbrute /api/audit[/demo]
+/api/captcha/capability`
 
 ## 架构
 
 ```
-web/                    手写前端（零构建）：展示页/工作台/批量/历史/API 文档
-app.py                  Flask：页面路由 + REST API + 异步扫描任务(线程池信号量)
-main.py                 CLI 入口
-scanner/
-  target.py             ScanTarget + TargetValidator（SSRF 防护：协议白名单/
-                        内网·环回·保留地址拒绝 + DNS 解析校验）
-  fetcher.py            requests 封装：全局限速、超时重试、轻量 GET、二进制抓取
-  evidence.py           BeautifulSoup 证据解析（meta/脚本/DOM 选择器命中）
-  crawler.py            同域浅爬取
-  detectors/            继承体系：BaseDetector → Header/Cookie/Meta/Html/Script
-                        + TscanDetector（表达式指纹引擎，短词边界保护）
-  engine.py             编排：校验→采集→解析→爬取→检测→安全评分→漏洞关联→模块
-  vuln.py               漏洞情报匹配（短语级产品匹配防泛词误报 + 微软公告别名表）
-  security.py           安全响应头评分
-  modules.py            可选主动模块（默认关闭）
-  embedding.py          字符 3-gram 哈希 TF-IDF 向量（离线语义检索辅助）
-  registry.py           指纹注册表（校验 + 内置库播种）
-  db.py                 PostgreSQL：知识库/历史(scan_techs 明细表)/任务 三类存储
-  exporters.py          JSON / 明细 CSV / 宽表 CSV / 漏洞 CSV
-tools/import_assets.py  资产导入管线（见 docs/开发文档.md 的溯源表）
-tools/jwt_check.py 占位  离线 JWT 字典校验思路见文档
-tests/                  18 项单元测试（mock 网络，离线可跑）
+cmd/sitelens          CLI（scan / serve）
+internal/server       内置 Web 服务：嵌入前端 + REST API + 作业调度
+internal/engine       扫描编排：校验→采集→爬取→指纹→评分→check→被动→DAST→情报
+internal/target       SSRF 安全校验（协议/保留主机/私网 IP/重定向逐跳）
+internal/httpx        限速客户端：手动重定向 + Cookie 注入 + Set-Cookie 保真
+internal/crawler      同域 BFS 爬取（robots.txt）
+internal/htmlx        轻量 HTML 解析（title/链接/表单/meta/script）
+internal/sitelens     指纹匹配引擎（预编译规则、多通道 AND/ANY 语义）
+internal/checks       验证型 check（软404 基线/回显剔除/二次确认）+ 插件
+internal/dast         参数级无害注入探测
+internal/passive      被动安全检测
+internal/security     安全响应头评分
+internal/intel        漏洞情报知识库（三级判定 + KEV + 检索 + 统计）
+internal/versioncmp   版本解析/比较/区间判定
+internal/netsec       TLS/DNS 邮件安全
+internal/loginbrute   登录爆破（授权闸 + 基线判定）
+internal/audit        源码静态审计（16 规则）
+internal/store        文件式历史存储 + 内存作业管理
+internal/config       .sitelens.yml 全量阈值注册表
+web/                  手写前端（零构建，go:embed 嵌入）
 ```
 
-## 面向对象设计落点
+## 与 Python 版的关系
 
-| 考核点 | 实现 |
-| --- | --- |
-| 封装 | 全部实体（`Technology/ScanTarget/PageEvidence/ScanResult/SecurityReport`）私有属性 + property；`add_evidence` 内控置信度成长 |
-| 继承 | `BaseDetector(ABC)` → 5 个证据源子类；`_Tx` 复用 |
-| 多态 | 引擎对检测器列表统一 `detect(evidence, signals)` 调用，新增检测器零改动 |
-| 组合 | `ScannerEngine` 组合 Fetcher/Crawler/检测器组/Registry/VulnMatcher；`Fetcher` 组合 `RateLimiter` |
-| 扩展性 | 指纹是数据不是代码（PG 表），加指纹不改引擎；自定义指纹即插入 `technologies` 表 |
-
-## 合规边界（重要）
-
-- 仅 http/https 目标；解析到环回/私有/保留地址直接拒绝（SSRF 防护）；
-- 请求全局限速 + UA 自报家门（`SiteLens/1.0`）；
-- 漏洞情报只做**名称/版本关联提示**，POC 攻击载荷不落盘、不执行；
-- 主动模块默认关闭；弱口令/WebShell 字典仅存档于 `data/asset-extras/`，**未接入任何功能**；
-- 请仅扫描自有或已授权的目标，遵守对方 robots 与服务条款。
-
-详细设计、数据库 schema、资产溯源表与 pgvector 迁移 SQL 见 `docs/开发文档.md`。
-
-> API 鉴权：设置环境变量 `SLENS_API_TOKEN` 后，所有 /api/* 请求需携带 `X-Token` 头。
+Python 全量实现保留在 `python` 分支（Flask + PostgreSQL + ddddocr 验证码 + 污点分析 +
+目录探测/子域名/端口服务识别等主动模块）。Go 版为主干持续迭代，功能对照见
+`docs/Go迁移对照表.md`。
