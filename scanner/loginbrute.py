@@ -168,7 +168,10 @@ def _solve_captcha(fetcher, url, html, captcha):
     field = captcha.get("field") or "captcha"
     if ctype == "digits":
         try:
-            return {field: captcha_mod.ocr_image(img)}
+            # OCR 文本常带空格/换行等噪声，只保留字母数字
+            import re as _re
+            answer = _re.sub(r"[^0-9A-Za-z]", "", captcha_mod.ocr_image(img))
+            return {field: answer} if answer else None
         except Exception:
             return None
     if ctype == "calc":

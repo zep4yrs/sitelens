@@ -16,7 +16,7 @@ import threading
 import uuid
 from pathlib import Path as _Path
 
-from flask import Flask, jsonify, request, send_file
+from flask import Flask, jsonify, redirect, request, send_file
 
 from scanner.db import Database, JobStore, KnowledgeBase, ScanStore, load_env
 from scanner.engine import ScannerEngine
@@ -39,6 +39,7 @@ except Exception:
     pass
 
 app = Flask(__name__, static_folder=None)
+app.config["MAX_CONTENT_LENGTH"] = 200 * 1024 * 1024   # 请求体上限 200MB（审计上传防 DoS）
 
 
 @app.get("/api/version")
@@ -128,17 +129,18 @@ def page_intel():
 
 @app.route("/netsec")
 def page_netsec():
-    return send_file(WEB_DIR + r"/netsec.html", mimetype="text/html")
+    # v0.0.1 起“网络层检测”并入工作台页签，旧路由重定向
+    return redirect("/app#netsec")
 
 
 @app.route("/loginbrute")
 def page_loginbrute():
-    return send_file(WEB_DIR + r"/loginbrute.html", mimetype="text/html")
+    return redirect("/app#loginbrute")
 
 
 @app.route("/verified")
 def page_verified():
-    return send_file(WEB_DIR + r"/verified.html", mimetype="text/html")
+    return redirect("/history#verified")
 
 
 @app.route("/audit")
@@ -180,18 +182,27 @@ def api_audit():
     from pathlib import Path as _Path
     from scanner.audit import run_audit
 
+    MAX_UPLOAD = 200 * 1024 * 1024        # 上传总量上限
+    MAX_EXTRACTED = 512 * 1024 * 1024     # 解压后总占用上限（防 zip 炸弹）
+
     files = request.files.getlist("files")
     if not files:
         return jsonify({"error": "请选择要审计的源码文件或 zip 包"}), 400
+    if sum(f.content_length or 0 for f in files) > MAX_UPLOAD:
+        return jsonify({"error": "上传总量超过 200MB 上限"}), 400
     work = _Path(tempfile.mkdtemp(prefix="sitelens_audit_"))
     try:
         root = work
+        extracted_total = 0
         for f in files:
             name = _Path(f.filename or "unnamed").name      # 剥掉路径成分
             dest = work / name
             if not dest.resolve().is_relative_to(work.resolve()):
                 return jsonify({"error": "文件名非法"}), 400
             f.save(dest)
+            extracted_total += dest.stat().st_size
+            if extracted_total > MAX_EXTRACTED:
+                return jsonify({"error": "解压内容超过 512MB 上限"}), 400
             if name.lower().endswith(".zip"):
                 ex = work / ("z_" + name[:-4])
                 ex.mkdir(exist_ok=True)
@@ -200,6 +211,9 @@ def api_audit():
                     for m in z.namelist():
                         if not (ex / m).resolve().is_relative_to(ex_base):
                             return jsonify({"error": "zip 内路径非法"}), 400
+                        extracted_total += m.file_size
+                        if extracted_total > MAX_EXTRACTED:
+                            return jsonify({"error": "解压内容超过 512MB 上限"}), 400
                     z.extractall(ex)
                 if len(files) == 1:
                     root = ex
@@ -228,12 +242,18 @@ def api_audit():
 
 @app.route("/css/<path:filename>")
 def css_files(filename):
-    return send_file(WEB_DIR + "/css/" + filename, mimetype="text/css")
+    target = _Path(WEB_DIR).resolve() / "css" / filename
+    if not str(target.resolve()).startswith(str(_Path(WEB_DIR).resolve())):
+        return "Not Found", 404
+    return send_file(str(target), mimetype="text/css")
 
 
 @app.route("/js/<path:filename>")
 def js_files(filename):
-    return send_file(WEB_DIR + "/js/" + filename, mimetype="application/javascript")
+    target = _Path(WEB_DIR).resolve() / "js" / filename
+    if not str(target.resolve()).startswith(str(_Path(WEB_DIR).resolve())):
+        return "Not Found", 404
+    return send_file(str(target), mimetype="application/javascript")
 
 
 # ---------------------------------------------------------------- 扫描 API
@@ -395,9 +415,18 @@ def api_job_results(job_id):
 
 
 # ---------------------------------------------------------------- 历史 / 导出
+def _safe_limit(default=50, cap=200):
+    """limit 参数解析：非数字/越界回退默认值，返回 400 而非 500"""
+    raw = request.args.get("limit", "")
+    try:
+        return min(int(raw), cap) if raw else default
+    except ValueError:
+        return default
+
+
 @app.get("/api/history")
 def api_history():
-    limit = min(int(request.args.get("limit", 50)), 200)
+    limit = _safe_limit()
     tech = request.args.get("tech") or None
     return jsonify({"scans": _store.list_scans(limit=limit, tech=tech)})
 
@@ -566,10 +595,11 @@ def api_netsec():
         return jsonify({"error": "请输入域名"}), 400
     try:
         from scanner.target import TargetValidator
-        host = TargetValidator.validate(host)[1]
+        _scheme, host, _port = TargetValidator.validate(host)
     except TargetError as e:
         return jsonify({"error": str(e)}), 400
-    return jsonify({"host": host, "findings": run_netsec(host)})
+    tls_port = _port if (_port and _port != 80) else 443
+    return jsonify({"host": host, "findings": run_netsec(host, tls_port=tls_port)})
 
 
 @app.post("/api/loginbrute")
@@ -596,11 +626,12 @@ def api_loginbrute():
         return jsonify({"job_id": job_id, "error": str(e)}), 400
 
     def worker():
+        import scanner.modules as _mods
         from scanner.fetcher import Fetcher
         from scanner.loginbrute import MAX_TRIES, load_list, brute_login
         f = Fetcher()
-        users = load_list("data/wordlists/weak_users.txt", 8)
-        pwds = load_list("data/wordlists/weak_passwords.txt", 50)
+        users = load_list(_mods.WEAK_USERS, 8)
+        pwds = load_list(_mods.WEAK_PASSWORDS, 50)
 
         def progress(done, total, msg):
             _jobs.update(job_id, status="running",
@@ -634,7 +665,7 @@ def api_loginbrute():
 @app.get("/api/verified")
 def api_verified():
     """跨扫描汇总全部已验证漏洞（最近 N 次扫描）"""
-    limit = min(int(request.args.get("limit", 50)), 200)
+    limit = _safe_limit()
     with _db.transaction(dict_rows=True) as cur:
         cur.execute(
             "SELECT s.id AS scan_id, s.host, s.scanned_at,"

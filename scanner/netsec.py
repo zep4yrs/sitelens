@@ -105,11 +105,11 @@ def check_dns_mail(domain):
     return hits
 
 
-def run_netsec(host, progress=None):
-    """TLS + DNS 邮件安全合集（全面识别等级调用）"""
+def run_netsec(host, progress=None, tls_port=443):
+    """TLS + DNS 邮件安全合集（全面识别等级调用）；tls_port 非 443 时按指定端口探 TLS"""
     progress = progress or (lambda done, total, msg: None)
     progress(1, 3, "TLS 检测")
-    hits = check_tls(host)
+    hits = check_tls(host, port=tls_port)
     progress(2, 3, "DNS 邮件安全")
     hits += check_dns_mail(host)
     progress(3, 3, "完成")

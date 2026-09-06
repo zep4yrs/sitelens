@@ -7,10 +7,11 @@
 """
 import threading
 import time
+from urllib.parse import urljoin
 
 import requests
 
-from .target import TargetError
+from .target import TargetError, TargetValidator
 
 USER_AGENT = "SiteLens/1.0 (website technology fingerprinting; authorized analysis only)"
 # 可选：隐藏扫描器身份用浏览器 UA（仅限授权测试；部分站点对非浏览器 UA 返回降级页面）
@@ -53,13 +54,38 @@ class Fetcher:
         if cookie:
             self.__session.headers["Cookie"] = cookie
 
+    def _get_follow(self, url, headers=None):
+        """GET 且手动跟随重定向：每一跳都做 SSRF 校验。
+
+        自动重定向模式下 requests 不经过 TargetValidator，目标可用 302
+        把扫描器引向内网/云元数据地址。此方法禁用自动重定向，逐跳校验
+        （协议白名单 + DNS 解析 + 私网地址拒绝）后才继续。
+        """
+        cur = url
+        resp = None
+        for _ in range(6):
+            kwargs = dict(timeout=(5, self.__timeout), allow_redirects=False)
+            if headers:
+                kwargs["headers"] = headers
+            resp = self.__session.get(cur, **kwargs)
+            if resp.status_code in (301, 302, 303, 307, 308):
+                loc = resp.headers.get("Location")
+                if not loc:
+                    return resp
+                nxt = urljoin(cur, loc)
+                TargetValidator.validate(nxt, resolve=True)
+                cur = nxt
+                continue
+            return resp
+        return resp
+
     def fetch(self, url):
         """抓取 URL，返回 PageEvidence；失败抛 TargetError（消息可直接展示）"""
         last_err = None
         for _ in range(self.__retries + 1):
             self.__limiter.wait()
             try:
-                resp = self.__session.get(url, timeout=(5, self.__timeout), allow_redirects=True)
+                resp = self._get_follow(url)
                 cookies = {}
                 for c in self.__session.cookies:
                     if url.startswith("http"):
@@ -77,7 +103,7 @@ class Fetcher:
         """抓取二进制资源（favicon 等），失败返回 None"""
         self.__limiter.wait()
         try:
-            resp = self.__session.get(url, timeout=(5, self.__timeout), allow_redirects=True)
+            resp = self._get_follow(url)
             if resp.status_code == 200 and resp.content:
                 return resp.content
         except requests.exceptions.RequestException:
@@ -91,8 +117,7 @@ class Fetcher:
         if headers:
             merged.update(headers)
         try:
-            resp = self.__session.get(url, timeout=(5, self.__timeout),
-                                      allow_redirects=True, headers=merged)
+            resp = self._get_follow(url, headers=merged)
         except requests.exceptions.Timeout as e:
             raise TargetError("请求超时")
         except requests.exceptions.RequestException as e:
@@ -126,8 +151,14 @@ class Fetcher:
         """表单提交（弱口令审计用）：返回 {status, still_login}"""
         self.__limiter.wait()
         try:
+            # POST 本身不跟随重定向；确有跳转时改用经校验的 GET 跟随
             resp = self.__session.post(url, data=fields, timeout=(5, self.__timeout),
-                                       allow_redirects=True)
+                                       allow_redirects=False)
+            if resp.status_code in (301, 302, 303, 307, 308):
+                loc = resp.headers.get("Location")
+                if loc:
+                    TargetValidator.validate(urljoin(url, loc), resolve=True)
+                    resp = self._get_follow(urljoin(url, loc))
         except requests.exceptions.RequestException:
             return None
         text = (resp.text or "")[:20000].lower()

@@ -316,6 +316,14 @@
     return "• " + esc(c.title || c.url || c.product || JSON.stringify(c));
   };
 
+  /* 外部参考链接：仅 http/https 协议渲染为 <a>，其余原样文本（防 javascript: 注入） */
+  window.safeLink = function (url, text) {
+    var u = String(url || "");
+    if (!/^https?:\/\//i.test(u)) return esc(text || u);
+    return '<a href="' + esc(u) + '" target="_blank" rel="noopener noreferrer">' +
+      esc(text || u) + "</a>";
+  };
+
   /* 侧栏页脚显示服务端版本号（失败保持 SiteLens 文案） */
   api.get("/api/version").then(function (v) {
     var el = document.getElementById("sl-ver");
