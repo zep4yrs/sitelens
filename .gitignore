@@ -14,3 +14,4 @@ docs/build/
 # 本地临时文件
 _issue_*.md
 _review_*.md
+data/intel_dump.json.gz
