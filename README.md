@@ -19,8 +19,8 @@ pip install -r requirements.txt
 # 2) 配置数据库连接：复制 .env.example 为 .env，填入 SLENS_DB_PASSWORD
 #    SLENS_DB_HOST / SLENS_DB_PORT / SLENS_DB_USER / SLENS_DB_PASSWORD / SLENS_DB_NAME=sitelens
 
-# 3) 初始化知识库（自动建表并播种 78 类 + 369 条精编指纹）
-#    没有"漏洞收集包"也能跑：会提示跳过资产导入，扫描功能不受影响
+# 3) 初始化知识库：自动建表 + 播种精编指纹 + 加载知识库数据包
+#    （11024 条漏洞情报/版本区间/CVSS/KEV 全部就位，无需任何外部资产）
 python tools/import_assets.py
 
 # 4) 启动

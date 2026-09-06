@@ -15,6 +15,7 @@
 """
 import csv
 import io
+import json
 import os
 import re
 import sys
@@ -28,6 +29,7 @@ ROOT = Path(__file__).resolve().parents[1]      # 项目根（tools/ 的上级�
 WL_DIR = ROOT / "data" / "wordlists"
 EXTRAS_DIR = ROOT / "data" / "asset-extras"
 ZIP_PATH = Path("漏洞收集(2).zip")   # 本地资产包路径：放到项目根目录，或改为你的实际路径
+INTEL_DUMP = ROOT / "data" / "intel_dump.json.gz"   # 知识库数据包（无资产包时的替代）
 
 sys.path.insert(0, str(ROOT))
 
@@ -414,6 +416,90 @@ def import_wordlists(z):
     log("[存档] 红队配置 → data/asset-extras/（不接入功能）")
 
 
+def load_intel_dump(db):
+    """无资产包时加载知识库数据包（intel_dump.json.gz），恢复情报/指纹/字典。
+
+    只向空表写入（已有数据不覆盖）；vuln_kb 的 embedding 按
+    import_vulnkb 同一公式（embed_text(product+name+type+descr[:160])）重算。
+    返回实际加载的表数。
+    """
+    import gzip
+
+    loaded = 0
+    with gzip.open(INTEL_DUMP, "rt", encoding="utf8") as f:
+        dump = json.load(f)["tables"]
+
+    def is_empty(table):
+        with db.transaction(dict_rows=True) as cur:
+            if table == "tscan_fingerprints":
+                cur.execute("SELECT COUNT(*) AS n FROM tscan_fingerprints")
+            elif table == "fingerdir":
+                cur.execute("SELECT COUNT(*) AS n FROM fingerdir")
+            elif table == "service_fp":
+                cur.execute("SELECT COUNT(*) AS n FROM service_fp")
+            elif table == "cve_ms":
+                cur.execute("SELECT COUNT(*) AS n FROM cve_ms")
+            elif table == "kev":
+                cur.execute("SELECT COUNT(*) AS n FROM kev")
+            else:
+                cur.execute("SELECT COUNT(*) AS n FROM vuln_kb")
+            return cur.fetchone()["n"] == 0
+
+    with db.transaction(dict_rows=True) as cur:
+        if is_empty("tscan_fingerprints"):
+            psycopg2.extras.execute_batch(
+                cur,
+                "INSERT INTO tscan_fingerprints (name, cat, groups) VALUES (%s,%s,%s)",
+                [(r["name"], r["cat"], json.dumps(r["groups"]))
+                 for r in dump["tscan_fingerprints"]], page_size=500)
+            loaded += 1
+        if is_empty("fingerdir"):
+            psycopg2.extras.execute_batch(
+                cur,
+                "INSERT INTO fingerdir (product, spec) VALUES (%s,%s)",
+                [(r["product"], json.dumps(r["spec"])) for r in dump["fingerdir"]],
+                page_size=100)
+            loaded += 1
+        if is_empty("service_fp"):
+            psycopg2.extras.execute_batch(
+                cur,
+                "INSERT INTO service_fp (service, pattern, product, version, soft)"
+                " VALUES (%s,%s,%s,%s,%s)",
+                [(r["service"], r["pattern"], r["product"], r["version"], r["soft"])
+                 for r in dump["service_fp"]], page_size=500)
+            loaded += 1
+        if is_empty("cve_ms"):
+            psycopg2.extras.execute_batch(
+                cur,
+                "INSERT INTO cve_ms (cve, component, title, severity, impact, date)"
+                " VALUES (%s,%s,%s,%s,%s,%s)",
+                [(r["cve"], r["component"], r["title"], r["severity"], r["impact"],
+                  r["date"]) for r in dump["cve_ms"]], page_size=1000)
+            loaded += 1
+        if is_empty("kev"):
+            psycopg2.extras.execute_batch(
+                cur,
+                "INSERT INTO kev (cve, date_added, ransomware) VALUES (%s,%s,%s)",
+                [(r["cve"], r["date_added"], r["ransomware"]) for r in dump["kev"]],
+                page_size=500)
+            loaded += 1
+        if is_empty("vuln_kb"):
+            for r in dump["vuln_kb"]:
+                vec_text = " ".join([r["product"] or "", r["name"] or "",
+                                     r["type"] or "", (r["descr"] or "")[:160]])
+                cur.execute(
+                    "INSERT INTO vuln_kb (src, name, product, cve, type, severity,"
+                    " ref, descr, affected, sources, cvss_score, cvss_sev,"
+                    " cvss_vector_txt, embedding)"
+                    " VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+                    (r["src"], r["name"], r["product"], r["cve"], r["type"],
+                     r["severity"], r["ref"], r["descr"], r["affected"],
+                     r["sources"], r["cvss_score"], r["cvss_sev"],
+                     r["cvss_vector_txt"], embed_text(vec_text)))
+            loaded += 1
+    return loaded
+
+
 def main():
     log("== SiteLens 资产导入 ==")
     db = Database(load_env())
@@ -422,8 +508,13 @@ def main():
     log(f"[内置库] 类别 {st['categories']}，精编指纹 {st['curated']}")
 
     if not ZIP_PATH.exists():
-        log(f"[跳过] 未找到资产包 {ZIP_PATH}——已建表并播种内置指纹，"
-            f"扫描功能可用；漏洞情报/社区指纹可后续放入资产包后重跑本命令导入")
+        if INTEL_DUMP.exists():
+            n = load_intel_dump(db)
+            log(f"[知识库数据包] 已加载 {n} 张表——情报/指纹/字典数据齐备，"
+                f"扫描功能完整可用")
+        else:
+            log(f"[跳过] 未找到资产包 {ZIP_PATH}——已建表并播种内置指纹，"
+                f"扫描功能可用；漏洞情报/社区指纹可后续放入资产包后重跑本命令导入")
         return
 
     z = zipfile.ZipFile(str(ZIP_PATH))
