@@ -269,6 +269,9 @@ func (e *Engine) Scan(rawURL string, opts Options, onProgress progress, cancel f
 	var dirHits []modules.PageHit
 	if opts.DirScan || opts.Subdomain || opts.Webshell || opts.WeakAudit || opts.ActiveFP || opts.ServiceProbe {
 		ac := e.cfg.Active
+		if opts.DirBypass {
+			ac.DirBypass403 = true // 每次扫描可覆盖配置（对齐 Python options.dir_bypass）
+		}
 		if opts.Subdomain {
 			onProgress(86, "子域名枚举…")
 			subs := modules.SubdomainEnum(res.Host, ac, nil, cancelled)
