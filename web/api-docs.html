@@ -89,10 +89,10 @@
 
   <div class="sec">
     <div class="sec-title"><span class="method post">POST</span>/api/audit</div>
-    <p>源码静态审计：multipart 上传字段 files（多文件 / zip / rar / 7z），同步返回报告，文件审计后即删：</p>
+    <p>源码静态审计：multipart 上传字段 file（单个 .zip 压缩包，或单个 .py / .js / .php 源码文件），同步返回报告，文件审计后即删。上限见配置 audit 节（默认压缩包 20MB / 单文件 512KB / 最多 800 文件）：</p>
     <pre class="code">{ "files": 12, "lines": 3401, "by_severity": {"high": 2, "medium": 5, "low": 9},
-  "findings": [{"severity": "high", "rule": "sql-inject", "title": "…",
-                "file": "a.py", "line": 12, "snippet": "…", "advice": "…"}] }</pre>
+  "findings": [{"rule": "PY-SECRET", "severity": "high", "title": "疑似硬编码密钥/口令",
+                "file": "a.py", "line": 12, "snippet": "…", "match": "…", "advice": "…"}] }</pre>
   </div>
 
   <div class="sec">
