@@ -23,7 +23,14 @@ type Config struct {
 	Audit      AuditConfig      `yaml:"audit"`
 	Batch      BatchConfig      `yaml:"batch"`
 	Web        WebConfig        `yaml:"web"`
+	Store      StoreConfig      `yaml:"store"`
 	Modules    ModulesConfig    `yaml:"modules"`
+}
+
+// StoreConfig 历史持久化（文件式，替代 Python 版的 PG 依赖）。
+type StoreConfig struct {
+	DataDir    string `yaml:"data_dir"`    // 状态目录（history.json 所在）
+	MaxRecords int    `yaml:"max_records"` // 历史记录留存上限（超出裁掉最旧）
 }
 
 // ScanConfig HTTP 采集与扫描全局阈值。
@@ -171,6 +178,7 @@ func Default() *Config {
 			HistoryCap: 200, ShutdownSec: 5,
 		},
 		Modules: ModulesConfig{},
+		Store:   StoreConfig{DataDir: "data/state", MaxRecords: 500},
 	}
 }
 
@@ -258,6 +266,11 @@ func (c *Config) fillDefaults() {
 	fillInt(&c.Web.HistoryLimit, d.Web.HistoryLimit)
 	fillInt(&c.Web.HistoryCap, d.Web.HistoryCap)
 	fillInt(&c.Web.ShutdownSec, d.Web.ShutdownSec)
+
+	if c.Store.DataDir == "" {
+		c.Store.DataDir = d.Store.DataDir
+	}
+	fillInt(&c.Store.MaxRecords, d.Store.MaxRecords)
 }
 
 func fillInt(v *int, def int) {
