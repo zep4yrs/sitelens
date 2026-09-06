@@ -37,8 +37,12 @@ type Doc struct {
 
 // Parse 解析 HTML 原文。
 func Parse(body string) *Doc {
+	// 关键：用长度保持的 ASCII 小写化，而非 strings.ToLower——
+	// ToLower 会改变非 ASCII 字节的字节长度（İ 等特殊字符、非法 UTF-8
+	// 膨胀为 RuneError），使 low 上的索引与 body 错位导致越界切片
+	//（模糊测试 FuzzParse 发现的真实崩溃）。
 	doc := &Doc{Metas: map[string]string{}, Links: []string{}, ScriptSrcs: []string{}}
-	low := strings.ToLower(body)
+	low := asciiLower(body)
 	seenLinks := map[string]bool{}
 
 	// <title>
@@ -142,15 +146,16 @@ func Parse(body string) *Doc {
 		// 表单内的 <input>：到 </form> 或下一个 <form 为止
 		region := body[start+tagEnd+1:]
 		regionEnd := len(region)
-		if nf := strings.Index(strings.ToLower(region), "<form"); nf >= 0 {
+		lowRegionFull := asciiLower(region)
+		if nf := strings.Index(lowRegionFull, "<form"); nf >= 0 {
 			region = region[:nf]
 			regionEnd = nf
 		}
-		if ef := strings.Index(strings.ToLower(region), "</form>"); ef >= 0 && ef < regionEnd {
+		if ef := strings.Index(lowRegionFull, "</form>"); ef >= 0 && ef < regionEnd {
 			region = region[:ef]
 		}
 		ipos := 0
-		lowRegion := strings.ToLower(region)
+		lowRegion := asciiLower(region)
 		for {
 			ii := strings.Index(lowRegion[ipos:], "<input")
 			if ii < 0 {
@@ -188,9 +193,32 @@ func Parse(body string) *Doc {
 	return doc
 }
 
+// asciiLower 仅将 A-Z 转小写，字节长度不变——索引与原文严格对齐。
+func asciiLower(s string) string {
+	has := false
+	for i := 0; i < len(s); i++ {
+		if s[i] >= 'A' && s[i] <= 'Z' {
+			has = true
+			break
+		}
+	}
+	if !has {
+		return s
+	}
+	b := []byte(s)
+	for i := 0; i < len(b); i++ {
+		if b[i] >= 'A' && b[i] <= 'Z' {
+			b[i] += 32
+		}
+	}
+	return string(b)
+}
+
 // attrValue 从单个标签原文取属性值（单/双引号或无引号，大小写不敏感）。
 func attrValue(tagText, attr string) string {
-	low := strings.ToLower(tagText)
+	// 长度保持小写化（asciiLower）：索引须与 tagText 对齐，
+	// strings.ToLower 的非 ASCII 字节膨胀曾导致越界（fuzz 发现）
+	low := asciiLower(tagText)
 	key := attr + "="
 	i := strings.Index(low, key)
 	if i < 0 {
