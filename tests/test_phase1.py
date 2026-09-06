@@ -300,3 +300,207 @@ class TestDastJudge(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+# ---------------------------------------------------------------- M7 被动检测 + P0 版本焊接
+from scanner.models import Technology
+
+
+class TestPassiveChecks(unittest.TestCase):
+    """Cookie 属性 + CSRF token 存在性（纯只读）"""
+
+    def _evidence(self, **kw):
+        from tests.test_sitelens import make_evidence
+        return make_evidence(**kw)
+
+    def test_cookie_missing_httponly_and_samesite(self):
+        from scanner.passive import check_cookie_attrs
+        ev = self._evidence(headers={
+            "Content-Type": "text/html",
+            "Set-Cookie": "PHPSESSID=abc123; Path=/"})
+        hits = check_cookie_attrs(ev, "https://example.com")
+        self.assertEqual(len(hits), 1)
+        self.assertIn("HttpOnly", hits[0]["evidence"])
+        self.assertIn("SameSite", hits[0]["evidence"])
+        self.assertIn("Secure", hits[0]["evidence"])      # https 下也提示 Secure
+        self.assertEqual(hits[0]["severity"], "medium")
+
+    def test_cookie_all_attrs_ok(self):
+        from scanner.passive import check_cookie_attrs
+        ev = self._evidence(headers={
+            "Content-Type": "text/html",
+            "Set-Cookie": "sid=t; Path=/; HttpOnly; Secure; SameSite=Lax"})
+        self.assertEqual(check_cookie_attrs(ev, "https://example.com"), [])
+
+    def test_cookie_multi_header_and_session_fallback(self):
+        """多 Set-Cookie 合并头切分 + 仅会话 Cookie 的 Secure 交叉提示"""
+        from scanner.passive import check_cookie_attrs
+        ev = self._evidence(
+            headers={"Content-Type": "text/html",
+                     "Set-Cookie": "a=1; HttpOnly, b=2; SameSite=Strict"},
+            cookies={"session_x": "v"})
+        hits = check_cookie_attrs(ev, "https://example.com")
+        names = {h["title"] for h in hits}
+        self.assertTrue(any("a" in n for n in names))     # a：缺 Secure/SameSite
+        self.assertTrue(any("b" in n for n in names))     # b：缺 HttpOnly/Secure
+        self.assertTrue(any("session_x" in n for n in names))
+        sess = next(h for h in hits if "session_x" in h["title"])
+        self.assertIn("Secure", sess["evidence"])         # 属性未知只提示 Secure
+        self.assertNotIn("HttpOnly", sess["evidence"])
+        self.assertEqual(sess["severity"], "low")
+
+    def test_cookie_http_no_secure_warning(self):
+        from scanner.passive import check_cookie_attrs
+        ev = self._evidence(headers={
+            "Content-Type": "text/html", "Set-Cookie": "s=1; HttpOnly"})
+        hits = check_cookie_attrs(ev, "http://example.com")
+        self.assertEqual(len(hits), 1)
+        self.assertNotIn("Secure", hits[0]["evidence"])   # http 站不提示 Secure
+
+    def test_csrf_token_present_and_absent(self):
+        from scanner.passive import check_csrf_tokens
+        body_with = ("<form action='/login'><input name='csrf_token' type='hidden'>"
+                     "<input type='password' name='pass'></form>")
+        ev = self._evidence(body=body_with)
+        self.assertEqual(check_csrf_tokens(ev, "https://example.com"), [])
+        body_without = ("<form action='/login'><input name='user'>"
+                        "<input type='password' name='pass'></form>")
+        ev2 = self._evidence(body=body_without)
+        hits = check_csrf_tokens(ev2, "https://example.com")
+        self.assertEqual(len(hits), 1)
+        self.assertEqual(hits[0]["check"], "form-no-csrf")
+        self.assertEqual(hits[0]["severity"], "low")
+
+    def test_csrf_ignores_non_sensitive_forms(self):
+        from scanner.passive import check_csrf_tokens
+        body = ("<form action='/search'><input name='q'></form>"
+                "<form action='/sub'><input name='email'></form>")
+        ev = self._evidence(body=body)
+        hits = check_csrf_tokens(ev, "https://example.com")
+        self.assertEqual(len(hits), 1)                    # 仅 email 表单提示（email 属身份输入）
+        self.assertIn("/sub", hits[0]["url"])             # 搜索表单（q）被忽略
+
+    def test_csrf_no_form(self):
+        from scanner.passive import check_csrf_tokens
+        ev = self._evidence(body="<p>no form</p>")
+        self.assertEqual(check_csrf_tokens(ev, "https://example.com"), [])
+
+    def test_run_passive_zero_extra_requests(self):
+        """被动检测不得发起任何请求：run_passive 只吃 PageEvidence"""
+        from scanner.passive import run_passive
+        ev = self._evidence(
+            headers={"Content-Type": "text/html",
+                     "Set-Cookie": "sid=1; Path=/"},
+            body="<form><input type='password' name='pwd'></form>")
+        hits = run_passive(ev, "https://example.com")
+        self.assertEqual({h["check"] for h in hits},
+                         {"cookie-attr", "form-no-csrf"})
+
+
+class TestExtractVersion(unittest.TestCase):
+    """P0 焊接点：extractor 版本抽取"""
+
+    def test_basic_extract(self):
+        from scanner.version_cmp import extract_version
+        self.assertEqual(extract_version("nginx/1.24.0", "nginx"), "1.24.0")
+        self.assertEqual(extract_version("X: v2.4.1-beta", "x"), "2.4.1")
+        self.assertEqual(extract_version("no version here"), "")
+
+    def test_keyword_line_priority(self):
+        from scanner.version_cmp import extract_version
+        text = "server: nginx 1.18.0\nmodule: php 8.2.1"
+        self.assertEqual(extract_version(text, "php"), "8.2.1")
+        self.assertEqual(extract_version(text, "nginx"), "1.18.0")
+
+    def test_plain_number_not_version(self):
+        from scanner.version_cmp import extract_version
+        self.assertEqual(extract_version("copyright 2024 id 99"), "")
+
+
+class TestVersionWelding(unittest.TestCase):
+    """check 抽取值 → 版本回填 → version_cmp 三级判定"""
+
+    def test_check_extract_output(self):
+        from scanner import checks as checks_mod
+
+        class F:
+            def get_small(self, url, headers=None):
+                if "__sl_none__" in url:
+                    return {"status": 404, "size": 5, "body": "x", "headers": {}}
+                if url.endswith("/readme.html"):
+                    return {"status": 200, "size": 40,
+                            "body": "WordPress 6.4.2 Version 6.4.2", "headers": {}}
+                return {"status": 404, "size": 5, "body": "x", "headers": {}}
+
+        t = ScanTarget("https://example.com", resolve=False)
+        hits = checks_mod.run_checks(F(), t, level="all",
+                                     include_ids={"wp-version-leak-readme"})
+        target = next(h for h in hits if h["check"] == "wp-version-leak-readme")
+        self.assertEqual(target["extracted_version"], "6.4.2")
+
+    def test_engine_version_backfill_and_verdict(self):
+        """extracted_version 回填无版本技术，并按受影响区间出 confirmed"""
+        from scanner.engine import ScannerEngine
+        eng = ScannerEngine.__new__(ScannerEngine)
+        eng._ranges = {"wordpress": [
+            {"affected": "<6.4.3", "cve": "CVE-TEST-1", "title": "test"}]}
+
+        class Tech:
+            name = "WordPress"
+            version = None
+
+            def set_version(self, v):
+                self.version = v
+
+        class Result:
+            def __init__(self):
+                self.technologies = [Tech()]
+                self.verified = [{
+                    "check": "wp-version-leak-readme",
+                    "extracted_version": "6.4.2"}]
+
+        res = Result()
+        eng._apply_extracted_versions(res)
+        self.assertEqual(res.technologies[0].version, "6.4.2")   # 版本已回填
+        hit = res.verified[0]
+        self.assertEqual(hit["verdict"], "confirmed")            # 三级判定命中
+        self.assertIn("CVE-TEST-1", hit["verdict_detail"])
+
+    def test_engine_no_backfill_when_version_known(self):
+        """已有版本的技術不被回填（指纹识别优先）"""
+        from scanner.engine import ScannerEngine
+        eng = ScannerEngine.__new__(ScannerEngine)
+        eng._ranges = {}
+
+        class Tech:
+            name = "WordPress"
+            version = "6.5.0"
+
+            def set_version(self, v):
+                raise AssertionError("已有版本不应被覆盖")
+
+        class Result:
+            technologies = [Tech()]
+            verified = [{"check": "wp-x", "extracted_version": "6.4.2"}]
+
+        eng._apply_extracted_versions(Result())   # 不抛即通过
+
+    def test_nuclei_extract_output(self):
+        from scanner import checks as checks_mod
+        rows = [{"id": "t-extract", "name": "Ver Leak", "sev": "low",
+                 "method": "GET", "path": "/ver.txt",
+                 "groups": [{"s": [200], "wany": ["ver"]}],
+                 "extract": {"keyword": "app"}}]
+
+        class F:
+            def get_small(self, url, headers=None):
+                if "__sl_none__" in url:
+                    return {"status": 404, "size": 5, "body": "x", "headers": {}}
+                if url.endswith("/ver.txt"):
+                    return {"status": 200, "size": 20,
+                            "body": "app version: 3.1.4", "headers": {}}
+                return {"status": 404, "size": 5, "body": "x", "headers": {}}
+
+        t = ScanTarget("https://example.com", resolve=False)
+        hits = checks_mod.run_nuclei(F(), t, rows)
+        self.assertEqual(hits[0].get("extracted_version"), "3.1.4")

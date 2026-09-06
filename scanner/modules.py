@@ -11,7 +11,7 @@
 import concurrent.futures
 import socket
 from pathlib import Path
-from urllib.parse import urljoin, urlparse
+from urllib.parse import urljoin
 
 from .target import TargetError
 
@@ -243,7 +243,6 @@ def weak_audit(fetcher, target, progress=None, max_tries=120):
     """
     import base64
     import itertools
-    import json as _json
     progress = progress or (lambda done, total, msg: None)
     users = _wordlist(WEAK_USERS)[:8]
     pwds = _wordlist(WEAK_PASSWORDS)[:50]
