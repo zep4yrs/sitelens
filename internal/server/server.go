@@ -694,7 +694,7 @@ func (s *Server) hLoginBrute(w http.ResponseWriter, r *http.Request) {
 		pwds := loginbrute.LoadList("data/wordlists/weak_passwords.txt", s.cfg.LoginBrute.MaxPasswords)
 		s.jobs.Update(jobID, func(j *store.Job) { j.Status = "running" })
 		hits, err := loginbrute.Brute(f, urlStr, users, pwds,
-			s.cfg.LoginBrute.MaxTries, captchaType,
+			s.cfg.LoginBrute.MaxTries, s.cfg.LoginBrute.IntervalMS, captchaType,
 			func(done, total int, msg string) {
 				s.jobs.Update(jobID, func(j *store.Job) {
 					j.Status = "running"
