@@ -278,14 +278,22 @@ class ScannerEngine:
                     r.get("cve") or r.get("title") or "intel-range")
         return techs
 
-    # check id 中常见的产物名缩写 → 规范名（词边界匹配用）
-    TECH_ABBREVS = {"wp": "wordpress"}
+    # check id 中常见的产物名缩写/别名 → 规范名（词边界匹配用）
+    # 11ty (Eleventy)：check/正文可能只出现 "11ty" 或 "eleventy" 之一
+    TECH_ABBREVS = {"wp": "wordpress", "11ty": "11ty (eleventy)",
+                    "eleventy": "11ty (eleventy)"}
 
     def _match_tech_for_hit(self, hit, by_name):
         """从 check id / 标题 / URL 中找出提及的已识别技术名。
 
-        词边界匹配（避免 "go" 误命中 "golang" 之类子串），
-        多词技术名要求全部词出现，单词支持常见缩写（wp → WordPress）。
+        词边界匹配（避免 "go" 误命中 "golang" 之类子串）。
+        技术名与正文统一按非字母数字切分为 token 后比对，统一规则为
+        「全部词出现」：多词名（"apache tomcat"）、含标点/别名单名
+        （"next.js" → next+js、"11ty (eleventy)" → 11ty+eleventy）
+        同样适用——否则这类名字在纯字母数字 token 集里永远命中不上，
+        版本抽取永不回填。
+        缩写（wp → WordPress）仅对单词名生效，且要求全部 token 命中
+        或缩写命中，避免 "next.js" 被 "next" 或 "js" 单独误命中。
         多个命中取名字最长者。
         """
         text = " ".join(str(hit.get(k) or "") for k in
@@ -295,9 +303,14 @@ class ScannerEngine:
         for name_l, tech in by_name.items():
             if not name_l:
                 continue
-            words = name_l.split()
+            # 技术名同样 token 化：多词、含标点单名（next.js）统一为
+            # 「全部词出现」判定——这类名字在纯字母数字 token 集里
+            # 原文永远命中不上；11ty (eleventy) 这类括号别名以词集
+            # 相交判定（11ty 或 eleventy 任一出现即可，见 ALIAS 组）。
+            words = [w for w in re.split(r"[^a-z0-9]+", name_l) if w]
             if len(words) > 1:
-                ok = all(w in tokens for w in words)
+                ok = all(w in tokens for w in words) or any(
+                    self.TECH_ABBREVS.get(t) == name_l for t in tokens)
             else:
                 ok = name_l in tokens or any(
                     self.TECH_ABBREVS.get(t) == name_l for t in tokens)
