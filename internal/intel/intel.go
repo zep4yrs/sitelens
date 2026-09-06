@@ -114,7 +114,20 @@ type KB struct {
 	ranges     map[string][]CuratedRange
 	tscanCount int
 	fingerDir  []FingerDirRow
+	serviceFP  []ServiceFPRow
 }
+
+// ServiceFPRow 端口服务 banner 指纹行。
+type ServiceFPRow struct {
+	Service string `json:"service"`
+	Pattern string `json:"pattern"`
+	Product string `json:"product"`
+	Version string `json:"version"`
+	Soft    bool   `json:"soft"`
+}
+
+// ServiceFP 返回端口服务 banner 指纹集。
+func (k *KB) ServiceFP() []ServiceFPRow { return k.serviceFP }
 
 // FingerDirRow FingerDir 主动路径指纹行。
 type FingerDirRow struct {
@@ -160,6 +173,7 @@ func Load(dumpGz, rangesJSON string) (*KB, error) {
 			KEV       []KevEntry     `json:"kev"`
 			Tscan     []struct{}     `json:"tscan_fingerprints"` // 仅取条数供统计
 			FingerDir []FingerDirRow `json:"fingerdir"`
+			ServiceFP []ServiceFPRow `json:"service_fp"`
 		} `json:"tables"`
 	}
 	if err := json.NewDecoder(gz).Decode(&box); err != nil {
@@ -167,7 +181,8 @@ func Load(dumpGz, rangesJSON string) (*KB, error) {
 	}
 	kb := &KB{vulns: box.Tables.VulnKB, kev: map[string]bool{},
 		tscanCount: len(box.Tables.Tscan),
-		fingerDir:  box.Tables.FingerDir}
+		fingerDir:  box.Tables.FingerDir,
+		serviceFP:  box.Tables.ServiceFP}
 	for _, k := range box.Tables.KEV {
 		kb.kev[strings.ToUpper(k.CVE)] = true
 	}
