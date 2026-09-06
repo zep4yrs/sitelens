@@ -65,7 +65,12 @@ func New(dataDir string, maxRecords int) (*Store, error) {
 		h: history{NextID: 1}}
 	data, err := os.ReadFile(s.path)
 	if err == nil {
-		_ = json.Unmarshal(data, &s.h)
+		if uerr := json.Unmarshal(data, &s.h); uerr != nil {
+			// 历史文件损坏：隔离为 .corrupt 后从空库继续（ID 从头计，
+			// 不覆盖原始损坏文件以便人工抢救）
+			_ = os.Rename(s.path, s.path+".corrupt")
+			s.h = history{NextID: 1}
+		}
 	}
 	if s.h.NextID < 1 {
 		s.h.NextID = 1
