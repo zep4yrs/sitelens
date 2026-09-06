@@ -168,6 +168,28 @@ func (c *Client) GetDirect(rawURL string) (*Response, error) {
 	return toResponseCap(resp, rawURL, 1_000_000), nil
 }
 
+// PostForm POST 表单提交（单请求，不跟随重定向；登录爆破用）。
+func (c *Client) PostForm(rawURL string, fields map[string]string) (*Response, error) {
+	c.wait()
+	form := url.Values{}
+	for k, v := range fields {
+		form.Set(k, v)
+	}
+	req, err := c.newRequest(http.MethodPost, rawURL)
+	if err != nil {
+		return nil, err
+	}
+	payload := form.Encode()
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Body = io.NopCloser(strings.NewReader(payload))
+	req.ContentLength = int64(len(payload))
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	return toResponseCap(resp, rawURL, 512_000), nil
+}
+
 func isRedirect(code int) bool {
 	return code == 301 || code == 302 || code == 303 || code == 307 || code == 308
 }
