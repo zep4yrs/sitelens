@@ -23,7 +23,7 @@ func TestBasicAuthBruteHits(t *testing.T) {
 
 	users := []string{"root", "admin"}
 	pwds := []string{"123456", "admin123", "password"}
-	hits := BasicAuthBrute(httpx.New(0), []string{srv.URL + "/admin"}, users, pwds, 400, nil)
+	hits := BasicAuthBrute(httpx.New(0), []string{srv.URL + "/admin"}, users, pwds, 400, 0, nil)
 	if len(hits) != 1 || hits[0].User != "admin" || hits[0].Password != "admin123" {
 		t.Fatalf("basic 认证命中失败: %+v", hits)
 	}
@@ -41,7 +41,7 @@ func TestBasicAuthBruteNoHit(t *testing.T) {
 	defer srv.Close()
 
 	hits := BasicAuthBrute(httpx.New(0), []string{srv.URL + "/x"},
-		[]string{"a"}, []string{"b"}, 400, nil)
+		[]string{"a"}, []string{"b"}, 400, 0, nil)
 	if len(hits) != 0 {
 		t.Fatalf("不应命中: %+v", hits)
 	}
