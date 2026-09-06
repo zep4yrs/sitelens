@@ -504,3 +504,94 @@ class TestVersionWelding(unittest.TestCase):
         t = ScanTarget("https://example.com", resolve=False)
         hits = checks_mod.run_nuclei(F(), t, rows)
         self.assertEqual(hits[0].get("extracted_version"), "3.1.4")
+
+
+class TestPunctTechMatch(unittest.TestCase):
+    """守门边界：含标点/别名的单名技术必须能被 hit 命中（焊接路不断）"""
+
+    def _run(self, names, hit):
+        from scanner.engine import ScannerEngine
+
+        class T:
+            def __init__(s, n):
+                s.name = n
+                s.version = None
+
+            def set_version(s, v):
+                s.version = v
+
+        eng = ScannerEngine.__new__(ScannerEngine)
+        techs = [T(n) for n in names]
+        by_name = {t.name.lower(): t for t in techs}
+        return eng._match_tech_for_hit(hit, by_name)
+
+    def test_punct_single_name_hit(self):
+        """含标点单名（Next.js）不再永远匹配不上"""
+        got = self._run(["Next.js"], {"url": "/next.js readme 12.0.1"})
+        self.assertIsNotNone(got)
+        self.assertEqual(got.name, "Next.js")
+
+    def test_bracket_alias_hit(self):
+        """括号别名（11ty (Eleventy)）：任一别名出现即命中"""
+        for text in ("/blog 11ty readme 2.0", "generator eleventy 2.0"):
+            got = self._run(["11ty (Eleventy)"], {"title": text})
+            self.assertIsNotNone(got, text)
+        self.assertIsNone(self._run(["11ty (Eleventy)"],
+                                    {"title": "generator hugo 0.1"}))
+
+    def test_word_boundary_still_holds(self):
+        """拆词匹配不破坏词边界：子串/单词/错误复数不命中"""
+        self.assertIsNone(self._run(["node.js"], {"url": "/nodes.js fake 1.0"}))
+        self.assertIsNone(self._run(["next.js"], {"url": "/next 1.0"}))
+        self.assertIsNone(self._run(["next.js"], {"url": "/js 1.0"}))
+        self.assertIsNone(self._run(["php"], {"check": "phpinfo leak"}))
+        self.assertIsNone(self._run(["wordpress"], {"url": "/wordpresss-x"}))
+
+    def test_multiword_and_abbrev_regression(self):
+        """原有多词与缩写路径回归不串"""
+        got = self._run(["apache", "apache tomcat"], {"title": "apache tomcat 9"})
+        self.assertEqual(got.name, "apache tomcat")
+        got = self._run(["WordPress"], {"check": "wp-x", "title": "wp login"})
+        self.assertEqual(got.name, "WordPress")
+
+
+class TestCookieValueComma(unittest.TestCase):
+    """守门边界：Set-Cookie 值内逗号不再过切出幽灵 cookie"""
+
+    def _hits(self, raw):
+        from scanner.models import PageEvidence
+        from scanner.passive import check_cookie_attrs
+        ev = PageEvidence(url="https://example.com", status=200,
+                          headers={"Content-Type": "text/html",
+                                   "Set-Cookie": raw},
+                          cookies={}, body="", title="")
+        return check_cookie_attrs(ev, "https://example.com")
+
+    def test_value_comma_not_split(self):
+        """值内 ,name= 不产生幽灵 cookie"""
+        hits = self._hits("t=foo,bar=baz; Path=/")
+        self.assertEqual(len(hits), 1)
+        self.assertIn("t", hits[0]["title"])
+
+    def test_quoted_value_comma_not_split(self):
+        """引号值内逗号保持一体"""
+        hits = self._hits('cfg="a,b=c"; Path=/')
+        self.assertEqual(len(hits), 1)
+        self.assertIn("cfg", hits[0]["title"])
+
+    def test_real_boundary_still_split(self):
+        """真实多头边界仍正常拆分"""
+        hits = self._hits("a=1;HttpOnly, b=2;SameSite=Strict")
+        self.assertEqual(len(hits), 2)
+        names = " ".join(h["title"] for h in hits)
+        self.assertIn("a", names)
+        self.assertIn("b", names)
+
+    def test_expires_comma_and_mixed(self):
+        """Expires 日期逗号不误切 + 值内逗号与真实边界混合场景"""
+        hits = self._hits(
+            'cfg="a,b=c"; Path=/, u=2; HttpOnly')
+        titles = " ".join(h["title"] for h in hits)
+        self.assertIn("cfg", titles)
+        self.assertIn("u", titles)
+        self.assertEqual(len(hits), 2)
