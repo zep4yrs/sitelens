@@ -36,13 +36,16 @@ type StoreConfig struct {
 
 // ActiveConfig 主动探测模块阈值（默认关，仅限授权目标）。
 type ActiveConfig struct {
-	DirMaxPaths   int    `yaml:"dir_max_paths"`   // 目录探测路径上限
-	DirBypass403  bool   `yaml:"dir_bypass_403"`  // 403 绕过重试（伪造来源头）
-	SubMaxWords   int    `yaml:"sub_max_words"`   // 子域名字典截取上限
-	SubWorkers    int    `yaml:"sub_workers"`     // 子域名并发解析数
-	ShellMaxPaths int    `yaml:"shell_max_paths"` // WebShell 探测路径上限
-	FPMaxRequests int    `yaml:"fp_max_requests"` // FingerDir 主动指纹请求上限
-	WordlistDir   string `yaml:"wordlist_dir"`    // 字典目录
+	DirMaxPaths    int    `yaml:"dir_max_paths"`    // 目录探测路径上限
+	DirBypass403   bool   `yaml:"dir_bypass_403"`   // 403 绕过重试（伪造来源头）
+	SubMaxWords    int    `yaml:"sub_max_words"`    // 子域名字典截取上限
+	SubWorkers     int    `yaml:"sub_workers"`      // 子域名并发解析数
+	ShellMaxPaths  int    `yaml:"shell_max_paths"`  // WebShell 探测路径上限
+	FPMaxRequests  int    `yaml:"fp_max_requests"`  // FingerDir 主动指纹请求上限
+	ProbePorts     []int  `yaml:"probe_ports"`      // 服务识别端口（空 = 内置常见端口集）
+	ProbeTimeoutMS int    `yaml:"probe_timeout_ms"` // 端口连接/读取超时
+	ProbeWorkers   int    `yaml:"probe_workers"`    // 端口探测并发数
+	WordlistDir    string `yaml:"wordlist_dir"`     // 字典目录
 }
 
 // ScanConfig HTTP 采集与扫描全局阈值。
@@ -197,7 +200,9 @@ func Default() *Config {
 		Store:   StoreConfig{DataDir: "data/state", MaxRecords: 500},
 		Active: ActiveConfig{
 			DirMaxPaths: 300, SubMaxWords: 2000, SubWorkers: 20,
-			ShellMaxPaths: 200, FPMaxRequests: 30, WordlistDir: "data/wordlists",
+			ShellMaxPaths: 200, FPMaxRequests: 30,
+			ProbeTimeoutMS: 2500, ProbeWorkers: 10,
+			WordlistDir: "data/wordlists",
 		},
 	}
 }
@@ -301,6 +306,8 @@ func (c *Config) fillDefaults() {
 	fillInt(&c.Active.SubWorkers, d.Active.SubWorkers)
 	fillInt(&c.Active.ShellMaxPaths, d.Active.ShellMaxPaths)
 	fillInt(&c.Active.FPMaxRequests, d.Active.FPMaxRequests)
+	fillInt(&c.Active.ProbeTimeoutMS, d.Active.ProbeTimeoutMS)
+	fillInt(&c.Active.ProbeWorkers, d.Active.ProbeWorkers)
 	if c.Active.WordlistDir == "" {
 		c.Active.WordlistDir = d.Active.WordlistDir
 	}
