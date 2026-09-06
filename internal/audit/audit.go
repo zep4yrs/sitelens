@@ -152,6 +152,7 @@ func Run(root string, cfg config.AuditConfig, onProgress func(done, total int, m
 	rep := &Report{Findings: []Finding{}, BySeverity: map[string]int{
 		"high": 0, "medium": 0, "low": 0}}
 	ruleHits := map[string]int{}
+	taintHits := 0
 	for i, fp := range files {
 		st, serr := os.Stat(fp)
 		if serr != nil || st.Size() > int64(cfg.MaxFileKB)*1024 {
@@ -164,6 +165,18 @@ func Run(root string, cfg config.AuditConfig, onProgress func(done, total int, m
 		rep.Lines += strings.Count(string(data), "\n") + 1
 		ext := strings.TrimPrefix(strings.ToLower(filepath.Ext(fp)), ".")
 		lines := strings.Split(string(data), "\n")
+
+		// TAINT-lite：污点数据流追踪（仅 .py，行级近似）
+		if ext == "py" && taintHits < cfg.MaxFindingsPerRule {
+			for _, f := range taintFile(fp, lines) {
+				if taintHits >= cfg.MaxFindingsPerRule {
+					break
+				}
+				rep.Findings = append(rep.Findings, f)
+				taintHits++
+			}
+		}
+
 		for _, r := range auditRules {
 			if r.Lang != "*" && r.Lang != ext {
 				continue
