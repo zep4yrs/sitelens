@@ -6,12 +6,8 @@
 - CISA KEV 拉"已知在野利用"清单（网络不通则跳过，不影响其余步骤）
 两个数据源 URL 均为字面量，无用户输入参与拼接。
 """
-import concurrent.futures
-import json
-import re
 import sys
 from pathlib import Path
-from urllib.parse import urljoin
 
 import requests
 

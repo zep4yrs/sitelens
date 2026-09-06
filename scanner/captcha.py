@@ -15,7 +15,7 @@ import io
 import re
 
 try:
-    import ddddocr
+    import ddddocr  # noqa: F401（仅探测可选依赖可用性；使用点均函数内局部 import）
     _AVAILABLE = True
 except Exception:
     _AVAILABLE = False
@@ -114,9 +114,7 @@ def slider_gap(bg_bytes, slide_bytes):
     """滑块缺口偏移：优先 ddddocr slide_match，失败退化为列差法"""
     if _AVAILABLE:
         try:
-            global _det
             import ddddocr
-            det = _det or ddddocr.DdddOcr(det=False, show_ad=False)
             res = ddddocr.DdddOcr(det=False, show_ad=False).slide_match(
                 slide_bytes, bg_bytes, simple_target=True)
             if res and res.get("target"):

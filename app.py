@@ -177,7 +177,6 @@ def api_audit():
     """源码静态审计：接收上传的源码文件 / zip 包，审计后立即删除。"""
     import shutil
     import tempfile
-    import uuid as _uuid
     import zipfile as _zipfile
     from pathlib import Path as _Path
     from scanner.audit import run_audit
@@ -309,6 +308,7 @@ def api_scan():
         "webshell": bool(data.get("webshell", False)),
         "netsec": bool(data.get("netsec", False)),
         "dast": bool(data.get("dast", False)),
+        "passive": bool(data.get("passive", False)),
         "checks": data.get("checks", "none"),
         "auth_cookie": str(data.get("auth_cookie") or "")[:1000],
     }

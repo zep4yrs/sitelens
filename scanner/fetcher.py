@@ -91,9 +91,9 @@ class Fetcher:
                     if url.startswith("http"):
                         cookies[c.name] = c.value
                 return self.__to_evidence(url, resp, cookies)
-            except requests.exceptions.Timeout as e:
+            except requests.exceptions.Timeout:
                 last_err = TargetError("请求超时（%ds）" % self.__timeout)
-            except requests.exceptions.ConnectionError as e:
+            except requests.exceptions.ConnectionError:
                 last_err = TargetError("连接失败：%s" % url)
             except requests.exceptions.RequestException as e:
                 last_err = TargetError("请求异常：%s" % e.__class__.__name__)
@@ -118,9 +118,9 @@ class Fetcher:
             merged.update(headers)
         try:
             resp = self._get_follow(url, headers=merged)
-        except requests.exceptions.Timeout as e:
+        except requests.exceptions.Timeout:
             raise TargetError("请求超时")
-        except requests.exceptions.RequestException as e:
+        except requests.exceptions.RequestException:
             raise TargetError("请求失败")
         from bs4 import BeautifulSoup
         title = ""

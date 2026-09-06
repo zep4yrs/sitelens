@@ -3,12 +3,17 @@
 
 每条 check：一个请求 + 一组判定（status / body 包含 / body 排除 / 响应头）。
 全部为只读类检测，命中即「已验证漏洞」，与情报关联分开呈现。
+模板可选 extract 字段（如 {"keyword": "nginx"}）：命中后从响应体抽取版本号，
+输出 extracted_version，由引擎交给 version_cmp 做三级判定（焊接点，见 engine.py）。
 lv 字段：0 = 核心集（深度识别起运行），1 = 扩展集（全面识别运行）。
 """
 from pathlib import Path
 from urllib.parse import urljoin
 
-# (id, lv, 路径, 匹配{状态码,包含[],排除[],头包含}, 标题, 严重度, 修复建议)
+from .version_cmp import extract_version
+
+# (id, lv, 路径, 匹配{状态码,包含[],排除[],头包含,extract{keyword}}, 标题, 严重度, 修复建议)
+# extract: 可选，命中后从响应体抽取版本号（extract_version）
 CHECKS = [
     ("git-leak", 0, "/.git/HEAD", {"s": 200, "c": ["ref: refs/"]}, "Git 仓库泄露", "high", "删除 Web 根下 .git 目录"),
     ("git-index", 0, "/.git/index", {"s": 200, "c": ["DIRC"]}, "Git index 文件泄露", "high", "同上"),
@@ -149,11 +154,18 @@ def run_checks(fetcher, target, level="core", progress=None, include_ids=None,
             if ok2 is False:
                 progress(i + 1, total, path)
                 continue                  # 复核未复现，判定为误报丢弃
-            hits.append({"check": cid, "title": title, "severity": sev,
-                         "url": url,
-                         "evidence": "HTTP %d（二次确认）" % r.get("status", 0)
-                         if ok2 else "HTTP %d（单次采样）" % r.get("status", 0),
-                         "advice": adv})
+            hit = {"check": cid, "title": title, "severity": sev,
+                   "url": url,
+                   "evidence": "HTTP %d（二次确认）" % r.get("status", 0)
+                   if ok2 else "HTTP %d（单次采样）" % r.get("status", 0),
+                   "advice": adv}
+            extract = match.get("extract")
+            if isinstance(extract, dict):
+                ver = extract_version(body, keyword=extract.get("keyword"))
+                if ver:
+                    hit["extracted_version"] = ver
+                    hit["evidence"] += "，版本抽取: %s" % ver
+            hits.append(hit)
         progress(i + 1, total, path)
     return hits
 
@@ -288,11 +300,19 @@ def run_nuclei(fetcher, target, rows, progress=None, cancel_check=None):
                 ok2 = any(_group_match(g, s2, b2, h2)
                           for g in row.get("groups", []))
             if ok2 is not False:
-                hits.append({"check": row["id"], "title": row["name"],
-                             "severity": row["sev"], "url": url,
-                             "evidence": "HTTP %d（二次确认）" % status
-                             if ok2 else "HTTP %d（单次采样）" % status,
-                             "advice": "参考 Nuclei 模板人工确认",
-                             "src": "nuclei"})
+                hit = {"check": row["id"], "title": row["name"],
+                       "severity": row["sev"], "url": url,
+                       "evidence": "HTTP %d（二次确认）" % status
+                       if ok2 else "HTTP %d（单次采样）" % status,
+                       "advice": "参考 Nuclei 模板人工确认",
+                       "src": "nuclei"}
+                extract = row.get("extract")
+                if isinstance(extract, dict):
+                    ver = extract_version((r.get("body") or ""),
+                                          keyword=extract.get("keyword"))
+                    if ver:
+                        hit["extracted_version"] = ver
+                        hit["evidence"] += "，版本抽取: %s" % ver
+                hits.append(hit)
         progress(i + 1, len(rows), path)
     return hits

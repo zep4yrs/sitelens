@@ -11,7 +11,6 @@ import sys
 
 from scanner.db import Database, KnowledgeBase, load_env
 from scanner.engine import ScannerEngine
-from scanner.registry import Registry
 
 
 def _progress(done, total, msg):
