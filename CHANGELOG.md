@@ -57,5 +57,5 @@ Go 全量迁移完成：单二进制、零外部依赖（弃 PostgreSQL），Pyt
 - 引擎取消：作业取消标志在阶段边界与 check 循环轮询生效
 
 ### 已知差距（详见 docs/Go迁移对照表.md）
-验证码 OCR（ddddocr）、Python 污点分析、语义向量路由（词面重合度近似）、
-Nuclei 头匹配/dsl 匹配器。
+验证码 OCR（ddddocr）、AST 级污点分析（已以 TAINT-lite 行级近似替代）、
+dsl 匹配器。
