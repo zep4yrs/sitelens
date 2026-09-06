@@ -30,7 +30,8 @@ type Entry struct {
 }
 
 var (
-	htags = regexp.MustCompile(`(?m)^tags:\s*(.+)$`)
+	// tags 在真实模板中缩进于 info 块内，须允许前导空白
+	htags = regexp.MustCompile(`(?m)^\s*tags:\s*(.+)$`)
 	hsev  = regexp.MustCompile(`(?m)^\s*severity:\s*(\S+)`)
 	hname = regexp.MustCompile(`(?m)^\s*name:\s*(.+)$`)
 )
