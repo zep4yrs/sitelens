@@ -25,6 +25,10 @@
 | 目录探测（含 403 绕过） | scanner/modules.py | internal/modules | 软404 基线剔除 + 伪造来源头绕过一次 |
 | 子域名枚举 | scanner/modules.py | internal/modules | DNS 并发解析、解析器可注入便于离线测试 |
 | WebShell 探测 | scanner/modules.py | internal/modules | 200 且非空正文判定 |
+| FingerDir 主动指纹 | scanner/modules.py | internal/modules | 38 条精编 spec 全条件判定（请求上限可配） |
+| JS 攻击面（jsmap） | scanner/jsmap.py | internal/jsmap | SourceMap 泄露 + API 端点枚举 |
+| 基础认证弱口令 | scanner/modules.py | internal/loginbrute | 401 路径 Basic 字典尝试 |
+| 情报自动更新（KEV） | scanner/intel_update.py | internal/intel + server 守护 | CISA 公开源，缓存 data/state/kev_extra.json，间隔可配 |
 | 源码审计 16 规则 | scanner/audit.py | internal/audit | 正则改写为 RE2 兼容（去 lookahead） |
 | 阈值配置体系 | — | internal/config | 全项目超时/并发/上限统一 .sitelens.yml 注册表（Python 版无此集中度） |
 | Web 服务 20 端点 | app.py (Flask) | internal/server | 契约逐键对齐，前端零改动；嵌入 web/ 单二进制 |
@@ -42,13 +46,9 @@
 | ddddocr 验证码识别（digits/calc/click） | 未迁移：要求验证码的表单明确报错拒绝，不静默瞎打 | Go 侧接 onnxruntime 或保留 Python 分支专责此项 |
 | 源码审计污点分析（TAINT 数据流） | 未迁移：16 条规则静态匹配已可用 | Go 实现轻量 AST 污点（py 文本级先行） |
 | 端口服务识别（service_probe） | 未迁移：依赖 PG 中 11966 条 service_fp 指纹 | 导出 service_fp 至 JSON 后移植 |
-| JS 攻击面（jsmap：SourceMap 泄露/bundle 端点） | 未迁移 | 正则级实现可行，Go 侧优先级中 |
-| FingerDir 主动路径指纹（active_fp） | 未迁移：依赖 PG fingerdir 表 | 同 dir_scan 一并处理 |
 | Nuclei 模板子集（2613 条 MoE 路由） | 未迁移：dump 中 nuclei JSON 未接入 Go check 引擎 | 复用 checks 插件 JSON 通道直接装载 |
-| 情报自动更新守护（OSV/KEV 每 24h） | 未迁移：知识库当前为静态 dump | Go 定时任务 + tools/update_intel.py 产物重导出 |
 | PostgreSQL 知识库/检索（trgm） | 设计性替代：Go 用内存索引 + 文件存储 | 不回迁；trgm 检索以相关度排序近似 |
-| 敏感信息审计（weak_audit） | 部分迁移：登录爆破可用，页面敏感内容审计未迁移 | 并入 check 规则族 |
-
+| 敏感信息审计（weak_audit 表单部分） | 部分迁移：Basic 认证已入引擎；表单弱口令由独立登录爆破端点承载（宽容解析优于原版常见字段枚举） | 保持现状 |
 ## 迁移中发现并修复的原版问题
 
 1. **指纹库形状 bug**：370 条精编指纹中 194 条 html 通道被导出成 `{dom,html}`
