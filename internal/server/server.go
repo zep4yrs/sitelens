@@ -203,8 +203,8 @@ func (s *Server) startKEVDaemon() {
 	}
 	dest := filepath.Join(s.cfg.Store.DataDir, "kev_extra.json")
 	refresh := func() {
-		entries, err := intel.FetchKEV(intel.KEVFeedURL,
-			time.Duration(s.cfg.Netsec.TLSTimeoutSec+7)*time.Second)
+		// 固定 15s 超时：KEV 源为外部固定地址，不随 netsec 探测配置联动
+		entries, err := intel.FetchKEV(intel.KEVFeedURL, 15*time.Second)
 		if err != nil {
 			log.Printf("KEV 更新失败（降级用本地缓存）：%v", err)
 			return
