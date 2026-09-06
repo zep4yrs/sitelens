@@ -107,6 +107,22 @@ func (c *Client) GetFollow(rawURL string) (*Response, error) {
 	return toResponse(resp, cur), nil
 }
 
+// GetDirect 单请求 GET：不跟随重定向、不做 SSRF 逐跳校验（URL 需预先 Validate）。
+// 供 DAST 开放重定向判定等需要看原始 30x 响应的探测使用；正文上限 1MB。
+func (c *Client) GetDirect(rawURL string) (*Response, error) {
+	c.wait()
+	req, err := http.NewRequest(http.MethodGet, rawURL, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("User-Agent", c.userAgent)
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	return toResponseCap(resp, rawURL, 1_000_000), nil
+}
+
 func isRedirect(code int) bool {
 	return code == 301 || code == 302 || code == 303 || code == 307 || code == 308
 }
@@ -125,10 +141,14 @@ func resolveRef(base, ref string) (string, error) {
 }
 
 func toResponse(resp *http.Response, finalURL string) *Response {
+	return toResponseCap(resp, finalURL, maxBodyBytes)
+}
+
+func toResponseCap(resp *http.Response, finalURL string, cap int) *Response {
 	defer resp.Body.Close()
-	body, _ := io.ReadAll(io.LimitReader(resp.Body, maxBodyBytes+1))
-	if len(body) > maxBodyBytes {
-		body = body[:maxBodyBytes]
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, int64(cap)+1))
+	if len(body) > cap {
+		body = body[:cap]
 	}
 	headers := make(map[string]string, len(resp.Header))
 	for k, vs := range resp.Header {
