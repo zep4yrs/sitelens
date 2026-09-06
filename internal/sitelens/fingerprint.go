@@ -19,6 +19,8 @@ type Technology struct {
 }
 
 // ruleChannels 指纹规则的证据通道（对齐 Python detectors 字段语义）。
+// 兼容两种导出形状：html 为正则数组，或 {dom:[], html:[]} 对象
+// （tools/export_intel.py 的历史形状，加载时收敛）。
 type ruleChannels struct {
 	Headers map[string][]string `json:"headers"` // 响应头名 → 正则组
 	Cookies []string            `json:"cookies"` // Cookie 名正则组
@@ -28,7 +30,40 @@ type ruleChannels struct {
 		Src     []string `json:"src"`     // 外链脚本正则组
 		Content []string `json:"content"` // 内联脚本正则组
 	} `json:"scripts"`
-	Dom []string `json:"dom"` // DOM 选择器（Phase 0 暂不实现）
+	Dom []string `json:"dom"` // DOM 选择器（暂不实现，保留通道）
+}
+
+// unmarshalRules 容错解析规则：整体直解失败时对 html 通道降级重试。
+func unmarshalRules(raw json.RawMessage) (*ruleChannels, bool) {
+	rc := &ruleChannels{}
+	if err := json.Unmarshal(raw, rc); err == nil {
+		return rc, true
+	}
+	// html 通道是 {dom, html} 对象的历史形状
+	var loose struct {
+		Headers map[string][]string `json:"headers"`
+		Cookies []string            `json:"cookies"`
+		Meta    map[string]string   `json:"meta"`
+		HTML    struct {
+			DOM  []string `json:"dom"`
+			HTML []string `json:"html"`
+		} `json:"html"`
+		Scripts struct {
+			Src     []string `json:"src"`
+			Content []string `json:"content"`
+		} `json:"scripts"`
+		Dom []string `json:"dom"`
+	}
+	if err := json.Unmarshal(raw, &loose); err != nil {
+		return nil, false
+	}
+	rc.Headers = loose.Headers
+	rc.Cookies = loose.Cookies
+	rc.Meta = loose.Meta
+	rc.HTML = loose.HTML.HTML
+	rc.Dom = append(loose.Dom, loose.HTML.DOM...)
+	rc.Scripts = loose.Scripts
+	return rc, true
 }
 
 // compiledTech 预编译后的单条指纹。
@@ -86,8 +121,8 @@ func LoadTechnologies(path string) ([]*compiledTech, error) {
 		if len(t.Rules) == 0 || t.Name == "" {
 			continue
 		}
-		var rules ruleChannels
-		if err := json.Unmarshal(t.Rules, &rules); err != nil {
+		rules, ok := unmarshalRules(t.Rules)
+		if !ok {
 			continue // 规则格式不符的指纹跳过，不阻塞加载
 		}
 		ct := &compiledTech{tech: &Technology{Name: t.Name, Cats: t.Cats, Conf: t.Conf}}
@@ -107,7 +142,8 @@ func LoadTechnologies(path string) ([]*compiledTech, error) {
 			if ct.meta == nil {
 				ct.meta = make(map[string]*regexp.Regexp)
 			}
-			ct.meta[strings.ToLower(name)] = regexp.MustCompile("(?i)" + p)
+			// 键名是 meta 名而非正则：反转义历史导出中的 \. \- 序列
+			ct.meta[strings.ToLower(unescapeName(name))] = regexp.MustCompile("(?i)" + p)
 		}
 		ct.html = compileAll(rules.HTML)
 		ct.src = compileAll(rules.Scripts.Src)
@@ -215,4 +251,11 @@ func truncate(s string, n int) string {
 		return s
 	}
 	return s[:n]
+}
+
+// unescapeName 反转义规则键名中的常见正则转义（\. \-），用于 meta/头名匹配。
+func unescapeName(s string) string {
+	s = strings.ReplaceAll(s, `\.`, ".")
+	s = strings.ReplaceAll(s, `\-`, "-")
+	return s
 }

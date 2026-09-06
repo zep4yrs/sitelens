@@ -14,11 +14,14 @@ import (
 )
 
 // Response 精简响应（对齐 Python get_small 的返回形态）。
+// Set-Cookie 单独保真存放：Go http.Header 本就逐条分离，不再合并进 Headers，
+// 下游 Cookie 属性/名称解析不需要启发式切分。
 type Response struct {
-	Status   int
-	Headers  map[string]string
-	Body     string
-	FinalURL string
+	Status     int
+	Headers    map[string]string
+	SetCookies []string
+	Body       string
+	FinalURL   string
 }
 
 // Header 大小写不敏感取响应头。
@@ -31,7 +34,17 @@ func (r *Response) Header(name string) string {
 	return ""
 }
 
-const maxBodyBytes = 3_000_000 // 与 Python 端一致：超 3MB 不留正文
+const defaultMaxBodyBytes = 3_000_000 // 与 Python 端一致：超 3MB 不留正文
+
+// ClientOptions 客户端参数（全部来自 config.ScanConfig 的装配）。
+type ClientOptions struct {
+	Interval     time.Duration // 相邻请求最小间隔（限速），0=不限速
+	Timeout      time.Duration // 单请求超时，0=20s
+	MaxHops      int           // 重定向最大跳数，0=6
+	MaxBodyBytes int           // 正文留存上限，0=3MB
+	UserAgent    string        // 空 = SiteLens 自报 UA
+	AuthCookie   string        // 附加到每个请求的 Cookie 头（授权扫描用）
+}
 
 // Client 限速 HTTP 客户端（自动重定向禁用，逐跳校验后手动跟随）。
 type Client struct {
@@ -41,22 +54,43 @@ type Client struct {
 	last      time.Time
 	userAgent string
 	maxHops   int
+	maxBody   int
+	cookie    string
 }
 
-// New 创建客户端；interval 为相邻请求最小间隔（限速）。
-func New(interval time.Duration) *Client {
+// NewWithOptions 按参数创建客户端。
+func NewWithOptions(o ClientOptions) *Client {
+	if o.Timeout <= 0 {
+		o.Timeout = 20 * time.Second
+	}
+	if o.MaxHops <= 0 {
+		o.MaxHops = 6
+	}
+	if o.MaxBodyBytes <= 0 {
+		o.MaxBodyBytes = defaultMaxBodyBytes
+	}
+	if o.UserAgent == "" {
+		o.UserAgent = "SiteLens/0.1 (+https://cnb.cool/feng-qiao/sitelens)"
+	}
 	c := &Client{
-		interval:  interval,
-		userAgent: "SiteLens/0.1 (+https://cnb.cool/feng-qiao/sitelens)",
-		maxHops:   6,
+		interval:  o.Interval,
+		userAgent: o.UserAgent,
+		maxHops:   o.MaxHops,
+		maxBody:   o.MaxBodyBytes,
+		cookie:    o.AuthCookie,
 	}
 	c.http = &http.Client{
-		Timeout: 20 * time.Second,
+		Timeout: o.Timeout,
 		CheckRedirect: func(*http.Request, []*http.Request) error {
 			return http.ErrUseLastResponse // 禁自动重定向，逐跳手动校验
 		},
 	}
 	return c
+}
+
+// New 创建客户端；interval 为相邻请求最小间隔（限速）。
+func New(interval time.Duration) *Client {
+	return NewWithOptions(ClientOptions{Interval: interval})
 }
 
 func (c *Client) wait() {
@@ -69,6 +103,21 @@ func (c *Client) wait() {
 	}
 }
 
+// newRequest 构造带自报 UA 与授权 Cookie 的请求。
+func (c *Client) newRequest(method, rawURL string) (*http.Request, error) {
+	req, err := http.NewRequest(method, rawURL, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("User-Agent", c.userAgent)
+	req.Header.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
+	req.Header.Set("Accept-Language", "zh-CN,zh;q=0.9,en;q=0.8")
+	if c.cookie != "" {
+		req.Header.Set("Cookie", c.cookie)
+	}
+	return req, nil
+}
+
 // GetFollow 手动跟随重定向的 GET：每一跳都过 target.Validate SSRF 校验
 // （协议白名单 + DNS 解析 + 私网拒绝）。返回最终到达的响应。
 func (c *Client) GetFollow(rawURL string) (*Response, error) {
@@ -77,13 +126,10 @@ func (c *Client) GetFollow(rawURL string) (*Response, error) {
 	var resp *http.Response
 	var err error
 	for hop := 0; hop < c.maxHops; hop++ {
-		req, rerr := http.NewRequest(http.MethodGet, cur, nil)
+		req, rerr := c.newRequest(http.MethodGet, cur)
 		if rerr != nil {
 			return nil, &target.Error{Msg: "URL 构造失败"}
 		}
-		req.Header.Set("User-Agent", c.userAgent)
-		req.Header.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
-		req.Header.Set("Accept-Language", "zh-CN,zh;q=0.9,en;q=0.8")
 		resp, err = c.http.Do(req)
 		if err != nil {
 			return nil, &target.Error{Msg: "连接失败：" + cur}
@@ -111,11 +157,10 @@ func (c *Client) GetFollow(rawURL string) (*Response, error) {
 // 供 DAST 开放重定向判定等需要看原始 30x 响应的探测使用；正文上限 1MB。
 func (c *Client) GetDirect(rawURL string) (*Response, error) {
 	c.wait()
-	req, err := http.NewRequest(http.MethodGet, rawURL, nil)
+	req, err := c.newRequest(http.MethodGet, rawURL)
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("User-Agent", c.userAgent)
 	resp, err := c.http.Do(req)
 	if err != nil {
 		return nil, err
@@ -141,23 +186,27 @@ func resolveRef(base, ref string) (string, error) {
 }
 
 func toResponse(resp *http.Response, finalURL string) *Response {
-	return toResponseCap(resp, finalURL, maxBodyBytes)
+	return toResponseCap(resp, finalURL, defaultMaxBodyBytes)
 }
 
-func toResponseCap(resp *http.Response, finalURL string, cap int) *Response {
+func toResponseCap(resp *http.Response, finalURL string, bodyCap int) *Response {
 	defer resp.Body.Close()
-	body, _ := io.ReadAll(io.LimitReader(resp.Body, int64(cap)+1))
-	if len(body) > cap {
-		body = body[:cap]
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, int64(bodyCap)+1))
+	if len(body) > bodyCap {
+		body = body[:bodyCap]
 	}
 	headers := make(map[string]string, len(resp.Header))
 	for k, vs := range resp.Header {
+		if strings.EqualFold(k, "Set-Cookie") {
+			continue // 单独保真存放
+		}
 		headers[k] = strings.Join(vs, ", ")
 	}
 	return &Response{
-		Status:   resp.StatusCode,
-		Headers:  headers,
-		Body:     string(body),
-		FinalURL: finalURL,
+		Status:     resp.StatusCode,
+		Headers:    headers,
+		SetCookies: resp.Header.Values("Set-Cookie"),
+		Body:       string(body),
+		FinalURL:   finalURL,
 	}
 }
