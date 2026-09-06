@@ -7,6 +7,7 @@
     "*"              任意版本
 版本比较：按数字段逐段比较（8.3.7 与 8.3 等价补零）。
 """
+import re
 
 
 def _parse(v):
@@ -58,3 +59,29 @@ def version_in(version, affected):
         if not ok:
             return False
     return True
+
+
+# ---------------------------------------------------------------- 版本号 extractor
+# 常见版本号形态：v1.2.3 / 1.2.3 / x.y.z-b2，避免把纯数字（如年份、ID）误判为版本
+_VERSION_RE = re.compile(
+    r"\bv?(\d{1,4}\.\d{1,4}(?:\.\d{1,4}){0,2})(?:[-._](?:beta|alpha|rc|b|a)\d*)?\b",
+    re.I)
+
+
+def extract_version(text, keyword=None):
+    """从文本中抽取版本号。
+
+    keyword: 优先在含该关键词的行内找（如 keyword="nginx" 只认 nginx 附近的
+    版本号），找不到时回退全文第一处版本号。找不到返回 ""。
+    """
+    if not text:
+        return ""
+    if keyword:
+        kw = keyword.lower()
+        for line in text.splitlines():
+            if kw in line.lower():
+                m = _VERSION_RE.search(line)
+                if m:
+                    return m.group(1)
+    m = _VERSION_RE.search(text)
+    return m.group(1) if m else ""

@@ -110,7 +110,7 @@ def brute_login(fetcher, url, usernames, passwords, progress=None,
     progress = progress or (lambda done, total, msg: None)
     captcha = captcha or {}
     cap_type = captcha.get("type")
-    cap_field = captcha.get("field") or "captcha"
+    # captcha["field"] 缺省时由下方表单自动识别回填（此处不提前固定）
     combos = [(u, p) for u in usernames for p in passwords][:max(1, max_tries - 1)]
     per_attempt = 3 if cap_type else 1
     total = max(1, len(combos) * per_attempt + 1)

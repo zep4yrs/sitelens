@@ -16,7 +16,6 @@
 import csv
 import io
 import json
-import os
 import re
 import sys
 import zipfile
