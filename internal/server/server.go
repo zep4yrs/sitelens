@@ -524,8 +524,11 @@ func (s *Server) runBatch(jobID string, urls []string) {
 		}()
 	}
 	wg.Wait()
+	// 注意：CancelRequested 不能放进 Update 回调——RWMutex 不可重入，
+	// 持写锁再请求读锁会永久死锁（回调外先取状态）。
+	wasCancelled := s.jobs.CancelRequested(jobID)
 	s.jobs.Update(jobID, func(j *store.Job) {
-		if s.jobs.CancelRequested(jobID) {
+		if wasCancelled {
 			j.Status = "cancelled"
 			j.Message = "批量已取消（未开始的 URL 已跳过）"
 		} else {
@@ -590,6 +593,9 @@ func (s *Server) hExport(w http.ResponseWriter, r *http.Request) {
 	case "wide":
 		csvText := wideCSV([]*store.ScanRecord{rec}, s.techIDs)
 		csvResponse(w, csvText, fmt.Sprintf("sitelens-wide-%d.csv", id))
+	case "html":
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		_, _ = w.Write([]byte(htmlReport(rec)))
 	default:
 		writeJSON(w, 400, map[string]any{"error": "未知格式"})
 	}
