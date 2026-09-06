@@ -1,4 +1,4 @@
-# Python
+# Python（历史版本存档于 python 分支）
 __pycache__/
 *.pyc
 
@@ -10,6 +10,10 @@ server.log
 # 可再生的大型数据（tools/fetch_nuclei.py + import_nuclei.py 可重新拉取转换）
 data/nuclei/
 docs/build/
+
+# Go
+*.exe
+sitelens
 
 # 本地临时文件
 _issue_*.md
