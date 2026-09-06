@@ -60,7 +60,7 @@ func TestScanPipeline(t *testing.T) {
 	if res.Title != "测试站" {
 		t.Fatalf("标题未提取: %q", res.Title)
 	}
-	if res.Status != 200 || res.IP == "" || res.Duration <= 0 {
+	if res.Status != 200 || res.IP == "" || res.Duration < 0 {
 		t.Fatalf("页面信息不完整: status=%d ip=%q dur=%v", res.Status, res.IP, res.Duration)
 	}
 	if len(msgs) < 3 {

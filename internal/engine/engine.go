@@ -83,7 +83,8 @@ func (e *Engine) Scan(rawURL string, opts Options, onProgress progress, cancel f
 		Extras:          map[string]any{},
 	}
 	finish := func() {
-		res.Duration = float64(int(time.Since(start).Seconds()*100)) / 100
+		// 毫秒精度（原 10ms 舍入会把 <5ms 的扫描记成 0.00）
+		res.Duration = float64(int(time.Since(start).Seconds()*1000)) / 1000
 	}
 
 	// 1) 校验（含 SSRF 防护）
