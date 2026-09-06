@@ -670,7 +670,7 @@ def api_verified():
         cur.execute(
             "SELECT s.id AS scan_id, s.host, s.scanned_at,"
             " v->>'check' AS check, v->>'title' AS title,"
-            " v->>'severity' AS severity, v->>'url' AS url"
+            " v->>'severity' AS severity, v->>'url' AS url, v->>'evidence' AS evidence"
             " FROM scans s, jsonb_array_elements(s.result->'verified') AS v"
             " ORDER BY s.id DESC LIMIT %s", (limit,))
         rows = [dict(r) for r in cur.fetchall()]
