@@ -13,6 +13,7 @@ import (
 	"cnb.cool/feng-qiao/sitelens/internal/htmlx"
 	"cnb.cool/feng-qiao/sitelens/internal/httpx"
 	"cnb.cool/feng-qiao/sitelens/internal/intel"
+	"cnb.cool/feng-qiao/sitelens/internal/modules"
 	"cnb.cool/feng-qiao/sitelens/internal/netsec"
 	"cnb.cool/feng-qiao/sitelens/internal/passive"
 	"cnb.cool/feng-qiao/sitelens/internal/security"
@@ -218,9 +219,27 @@ func (e *Engine) Scan(rawURL string, opts Options, onProgress progress, cancel f
 		}
 	}
 
-	// 9) 网络层安全
+	// 9) 主动模块（默认关，仅限授权目标）
+	if opts.DirScan || opts.Subdomain || opts.Webshell {
+		ac := e.cfg.Active
+		if opts.Subdomain {
+			onProgress(86, "子域名枚举…")
+			subs := modules.SubdomainEnum(res.Host, ac, nil, cancelled)
+			res.Extras["subdomain"] = subs
+		}
+		if opts.DirScan {
+			onProgress(87, "目录探测…")
+			res.Extras["dir"] = modules.DirScan(client, baseURL, ac, nil, cancelled)
+		}
+		if opts.Webshell {
+			onProgress(88, "WebShell 探测…")
+			res.Extras["webshell"] = modules.WebshellProbe(client, baseURL, ac, nil, cancelled)
+		}
+	}
+
+	// 10) 网络层安全
 	if opts.Netsec {
-		onProgress(88, "TLS / DNS 安全检测…")
+		onProgress(89, "TLS / DNS 安全检测…")
 		tlsPort := port
 		if tlsPort == 0 || tlsPort == 80 {
 			tlsPort = 443
@@ -232,7 +251,7 @@ func (e *Engine) Scan(rawURL string, opts Options, onProgress progress, cancel f
 		res.Extras["netsec"] = map[string]any{"findings": findings}
 	}
 
-	// 10) 漏洞情报关联
+	// 11) 漏洞情报关联
 	if !cancelled() && e.kb != nil {
 		onProgress(92, "关联漏洞情报…")
 		techs := acc.techHits()

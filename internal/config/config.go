@@ -24,6 +24,7 @@ type Config struct {
 	Batch      BatchConfig      `yaml:"batch"`
 	Web        WebConfig        `yaml:"web"`
 	Store      StoreConfig      `yaml:"store"`
+	Active     ActiveConfig     `yaml:"active"`
 	Modules    ModulesConfig    `yaml:"modules"`
 }
 
@@ -31,6 +32,16 @@ type Config struct {
 type StoreConfig struct {
 	DataDir    string `yaml:"data_dir"`    // 状态目录（history.json 所在）
 	MaxRecords int    `yaml:"max_records"` // 历史记录留存上限（超出裁掉最旧）
+}
+
+// ActiveConfig 主动探测模块阈值（默认关，仅限授权目标）。
+type ActiveConfig struct {
+	DirMaxPaths   int    `yaml:"dir_max_paths"`   // 目录探测路径上限
+	DirBypass403  bool   `yaml:"dir_bypass_403"`  // 403 绕过重试（伪造来源头）
+	SubMaxWords   int    `yaml:"sub_max_words"`   // 子域名字典截取上限
+	SubWorkers    int    `yaml:"sub_workers"`     // 子域名并发解析数
+	ShellMaxPaths int    `yaml:"shell_max_paths"` // WebShell 探测路径上限
+	WordlistDir   string `yaml:"wordlist_dir"`    // 字典目录
 }
 
 // ScanConfig HTTP 采集与扫描全局阈值。
@@ -181,6 +192,10 @@ func Default() *Config {
 		},
 		Modules: ModulesConfig{},
 		Store:   StoreConfig{DataDir: "data/state", MaxRecords: 500},
+		Active: ActiveConfig{
+			DirMaxPaths: 300, SubMaxWords: 2000, SubWorkers: 20,
+			ShellMaxPaths: 200, WordlistDir: "data/wordlists",
+		},
 	}
 }
 
@@ -276,6 +291,14 @@ func (c *Config) fillDefaults() {
 		c.Store.DataDir = d.Store.DataDir
 	}
 	fillInt(&c.Store.MaxRecords, d.Store.MaxRecords)
+
+	fillInt(&c.Active.DirMaxPaths, d.Active.DirMaxPaths)
+	fillInt(&c.Active.SubMaxWords, d.Active.SubMaxWords)
+	fillInt(&c.Active.SubWorkers, d.Active.SubWorkers)
+	fillInt(&c.Active.ShellMaxPaths, d.Active.ShellMaxPaths)
+	if c.Active.WordlistDir == "" {
+		c.Active.WordlistDir = d.Active.WordlistDir
+	}
 }
 
 func fillInt(v *int, def int) {
