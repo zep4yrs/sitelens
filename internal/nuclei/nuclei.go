@@ -35,8 +35,18 @@ var (
 	hname = regexp.MustCompile(`(?m)^\s*name:\s*(.+)$`)
 )
 
+// cacheSchema 索引缓存格式版本——格式变更时递增以强制重建
+// （历史缓存中 Tags 全空，无法通过条目数区分新旧格式）。
+const cacheSchema = 2
+
+type cacheFile struct {
+	Schema  int     `json:"schema"`
+	Entries []Entry `json:"entries"`
+}
+
 // Index 建立（或读取缓存的）模板索引。缓存失效策略：模板文件总数
-// 与缓存不一致时重建（模板库是可再生的大目录，不追求细粒度失效）。
+// 与缓存不一致或缓存格式版本不符时重建（模板库是可再生的大目录，
+// 不追求细粒度失效）。
 func Index(dir, cachePath string) ([]Entry, error) {
 	var files []string
 	err := filepath.WalkDir(dir, func(p string, d os.DirEntry, werr error) error {
@@ -52,9 +62,10 @@ func Index(dir, cachePath string) ([]Entry, error) {
 		return nil, err
 	}
 	if data, rerr := os.ReadFile(cachePath); rerr == nil {
-		var cached []Entry
-		if json.Unmarshal(data, &cached) == nil && len(cached) == len(files) {
-			return cached, nil
+		var cached cacheFile
+		if json.Unmarshal(data, &cached) == nil && cached.Schema == cacheSchema &&
+			len(cached.Entries) == len(files) {
+			return cached.Entries, nil
 		}
 	}
 
@@ -94,7 +105,7 @@ func Index(dir, cachePath string) ([]Entry, error) {
 		entries = append(entries, e)
 	}
 	if cachePath != "" {
-		if data, jerr := json.Marshal(entries); jerr == nil {
+		if data, jerr := json.Marshal(cacheFile{Schema: cacheSchema, Entries: entries}); jerr == nil {
 			_ = os.WriteFile(cachePath, data, 0o644)
 		}
 	}
