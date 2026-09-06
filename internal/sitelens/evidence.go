@@ -45,22 +45,22 @@ func Extract(resp *httpx.Response) *Evidence {
 		ScriptSrcs: doc.ScriptSrcs,
 		Metas:      doc.Metas,
 	}
-	ev.CookieNames = parseCookieNames(resp.Header("Set-Cookie"))
+	ev.CookieNames = parseCookieNames(resp.SetCookies)
 	return ev
 }
 
-// parseCookieNames 从 Set-Cookie 值中取 Cookie 名（支持合并头切分）。
-func parseCookieNames(setCookie string) []string {
+// parseCookieNames 从逐条 Set-Cookie 头中取 Cookie 名。
+func parseCookieNames(cookies []string) []string {
 	var names []string
 	seen := map[string]bool{}
-	for _, seg := range strings.Split(setCookie, ",") {
+	for _, seg := range cookies {
 		head := strings.TrimSpace(strings.SplitN(seg, ";", 2)[0])
 		if head == "" {
 			continue
 		}
 		nv := strings.SplitN(head, "=", 2)
 		name := strings.ToLower(strings.TrimSpace(nv[0]))
-		if name == "" || name == "expires" || seen[name] {
+		if name == "" || seen[name] {
 			continue
 		}
 		seen[name] = true

@@ -159,3 +159,6 @@ func LoadPlugins(dir string) []Check {
 	}
 	return out
 }
+
+// CMSTechChecks 返回某技术指纹触发的联动 check id 列表（无则 nil）。
+func CMSTechChecks(tech string) []string { return cmsChecks[tech] }
