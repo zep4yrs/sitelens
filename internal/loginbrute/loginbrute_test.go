@@ -89,8 +89,9 @@ func TestAnalyzeInferFields(t *testing.T) {
 	if form.UserField != "account" {
 		t.Fatalf("用户字段推断失败: %q", form.UserField)
 	}
-	if form.PassField != "password" {
-		t.Fatalf("密码字段缺名时应回退默认: %q", form.PassField)
+	if form.PassField != "请输入密码" {
+		// 与 Python 宽容版一致：name/id 缺失时用 placeholder 作为提交字段名
+		t.Fatalf("密码字段应取 placeholder: %q", form.PassField)
 	}
 	if form.Hidden["csrf"] != "tok123" {
 		t.Fatalf("隐藏字段丢失: %+v", form.Hidden)
