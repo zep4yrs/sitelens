@@ -1,0 +1,82 @@
+# SiteLens 配置示例：复制为 .sitelens.yml 后按需修改。
+# 所有键均可省略——未设置（或负值）的项自动回退内置最佳实践默认值；
+# 布尔项的 false 是合法的"关"，不会被回退。
+# 完整键位语义见 README「配置」节。
+
+scan:
+  rate_interval_ms: 400      # 请求最小间隔（限速）
+  timeout_sec: 15            # 单请求超时
+  max_hops: 6                # 重定向跳数上限
+  max_body_mb: 3             # 正文留存上限
+  deep: true                 # 默认同域浅爬取
+  resolve: true              # SSRF DNS 校验（内网授权靶场可关）
+  max_concurrent: 3          # 并发扫描任务数
+
+checks:
+  level: all                 # none | core | all
+  plugin_dir: data/plugins   # 用户自定义 check（JSON 数组，热加载）
+  nuclei_cap: 300            # Nuclei 子集数量上限
+  nuclei_dir: data/nuclei    # 模板库目录（不存在自动跳过）
+
+crawler:
+  max_pages: 4
+  respect_robots: true
+  max_links_per_page: 80
+  timeout_sec: 60
+
+dast:
+  max_params: 24
+  time_blind: true
+  blind_threshold_ms: 3500
+  sleep_seconds: 4
+
+intel:
+  dump_path: data/intel_dump.json.gz
+  ranges_path: data/affected_ranges.json
+  technologies_path: data/go/technologies.json
+  search_limit: 40
+  update_hours: 24           # KEV 自动更新间隔（0 = 关闭）
+
+netsec:
+  tls_timeout_sec: 8
+  mail_check: true
+
+loginbrute:                  # 仅限授权目标；前端需勾选授权确认
+  max_tries: 400
+  max_users: 8
+  max_passwords: 50
+  interval_ms: 150
+  max_concurrent: 2
+
+audit:
+  max_archive_mb: 20
+  max_files: 800
+  max_file_kb: 512
+  max_findings_per_rule: 50
+
+batch:
+  max_urls: 50
+  workers: 3
+
+web:
+  listen: 127.0.0.1:5000     # 旧 Python 服务占用 5000 时可改端口
+  api_token: ""              # 非空则 /api/* 需 X-Token（也可用环境变量 SLENS_API_TOKEN）
+  history_limit: 50
+  history_cap: 200
+  shutdown_sec: 5
+
+store:
+  data_dir: data/state       # history.json / kev_extra.json / nuclei 索引缓存
+  max_records: 500
+
+active:                      # 主动模块阈值（模块本身默认关，扫描请求内指定）
+  dir_max_paths: 300
+  dir_bypass_403: false      # 403 绕过重试（伪造来源头）
+  sub_max_words: 2000
+  sub_workers: 20
+  shell_max_paths: 200
+  fp_max_requests: 30
+  probe_ports: []            # 空 = 内置常见端口集
+  probe_timeout_ms: 2500
+  probe_workers: 10
+  wordlist_dir: data/wordlists

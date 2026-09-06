@@ -286,6 +286,8 @@ func (m *JobManager) Create(id, kind string, payload map[string]any, total int) 
 }
 
 // Update 非空字段更新（对齐 Python JobStore.update 的 COALESCE 语义）。
+// 注意：RWMutex 不可重入——回调 fn 内不得再调用本管理器的任何方法
+// （Get/Update/CancelRequested），需要组合状态时先在回调外读取。
 func (m *JobManager) Update(id string, fn func(j *Job)) {
 	m.mu.Lock()
 	defer m.mu.Unlock()

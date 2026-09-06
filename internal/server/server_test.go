@@ -178,6 +178,49 @@ func TestScanJobFlow(t *testing.T) {
 	_ = s
 }
 
+func TestBatchFlow(t *testing.T) {
+	_, api := newServer(t)
+	// 两个目标：自身 API 站点（存活）+ 一个必然失败的保留域名
+	site := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		strings.NewReader(targetHTML).WriteTo(w)
+	}))
+	defer site.Close()
+
+	body := `{"urls":["` + site.URL + `","http://127.0.0.1:1"]}`
+	code, resp := postJSON(t, api.URL+"/api/batch", body)
+	if code != 200 {
+		t.Fatalf("batch %d: %v", code, resp)
+	}
+	jobID, _ := resp["job_id"].(string)
+	if jobID == "" {
+		t.Fatalf("缺 job_id: %v", resp)
+	}
+	deadline := time.Now().Add(60 * time.Second)
+	var job map[string]any
+	for {
+		_, job = getJSON(t, api.URL+"/api/job/"+jobID+"/results")
+		st, _ := job["status"].(string)
+		if st == "done" || st == "cancelled" || st == "error" {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("批量超时: %v", job)
+		}
+		time.Sleep(300 * time.Millisecond)
+	}
+	if job["status"] != "done" {
+		t.Fatalf("批量未完成: %v", job)
+	}
+	if int(job["done"].(float64)) != 2 {
+		t.Fatalf("应处理 2 个 URL: %v", job)
+	}
+	// 一条历史入库（存活的那个）
+	_, h := getJSON(t, api.URL+"/api/history?limit=10")
+	if n := len(h["scans"].([]any)); n != 1 {
+		t.Fatalf("批量应入库 1 条: %d", n)
+	}
+}
+
 func TestScanRejectsBadTarget(t *testing.T) {
 	_, api := newServer(t)
 	code, body := postJSON(t, api.URL+"/api/scan", `{"url":"ftp://x"}`)
