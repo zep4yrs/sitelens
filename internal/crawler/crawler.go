@@ -17,12 +17,13 @@ import (
 
 // Page 一页采集结果。
 type Page struct {
-	URL      string
-	FinalURL string
-	Status   int
-	Headers  map[string]string
-	Body     string
-	Title    string
+	URL        string
+	FinalURL   string
+	Status     int
+	Headers    map[string]string
+	SetCookies []string
+	Body       string
+	Title      string
 }
 
 // Form 暴露给引擎的表单（与 htmlx.Form 解耦，避免引擎依赖解析细节）。
@@ -90,15 +91,19 @@ func (c *Crawler) Crawl(home *httpx.Response) *Result {
 			continue
 		}
 		visited[key] = true
+		if resp.Status >= 400 {
+			continue // 与 Python 版一致：非 2xx/3xx 页不入结果、不解析链接
+		}
 
 		doc := htmlx.Parse(resp.Body)
 		res.Pages = append(res.Pages, Page{
-			URL:      resp.FinalURL,
-			FinalURL: resp.FinalURL,
-			Status:   resp.Status,
-			Headers:  resp.Headers,
-			Body:     resp.Body,
-			Title:    doc.Title,
+			URL:        resp.FinalURL,
+			FinalURL:   resp.FinalURL,
+			Status:     resp.Status,
+			Headers:    resp.Headers,
+			SetCookies: resp.SetCookies,
+			Body:       resp.Body,
+			Title:      doc.Title,
 		})
 
 		// 收集表单与带参链接（任意已访问页都算攻击面）
