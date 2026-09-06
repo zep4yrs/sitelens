@@ -100,9 +100,20 @@ func m(status int, contains ...string) Match {
 	return Match{Status: status, Contains: contains}
 }
 
-// extractCheck 需要版本抽取的 check：check id → (关键词, 技术名)。
+// extractChecks 需要版本抽取的 check：check id → (关键词, 技术名)。
+// 命中后从响应正文按关键词抽取版本，回填对应技术的版本号——
+// 情报关联从 possible 升级为 confirmed 的关键链路。
 var extractChecks = map[string][2]string{
 	"wp-readme": {"version", "WordPress"},
+}
+
+// ExtractFor 返回 check 的版本抽取配置（关键词, 技术名, 是否存在）。
+func ExtractFor(id string) (keyword, tech string, ok bool) {
+	pair, exists := extractChecks[id]
+	if !exists {
+		return "", "", false
+	}
+	return pair[0], pair[1], true
 }
 
 var allChecks = builtinChecks()

@@ -189,7 +189,15 @@ func (e *Engine) Scan(rawURL string, opts Options, onProgress progress, cancel f
 				"check": h.Check, "title": h.Title, "severity": h.Severity,
 				"url": h.URL, "evidence": h.Evidence, "advice": h.Advice,
 			}))
+			// 版本抽取回填：wp-readme 等命中可为技术补版本，
+			// 让情报关联从 possible 升级为 confirmed
+			if h.Version != "" {
+				if _, techName, ok := checks.ExtractFor(h.Check); ok {
+					acc.refineVersion(techName, h.Version)
+				}
+			}
 		}
+		res.Technologies = acc.list()
 	}
 
 	// 6.5) Nuclei 社区模板子集（all 级别 + 模板库存在时）

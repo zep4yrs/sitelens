@@ -92,11 +92,7 @@ var severityZh = map[string]string{
 	"critical": "严重", "high": "高危", "medium": "中危", "low": "低危",
 }
 
-const maxPerTech = 20
-
-func severityOrderOf(sev string) int {
-	return severityOrder[strings.ToLower(sev)]
-}
+const maxPerTech = 20 // 单技术最多关联的情报条数
 
 func severityZhOf(sev string) string {
 	if zh := severityZh[strings.ToLower(sev)]; zh != "" {
@@ -290,7 +286,11 @@ func (k *KB) Match(techs []TechHit) []Finding {
 			}
 			continue
 		}
+		perTech := 0
 		for _, v := range k.vulnsFor(tech.Name) {
+			if perTech >= maxPerTech {
+				break
+			}
 			if seen[v.ID] {
 				continue
 			}
@@ -315,6 +315,7 @@ func (k *KB) Match(techs []TechHit) []Finding {
 				continue
 			}
 			seen[v.ID] = true
+			perTech++
 			out = append(out, Finding{
 				ID: v.ID, Tech: tech.Name, Version: tech.Version,
 				Src: v.Src, Name: v.Name, Product: v.Product,

@@ -7,11 +7,13 @@ import (
 	"strings"
 
 	"cnb.cool/feng-qiao/sitelens/internal/httpx"
+	"cnb.cool/feng-qiao/sitelens/internal/versioncmp"
 )
 
 // Hit 一条已验证发现。
 type Hit struct {
 	Check    string `json:"check"`
+	Version  string `json:"version,omitempty"` // 版本抽取成功时携带
 	Title    string `json:"title"`
 	Severity string `json:"severity"`
 	URL      string `json:"url"`
@@ -110,6 +112,7 @@ func RunList(client *httpx.Client, targetURL string, list []Check,
 			Check: chk.ID, Title: chk.Title, Severity: chk.Sev,
 			URL: u, Advice: chk.Advice,
 			Evidence: fmt.Sprintf("HTTP %d（二次确认）", resp2.Status),
+			Version:  extractVersion(chk, body2),
 		})
 		onProgress(i+1, total, chk.Path)
 	}
@@ -167,6 +170,15 @@ func matchBody(m Match, status int, body string, headers map[string]string) bool
 		}
 	}
 	return true
+}
+
+// extractVersion 配置了版本抽取的 check：从正文按关键词提取版本号。
+func extractVersion(chk Check, body string) string {
+	keyword, _, ok := ExtractFor(chk.ID)
+	if !ok {
+		return ""
+	}
+	return versioncmp.ExtractVersion(body, keyword)
 }
 
 // joinHeaders 把响应头合并为「名: 值」多行串供头匹配。
