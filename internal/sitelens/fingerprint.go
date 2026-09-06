@@ -67,15 +67,114 @@ func unmarshalRules(raw json.RawMessage) (*ruleChannels, bool) {
 }
 
 // compiledTech 预编译后的单条指纹。
+// 纯字面量模式走 strings.Contains 快路径（指纹库大多数模式如此），
+// 仅带正则元字符的模式编译为 regexp —— 单页匹配成本的数量级优化。
 type compiledTech struct {
 	tech    *Technology
-	headers map[string][]*regexp.Regexp
-	cookies []*regexp.Regexp
+	headers map[string][]pattern
+	cookies []pattern
 	meta    map[string]*regexp.Regexp
-	html    []*regexp.Regexp
-	src     []*regexp.Regexp
-	inline  []*regexp.Regexp
+	html    []pattern
+	src     []pattern
+	inline  []pattern
 	usable  bool // 至少存在一个可用通道
+}
+
+// pattern 字面量或正则的单个匹配模式。
+type pattern struct {
+	re    *regexp.Regexp // isLit=false 时可用
+	gate  string         // isLit=false 时：正则必然包含的最长字面量（小写预筛）
+	lit   string         // isLit=true 时的小写子串
+	raw   string         // 原始文本（证据显示用）
+	isLit bool
+}
+
+// compilePats 编译模式组：无正则元字符的按字面量快路径处理；
+// 正则模式提取字面量门控（gate），门不命中即跳过正则执行。
+func compilePats(patterns []string) []pattern {
+	out := make([]pattern, 0, len(patterns))
+	for _, p := range patterns {
+		if p == "" {
+			continue
+		}
+		if isSimpleLiteral(p) {
+			out = append(out, pattern{lit: strings.ToLower(p), raw: p, isLit: true})
+		} else {
+			out = append(out, pattern{re: regexp.MustCompile("(?i)" + p), raw: p,
+				gate: literalGate(p)})
+		}
+	}
+	return out
+}
+
+func isSimpleLiteral(p string) bool {
+	for _, r := range p {
+		if strings.ContainsRune(`\.+*?()[]{}|^$`, r) {
+			return false
+		}
+	}
+	return true
+}
+
+// findIn 在 s（附其小写形态 sLow，避免循环内重复 ToLower 大文本）中匹配，
+// 返回 (匹配文本, 捕获组)。字面量无捕获组。
+func (p pattern) findIn(s, sLow string) (string, []string) {
+	if p.isLit {
+		if strings.Contains(sLow, p.lit) {
+			return p.raw, nil
+		}
+		return "", nil
+	}
+	if p.gate != "" && !strings.Contains(sLow, p.gate) {
+		return "", nil // 字面量门控：正则必然含该子串，门不过直接跳过
+	}
+	m := p.re.FindStringSubmatch(s)
+	if m == nil {
+		return "", nil
+	}
+	return m[0], m
+}
+
+// literalGate 提取正则中必然出现在匹配结果里的最长字面量运行。
+// 保守策略：遇元字符结束当前运行；(…) […] {…} 整段跳过（其中内容
+// 不保证逐字出现）；转义字符取字面量。短于 3 字节不设门控。
+func literalGate(p string) string {
+	var best, cur []byte
+	flush := func() {
+		if len(cur) > len(best) {
+			best = append(best[:0], cur...)
+		}
+		cur = cur[:0]
+	}
+	for i := 0; i < len(p); i++ {
+		switch c := p[i]; c {
+		case '\\':
+			i++
+			if i < len(p) {
+				cur = append(cur, p[i])
+			}
+		case '.', '+', '*', '?', '|', '^', '$', ')':
+			flush()
+		case '(', '[', '{':
+			flush()
+			close := byte(')')
+			if c == '[' {
+				close = ']'
+			} else if c == '{' {
+				close = '}'
+			}
+			for i < len(p) && p[i] != close {
+				i++
+			}
+		default:
+			cur = append(cur, c)
+		}
+	}
+	flush()
+	if len(best) < 3 {
+		return ""
+	}
+	return strings.ToLower(string(best))
 }
 
 // Hit 一次指纹命中。
@@ -87,23 +186,16 @@ type Hit struct {
 	Version  string
 }
 
-func compileAll(patterns []string) []*regexp.Regexp {
-	out := make([]*regexp.Regexp, 0, len(patterns))
-	for _, p := range patterns {
-		if p == "" {
-			continue
-		}
-		out = append(out, regexp.MustCompile("(?i)"+p))
-	}
-	return out
-}
-
 // LoadTechnologies 从 JSON 文件加载指纹规则并预编译正则。
 func LoadTechnologies(path string) ([]*compiledTech, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err
 	}
+	return loadFrom(data)
+}
+
+func loadFrom(data json.RawMessage) ([]*compiledTech, error) {
 	var box struct {
 		Technologies []struct {
 			Name    string          `json:"name"`
@@ -127,14 +219,14 @@ func LoadTechnologies(path string) ([]*compiledTech, error) {
 		}
 		ct := &compiledTech{tech: &Technology{Name: t.Name, Cats: t.Cats, Conf: t.Conf}}
 		for name, pats := range rules.Headers {
-			if regs := compileAll(pats); len(regs) > 0 {
+			if ps := compilePats(pats); len(ps) > 0 {
 				if ct.headers == nil {
-					ct.headers = make(map[string][]*regexp.Regexp)
+					ct.headers = make(map[string][]pattern)
 				}
-				ct.headers[strings.ToLower(name)] = regs
+				ct.headers[strings.ToLower(unescapeName(name))] = ps
 			}
 		}
-		ct.cookies = compileAll(rules.Cookies)
+		ct.cookies = compilePats(rules.Cookies)
 		for name, p := range rules.Meta {
 			if p == "" {
 				continue
@@ -145,9 +237,9 @@ func LoadTechnologies(path string) ([]*compiledTech, error) {
 			// 键名是 meta 名而非正则：反转义历史导出中的 \. \- 序列
 			ct.meta[strings.ToLower(unescapeName(name))] = regexp.MustCompile("(?i)" + p)
 		}
-		ct.html = compileAll(rules.HTML)
-		ct.src = compileAll(rules.Scripts.Src)
-		ct.inline = compileAll(rules.Scripts.Content)
+		ct.html = compilePats(rules.HTML)
+		ct.src = compilePats(rules.Scripts.Src)
+		ct.inline = compilePats(rules.Scripts.Content)
 		ct.usable = len(ct.headers) > 0 || len(ct.cookies) > 0 ||
 			len(ct.meta) > 0 || len(ct.html) > 0 ||
 			len(ct.src) > 0 || len(ct.inline) > 0
@@ -185,24 +277,25 @@ func Match(techs []*compiledTech, ev *Evidence) []Hit {
 // match 按通道顺序应用证据；返回 (证据描述, 版本, 是否命中)。
 func (ct *compiledTech) match(ev *Evidence) (string, string, bool) {
 	if len(ct.headers) > 0 {
-		for name, regs := range ct.headers {
+		for name, pats := range ct.headers {
 			val := ev.Header(name)
 			if val == "" {
 				continue
 			}
-			for _, re := range regs {
-				if m := re.FindStringSubmatch(val); m != nil {
+			valLow := strings.ToLower(val)
+			for _, p := range pats {
+				if text, subs := p.findIn(val, valLow); text != "" {
 					return fmt.Sprintf("%s=%s", name, truncate(val, 80)),
-						versionFromMatch(m), true
+						versionFromMatch(subs), true
 				}
 			}
 		}
 	}
 	if len(ct.cookies) > 0 {
-		for _, re := range ct.cookies {
+		for _, p := range ct.cookies {
 			for _, cn := range ev.CookieNames {
-				if m := re.FindStringSubmatch(cn); m != nil {
-					return fmt.Sprintf("cookie %s", cn), versionFromMatch(m), true
+				if text, subs := p.findIn(cn, cn); text != "" {
+					return fmt.Sprintf("cookie %s", cn), versionFromMatch(subs), true
 				}
 			}
 		}
@@ -217,29 +310,32 @@ func (ct *compiledTech) match(ev *Evidence) (string, string, bool) {
 			}
 		}
 	}
-	if len(ct.html) > 0 {
-		for _, re := range ct.html {
-			if m := re.FindStringIndex(ev.Body); m != nil {
-				return fmt.Sprintf("正则 %s", truncate(re.String(), 40)),
-					versionFromMatch(re.FindStringSubmatch(ev.Body)), true
-			}
-		}
-	}
-	if len(ct.src) > 0 {
-		for _, re := range ct.src {
-			for _, src := range ev.ScriptSrcs {
-				if m := re.FindStringSubmatch(src); m != nil {
-					return fmt.Sprintf("src %s", truncate(src, 80)),
-						versionFromMatch(m), true
+	if len(ct.html) > 0 || len(ct.inline) > 0 {
+		bodyLow := strings.ToLower(ev.Body)
+		if len(ct.html) > 0 {
+			for _, p := range ct.html {
+				if text, subs := p.findIn(ev.Body, bodyLow); text != "" {
+					return fmt.Sprintf("正则 %s", truncate(p.raw, 40)),
+						versionFromMatch(subs), true
 				}
 			}
 		}
-	}
-	if len(ct.inline) > 0 {
-		for _, re := range ct.inline {
-			if m := re.FindStringSubmatch(ev.Body); m != nil {
-				return fmt.Sprintf("内联JS %s", truncate(m[0], 40)),
-					versionFromMatch(m), true
+		if len(ct.src) > 0 {
+			for _, p := range ct.src {
+				for _, src := range ev.ScriptSrcs {
+					if text, subs := p.findIn(src, src); text != "" {
+						return fmt.Sprintf("src %s", truncate(src, 80)),
+							versionFromMatch(subs), true
+					}
+				}
+			}
+		}
+		if len(ct.inline) > 0 {
+			for _, p := range ct.inline {
+				if text, subs := p.findIn(ev.Body, bodyLow); text != "" {
+					return fmt.Sprintf("内联JS %s", truncate(text, 40)),
+						versionFromMatch(subs), true
+				}
 			}
 		}
 	}
