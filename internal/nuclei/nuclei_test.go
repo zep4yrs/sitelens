@@ -156,6 +156,32 @@ func TestIndexAndLoadRealLibrary(t *testing.T) {
 	if len(entries) < 1000 {
 		t.Fatalf("索引条目异常: %d", len(entries))
 	}
+	// 回归断言：Index 必须提取 tags（此前重构曾静默丢失，tag 路由整条失效）
+	withTags := 0
+	for _, e := range entries {
+		if len(e.Tags) > 0 {
+			withTags++
+		}
+	}
+	if withTags < len(entries)/2 {
+		t.Fatalf("带 tags 的条目占比异常低: %d/%d", withTags, len(entries))
+	}
+	// tag 路由：wordpress tag 应命中真实模板
+	wpSel := Select(entries, map[string]bool{"wordpress": true}, "", 20, nil)
+	if len(wpSel) == 0 {
+		t.Fatal("wordpress tag 应命中模板")
+	}
+	wpHit := false
+	for _, e := range wpSel {
+		for _, tg := range e.Tags {
+			if tg == "wordpress" {
+				wpHit = true
+			}
+		}
+	}
+	if !wpHit {
+		t.Fatalf("选中结果应含 wordpress tag: %+v", wpSel[:2])
+	}
 	// 抽 200 条转换：漏斗会按 Python 版同款规则拒绝相当比例
 	//（OSINT/外部 URL/interactsh/dsl 等），但应有可观的成功数
 	sel := Select(entries, map[string]bool{}, "", 200, nil)
