@@ -17,15 +17,18 @@ import (
 
 // Chrome 基于 chromedp 的渲染器。
 type Chrome struct {
-	timeout time.Duration
+	timeout  time.Duration
+	execPath string // 浏览器可执行路径（空 = chromedp 自动探测）
 }
 
 // NewChrome 创建渲染器。timeout ≤ 0 时取默认 20s。
-func NewChrome(timeout time.Duration) *Chrome {
+// execPath 指定 Chromium 系浏览器可执行文件（Chrome/Edge/Tabbit 等）；
+// 为空时 chromedp 自动探测标准安装路径。
+func NewChrome(timeout time.Duration, execPath string) *Chrome {
 	if timeout <= 0 {
 		timeout = 20 * time.Second
 	}
-	return &Chrome{timeout: timeout}
+	return &Chrome{timeout: timeout, execPath: execPath}
 }
 
 // Render 拉取页面并等待 JS 执行完成，返回渲染后的完整 HTML。
@@ -34,9 +37,16 @@ func (c *Chrome) Render(rawURL string) (string, error) {
 	if !strings.HasPrefix(rawURL, "http://") && !strings.HasPrefix(rawURL, "https://") {
 		return "", fmt.Errorf("仅支持 http/https 地址")
 	}
-	ctx, cancel := chromedp.NewContext(context.Background())
-	defer cancel()
-	ctx, cancel = context.WithTimeout(ctx, c.timeout)
+	// 浏览器路径：配置指定优先（Chromium 系均可，Tabbit/Edge 等），
+	// 否则 chromedp 自动探测标准安装路径
+	allocOpts := append(chromedp.DefaultExecAllocatorOptions[:],
+		chromedp.Flag("headless", true))
+	if c.execPath != "" {
+		allocOpts = append(allocOpts, chromedp.ExecPath(c.execPath))
+	}
+	allocCtx, allocCancel := chromedp.NewExecAllocator(context.Background(), allocOpts...)
+	defer allocCancel()
+	ctx, cancel := context.WithTimeout(allocCtx, c.timeout)
 	defer cancel()
 
 	var html string

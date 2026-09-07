@@ -71,12 +71,13 @@ type ChecksConfig struct {
 
 // CrawlerConfig 同域爬取。
 type CrawlerConfig struct {
-	MaxPages           int  `yaml:"max_pages"`            // 最多爬取的页面数
-	RespectRobots      bool `yaml:"respect_robots"`       // 是否遵循 robots.txt
-	MaxLinksPerPage    int  `yaml:"max_links_per_page"`   // 每页最多提取的链接数
-	TimeoutSec         int  `yaml:"timeout_sec"`          // 爬取阶段总时长上限（秒），0=不限
-	Headless           bool `yaml:"headless"`             // 无头浏览器渲染（SPA 支持；需本机有 Chrome/Chromium，缺失自动降级）
-	HeadlessTimeoutSec int  `yaml:"headless_timeout_sec"` // 单页渲染超时（秒）
+	MaxPages           int    `yaml:"max_pages"`            // 最多爬取的页面数
+	RespectRobots      bool   `yaml:"respect_robots"`       // 是否遵循 robots.txt
+	MaxLinksPerPage    int    `yaml:"max_links_per_page"`   // 每页最多提取的链接数
+	TimeoutSec         int    `yaml:"timeout_sec"`          // 爬取阶段总时长上限（秒），0=不限
+	Headless           bool   `yaml:"headless"`             // 无头浏览器渲染（SPA 支持；需本机有 Chromium 系浏览器，缺失自动降级）
+	HeadlessTimeoutSec int    `yaml:"headless_timeout_sec"` // 单页渲染超时（秒）
+	HeadlessExecPath   string `yaml:"headless_exec_path"`   // 浏览器可执行路径（空 = 自动探测；支持 Chrome/Edge/Tabbit 等 Chromium 系）
 }
 
 // DASTConfig 参数级注入探测。

@@ -189,7 +189,7 @@ func (e *Engine) Scan(rawURL string, opts Options, onProgress progress, cancel f
 		onProgress(40, "同域浅爬取…")
 		c := crawler.New(client, e.cfg.Crawler, baseURL)
 		if e.cfg.Crawler.Headless {
-			c.SetRenderer(chromeRenderer{headless.NewChrome(time.Duration(e.cfg.Crawler.HeadlessTimeoutSec) * time.Second)})
+			c.SetRenderer(chromeRenderer{headless.NewChrome(time.Duration(e.cfg.Crawler.HeadlessTimeoutSec)*time.Second, e.cfg.Crawler.HeadlessExecPath)})
 		}
 		var seeds []string
 		for _, ep := range jsEndpoints {
