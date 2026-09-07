@@ -8,6 +8,7 @@ package store
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"sort"
@@ -108,6 +109,28 @@ func (s *Store) Save(res *engine.Result, options map[string]any) int64 {
 	}
 	s.flush()
 	return id
+}
+
+// Import 迁移导入：保留原始记录 id（PG 历史无损搬迁用）。
+// next_id 自动抬到已导入最大 id + 1，后续新扫描 id 不冲突。
+// 幂等：同 id 已存在则跳过。（锁不可重入，勿在回调中调用其他方法。）
+func (s *Store) Import(rec ScanRecord) (int64, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if rec.ID <= 0 {
+		return 0, errors.New("导入记录缺少有效 id")
+	}
+	for i := range s.h.Scans {
+		if s.h.Scans[i].ID == rec.ID {
+			return rec.ID, nil // 已存在：幂等跳过
+		}
+	}
+	if rec.ID >= s.h.NextID {
+		s.h.NextID = rec.ID + 1
+	}
+	s.h.Scans = append(s.h.Scans, rec)
+	s.flush()
+	return rec.ID, nil
 }
 
 // List 历史列表（新→旧）；tech 非空时按技术名过滤。
