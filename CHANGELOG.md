@@ -2,6 +2,10 @@
 
 ## 未发布（预览版追加）
 
+- MoE 三路调度完整回归 Go 版：tag 硬匹配置顶 + TF 余弦相似度路由
+  （与原版 embedding 余弦同构，无模型依赖）+ 持久化 LRU 公平调度
+  （跨重启保持轮转进度，⌈C/N⌉ 次扫描完成全量轮换）
+
 - 爬虫现代化四连：sitemap 种子（robots Sitemap 声明 + /sitemap.xml）、
   jsmap API 端点回灌爬虫、SPA 路由提取（__NEXT_DATA__/__NUXT__）、
   无头渲染（chromedp，crawler.headless 开关默认关，浏览器缺失自动降级）
