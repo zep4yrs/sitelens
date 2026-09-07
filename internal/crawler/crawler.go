@@ -7,6 +7,7 @@ package crawler
 
 import (
 	"net/url"
+	"regexp"
 	"strings"
 	"time"
 
@@ -45,11 +46,13 @@ type Result struct {
 
 // Crawler 爬取器。
 type Crawler struct {
-	client   *httpx.Client
-	opts     config.CrawlerConfig
-	homeHost string
-	disallow []string // robots Disallow 前缀
-	start    time.Time
+	client       *httpx.Client
+	opts         config.CrawlerConfig
+	homeHost     string
+	disallow     []string // robots Disallow 前缀
+	start        time.Time
+	renderer     Renderer // 可选：无头渲染器（SPA 支持）
+	sitemapDecls []string // robots.txt 声明的 Sitemap 地址
 }
 
 // New 创建爬取器；homeURL 用于确定同域边界。
@@ -67,8 +70,20 @@ func New(client *httpx.Client, opts config.CrawlerConfig, homeURL string) *Crawl
 	return &Crawler{client: client, opts: opts, homeHost: host, start: time.Now()}
 }
 
+// Renderer 无头渲染接口（SPA 支持；chromedp 实现见 internal/headless）。
+type Renderer interface {
+	// Render 拉取并执行页面 JS，返回渲染后的 HTML；失败返回 ok=false。
+	Render(rawURL string) (renderedHTML string, ok bool)
+}
+
+// SetRenderer 挂载无头渲染器（可选）：启用后首页会额外做一次
+// JS 渲染并提取渲染后 DOM 的链接/路由（SPA 支持）。
+func (c *Crawler) SetRenderer(r Renderer) { c.renderer = r }
+
 // Crawl 从首页响应开始爬取（首页已由引擎采到，直接复用不重复请求）。
-func (c *Crawler) Crawl(home *httpx.Response) *Result {
+// extraSeeds 为外部提供的候选入口（jsmap API 端点 / sitemap / SPA 路由），
+// 仅接受同域 http(s) 地址，且同样受 MaxPages 与 robots 约束。
+func (c *Crawler) Crawl(home *httpx.Response, extraSeeds []string) *Result {
 	res := &Result{}
 	if home == nil {
 		return res
@@ -81,6 +96,48 @@ func (c *Crawler) Crawl(home *httpx.Response) *Result {
 	visited := map[string]bool{}
 	queue := []*httpx.Response{home}
 	queued := map[string]bool{normalize(home.FinalURL): true}
+
+	// 外部种子（jsmap 端点等）：同域过滤后最优先入队
+	for _, seed := range extraSeeds {
+		abs := c.resolveURL(home.FinalURL, seed)
+		if abs == "" {
+			continue
+		}
+		res.AllLinks = append(res.AllLinks, abs)
+		k := normalize(abs)
+		if queued[k] || visited[k] || !c.allowed(abs) {
+			continue
+		}
+		if len(res.Pages)+len(queue) >= c.opts.MaxPages {
+			break
+		}
+		queued[k] = true
+		if c.timedOut() {
+			break
+		}
+		if next, err := c.client.GetFollow(abs); err == nil && next != nil {
+			queue = append(queue, next)
+		}
+	}
+
+	// sitemap 种子：/sitemap.xml 与 robots.txt 声明的 Sitemap 地址
+	for _, abs := range c.sitemapSeeds(home.FinalURL) {
+		res.AllLinks = append(res.AllLinks, abs)
+		k := normalize(abs)
+		if queued[k] || visited[k] || !c.allowed(abs) {
+			continue
+		}
+		if len(res.Pages)+len(queue) >= c.opts.MaxPages {
+			break
+		}
+		queued[k] = true
+		if c.timedOut() {
+			break
+		}
+		if next, err := c.client.GetFollow(abs); err == nil && next != nil {
+			queue = append(queue, next)
+		}
+	}
 
 	for len(queue) > 0 && len(res.Pages) < c.opts.MaxPages {
 		resp := queue[0]
@@ -96,6 +153,16 @@ func (c *Crawler) Crawl(home *httpx.Response) *Result {
 		}
 
 		doc := htmlx.Parse(resp.Body)
+
+		// SPA 无头渲染：仅对首页做一次，渲染后 DOM 的链接与路由并入本页
+		if c.renderer != nil && resp == home {
+			if rendered, ok := c.renderer.Render(resp.FinalURL); ok {
+				rd := htmlx.Parse(rendered)
+				doc.Links = append(doc.Links, rd.Links...)
+				doc.NextRoutes = append(doc.NextRoutes, rd.NextRoutes...)
+			}
+		}
+
 		res.Pages = append(res.Pages, Page{
 			URL:        resp.FinalURL,
 			FinalURL:   resp.FinalURL,
@@ -119,6 +186,29 @@ func (c *Crawler) Crawl(home *httpx.Response) *Result {
 				Action: act, Method: f.Method,
 				HasPwd: f.HasPassword, Fields: len(f.Inputs),
 			})
+		}
+
+		// SPA 路由：数据岛提取的路径作为候选页入队（不受链接预算限制，受页数上限约束）
+		for _, route := range doc.NextRoutes {
+			abs := c.resolve(base, route)
+			if abs == "" {
+				continue
+			}
+			res.AllLinks = append(res.AllLinks, abs)
+			k := normalize(abs)
+			if queued[k] || visited[k] || !c.allowed(abs) {
+				continue
+			}
+			if len(res.Pages)+len(queue) >= c.opts.MaxPages {
+				continue
+			}
+			queued[k] = true
+			if c.timedOut() {
+				continue
+			}
+			if next, err := c.client.GetFollow(abs); err == nil && next != nil {
+				queue = append(queue, next)
+			}
 		}
 
 		// 链接解析：同域 + http(s) 才入队
@@ -227,8 +317,8 @@ func (c *Crawler) allowed(raw string) bool {
 	return true
 }
 
-// loadRobots 拉取并解析 robots.txt 的 User-agent: * 段 Disallow 规则。
-// 拉取失败视为无限制（内网靶场常见无 robots）。
+// loadRobots 拉取并解析 robots.txt 的 User-agent: * 段 Disallow 规则，
+// 同时收集 Sitemap: 声明行供种子提取。拉取失败视为无限制。
 func (c *Crawler) loadRobots(homeURL string) {
 	u, err := url.Parse(homeURL)
 	if err != nil {
@@ -258,6 +348,98 @@ func (c *Crawler) loadRobots(homeURL string) {
 			if inStar {
 				c.disallow = append(c.disallow, val)
 			}
+		case "sitemap":
+			if strings.HasPrefix(val, "http") {
+				c.sitemapDecls = append(c.sitemapDecls, val)
+			}
 		}
 	}
+}
+
+var locRe = regexp.MustCompile(`(?is)<loc>\s*([^<]+?)\s*</loc>`)
+
+// sitemapSeeds 收集 sitemap 种子：robots Sitemap 声明（若有）+ 默认
+// /sitemap.xml，解析其中 <loc> 条目，仅保留同域地址，条目数封顶。
+func (c *Crawler) sitemapSeeds(homeURL string) []string {
+	u, err := url.Parse(homeURL)
+	if err != nil {
+		return nil
+	}
+	root := u.Scheme + "://" + u.Host
+	candidates := append([]string{}, c.sitemapDecls...)
+	candidates = append(candidates, root+"/sitemap.xml")
+
+	var out []string
+	seen := map[string]bool{}
+	budget := c.opts.MaxPages * 4 // 种子池上限：页数上限的 4 倍
+	for _, sm := range candidates {
+		if budget <= 0 {
+			break
+		}
+		resp, err := c.client.GetDirect(sm)
+		if err != nil || resp == nil || resp.Status != 200 {
+			continue
+		}
+		for _, m := range locRe.FindAllStringSubmatch(resp.Body, -1) {
+			abs := c.resolveRoot(m[1], root)
+			if abs == "" || seen[abs] {
+				continue
+			}
+			seen[abs] = true
+			out = append(out, abs)
+			budget--
+			if budget <= 0 {
+				break
+			}
+		}
+	}
+	return out
+}
+
+// resolveRoot 以站点根解析 sitemap 中的地址（可能为绝对或相对路径），
+// 仅保留同域 http(s) 地址。
+func (c *Crawler) resolveRoot(p, root string) string {
+	p = strings.TrimSpace(p)
+	if p == "" {
+		return ""
+	}
+	ref, err := url.Parse(p)
+	if err != nil {
+		return ""
+	}
+	base, berr := url.Parse(root + "/")
+	if berr != nil {
+		return ""
+	}
+	abs := base.ResolveReference(ref)
+	if strings.ToLower(abs.Host) != c.homeHost {
+		return ""
+	}
+	if abs.Scheme != "http" && abs.Scheme != "https" {
+		return ""
+	}
+	abs.Fragment = ""
+	abs.RawQuery = "" // sitemap 条目通常无查询串；去掉以防重复种子
+	return abs.String()
+}
+
+// resolveURL 以 homeURL 为基解析外部种子地址，仅保留同域 http(s)。
+func (c *Crawler) resolveURL(homeURL, seed string) string {
+	base, err := url.Parse(homeURL)
+	if err != nil {
+		return ""
+	}
+	ref, err := url.Parse(strings.TrimSpace(seed))
+	if err != nil {
+		return ""
+	}
+	abs := base.ResolveReference(ref)
+	if strings.ToLower(abs.Host) != c.homeHost {
+		return ""
+	}
+	if abs.Scheme != "http" && abs.Scheme != "https" {
+		return ""
+	}
+	abs.Fragment = ""
+	return abs.String()
 }

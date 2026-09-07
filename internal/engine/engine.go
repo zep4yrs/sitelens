@@ -12,6 +12,7 @@ import (
 	"cnb.cool/feng-qiao/sitelens/internal/config"
 	"cnb.cool/feng-qiao/sitelens/internal/crawler"
 	"cnb.cool/feng-qiao/sitelens/internal/dast"
+	"cnb.cool/feng-qiao/sitelens/internal/headless"
 	"cnb.cool/feng-qiao/sitelens/internal/htmlx"
 	"cnb.cool/feng-qiao/sitelens/internal/httpx"
 	"cnb.cool/feng-qiao/sitelens/internal/intel"
@@ -129,11 +130,36 @@ func (e *Engine) Scan(rawURL string, opts Options, onProgress progress, cancel f
 	acc := newTechAcc()
 	pages := []crawlPage{{resp: home, doc: doc}}
 
-	// 3) 同域浅爬取
+	// 3) 同域浅爬取（DAST 开启时 jsmap 前置：API 端点回灌爬虫种子）
+	var jsEndpoints []jsmap.Endpoint
+	if opts.DAST {
+		onProgress(38, "JS 攻击面提取…")
+		var jsFind []jsmap.Finding
+		jsFind, jsEndpoints = jsmap.Run(jsmap.NewFetcher(client), baseURL, doc, 4)
+		for _, f := range jsFind {
+			res.Verified = append(res.Verified, verifiedMap(map[string]any{
+				"check": f.Check, "title": f.Title, "severity": f.Severity,
+				"url": f.URL, "evidence": f.Evidence, "advice": f.Advice,
+				"src": "js",
+			}))
+		}
+		if len(jsEndpoints) > 0 {
+			res.Extras["js"] = jsEndpoints
+		}
+	}
 	if opts.Deep {
 		onProgress(40, "同域浅爬取…")
 		c := crawler.New(client, e.cfg.Crawler, baseURL)
-		cr := c.Crawl(home)
+		if e.cfg.Crawler.Headless {
+			c.SetRenderer(chromeRenderer{headless.NewChrome(time.Duration(e.cfg.Crawler.HeadlessTimeoutSec) * time.Second)})
+		}
+		var seeds []string
+		for _, ep := range jsEndpoints {
+			if ep.Kind == "api" {
+				seeds = append(seeds, ep.Endpoint)
+			}
+		}
+		cr := c.Crawl(home, seeds)
 		for i := range cr.Pages {
 			p := &cr.Pages[i]
 			if normalizeKey(p.FinalURL) == normalizeKey(home.FinalURL) {
@@ -233,21 +259,8 @@ func (e *Engine) Scan(rawURL string, opts Options, onProgress progress, cancel f
 		}
 	}
 
-	// 8) DAST：JS 攻击面提取 + 参数级探测
+	// 8) DAST：参数级探测（JS 攻击面已在爬取前提取，端点回灌了爬虫种子）
 	if opts.DAST {
-		onProgress(83, "JS 攻击面提取…")
-		jsFind, jsEps := jsmap.Run(jsmap.NewFetcher(client), baseURL, doc, 4)
-		for _, f := range jsFind {
-			res.Verified = append(res.Verified, verifiedMap(map[string]any{
-				"check": f.Check, "title": f.Title, "severity": f.Severity,
-				"url": f.URL, "evidence": f.Evidence, "advice": f.Advice,
-				"src": "js",
-			}))
-		}
-		if len(jsEps) > 0 {
-			res.Extras["js"] = jsEps
-		}
-
 		onProgress(85, "参数级 DAST 探测…")
 		r := dast.New(dastFetcher{client}, dast.Options{
 			MaxParams:        e.cfg.DAST.MaxParams,
@@ -406,6 +419,17 @@ func normalizeKey(u string) string { return strings.TrimSuffix(u, "/") }
 // wordlistPath 字典文件路径（wordlist_dir 下）。
 func wordlistPath(cfg *config.Config, name string) string {
 	return filepath.Join(cfg.Active.WordlistDir, name)
+}
+
+// chromeRenderer 把 headless.Chrome 适配为 crawler.Renderer。
+type chromeRenderer struct{ c *headless.Chrome }
+
+func (a chromeRenderer) Render(rawURL string) (string, bool) {
+	html, err := a.c.Render(rawURL)
+	if err != nil {
+		return "", false
+	}
+	return html, true
 }
 
 // nucleiCursor 跨扫描轮转游标（进程级：保证无 tag 信号的模板长期全覆盖）。

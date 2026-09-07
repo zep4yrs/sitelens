@@ -71,10 +71,12 @@ type ChecksConfig struct {
 
 // CrawlerConfig 同域爬取。
 type CrawlerConfig struct {
-	MaxPages        int  `yaml:"max_pages"`          // 最多爬取的页面数
-	RespectRobots   bool `yaml:"respect_robots"`     // 是否遵循 robots.txt
-	MaxLinksPerPage int  `yaml:"max_links_per_page"` // 每页最多提取的链接数
-	TimeoutSec      int  `yaml:"timeout_sec"`        // 爬取阶段总时长上限（秒），0=不限
+	MaxPages           int  `yaml:"max_pages"`            // 最多爬取的页面数
+	RespectRobots      bool `yaml:"respect_robots"`       // 是否遵循 robots.txt
+	MaxLinksPerPage    int  `yaml:"max_links_per_page"`   // 每页最多提取的链接数
+	TimeoutSec         int  `yaml:"timeout_sec"`          // 爬取阶段总时长上限（秒），0=不限
+	Headless           bool `yaml:"headless"`             // 无头浏览器渲染（SPA 支持；需本机有 Chrome/Chromium，缺失自动降级）
+	HeadlessTimeoutSec int  `yaml:"headless_timeout_sec"` // 单页渲染超时（秒）
 }
 
 // DASTConfig 参数级注入探测。
@@ -167,10 +169,12 @@ func Default() *Config {
 			NucleiDir: "data/nuclei",
 		},
 		Crawler: CrawlerConfig{
-			MaxPages:        4,
-			RespectRobots:   true,
-			MaxLinksPerPage: 80,
-			TimeoutSec:      60,
+			MaxPages:           4,
+			RespectRobots:      true,
+			MaxLinksPerPage:    80,
+			TimeoutSec:         60,
+			Headless:           false, // 默认关：需要本机 Chrome/Chromium
+			HeadlessTimeoutSec: 20,
 		},
 		DAST: DASTConfig{
 			MaxParams:        24,
@@ -262,6 +266,7 @@ func (c *Config) fillDefaults() {
 	fillInt(&c.Crawler.MaxPages, d.Crawler.MaxPages)
 	fillInt(&c.Crawler.MaxLinksPerPage, d.Crawler.MaxLinksPerPage)
 	fillInt(&c.Crawler.TimeoutSec, d.Crawler.TimeoutSec)
+	fillInt(&c.Crawler.HeadlessTimeoutSec, d.Crawler.HeadlessTimeoutSec)
 
 	fillInt(&c.DAST.MaxParams, d.DAST.MaxParams)
 	fillInt64(&c.DAST.BlindThresholdMS, d.DAST.BlindThresholdMS)
