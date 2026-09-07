@@ -64,19 +64,23 @@ type Server struct {
 	cfg      *config.Config
 	eng      *engine.Engine
 	matcher  *sitelens.Matcher
-	kb       *intel.KB
+	kb       atomic.Pointer[intel.KB] // 热替换安全：指向当前知识库快照
 	st       *store.Store
 	jobs     *store.JobManager
 	sem      chan struct{}
 	apiToken string
 	techIDs  []string // 类别全集（CSV 宽表列序）
 	techCnt  int
+
+	dataMu   sync.Mutex
+	lastData map[string]int64 // 数据文件路径 → 上次加载时的 mtime（热更新基线）
 }
 
 // New 装配服务（加载指纹库/知识库/历史存储/用户插件）。
 func New(cfg *config.Config) (*Server, error) {
 	s := &Server{cfg: cfg, jobs: store.NewJobManagerWithCap(200),
-		sem: make(chan struct{}, cfg.Scan.MaxConcurrent)}
+		sem:      make(chan struct{}, cfg.Scan.MaxConcurrent),
+		lastData: map[string]int64{}}
 	checks.ConfigurePlugins(cfg.Checks.PluginDir)
 	s.apiToken = os.Getenv("SLENS_API_TOKEN")
 	if s.apiToken == "" {
@@ -94,7 +98,7 @@ func New(cfg *config.Config) (*Server, error) {
 		log.Printf("指纹库加载失败（扫描将无指纹识别）：%v", err)
 	}
 	if kb, err := intel.Load(cfg.Intel.DumpPath, cfg.Intel.RangesPath); err == nil {
-		s.kb = kb
+		s.kb.Store(kb)
 	} else {
 		log.Printf("知识库加载失败（情报关联降级）：%v", err)
 	}
@@ -103,19 +107,28 @@ func New(cfg *config.Config) (*Server, error) {
 		return nil, err
 	}
 	s.st = st
-	s.eng = engine.New(cfg, s.matcher, s.kb)
+	s.eng = engine.New(cfg, s.matcher, s.KB())
 	if s.matcher == nil {
 		s.matcher = &sitelens.Matcher{}
-		s.eng = engine.New(cfg, nil, s.kb)
+		s.eng.SetMatcher(s.matcher)
+	}
+	// 记录初始数据文件指纹（热更新基线）
+	for _, p := range s.dataPaths() {
+		if mt, ok := fileMTime(p); ok {
+			s.lastData[p] = mt
+		}
 	}
 	// KEV 本地缓存秒加载（网络拉取交给守护协程，不阻塞启动）
-	if s.kb != nil {
+	if kb := s.KB(); kb != nil {
 		if entries, err := intel.LoadKEVExtra(filepath.Join(cfg.Store.DataDir, "kev_extra.json")); err == nil {
-			s.kb.MergeKEV(entries)
+			kb.MergeKEV(entries)
 		}
 	}
 	return s, nil
 }
+
+// KB 返回当前知识库快照（热替换安全）。
+func (s *Server) KB() *intel.KB { return s.kb.Load() }
 
 // Handler 构建全部路由。
 func (s *Server) Handler() http.Handler {
@@ -146,6 +159,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/version", s.hVersion)
 	mux.HandleFunc("GET /api/stats", s.hStats)
 	mux.HandleFunc("GET /api/categories", s.hCategories)
+	mux.HandleFunc("POST /api/admin/reload", s.hAdminReload)
 	mux.HandleFunc("POST /api/scan", s.hScan)
 	mux.HandleFunc("GET /api/job/{id}", s.hJob)
 	mux.HandleFunc("POST /api/job/{id}/cancel", s.hJobCancel)
@@ -198,7 +212,7 @@ func (s *Server) Run() error {
 // startKEVDaemon 情报守护：立即拉取一次 KEV，此后按 update_hours 轮询。
 // 失败仅记日志（离线环境降级为静态知识库）。
 func (s *Server) startKEVDaemon() {
-	if s.kb == nil || s.cfg.Intel.UpdateHours <= 0 {
+	if s.KB() == nil || s.cfg.Intel.UpdateHours <= 0 {
 		return
 	}
 	dest := filepath.Join(s.cfg.Store.DataDir, "kev_extra.json")
@@ -209,7 +223,7 @@ func (s *Server) startKEVDaemon() {
 			log.Printf("KEV 更新失败（降级用本地缓存）：%v", err)
 			return
 		}
-		added := s.kb.MergeKEV(entries)
+		added := s.KB().MergeKEV(entries)
 		if err := intel.SaveKEVExtra(dest, entries); err != nil {
 			log.Printf("KEV 缓存写入失败：%v", err)
 			return
@@ -291,8 +305,8 @@ func (s *Server) hStats(w http.ResponseWriter, r *http.Request) {
 		"vulns": 0, "tscan": 0, "vuln_by_severity": map[string]int{},
 		"intel_sources": map[string]int{}, "intel_with_ranges": 0, "intel_with_cvss": 0,
 	}
-	if s.kb != nil {
-		for k, v := range s.kb.Stats() {
+	if kb := s.KB(); kb != nil {
+		for k, v := range kb.Stats() {
 			stats[k] = v
 		}
 	}
@@ -311,11 +325,16 @@ func (s *Server) hCategories(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) hVulnSearch(w http.ResponseWriter, r *http.Request) {
 	q := strings.TrimSpace(r.URL.Query().Get("q"))
-	if q == "" || s.kb == nil {
+	if q == "" {
 		writeJSON(w, 200, map[string]any{"results": []any{}})
 		return
 	}
-	writeJSON(w, 200, map[string]any{"results": s.kb.Search(q, s.cfg.Intel.SearchLimit)})
+	kb := s.KB()
+	if kb == nil {
+		writeJSON(w, 200, map[string]any{"results": []any{}})
+		return
+	}
+	writeJSON(w, 200, map[string]any{"results": kb.Search(q, s.cfg.Intel.SearchLimit)})
 }
 
 func (s *Server) hVerified(w http.ResponseWriter, r *http.Request) {
@@ -326,6 +345,7 @@ func (s *Server) hVerified(w http.ResponseWriter, r *http.Request) {
 // ---- 扫描 ----
 
 func (s *Server) hScan(w http.ResponseWriter, r *http.Request) {
+	s.reloadIfDataChanged()
 	var body map[string]any
 	_ = json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&body)
 	urlStr, _ := body["url"].(string)
@@ -444,6 +464,7 @@ func (s *Server) hJobCancel(w http.ResponseWriter, r *http.Request) {
 // ---- 批量 ----
 
 func (s *Server) hBatch(w http.ResponseWriter, r *http.Request) {
+	s.reloadIfDataChanged()
 	var body struct {
 		URLs []string `json:"urls"`
 	}
