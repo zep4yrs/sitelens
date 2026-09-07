@@ -2,6 +2,11 @@
 
 ## 未发布（预览版追加）
 
+- **验证引擎同路径请求聚类（§12 P1 落地）**：Method+Path+Body+
+  ContentType 相同的 check 共享一次请求，命中后按组一次独立重放完成
+  全组二次确认（每条命中仍经独立重放验证，语义不变）。请求数从
+  O(模板数) 降到 O(路径数)——Nuclei 子集大量模板探测同一路径，300
+  模板典型场景降至 ~30 次请求；对目标更友好，扫描更快
 - **子域名接管探测（takeover，opt-in）**：18 服务 CNAME+边缘 404 特征
   双条件判定（GitHub Pages/Heroku/S3/Azure/CloudFront/Shopify/Fastly/
   Netlify 等，取 can-i-take-over-xyz 核验子集）；随子域名枚举产出候选，
