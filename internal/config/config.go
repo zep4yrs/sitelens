@@ -6,6 +6,7 @@
 package config
 
 import (
+	"fmt"
 	"os"
 
 	"gopkg.in/yaml.v3"
@@ -235,9 +236,14 @@ func Load(path string) (*Config, error) {
 	return cfg, nil
 }
 
-// LoadOrDefault 加载配置；出错时静默使用默认值。
+// LoadOrDefault 加载配置；出错时 stderr 告警并使用默认值
+//（此前静默回退会让用户配置失效而无感知——YAML 双引号反斜杠路径
+// 即可触发解析失败）。
 func LoadOrDefault(path string) *Config {
-	cfg, _ := Load(path)
+	cfg, err := Load(path)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "配置加载失败（使用默认值）：", err)
+	}
 	return cfg
 }
 
