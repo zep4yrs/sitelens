@@ -22,3 +22,13 @@ data/intel_dump.json.gz
 
 # Go 运行时产物
 /data/state/
+
+# 扫描临时产物
+*.json.tmp
+/full*.json
+/tj*.json
+/tools_*.json
+/real_*.json
+/alljob.json
+/hj*.json
+/hd*.json
