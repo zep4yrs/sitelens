@@ -45,7 +45,7 @@ func TestCrawlBFSCapsAndSameHost(t *testing.T) {
 	srv := newSite(t, false)
 	opts := config.CrawlerConfig{MaxPages: 10, RespectRobots: false, MaxLinksPerPage: 20}
 	c := New(testClient(), opts, srv.URL+"/")
-	res := c.Crawl(mustGet(t, srv.URL+"/"))
+	res := c.Crawl(mustGet(t, srv.URL+"/"), nil)
 
 	if len(res.Pages) != 4 { // / a b c
 		t.Fatalf("应爬满 4 页: %d", len(res.Pages))
@@ -71,7 +71,7 @@ func TestCrawlMaxPagesCap(t *testing.T) {
 	srv := newSite(t, false)
 	opts := config.CrawlerConfig{MaxPages: 2, RespectRobots: false, MaxLinksPerPage: 20}
 	c := New(testClient(), opts, srv.URL+"/")
-	res := c.Crawl(mustGet(t, srv.URL+"/"))
+	res := c.Crawl(mustGet(t, srv.URL+"/"), nil)
 	if len(res.Pages) != 2 {
 		t.Fatalf("MaxPages=2 应只爬 2 页: %d", len(res.Pages))
 	}
@@ -106,7 +106,7 @@ func TestPhaseTimeout(t *testing.T) {
 		MaxLinksPerPage: 20, TimeoutSec: 1}
 	c := New(testClient(), opts, srv.URL+"/")
 	c.start = time.Now().Add(-2 * time.Second) // 已超时 2 秒
-	res := c.Crawl(mustGet(t, srv.URL+"/"))
+	res := c.Crawl(mustGet(t, srv.URL+"/"), nil)
 	if len(res.Pages) != 1 { // 只有首页（已采到的），后续全部超时终止
 		t.Fatalf("超时应终止爬取: %d", len(res.Pages))
 	}

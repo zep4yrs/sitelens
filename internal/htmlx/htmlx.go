@@ -5,6 +5,8 @@
 package htmlx
 
 import (
+	"encoding/json"
+	"regexp"
 	"strings"
 )
 
@@ -32,7 +34,8 @@ type Doc struct {
 	ScriptSrcs  []string          // <script src>
 	Metas       map[string]string // meta name/property(小写) → content
 	Forms       []Form
-	HasPassword bool // 是否存在 password 输入框（登录页特征）
+	HasPassword bool     // 是否存在 password 输入框（登录页特征）
+	NextRoutes  []string // SPA 数据岛（__NEXT_DATA__/__NUXT__）中的路由路径
 }
 
 // Parse 解析 HTML 原文。
@@ -88,10 +91,19 @@ func Parse(body string) *Doc {
 			break
 		}
 		tagText := body[start : start+tagEnd+1]
-		if src := attrValue(tagText, "src"); src != "" {
+		closeIdx := strings.Index(low[start:], "</script>")
+		src := attrValue(tagText, "src")
+		if src == "" && closeIdx >= 0 {
+			// SPA 数据岛：__NEXT_DATA__（JSON 岛）与 __NUXT__（内联 JS，
+			// 退化为引号内路径提取）两类都贡献路由
+			inner := body[start+tagEnd+1 : start+closeIdx]
+			if isSPAJet(tagText) || strings.Contains(asciiLower(inner), "window.__nuxt__") {
+				doc.NextRoutes = append(doc.NextRoutes, spaRoutes(inner)...)
+			}
+		}
+		if src != "" {
 			doc.ScriptSrcs = append(doc.ScriptSrcs, src)
 		}
-		closeIdx := strings.Index(low[start:], "</script>")
 		if closeIdx < 0 {
 			pos = start + tagEnd + 1
 			continue
@@ -212,6 +224,60 @@ func asciiLower(s string) string {
 		}
 	}
 	return string(b)
+}
+
+// isSPAJet 该 script 标签是否为 SPA 数据岛（__NEXT_DATA__ 等 JSON 岛）。
+func isSPAJet(tagText string) bool {
+	low := asciiLower(tagText)
+	return strings.Contains(low, `id="__next_data__"`) ||
+		strings.Contains(low, `type="application/json"`) ||
+		strings.Contains(low, `type='application/json'`)
+}
+
+// 路径含斜杠，字符类必须包含 /；- 放在类尾避免被读作区间
+var nuxtPathRe = regexp.MustCompile(`["'](/[a-zA-Z0-9_./-]{1,80})["']`)
+
+// spaRoutes 从 SPA 数据岛内容提取路由样路径（/ 开头、无空格、限长）。
+func spaRoutes(inner string) []string {
+	var out []string
+	seen := map[string]bool{}
+	add := func(s string) {
+		if s != "" && !seen[s] && len(out) < 200 {
+			seen[s] = true
+			out = append(out, s)
+		}
+	}
+	// __NEXT_DATA__：标准 JSON，遍历找 route/page/href/url 键
+	var v any
+	if err := json.Unmarshal([]byte(inner), &v); err == nil {
+		var walk func(n any)
+		walk = func(n any) {
+			switch t := n.(type) {
+			case map[string]any:
+				for k, vv := range t {
+					switch k {
+					case "route", "page", "href", "url":
+						if s, ok := vv.(string); ok && strings.HasPrefix(s, "/") &&
+							!strings.Contains(s, " ") {
+							add(s)
+						}
+					}
+					walk(vv)
+				}
+			case []any:
+				for _, vv := range t {
+					walk(vv)
+				}
+			}
+		}
+		walk(v)
+		return out
+	}
+	// __NUXT__：JS 赋值非标准 JSON，退化为提取引号包裹的路径样字符串
+	for _, m := range nuxtPathRe.FindAllStringSubmatch(inner, -1) {
+		add(m[1])
+	}
+	return out
 }
 
 // attrValue 从单个标签原文取属性值（单/双引号或无引号，大小写不敏感）。
