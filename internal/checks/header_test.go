@@ -10,15 +10,15 @@ func TestMatchBodyHeaderContains(t *testing.T) {
 		"Content-Type": "text/html",
 	}
 	m := Match{Status: 200, HeaderContains: []string{"nginx", "PHP"}}
-	if !matchBody(m, 200, "body", headers) {
+	if !matchBody(m, 200, "body", headers, "") {
 		t.Fatal("两处头关键词均存在应命中")
 	}
 	m2 := Match{Status: 200, HeaderContains: []string{"nginx", "apache"}}
-	if matchBody(m2, 200, "body", headers) {
+	if matchBody(m2, 200, "body", headers, "") {
 		t.Fatal("缺少 apache 不应命中")
 	}
 	// 无头条件时行为不变（含正/反用例）
-	if !matchBody(Match{Status: 200, Contains: []string{"ok"}}, 200, "ok!", headers) {
+	if !matchBody(Match{Status: 200, Contains: []string{"ok"}}, 200, "ok!", headers, "") {
 		t.Fatal("无头条件时正文命中应通过")
 	}
 }

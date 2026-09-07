@@ -34,17 +34,67 @@ http:
         condition: and
 `
 
-const unsupportedTpl = `id: needs-dsl
+// dsl 安全子集：状态比较 + tolower 包含（真实库占比最高的形态）
+const dslTpl = `id: dsl-combo
 info:
-  name: DSL Template
-  severity: medium
+  name: DSL Combo
+  severity: high
 http:
-  - path:
-      - "{{BaseURL}}/x"
+  - method: GET
+    path:
+      - "{{BaseURL}}/"
     matchers:
       - type: dsl
         dsl:
-          - "status_code == 200"
+          - 'status_code == 200 && contains(tolower(body), "<title>ackee")'
+`
+
+// 纯排除式：对任意响应可能恒真，准入必须拒绝（防空转 check）
+const dslExclusionOnlyTpl = `id: dsl-excl
+info:
+  name: DSL Exclusion Only
+  severity: medium
+http:
+  - method: GET
+    path:
+      - "{{BaseURL}}/"
+    matchers:
+      - type: dsl
+        dsl:
+          - '!contains(host,"1password.com")'
+`
+
+// 子集外函数 / extract 绑定变量 / 多请求变量：准入拒绝
+const dslExoticTpl = `id: dsl-exotic
+info:
+  name: DSL Exotic
+  severity: medium
+http:
+  - method: GET
+    path:
+      - "{{BaseURL}}/"
+    matchers:
+      - type: dsl
+        dsl:
+          - "bcontains(base64('abc'))"
+          - "compare_versions(version, '<=2.2.34')"
+          - "status_code_2 == 200"
+`
+
+// regex 匹配器：装配修复回归——此前 g.rx 从未写入 Match.RegexBody，
+// 纯 regex 模板会转成无条件 check（对任意响应恒真）
+const regexOnlyTpl = `id: regex-only
+info:
+  name: Regex Only
+  severity: high
+http:
+  - method: GET
+    path:
+      - "{{BaseURL}}/"
+    matchers:
+      - type: regex
+        regex:
+          - "powered by WordPress [0-9.]+"
 `
 
 const multiGroupTpl = `id: multi-or
@@ -84,9 +134,37 @@ func TestConvertGoodTemplate(t *testing.T) {
 	}
 }
 
-func TestConvertUnsupportedSkipped(t *testing.T) {
-	if cs := Convert([]byte(unsupportedTpl)); len(cs) != 0 {
-		t.Fatalf("dsl 模板应跳过: %+v", cs)
+// TestConvertDslSafeSubset dsl 安全子集准入：正向子集转换并写入
+// Match.DSL；纯排除式与子集外形态整模板跳过。
+func TestConvertDslSafeSubset(t *testing.T) {
+	cs := Convert([]byte(dslTpl))
+	if len(cs) != 1 {
+		t.Fatalf("dsl 正向模板应转换出 1 条: %d", len(cs))
+	}
+	if len(cs[0].Match.DSL) != 1 {
+		t.Fatalf("Match.DSL 未装配: %+v", cs[0].Match)
+	}
+	if cs[0].Match.DSL[0] != `status_code == 200 && contains(tolower(body), "<title>ackee")` {
+		t.Fatalf("dsl 表达式原文应原样保留: %q", cs[0].Match.DSL[0])
+	}
+
+	if cs := Convert([]byte(dslExclusionOnlyTpl)); len(cs) != 0 {
+		t.Fatalf("纯排除式 dsl 应跳过（恒真空转）: %+v", cs)
+	}
+	if cs := Convert([]byte(dslExoticTpl)); len(cs) != 0 {
+		t.Fatalf("子集外 dsl（bcontains/extract 绑定/多请求变量）应跳过: %+v", cs)
+	}
+}
+
+// TestConvertRegexBodyAttached 锁定装配修复：regex 匹配器必须落到
+// Match.RegexBody（此前 g.rx 丢失导致纯 regex 模板对任意响应恒真）。
+func TestConvertRegexBodyAttached(t *testing.T) {
+	cs := Convert([]byte(regexOnlyTpl))
+	if len(cs) != 1 {
+		t.Fatalf("纯 regex 模板应转换出 1 条: %d", len(cs))
+	}
+	if len(cs[0].Match.RegexBody) != 1 || cs[0].Match.RegexBody[0] != "(?i)powered by WordPress [0-9.]+" {
+		t.Fatalf("Match.RegexBody 未装配: %+v", cs[0].Match)
 	}
 }
 

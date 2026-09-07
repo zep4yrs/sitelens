@@ -3,9 +3,11 @@ package checks
 
 import (
 	"fmt"
+	"net/url"
 	"sort"
 	"strings"
 
+	"cnb.cool/feng-qiao/sitelens/internal/dsl"
 	"cnb.cool/feng-qiao/sitelens/internal/httpx"
 	"cnb.cool/feng-qiao/sitelens/internal/versioncmp"
 )
@@ -96,7 +98,7 @@ func RunList(client *httpx.Client, targetURL string, list []Check,
 			continue
 		}
 		body := stripEcho(resp.Body, u, chk.Path)
-		if !matchBody(chk.Match, resp.Status, body, resp.Headers) {
+		if !matchBody(chk.Match, resp.Status, body, resp.Headers, hostOf(u)) {
 			onProgress(i+1, total, chk.Path)
 			continue
 		}
@@ -124,7 +126,7 @@ func RunList(client *httpx.Client, targetURL string, list []Check,
 			continue
 		}
 		body2 := stripEcho(resp2.Body, u, chk.Path)
-		if !matchBody(chk.Match, resp2.Status, body2, resp2.Headers) {
+		if !matchBody(chk.Match, resp2.Status, body2, resp2.Headers, hostOf(u)) {
 			onProgress(i+1, total, chk.Path)
 			continue
 		}
@@ -140,12 +142,13 @@ func RunList(client *httpx.Client, targetURL string, list []Check,
 	return hits
 }
 
-// matchBody 判定：状态码（等值或任一列表）+ 正文包含 + 正则 + 响应头包含。
-// Contains 为全包含（AND），ContainsAny 为任一包含（OR，Nuclei 组转换），
-// RegexBody 为任一正则命中，HeaderContains 对「名=值」合并区全包含，
-// 多类条件可并存（都须满足各自语义）。
+// matchBody 判定：状态码（等值或任一列表）+ 正文包含 + 正则 + 响应头包含
+// + dsl 表达式（安全子集）。Contains 为全包含（AND），ContainsAny 为任一
+// 包含（OR，Nuclei 组转换），RegexBody 为任一正则命中，HeaderContains 对
+// 「名=值」合并区全包含，DSL 各表达式须全部为真；多类条件可并存。
 // 修复：此前实际响应状态码从未参与比较，纯状态码 check 会对任何响应命中。
-func matchBody(m Match, status int, body string, headers map[string]string) bool {
+// dsl 求值失败（编译/类型/正则错误）一律不命中——宁少报不误报。
+func matchBody(m Match, status int, body string, headers map[string]string, host string) bool {
 	if m.Status != 0 && status != m.Status {
 		return false
 	}
@@ -202,8 +205,45 @@ func matchBody(m Match, status int, body string, headers map[string]string) bool
 			}
 		}
 	}
+	for _, expr := range m.DSL {
+		prog, err := dsl.CompileCached(expr)
+		if err != nil {
+			return false
+		}
+		ok, err := prog.Eval(respEnv{status: status, body: body, headers: headers, host: host})
+		if err != nil || !ok {
+			return false
+		}
+	}
 	return true
 }
+
+// respEnv dsl 求值环境：封装单次响应的状态码/正文/头/主机名。
+type respEnv struct {
+	status  int
+	body    string
+	headers map[string]string
+	host    string
+}
+
+func (e respEnv) StatusCode() int { return e.status }
+func (e respEnv) Body() string    { return e.body }
+func (e respEnv) Header(name string) string {
+	for k, v := range e.headers {
+		if strings.EqualFold(k, name) {
+			return v
+		}
+	}
+	return ""
+}
+func (e respEnv) HeaderValues() []string {
+	out := make([]string, 0, len(e.headers))
+	for _, v := range e.headers {
+		out = append(out, v)
+	}
+	return out
+}
+func (e respEnv) Host() string { return e.host }
 
 // extractVersion 配置了版本抽取的 check：从正文按关键词提取版本号
 // （wp-readme → WordPress 版本，情报关联 confirmed 的关键链路）。
@@ -213,6 +253,14 @@ func extractVersion(chk Check, body string) string {
 		return ""
 	}
 	return versioncmp.ExtractVersion(body, keyword)
+}
+
+// hostOf 从请求 URL 提取主机名（dsl 的 host 变量取值）。
+func hostOf(rawURL string) string {
+	if u, err := url.Parse(rawURL); err == nil {
+		return u.Hostname()
+	}
+	return ""
 }
 
 // joinHeaders 把响应头合并为「名: 值」多行串供头匹配。

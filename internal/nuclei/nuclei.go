@@ -7,8 +7,8 @@
 // ③ 持久化 LRU：最久未跑优先，跨重启保持轮转公平——⌈C/N⌉ 次扫描
 //
 //	完成全量轮换。模板漏斗对齐 python 分支 tools/import_nuclei.py：
-//	仅接受单 GET、path 为 {{BaseURL}} 后缀、matchers 为 status/word
-//	的模板；需要外部回调（interactsh）的模板跳过。
+//	仅接受单请求、path 为 {{BaseURL}} 后缀、matchers 为 status/word/
+//	regex/dsl（安全子集）的模板；需要外部回调（interactsh）的模板跳过。
 package nuclei
 
 import (
@@ -24,6 +24,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"cnb.cool/feng-qiao/sitelens/internal/checks"
+	"cnb.cool/feng-qiao/sitelens/internal/dsl"
 )
 
 // Entry 索引条目（建索引时一次全量 Convert 验证）。
@@ -38,19 +39,14 @@ type Entry struct {
 	LastRun     int64    `json:"lastrun"`     // 最近一次运行时间（unix nano；0=从未）
 }
 
-var (
-	// tags 在真实模板中缩进于 info 块内，须允许前导空白
-	htags = regexp.MustCompile(`(?m)^\s*tags:\s*(.+)$`)
-	hsev  = regexp.MustCompile(`(?m)^\s*severity:\s*(\S+)`)
-	hname = regexp.MustCompile(`(?m)^\s*name:\s*(.+)$`)
-)
-
 // cacheSchema 索引缓存格式版本——格式变更时递增以强制重建
 // （历史缓存中 Tags 全空，无法通过条目数区分新旧格式）。
-const cacheSchema = 3
+// v4：dsl 安全子集接入 + RegexBody 装配修复，转换结果变化。
+const cacheSchema = 4
 
 type cacheFile struct {
 	Schema  int     `json:"schema"`
+	Files   int     `json:"files"` // 目录内 yaml/yml 总数（缓存有效性依据）
 	Entries []Entry `json:"entries"`
 }
 
@@ -73,8 +69,11 @@ func Index(dir, cachePath string) ([]Entry, error) {
 	}
 	if data, rerr := os.ReadFile(cachePath); rerr == nil {
 		var cached cacheFile
+		// 有效性比对的是「目录内模板文件总数」——entries 只含漏斗
+		// 通过者，数目必然小于文件总数（旧缓存正是因拿 entries 数
+		// 与文件数比对而永远失配，每次都全量重建索引）
 		if json.Unmarshal(data, &cached) == nil && cached.Schema == cacheSchema &&
-			len(cached.Entries) == len(files) {
+			cached.Files == len(files) {
 			return cached.Entries, nil
 		}
 	}
@@ -100,16 +99,17 @@ func Index(dir, cachePath string) ([]Entry, error) {
 		}
 		name, sev, tags := convertMeta(string(data))
 		entries = append(entries, Entry{
-			Path:  rel,
-			Name:  name,
-			Sev:   sev,
-			Tags:  tags,
-			MTime: st.ModTime().Unix(),
-			Size:  st.Size(),
+			Path:        rel,
+			Name:        name,
+			Sev:         sev,
+			Tags:        tags,
+			MTime:       st.ModTime().Unix(),
+			Size:        st.Size(),
+			Convertible: true, // 建入索引即漏斗通过（Convert 非空）
 		})
 	}
 	if cachePath != "" {
-		if data, jerr := json.Marshal(cacheFile{Schema: cacheSchema, Entries: entries}); jerr == nil {
+		if data, jerr := json.Marshal(cacheFile{Schema: cacheSchema, Files: len(files), Entries: entries}); jerr == nil {
 			_ = os.WriteFile(cachePath, data, 0o644)
 		}
 	}
@@ -228,11 +228,6 @@ func termVec(terms []string) map[string]float64 {
 	return vec
 }
 
-// docVec 模板文档向量。
-func docVec(e Entry) map[string]float64 {
-	return termVec(tokenize(e.Name + " " + strings.Join(e.Tags, " ") + " " + e.Path))
-}
-
 // cosine 余弦相似度（TF 空间；零向量返回 0）。
 func cosine(a, b map[string]float64) float64 {
 	if len(a) == 0 || len(b) == 0 {
@@ -281,6 +276,7 @@ type tplMatcher struct {
 	Status    []int    `yaml:"status"`
 	Words     []string `yaml:"words"`
 	Regex     []string `yaml:"regex"`
+	DSL       []string `yaml:"dsl"` // dsl 表达式（安全子集，internal/dsl 准入）
 	Part      string   `yaml:"part"`
 	Condition string   `yaml:"condition"`
 }
@@ -351,13 +347,15 @@ func Convert(data []byte) []checks.Check {
 	}
 
 	// 组转换：status → StatusAny；word body+and → Contains；word body+or →
-	// ContainsAny；word header → HeaderContains（全包含语义）
+	// ContainsAny；word header → HeaderContains（全包含语义）；
+	// dsl → DSL（安全子集求值，internal/dsl 准入）
 	type group struct {
 		status []int
 		wall   []string
 		wany   []string
 		h      []string
 		rx     []string
+		dsl    []string
 	}
 	var groups []group
 	for _, m := range req.Matchers {
@@ -393,10 +391,26 @@ func Convert(data []byte) []checks.Check {
 				return nil
 			}
 			g.rx = pats
+		case "dsl":
+			// 安全子集准入：任一表达式编译失败或含纯排除式（对任意
+			// 响应可能恒真）即整模板跳过，与 regex RE2 准入同策略
+			for _, expr := range m.DSL {
+				prog, err := dsl.Compile(expr)
+				if err != nil {
+					return nil
+				}
+				if !prog.PositiveGround() {
+					return nil
+				}
+			}
+			if len(m.DSL) == 0 {
+				return nil
+			}
+			g.dsl = m.DSL
 		default:
-			return nil // dsl/binary/其他
+			return nil // binary/其他未知形态
 		}
-		if len(g.status) == 0 && len(g.wall) == 0 && len(g.wany) == 0 && len(g.h) == 0 && len(g.rx) == 0 {
+		if len(g.status) == 0 && len(g.wall) == 0 && len(g.wany) == 0 && len(g.h) == 0 && len(g.rx) == 0 && len(g.dsl) == 0 {
 			return nil
 		}
 		groups = append(groups, g)
@@ -409,18 +423,19 @@ func Convert(data []byte) []checks.Check {
 			merged.wany = append(merged.wany, g.wany...)
 			merged.h = append(merged.h, g.h...)
 			merged.rx = append(merged.rx, g.rx...)
+			merged.dsl = append(merged.dsl, g.dsl...)
 		}
 		// AND 语义下多组 status 各自独立列表语义有损，取交集语义由
 		// matchBody 的 StatusAny（任一）近似——仅当无词组时保留，
 		// 有词组时丢弃 status 条件（宁少报不误报）。
-		if len(merged.wall) > 0 || len(merged.wany) > 0 || len(merged.h) > 0 {
+		if len(merged.wall) > 0 || len(merged.wany) > 0 || len(merged.h) > 0 || len(merged.dsl) > 0 {
 			merged.status = nil
 		}
 		groups = []group{merged}
 	}
 	if len(groups) == 1 {
 		g := groups[0]
-		if len(g.status) == 0 && len(g.wall) == 0 && len(g.wany) == 0 && len(g.h) == 0 && len(g.rx) == 0 {
+		if len(g.status) == 0 && len(g.wall) == 0 && len(g.wany) == 0 && len(g.h) == 0 && len(g.rx) == 0 && len(g.dsl) == 0 {
 			return nil
 		}
 	}
@@ -451,6 +466,8 @@ func Convert(data []byte) []checks.Check {
 				Contains:       g.wall,
 				ContainsAny:    g.wany,
 				HeaderContains: g.h,
+				RegexBody:      g.rx,
+				DSL:            g.dsl,
 				Method:         method,
 				Body:           req.Body,
 				ContentType:    reqCT,
