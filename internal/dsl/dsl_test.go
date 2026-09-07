@@ -22,13 +22,6 @@ func (e testEnv) Header(n string) string {
 	}
 	return ""
 }
-func (e testEnv) HeaderValues() []string {
-	var out []string
-	for _, v := range e.headers {
-		out = append(out, v)
-	}
-	return out
-}
 func (e testEnv) Host() string { return e.host }
 
 func mustEval(t *testing.T, expr string, env testEnv) (bool, error) {
