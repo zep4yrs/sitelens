@@ -110,3 +110,29 @@ func TestLookupAliases(t *testing.T) {
 		t.Fatalf("无别名技术被误匹配: %+v", out)
 	}
 }
+
+// TestMatchCVEMsEmptyComponent 空组件名公告不得经反向包含匹配任意技术
+// （真实库 34931 条中 1545 条 component 为空，修复前每次扫描 20 条
+// 配额全被无关公告占满）。
+func TestMatchCVEMsEmptyComponent(t *testing.T) {
+	kb := &KB{cveMs: []CVEMsRow{
+		{CVE: "CVE-X", Component: "", Title: "空组件公告", Severity: "Important"},
+		{CVE: "CVE-Y", Component: "  ", Title: "空白组件公告", Severity: "Important"},
+		{CVE: "CVE-Z", Component: "Windows Kernel", Title: "正常公告", Severity: "Important"},
+		{CVE: "CVE-W", Component: ".NET", Title: "组件含点号", Severity: "Important"},
+	}}
+	out := kb.MatchCVEMs([]TechHit{{Name: "Nginx"}}, 20)
+	if len(out) != 0 {
+		t.Fatalf("Nginx 不应匹配任何 MS 公告: %+v", out)
+	}
+	// 正向包含（组件名包含技术名）不受影响
+	out = kb.MatchCVEMs([]TechHit{{Name: "Windows Kernel"}}, 20)
+	if len(out) != 1 {
+		t.Fatalf("正向包含被误伤: %+v", out)
+	}
+	// 反向包含保留 ≥4 字符组件（如 ASP.NET ↔ .NET）
+	out = kb.MatchCVEMs([]TechHit{{Name: "ASP.NET"}}, 20)
+	if len(out) != 1 || out[0].Component != ".NET" {
+		t.Fatalf("反向包含守卫误伤 .NET: %+v", out)
+	}
+}
