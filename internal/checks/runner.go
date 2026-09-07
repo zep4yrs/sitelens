@@ -75,68 +75,91 @@ func RunList(client *httpx.Client, targetURL string, list []Check,
 
 	baseSize, basePrefix := soft404Baseline(client, targetURL)
 
+	// 同路径聚类：Method+Path+Body+ContentType 相同的 check 共享一次
+	// 请求——Nuclei 子集大量模板探测同一路径（如 /），聚类后请求数从
+	// O(模板数) 降到 O(路径数)，二次确认按组一次重放服务组内全部命中
+	//（每条命中仍经独立重放验证，语义不变）。
+	type group struct {
+		idx []int
+	}
+	groups := map[string]*group{}
+	var order []string
+	for i := range selected {
+		chk := selected[i]
+		k := chk.Match.Method + "\x00" + chk.Path + "\x00" + chk.Match.Body + "\x00" + chk.Match.ContentType
+		if groups[k] == nil {
+			groups[k] = &group{}
+			order = append(order, k)
+		}
+		groups[k].idx = append(groups[k].idx, i)
+	}
+
+	fetch := func(u string, m Match) (*httpx.Response, error) {
+		if m.Method == "POST" {
+			ctype := m.ContentType
+			if ctype == "" {
+				ctype = "application/x-www-form-urlencoded"
+			}
+			return client.PostRaw(u, ctype, m.Body)
+		}
+		return client.GetFollow(u)
+	}
+
 	hits := []Hit{}
+	done := 0
 	total := len(selected)
-	for i, chk := range selected {
+	for _, k := range order {
 		if cancelCheck != nil && cancelCheck() {
 			break
 		}
-		u := joinURL(targetURL, strings.TrimLeft(chk.Path, "/"))
-		var resp *httpx.Response
-		var gerr error
-		if chk.Match.Method == "POST" {
-			ctype := chk.Match.ContentType
-			if ctype == "" {
-				ctype = "application/x-www-form-urlencoded"
-			}
-			resp, gerr = client.PostRaw(u, ctype, chk.Match.Body)
-		} else {
-			resp, gerr = client.GetFollow(u)
-		}
+		g := groups[k]
+		chk0 := selected[g.idx[0]]
+		u := joinURL(targetURL, strings.TrimLeft(chk0.Path, "/"))
+		host := hostOf(u)
+
+		resp, gerr := fetch(u, chk0.Match)
 		if gerr != nil || resp == nil {
-			onProgress(i+1, total, chk.Path)
+			done += len(g.idx)
+			onProgress(done, total, chk0.Path)
 			continue
 		}
-		body := stripEcho(resp.Body, u, chk.Path)
-		if !matchBody(chk.Match, resp.Status, body, resp.Headers, hostOf(u)) {
-			onProgress(i+1, total, chk.Path)
-			continue
-		}
-		// 软 404：与不存在路径响应一致
-		if baseSize > 0 && len(resp.Body) == baseSize &&
+		body := stripEcho(resp.Body, u, chk0.Path)
+		soft404 := baseSize > 0 && len(resp.Body) == baseSize &&
 			strings.HasPrefix(strings.ToLower(body[:min(200, len(body))]),
-				strings.ToLower(basePrefix[:min(200, len(basePrefix))])) {
-			onProgress(i+1, total, chk.Path)
-			continue
-		}
-		// 二次确认：立即重放，两次都命中才采信
-		var resp2 *httpx.Response
-		var gerr2 error
-		if chk.Match.Method == "POST" {
-			ctype := chk.Match.ContentType
-			if ctype == "" {
-				ctype = "application/x-www-form-urlencoded"
+				strings.ToLower(basePrefix[:min(200, len(basePrefix))]))
+
+		// 组内首轮判定
+		var pending []int
+		for _, ci := range g.idx {
+			if !matchBody(selected[ci].Match, resp.Status, body, resp.Headers, host) {
+				continue
 			}
-			resp2, gerr2 = client.PostRaw(u, ctype, chk.Match.Body)
-		} else {
-			resp2, gerr2 = client.GetFollow(u)
+			if soft404 {
+				continue // 软 404：与不存在路径响应一致，整组共享同一响应
+			}
+			pending = append(pending, ci)
 		}
-		if gerr2 != nil {
-			onProgress(i+1, total, chk.Path)
-			continue
+		// 二次确认：组内共享一次独立重放
+		if len(pending) > 0 {
+			resp2, gerr2 := fetch(u, chk0.Match)
+			if gerr2 == nil && resp2 != nil {
+				body2 := stripEcho(resp2.Body, u, chk0.Path)
+				for _, ci := range pending {
+					chk := selected[ci]
+					if !matchBody(chk.Match, resp2.Status, body2, resp2.Headers, host) {
+						continue
+					}
+					hits = append(hits, Hit{
+						Check: chk.ID, Title: chk.Title, Severity: chk.Sev,
+						URL: u, Advice: chk.Advice,
+						Evidence: fmt.Sprintf("HTTP %d（二次确认）", resp2.Status),
+						Version:  extractVersion(chk, body2),
+					})
+				}
+			}
 		}
-		body2 := stripEcho(resp2.Body, u, chk.Path)
-		if !matchBody(chk.Match, resp2.Status, body2, resp2.Headers, hostOf(u)) {
-			onProgress(i+1, total, chk.Path)
-			continue
-		}
-		hits = append(hits, Hit{
-			Check: chk.ID, Title: chk.Title, Severity: chk.Sev,
-			URL: u, Advice: chk.Advice,
-			Evidence: fmt.Sprintf("HTTP %d（二次确认）", resp2.Status),
-			Version:  extractVersion(chk, body2),
-		})
-		onProgress(i+1, total, chk.Path)
+		done += len(g.idx)
+		onProgress(done, total, chk0.Path)
 	}
 	sortHits(hits)
 	return hits
