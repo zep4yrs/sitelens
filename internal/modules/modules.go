@@ -128,6 +128,9 @@ func WebshellProbe(client *httpx.Client, baseURL string, cfg config.ActiveConfig
 		return nil
 	}
 	base := strings.TrimRight(baseURL, "/")
+	// 软 404 基线：与 DirScan 同源——站点对不存在路径返回 200+内容时，
+	// 未过滤会把每个探测路径都误报成 webshell（tools 站实测暴露）
+	baseline := soft404Sizes(client, baseURL)
 	hits := []PageHit{}
 	for i, w := range words {
 		if cancel != nil && cancel() {
@@ -135,7 +138,7 @@ func WebshellProbe(client *httpx.Client, baseURL string, cfg config.ActiveConfig
 		}
 		u := base + "/" + strings.TrimLeft(w, "/")
 		r, err := client.GetFollow(u)
-		if err == nil && r != nil && r.Status == 200 && len(r.Body) > 0 {
+		if err == nil && r != nil && r.Status == 200 && len(r.Body) > 0 && !baseline[len(r.Body)] {
 			hits = append(hits, PageHit{
 				URL: u, Path: "/" + strings.TrimLeft(w, "/"),
 				Status: 200, Size: len(r.Body),
