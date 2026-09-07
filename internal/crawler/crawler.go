@@ -97,6 +97,14 @@ func (c *Crawler) Crawl(home *httpx.Response, extraSeeds []string) *Result {
 	queue := []*httpx.Response{home}
 	queued := map[string]bool{normalize(home.FinalURL): true}
 
+	// 种子独立预算：API 端点/sitemap 种子不挤占普通页面预算
+	//（额外允许 16 个种子页；仍受 robots/同域/总时长约束）
+	seedAllowance := 0
+	if len(extraSeeds) > 0 {
+		seedAllowance += 16
+	}
+	pageCap := c.opts.MaxPages + seedAllowance
+
 	// 外部种子（jsmap 端点等）：同域过滤后最优先入队
 	for _, seed := range extraSeeds {
 		abs := c.resolveURL(home.FinalURL, seed)
@@ -108,7 +116,7 @@ func (c *Crawler) Crawl(home *httpx.Response, extraSeeds []string) *Result {
 		if queued[k] || visited[k] || !c.allowed(abs) {
 			continue
 		}
-		if len(res.Pages)+len(queue) >= c.opts.MaxPages {
+		if len(res.Pages)+len(queue) >= pageCap {
 			break
 		}
 		queued[k] = true
@@ -121,13 +129,14 @@ func (c *Crawler) Crawl(home *httpx.Response, extraSeeds []string) *Result {
 	}
 
 	// sitemap 种子：/sitemap.xml 与 robots.txt 声明的 Sitemap 地址
+	//（sitemapindex 递归一层取子 sitemap）
 	for _, abs := range c.sitemapSeeds(home.FinalURL) {
 		res.AllLinks = append(res.AllLinks, abs)
 		k := normalize(abs)
 		if queued[k] || visited[k] || !c.allowed(abs) {
 			continue
 		}
-		if len(res.Pages)+len(queue) >= c.opts.MaxPages {
+		if len(res.Pages)+len(queue) >= pageCap {
 			break
 		}
 		queued[k] = true
@@ -139,7 +148,7 @@ func (c *Crawler) Crawl(home *httpx.Response, extraSeeds []string) *Result {
 		}
 	}
 
-	for len(queue) > 0 && len(res.Pages) < c.opts.MaxPages {
+	for len(queue) > 0 && len(res.Pages) < pageCap {
 		resp := queue[0]
 		queue = queue[1:]
 
@@ -372,21 +381,44 @@ func (c *Crawler) sitemapSeeds(homeURL string) []string {
 	var out []string
 	seen := map[string]bool{}
 	budget := c.opts.MaxPages * 4 // 种子池上限：页数上限的 4 倍
-	for _, sm := range candidates {
-		if budget <= 0 {
-			break
-		}
+
+	// fetchSitemap 拉取一个清单地址返回 URL 条目；
+	// sitemapindex（嵌套 sitemap）递归一层展开子清单（depth 防循环）。
+	var fetchSitemap func(sm string, depth int) []string
+	fetchSitemap = func(sm string, depth int) []string {
 		resp, err := c.client.GetDirect(sm)
 		if err != nil || resp == nil || resp.Status != 200 {
-			continue
+			return nil
 		}
+		var locs []string
 		for _, m := range locRe.FindAllStringSubmatch(resp.Body, -1) {
 			abs := c.resolveRoot(m[1], root)
 			if abs == "" || seen[abs] {
 				continue
 			}
 			seen[abs] = true
-			out = append(out, abs)
+			locs = append(locs, abs)
+		}
+		if strings.Contains(resp.Body, "<sitemapindex") && depth < 1 {
+			var sub []string
+			for _, loc := range locs {
+				budget--
+				if budget <= 0 {
+					break
+				}
+				sub = append(sub, fetchSitemap(loc, depth+1)...)
+			}
+			return sub
+		}
+		return locs
+	}
+
+	for _, sm := range candidates {
+		if budget <= 0 {
+			break
+		}
+		for _, u := range fetchSitemap(sm, 0) {
+			out = append(out, u)
 			budget--
 			if budget <= 0 {
 				break

@@ -153,6 +153,7 @@ type Hit struct {
 	User     string `json:"user"`
 	Password string `json:"password"`
 	URL      string `json:"url"`
+	Note     string `json:"note,omitempty"` // 人工复核提示（如提交目标为登录页自身）
 }
 
 // BasicAuthBrute 对一组 401 路径做 HTTP Basic 弱口令尝试（命中即停/路径）。
@@ -352,6 +353,13 @@ func Brute(p Poster, opts Options, onProgress func(done, total int, msg string))
 	}
 	total := len(combos) + 1
 
+	// 提交目标诚实标注：表单无 action 时按惯例 POST 到登录页自身，
+	// 命中证据里注明，提醒人工复核该结果的提交语义
+	submitTargetNote := ""
+	if form.Action == pageURL {
+		submitTargetNote = "；表单未声明 action，提交目标为登录页自身，建议人工复核"
+	}
+
 	// 失败基线：一组必然错误的提交
 	bStatus, bBody, berr := p.PostForm(form.Action, map[string]string{
 		form.UserField: "__nl_probe__", form.PassField: "__nl_probe__"})
@@ -384,7 +392,10 @@ func Brute(p Poster, opts Options, onProgress func(done, total int, msg string))
 			continue
 		}
 		if isSuccess(rStatus, rBody, bStatus, baseSize) {
-			hits = append(hits, Hit{User: c.u, Password: c.pw, URL: form.Action})
+			hits = append(hits, Hit{
+				User: c.u, Password: c.pw, URL: form.Action,
+				Note: submitTargetNote,
+			})
 			break
 		}
 	}
