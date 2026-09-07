@@ -237,7 +237,7 @@ func Load(path string) (*Config, error) {
 }
 
 // LoadOrDefault 加载配置；出错时 stderr 告警并使用默认值
-//（此前静默回退会让用户配置失效而无感知——YAML 双引号反斜杠路径
+// （此前静默回退会让用户配置失效而无感知——YAML 双引号反斜杠路径
 // 即可触发解析失败）。
 func LoadOrDefault(path string) *Config {
 	cfg, err := Load(path)

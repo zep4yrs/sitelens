@@ -22,6 +22,7 @@ type Match struct {
 	ContainsAny    []string `json:"cany,omitempty"`   // 正文任一包含（OR，Nuclei 组转换用）
 	HeaderContains []string `json:"h,omitempty"`      // 响应头区须全部包含（Nuclei 头匹配）
 	RegexBody      []string `json:"rxbody,omitempty"` // 正文任一正则命中（OR，Nuclei regex 转换）
+	DSL            []string `json:"dsl,omitempty"`    // dsl 表达式须全部为真（安全子集，见 internal/dsl）
 	Method         string   `json:"method,omitempty"` // POST 模板请求方法
 	Body           string   `json:"body,omitempty"`   // POST 请求体
 	ContentType    string   `json:"ctype,omitempty"`  // POST Content-Type
