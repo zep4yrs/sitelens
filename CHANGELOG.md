@@ -1,5 +1,12 @@
 # 更新日志
 
+## 未发布（预览版追加）
+
+- 爬虫现代化四连：sitemap 种子（robots Sitemap 声明 + /sitemap.xml）、
+  jsmap API 端点回灌爬虫、SPA 路由提取（__NEXT_DATA__/__NUXT__）、
+  无头渲染（chromedp，crawler.headless 开关默认关，浏览器缺失自动降级）
+- 修复：NUXT 路径提取正则字符类缺少斜杠导致恒空（细分诊断定位）
+
 ## v0.0.1-preview（预览版，2026-09-07）
 
 Go 全量迁移完成：单二进制、零外部依赖（弃 PostgreSQL），Python 全量实现存档于 `python` 分支。
