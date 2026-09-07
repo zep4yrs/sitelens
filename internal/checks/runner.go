@@ -236,13 +236,6 @@ func (e respEnv) Header(name string) string {
 	}
 	return ""
 }
-func (e respEnv) HeaderValues() []string {
-	out := make([]string, 0, len(e.headers))
-	for _, v := range e.headers {
-		out = append(out, v)
-	}
-	return out
-}
 func (e respEnv) Host() string { return e.host }
 
 // extractVersion 配置了版本抽取的 check：从正文按关键词提取版本号

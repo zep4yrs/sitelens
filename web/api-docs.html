@@ -44,6 +44,7 @@
   "dir_scan": false,      // 目录探测
   "dir_bypass": false,    // 403 绕过重试（需 dir_scan）
   "subdomain": false,     // 子域名枚举
+  "takeover": false,      // 子域名接管探测（需 subdomain 产出候选；CNAME 特征表 18 服务，候选 ≤ takeover_max）
   "service_probe": false, // 端口服务识别
   "browser_ua": false,    // 浏览器 UA 请求
   "webshell": false,      // WebShell 路径探测
