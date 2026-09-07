@@ -333,17 +333,34 @@ func (k *KB) Match(techs []TechHit) []Finding {
 	return out
 }
 
+// lookupAliases 指纹技术名 → 情报库产品名的补充查询别名。
+//
+// 情报产品名与指纹名的系统性差异（WordPress 插件在情报侧带平台前缀、
+// IIS 在情报侧用缩写等）导致短语匹配漏配；仅收录经全库核对同属一个
+// 软件的条目——宁缺毋滥，错误的别名会把别家产品的漏洞安到无关指纹上。
+// 数据来源：technologies.json 370 项与 intel 库 6511 产品逐一比对，
+// 279 个未命中项中仅这三对经人工核实成立，其余均为情报未覆盖或
+// 同词不同物（如各路 "editor" 互不相干）。
+var lookupAliases = map[string][]string{
+	"microsoft iis":      {"iis", "microsoft-iis6.0"}, // HTTP.sys RCE / WebDAV ScStoragePathFromUrl RCE
+	"yoast seo":          {"wordpress yoast"},         // Yoast SEO 16.7-17.2 信息泄露
+	"akamai bot manager": {"akamai"},                  // 指纹命中即平台在用，缓存投毒 XSS 适用
+}
+
 func (k *KB) vulnsFor(techName string) []*Entry {
 	if k.index == nil {
 		k.buildIndex()
 	}
 	var out []*Entry
 	seen := map[*Entry]bool{}
-	for kw := range Keywords(techName, false) {
-		for _, v := range k.index[kw] {
-			if !seen[v] {
-				seen[v] = true
-				out = append(out, v)
+	names := append([]string{techName}, lookupAliases[strings.ToLower(strings.TrimSpace(techName))]...)
+	for _, n := range names {
+		for kw := range Keywords(n, false) {
+			for _, v := range k.index[kw] {
+				if !seen[v] {
+					seen[v] = true
+					out = append(out, v)
+				}
 			}
 		}
 	}
