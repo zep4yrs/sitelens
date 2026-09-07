@@ -163,8 +163,10 @@ func (c *Crawler) Crawl(home *httpx.Response, extraSeeds []string) *Result {
 
 		doc := htmlx.Parse(resp.Body)
 
-		// SPA 无头渲染：仅对首页做一次，渲染后 DOM 的链接与路由并入本页
-		if c.renderer != nil && resp == home {
+		// SPA 无头渲染：默认仅首页一次；crawler.headless_all_pages 开启后
+		// 扩展到全部已爬页（JS 路由的二级页也能贡献链接/路由，代价是
+		// 每页一次浏览器渲染，页面多时显著变慢）
+		if c.renderer != nil && (resp == home || c.opts.HeadlessAllPages) {
 			if rendered, ok := c.renderer.Render(resp.FinalURL); ok {
 				rd := htmlx.Parse(rendered)
 				doc.Links = append(doc.Links, rd.Links...)
