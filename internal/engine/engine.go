@@ -1,8 +1,10 @@
 package engine
 
 import (
+	"encoding/json"
 	"fmt"
 	"net"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -55,10 +57,11 @@ type progress func(percent int, msg string)
 // matcher/kb 支持运行期热替换（SetMatcher/SetKB）：换枪为指针原子语义，
 // 进行中的扫描持旧快照不受影响，新扫描取新数据。
 type Engine struct {
-	cfg     *config.Config
-	dataMu  sync.Mutex
-	matcher *sitelens.Matcher
-	kb      *intel.KB
+	cfg       *config.Config
+	dataMu    sync.Mutex
+	matcher   *sitelens.Matcher
+	kb        *intel.KB
+	nucleiLRU map[string]int64 // Nuclei 模板 LRU 调度表（持久化，重启不丢轮转进度）
 }
 
 // New 创建引擎。matcher / kb 可为 nil（对应能力降级跳过，不阻塞扫描）。
@@ -69,6 +72,7 @@ func New(cfg *config.Config, matcher *sitelens.Matcher, kb *intel.KB) *Engine {
 	e := &Engine{cfg: cfg}
 	e.SetMatcher(matcher)
 	e.SetKB(kb)
+	e.loadNucleiLRU()
 	return e
 }
 
@@ -465,9 +469,10 @@ func (a chromeRenderer) Render(rawURL string) (string, bool) {
 	return html, true
 }
 
-// nucleiCursor 跨扫描轮转游标（进程级：保证无 tag 信号的模板长期全覆盖）。
-var nucleiCursor int
-var nucleiMu sync.Mutex
+// nucleiLRU 持久化 LRU 调度表：模板路径 → 最近运行时间。
+// 落盘 data/state/nuclei_schedule.json，跨进程重启保持轮转公平——
+// 数学保证：可运行全集 C、单次上限 N，⌈C/N⌉ 次扫描后全部模板各跑一遍。
+var nucleiLRUMu sync.Mutex
 
 // nucleiSubset 按已识别技术挑选 Nuclei 模板并转换为 check。
 func (e *Engine) nucleiSubset(techs []Tech, pageTitle string) []checks.Check {
@@ -484,9 +489,17 @@ func (e *Engine) nucleiSubset(techs []Tech, pageTitle string) []checks.Check {
 	}
 	// 相关度查询文本：技术名 + 页面标题（模板名/tag 词面重合排序）
 	query := strings.Join(names, " ") + " " + pageTitle
-	nucleiMu.Lock()
-	selected := nuclei.Select(entries, tags, query, e.cfg.Checks.NucleiCap, &nucleiCursor)
-	nucleiMu.Unlock()
+
+	nucleiLRUMu.Lock()
+	defer nucleiLRUMu.Unlock()
+	selected := nuclei.Select(entries, tags, query, e.cfg.Checks.NucleiCap, e.nucleiLRU)
+	if len(selected) > 0 {
+		now := time.Now().UnixNano()
+		for _, ent := range selected {
+			e.nucleiLRU[ent.Path] = now
+		}
+		e.saveNucleiLRU()
+	}
 
 	var out []checks.Check
 	for _, ent := range selected {
@@ -497,6 +510,28 @@ func (e *Engine) nucleiSubset(techs []Tech, pageTitle string) []checks.Check {
 		out = append(out, cs...)
 	}
 	return out
+}
+
+// loadNucleiLRU 从磁盘恢复调度表（文件缺失 = 全新开始）。
+func (e *Engine) loadNucleiLRU() {
+	data, err := os.ReadFile(filepath.Join(e.cfg.Store.DataDir, "nuclei_schedule.json"))
+	if err != nil {
+		e.nucleiLRU = map[string]int64{}
+		return
+	}
+	m := map[string]int64{}
+	if json.Unmarshal(data, &m) == nil {
+		e.nucleiLRU = m
+	}
+}
+
+// saveNucleiLRU 调度表落盘。
+func (e *Engine) saveNucleiLRU() {
+	data, err := json.Marshal(e.nucleiLRU)
+	if err != nil {
+		return
+	}
+	_ = os.WriteFile(filepath.Join(e.cfg.Store.DataDir, "nuclei_schedule.json"), data, 0o644)
 }
 
 // dastFetcher 把 httpx 客户端适配为 dast.Fetcher。

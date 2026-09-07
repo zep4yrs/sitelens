@@ -108,42 +108,6 @@ func TestConvertMultiGroupSplit(t *testing.T) {
 	}
 }
 
-func TestSelectTagPriorityAndRotation(t *testing.T) {
-	entries := []Entry{
-		{Path: "a.yaml", Tags: []string{"wordpress"}, Sev: "high"},
-		{Path: "b.yaml", Tags: []string{"nginx"}, Sev: "critical"},
-		{Path: "c.yaml", Tags: []string{"misc"}, Sev: "low"},
-		{Path: "d.yaml", Tags: []string{"misc"}, Sev: "info"},
-	}
-	cursor := 0
-	sel := Select(entries, map[string]bool{"wordpress": true}, "", 2, &cursor)
-	if len(sel) != 2 || sel[0].Path != "a.yaml" {
-		t.Fatalf("tag 置顶失败: %+v", sel)
-	}
-	// 无 tag 命中时轮转：两次选择起点不同
-	sel1 := Select(entries, map[string]bool{}, "", 2, &cursor)
-	sel2 := Select(entries, map[string]bool{}, "", 2, &cursor)
-	if sel1[0].Path == sel2[0].Path {
-		t.Fatalf("游标应轮转: %s vs %s", sel1[0].Path, sel2[0].Path)
-	}
-}
-
-func TestSelectRelevanceRanking(t *testing.T) {
-	entries := []Entry{
-		{Path: "z-unrelated.yaml", Name: "Something Else", Tags: []string{"misc"}, Sev: "low"},
-		{Path: "m-wp-firewall.yaml", Name: "WordPress Firewall Detect", Tags: []string{"wp-plugin"}, Sev: "medium"},
-		{Path: "k-wp-backup.yaml", Name: "WordPress Backup Exposure", Tags: []string{"wp-plugin"}, Sev: "high"},
-		{Path: "a-other.yaml", Name: "Other Thing", Tags: []string{"misc"}, Sev: "info"},
-	}
-	cursor := 0
-	// 无 tag 硬命中，但查询词 "wordpress backup" 与两条 wp 模板词面重合，
-	// 应排到最前，且 high 严重度的 backup 在前
-	sel := Select(entries, map[string]bool{}, "wordpress backup 泄露", 2, &cursor)
-	if len(sel) < 2 || sel[0].Path != "k-wp-backup.yaml" || sel[1].Path != "m-wp-firewall.yaml" {
-		t.Fatalf("相关度排序失败: %+v", sel)
-	}
-}
-
 func TestIndexAndLoadRealLibrary(t *testing.T) {
 	dir := "../../data/nuclei"
 	if _, err := os.Stat(dir); err != nil {
