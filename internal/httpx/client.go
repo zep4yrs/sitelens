@@ -70,7 +70,7 @@ func NewWithOptions(o ClientOptions) *Client {
 		o.MaxBodyBytes = defaultMaxBodyBytes
 	}
 	if o.UserAgent == "" {
-		o.UserAgent = "SiteLens/0.1 (+https://cnb.cool/feng-qiao/sitelens)"
+		o.UserAgent = "SiteLens/0.0.1-preview (+https://cnb.cool/feng-qiao/sitelens)"
 	}
 	c := &Client{
 		interval:  o.Interval,
