@@ -210,37 +210,55 @@ type Poster interface {
 	GetSmall(rawURL string) (status int, body string, err error)
 }
 
+// Options 爆破参数。
+type Options struct {
+	PageURL      string   // 登录页地址
+	Users        []string // 用户名字典
+	Passwords    []string // 密码字典
+	MaxTries     int      // 总尝试硬上限
+	IntervalMS   int      // 相邻尝试间隔（毫秒，0 = 不间隔）
+	CaptchaType  string   // 非空非 none 直接报错（Go 版未含 OCR）
+	RenderedBody string   // SPA 支持：无头渲染后的页面 HTML；非空时表单解析优先使用它
+}
+
 // Brute 执行爆破：返回命中列表（命中一组即停，控制请求量）。
-// maxTries 为总尝试硬上限；intervalMS 为相邻尝试间隔（0 = 不间隔）；
-// captchaType 非空非 none 直接报错（Go 版未含 OCR）。
-func Brute(p Poster, pageURL string, users, passwords []string, maxTries int,
-	intervalMS int, captchaType string, onProgress func(done, total int, msg string)) ([]Hit, error) {
+// 表单解析优先使用 RenderedBody（SPA 登录页由 chromedp 渲染后传入），
+// 为空时抓取 PageURL 的静态 HTML——纯 JS 渲染且未开无头渲染的页面
+// 会解析不到表单并明确报错。
+func Brute(p Poster, opts Options, onProgress func(done, total int, msg string)) ([]Hit, error) {
 	if onProgress == nil {
 		onProgress = func(int, int, string) {}
 	}
-	if captchaType != "" && !strings.EqualFold(captchaType, "none") {
+	if opts.CaptchaType != "" && !strings.EqualFold(opts.CaptchaType, "none") {
 		return nil, fmt.Errorf("该登录页需要验证码识别，Go 版暂未包含该能力；请改用无验证码的表单页或使用 Python 分支")
 	}
-	if maxTries <= 0 {
-		maxTries = 300
+	if opts.MaxTries <= 0 {
+		opts.MaxTries = 300
 	}
+	pageURL := opts.PageURL
 
-	_, body, err := p.GetSmall(pageURL)
-	if err != nil {
-		return nil, fmt.Errorf("登录页请求失败：%v", err)
+	pageBody := opts.RenderedBody
+	formSrc := "渲染页"
+	if pageBody == "" {
+		_, body, err := p.GetSmall(pageURL)
+		if err != nil {
+			return nil, fmt.Errorf("登录页请求失败：%v", err)
+		}
+		pageBody = body
+		formSrc = "静态页"
 	}
-	doc := htmlx.Parse(body)
+	doc := htmlx.Parse(pageBody)
 	form, diag := AnalyzeWithDiag(doc, pageURL)
 	if form == nil {
-		return nil, fmt.Errorf("未解析到含密码框的登录表单（表单 %d 个，输入框 %d 个，密码框 %d 个）。"+
-			"若页面由 JS 动态渲染登录框，请改用传统表单登录页测试",
-			diag.Forms, diag.Inputs, diag.Passwords)
+		return nil, fmt.Errorf("未解析到含密码框的登录表单（%s：表单 %d 个，输入框 %d 个，密码框 %d 个）。"+
+			"若页面由 JS 动态渲染登录框，请在 crawler.headless 开启无头渲染后重试",
+			formSrc, diag.Forms, diag.Inputs, diag.Passwords)
 	}
 
 	combos := []struct{ u, pw string }{}
-	for _, u := range users {
-		for _, pw := range passwords {
-			if len(combos) >= maxTries-1 {
+	for _, u := range opts.Users {
+		for _, pw := range opts.Passwords {
+			if len(combos) >= opts.MaxTries-1 {
 				break
 			}
 			combos = append(combos, struct{ u, pw string }{u, pw})
@@ -258,7 +276,7 @@ func Brute(p Poster, pageURL string, users, passwords []string, maxTries int,
 
 	var hits []Hit
 	for i, c := range combos {
-		sleepInterval(intervalMS, i)
+		sleepInterval(opts.IntervalMS, i)
 		fields := map[string]string{}
 		for k, v := range form.Hidden {
 			fields[k] = v

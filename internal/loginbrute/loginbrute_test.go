@@ -37,7 +37,8 @@ func TestBruteFindsHit(t *testing.T) {
 	users = append([]string{"admin"}, users...)
 	pwds = append([]string{"letmein"}, pwds...)
 
-	hits, err := Brute(f, "https://x.com/login", users, pwds, 400, 0, "", nil)
+	hits, err := Brute(f, Options{PageURL: "https://x.com/login", Users: users,
+		Passwords: pwds, MaxTries: 400}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -51,7 +52,8 @@ func TestBruteFindsHit(t *testing.T) {
 
 func TestBruteNoForm(t *testing.T) {
 	p := &noFormPoster{}
-	_, err := Brute(p, "https://x.com/", []string{"a"}, []string{"b"}, 10, 0, "", nil)
+	_, err := Brute(p, Options{PageURL: "https://x.com/", Users: []string{"a"},
+		Passwords: []string{"b"}, MaxTries: 10}, nil)
 	if err == nil || !strings.Contains(err.Error(), "未解析到") {
 		t.Fatalf("无表单应报诊断错误: %v", err)
 	}
@@ -67,8 +69,9 @@ func (n *noFormPoster) PostForm(string, map[string]string) (int, string, error) 
 }
 
 func TestBruteCaptchaRefused(t *testing.T) {
-	_, err := Brute(&fakePoster{}, "https://x.com/login",
-		[]string{"a"}, []string{"b"}, 10, 0, "digits", nil)
+	_, err := Brute(&fakePoster{}, Options{PageURL: "https://x.com/login",
+		Users: []string{"a"}, Passwords: []string{"b"}, MaxTries: 10,
+		CaptchaType: "digits"}, nil)
 	if err == nil || !strings.Contains(err.Error(), "验证码") {
 		t.Fatalf("验证码能力缺失应明确报错: %v", err)
 	}
