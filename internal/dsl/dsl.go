@@ -30,8 +30,7 @@ import (
 type Env interface {
 	StatusCode() int
 	Body() string
-	Header(name string) string // 单头取值，不存在返回空串
-	HeaderValues() []string    // 全部头值（contains(headers,...) 不支持 map，此方法仅为类型错误提示保留）
+	Header(name string) string // 单头取值，不存在返回空串（头 map 的整体包含不是子集语义，不支持）
 	Host() string
 }
 

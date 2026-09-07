@@ -43,6 +43,7 @@ type ActiveConfig struct {
 	SubWorkers     int    `yaml:"sub_workers"`      // 子域名并发解析数
 	ShellMaxPaths  int    `yaml:"shell_max_paths"`  // WebShell 探测路径上限
 	FPMaxRequests  int    `yaml:"fp_max_requests"`  // FingerDir 主动指纹请求上限
+	TakeoverMax    int    `yaml:"takeover_max"`     // 子域名接管探测候选上限（0=50）
 	ProbePorts     []int  `yaml:"probe_ports"`      // 服务识别端口（空 = 内置常见端口集）
 	ProbeTimeoutMS int    `yaml:"probe_timeout_ms"` // 端口连接/读取超时
 	ProbeWorkers   int    `yaml:"probe_workers"`    // 端口探测并发数
@@ -212,7 +213,7 @@ func Default() *Config {
 		Store:   StoreConfig{DataDir: "data/state", MaxRecords: 500},
 		Active: ActiveConfig{
 			DirMaxPaths: 300, SubMaxWords: 2000, SubWorkers: 20,
-			ShellMaxPaths: 200, FPMaxRequests: 30,
+			ShellMaxPaths: 200, FPMaxRequests: 30, TakeoverMax: 50,
 			ProbeTimeoutMS: 2500, ProbeWorkers: 10,
 			WordlistDir: "data/wordlists",
 		},
@@ -327,6 +328,7 @@ func (c *Config) fillDefaults() {
 	fillInt(&c.Active.SubWorkers, d.Active.SubWorkers)
 	fillInt(&c.Active.ShellMaxPaths, d.Active.ShellMaxPaths)
 	fillInt(&c.Active.FPMaxRequests, d.Active.FPMaxRequests)
+	fillInt(&c.Active.TakeoverMax, d.Active.TakeoverMax)
 	fillInt(&c.Active.ProbeTimeoutMS, d.Active.ProbeTimeoutMS)
 	fillInt(&c.Active.ProbeWorkers, d.Active.ProbeWorkers)
 	if c.Active.WordlistDir == "" {

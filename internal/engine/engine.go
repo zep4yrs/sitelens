@@ -40,6 +40,7 @@ type Options struct {
 	BrowserUA    bool   // 浏览器 UA
 	WeakAudit    bool   // 敏感信息审计
 	Webshell     bool   // WebShell 探测
+	Takeover     bool   // 子域名接管探测（需先开 Subdomain 产出候选）
 	Netsec       bool   // TLS/DNS 安全检测
 	DAST         bool   // 参数级注入探测
 	Passive      bool   // 被动安全检测
@@ -327,6 +328,10 @@ func (e *Engine) Scan(rawURL string, opts Options, onProgress progress, cancel f
 			onProgress(86, "子域名枚举…")
 			subs := modules.SubdomainEnum(res.Host, ac, nil, cancelled)
 			res.Extras["subdomain"] = subs
+			if opts.Takeover && len(subs) > 0 {
+				onProgress(86, "子域名接管探测…")
+				res.Extras["takeover"] = modules.TakeoverProbe(client, subs, ac, nil, cancelled)
+			}
 		}
 		if opts.DirScan {
 			onProgress(87, "目录探测…")

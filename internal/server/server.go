@@ -375,6 +375,7 @@ func scanOptions(body map[string]any) engine.Options {
 	o.DirScan = boolOf(body["dir_scan"], false)
 	o.DirBypass = boolOf(body["dir_bypass"], false)
 	o.Subdomain = boolOf(body["subdomain"], false)
+	o.Takeover = boolOf(body["takeover"], false)
 	o.ServiceProbe = boolOf(body["service_probe"], false)
 	o.BrowserUA = boolOf(body["browser_ua"], false)
 	o.WeakAudit = boolOf(body["weak_audit"], false)

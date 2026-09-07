@@ -2,6 +2,13 @@
 
 ## 未发布（预览版追加）
 
+- **子域名接管探测（takeover，opt-in）**：18 服务 CNAME+边缘 404 特征
+  双条件判定（GitHub Pages/Heroku/S3/Azure/CloudFront/Shopify/Fastly/
+  Netlify 等，取 can-i-take-over-xyz 核验子集）；随子域名枚举产出候选，
+  每候选 1 次请求、总量 `active.takeover_max`（默认 50）封顶；命中即
+  高/中危发现并给处置建议。§12 改进路线 P1 落地
+- Env 接口精简：删除从未被求值器调用的 HeaderValues（头 map 整体包含
+  非子集语义，类型错误路径保持不变）
 - **修复：htmlx script 块解析 panic（fuzz 实测）**——畸形标签
   `<sCript</sCript>` 使 `</script>` 闭合下标落进标签文本内，
   数据岛切片反向越界（body[16:7]）。爬虫会解析任意站点页面，

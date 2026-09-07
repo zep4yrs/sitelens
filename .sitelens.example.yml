@@ -80,6 +80,7 @@ active:                      # 主动模块阈值（模块本身默认关，扫�
   sub_workers: 20
   shell_max_paths: 200
   fp_max_requests: 30
+  takeover_max: 50         # 子域名接管探测候选上限
   probe_ports: []            # 空 = 内置常见端口集
   probe_timeout_ms: 2500
   probe_workers: 10
