@@ -161,6 +161,9 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/stats", s.hStats)
 	mux.HandleFunc("GET /api/categories", s.hCategories)
 	mux.HandleFunc("POST /api/admin/reload", s.hAdminReload)
+	// 内置 SPA 靶页：JS 延迟注入登录表单，用于无头渲染/登录爆破链路自测
+	mux.HandleFunc("GET /dev/spa-target", hSPATarget)
+	mux.HandleFunc("POST /dev/spa-target/login", hSPATargetLogin)
 	mux.HandleFunc("POST /api/scan", s.hScan)
 	mux.HandleFunc("GET /api/job/{id}", s.hJob)
 	mux.HandleFunc("POST /api/job/{id}/cancel", s.hJobCancel)
@@ -727,7 +730,7 @@ func (s *Server) hLoginBrute(w http.ResponseWriter, r *http.Request) {
 		// SPA 登录页支持：开启无头渲染时先渲染登录页，用渲染后的 DOM 解析表单
 		rendered := ""
 		if s.cfg.Crawler.Headless {
-			r := headless.NewChrome(time.Duration(s.cfg.Crawler.HeadlessTimeoutSec) * time.Second)
+			r := headless.NewChrome(time.Duration(s.cfg.Crawler.HeadlessTimeoutSec)*time.Second, s.cfg.Crawler.HeadlessExecPath)
 			if html, rerr := r.Render(urlStr); rerr == nil {
 				rendered = html
 			}
