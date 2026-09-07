@@ -398,11 +398,20 @@ func (k *KB) MatchCVEMs(techs []TechHit, limit int) []CVEMsFinding {
 			if name == "" {
 				continue
 			}
-			low := strings.ToLower(name)
+			low := strings.ToLower(strings.TrimSpace(name))
+			if low == "" {
+				continue
+			}
 			for i := range k.cveMs {
 				c := &k.cveMs[i]
-				comp := strings.ToLower(c.Component)
-				if !strings.Contains(comp, low) && !strings.Contains(low, comp) {
+				comp := strings.ToLower(strings.TrimSpace(c.Component))
+				// 空组件名在反向包含（Contains(low, "") 恒真）下会匹配
+				// 任意技术——实测每次扫描 20 条配额全被无关公告占满；
+				// 过短组件名同理放大误配，一律要求 ≥4 字符
+				if len(comp) < 4 {
+					continue
+				}
+				if !strings.Contains(comp, low) && !(len(low) >= 4 && strings.Contains(low, comp)) {
 					continue
 				}
 				k := c.CVE + "|" + c.Component
