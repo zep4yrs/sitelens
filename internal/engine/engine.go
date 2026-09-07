@@ -166,7 +166,8 @@ func (e *Engine) Scan(rawURL string, opts Options, onProgress progress, cancel f
 	matcher, kb := e.snapshot()
 
 	acc := newTechAcc()
-	dastLinks := []string{} // 爬取阶段收集的带参链接（DAST 探测点）
+	dastLinks := []string{}               // 爬取阶段收集的带参链接（DAST 探测点）
+	var dastFormTargets []dast.FormTarget // 爬取阶段收集的表单（DAST 表单探测点）
 	pages := []crawlPage{{resp: home, doc: doc}}
 
 	// 3) 同域浅爬取（DAST 开启时 jsmap 前置：API 端点回灌爬虫种子）
@@ -217,6 +218,11 @@ func (e *Engine) Scan(rawURL string, opts Options, onProgress progress, cancel f
 			})
 		}
 		dastLinks = cr.ParamLinks
+		for _, f := range cr.Forms {
+			if f.Action != "" && len(f.Names) > 0 {
+				dastFormTargets = append(dastFormTargets, dast.FormTarget{Action: f.Action, Fields: f.Names})
+			}
+		}
 	}
 
 	// 4) 多页指纹识别
@@ -308,6 +314,13 @@ func (e *Engine) Scan(rawURL string, opts Options, onProgress progress, cancel f
 			SleepSeconds:     e.cfg.DAST.SleepSeconds,
 			MaxURLLen:        e.cfg.DAST.MaxURLLen,
 		})
+		for _, f := range r.RunForms(dastFormTargets) {
+			res.Verified = append(res.Verified, verifiedMap(map[string]any{
+				"check": f.Check, "title": f.Title, "severity": f.Severity,
+				"url": f.URL, "evidence": f.Evidence, "advice": f.Advice,
+				"src": "dast", "param": f.Param,
+			}))
+		}
 		for _, f := range r.Run(dastLinks) {
 			res.Verified = append(res.Verified, verifiedMap(map[string]any{
 				"check": f.Check, "title": f.Title, "severity": f.Severity,
@@ -545,6 +558,14 @@ func (e *Engine) saveNucleiLRU() {
 
 // dastFetcher 把 httpx 客户端适配为 dast.Fetcher。
 type dastFetcher struct{ c *httpx.Client }
+
+func (d dastFetcher) PostFormSmall(rawURL string, data map[string]string) *dast.Resp {
+	r, err := d.c.PostForm(rawURL, data)
+	if err != nil || r == nil {
+		return nil
+	}
+	return &dast.Resp{Status: r.Status, Headers: r.Headers, Body: r.Body}
+}
 
 func (d dastFetcher) GetSmall(rawURL string) *dast.Resp {
 	r, err := d.c.GetDirect(rawURL)

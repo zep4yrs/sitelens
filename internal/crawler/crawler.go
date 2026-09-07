@@ -29,6 +29,7 @@ type Page struct {
 
 // Form 暴露给引擎的表单（与 htmlx.Form 解耦，避免引擎依赖解析细节）。
 type Form struct {
+	Names  []string `json:"names,omitempty"` // 可注入字段名（DAST 表单探测用，截取前 16 个）
 	Action string
 	Method string
 	HasPwd bool
@@ -193,9 +194,16 @@ func (c *Crawler) Crawl(home *httpx.Response, extraSeeds []string) *Result {
 					act = ru.String()
 				}
 			}
+			names := make([]string, 0, len(f.Inputs))
+			for _, in := range f.Inputs {
+				if in.Name != "" && len(names) < 16 {
+					names = append(names, in.Name)
+				}
+			}
 			res.Forms = append(res.Forms, Form{
 				Action: act, Method: f.Method,
 				HasPwd: f.HasPassword, Fields: len(f.Inputs),
+				Names: names,
 			})
 		}
 

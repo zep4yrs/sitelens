@@ -71,6 +71,8 @@ func (r *Resp) Header(name string) string {
 // Fetcher HTTP 请求接口：单请求、不跟随重定向（开放重定向需要看原始 30x）。
 type Fetcher interface {
 	GetSmall(rawURL string) *Resp
+	// PostFormSmall 表单 POST（表单探测用；同不跟随重定向）。
+	PostFormSmall(rawURL string, data map[string]string) *Resp
 }
 
 // Target 带参数的探测目标。
@@ -167,6 +169,104 @@ func (r *Runner) Run(links []string) []Finding {
 		if r.opts.TimeBlind && !r.stopped() {
 			if f := r.timeBlind(tgt, &done, total); f != nil {
 				hits = append(hits, *f)
+			}
+		}
+	}
+	return hits
+}
+
+// FormTarget POST 表单探测目标（来自爬虫的表单采集）。
+type FormTarget struct {
+	Action string   // 绝对 URL
+	Fields []string // 可注入字段名
+}
+
+// RunForms 对表单字段执行与 URL 参数相同的四类无害探测。
+// 与 Run 的差异：注入走表单字段（其余字段填基线值），判定复用
+// judge；时间盲注暂不覆盖表单（Fetcher 无计时报文，避免假阴/假阳）。
+// 字段总预算并入 opts.MaxParams。
+func (r *Runner) RunForms(targets []FormTarget) []Finding {
+	// 字段预算：全局 MaxParams 与链接参数共享，表单侧先到先得
+	budget := r.opts.MaxParams
+	type planItem struct {
+		ft    FormTarget
+		field string
+	}
+	var plan []planItem
+	seen := map[string]bool{}
+	for _, ft := range targets {
+		if ft.Action == "" || r.stopped() {
+			continue
+		}
+		for _, f := range ft.Fields {
+			if f == "" || budget <= 0 {
+				continue
+			}
+			key := ft.Action + "\x00" + f
+			if seen[key] {
+				continue
+			}
+			seen[key] = true
+			budget--
+			plan = append(plan, planItem{ft, f})
+		}
+	}
+	if len(plan) == 0 {
+		return nil
+	}
+
+	total := len(plan) * 5 // 基线 + xss / sqli / redirect / traversal
+	done := 0
+	tick := func(label string) {
+		done++
+		if r.prog != nil {
+			r.prog(done, total, label)
+		}
+	}
+
+	var hits []Finding
+	for _, p := range plan {
+		if r.stopped() {
+			break
+		}
+		label := p.field + "@" + p.ft.Action
+		// 基线：全部字段填惰性值（页面天然含有的报错/系统特征不算命中）
+		baseData := map[string]string{}
+		for _, f := range p.ft.Fields {
+			if f != "" {
+				baseData[f] = "sl-dast-base"
+			}
+		}
+		baseBody := ""
+		if base := r.fetch.PostFormSmall(p.ft.Action, baseData); base != nil {
+			baseBody = strings.ToLower(base.Body)
+		}
+		tick(label)
+
+		for _, probe := range []struct {
+			kind  string
+			value string
+		}{
+			{"xss", xssMark},
+			{"sqli", "'"},
+			{"redirect", redirMark},
+			{"traversal", traversal},
+		} {
+			if r.stopped() {
+				return hits
+			}
+			data := map[string]string{}
+			for f := range baseData {
+				data[f] = "sl-dast-base"
+			}
+			data[p.field] = probe.value
+			resp := r.fetch.PostFormSmall(p.ft.Action, data)
+			tick(label)
+			if resp == nil {
+				continue
+			}
+			if hit := judge(probe.kind, resp, baseBody, Target{URL: p.ft.Action, Param: p.field}); hit != nil {
+				hits = append(hits, *hit)
 			}
 		}
 	}

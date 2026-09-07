@@ -9,9 +9,10 @@ import (
 
 // fakeFetch 按注册规则响应探测请求；未命中规则时回显参数值（模拟反射页面）。
 type fakeFetch struct {
-	rules   []func(u string) *Resp
-	delay   time.Duration
-	request int
+	rules     []func(u string) *Resp
+	postRules []func(u string, data map[string]string) *Resp
+	delay     time.Duration
+	request   int
 }
 
 func (f *fakeFetch) GetSmall(rawURL string) *Resp {
@@ -24,7 +25,6 @@ func (f *fakeFetch) GetSmall(rawURL string) *Resp {
 			return resp
 		}
 	}
-	// 默认：把 query 值 URL 解码后回显进 HTML（模拟真实应用的反射行为，不转义 → XSS 必中）
 	if u, err := url.Parse(rawURL); err == nil && u.RawQuery != "" {
 		var parts []string
 		for k, vs := range u.Query() {
@@ -33,6 +33,22 @@ func (f *fakeFetch) GetSmall(rawURL string) *Resp {
 		return &Resp{Status: 200, Body: "<html>q=" + strings.Join(parts, "&") + "</html>"}
 	}
 	return &Resp{Status: 200, Body: "<html>index</html>"}
+}
+
+// PostFormSmall 表单探测桩：回显全部字段值（不转义 → XSS/报错注入可命中），
+// postRules 注册的规则优先。
+func (f *fakeFetch) PostFormSmall(rawURL string, data map[string]string) *Resp {
+	f.request++
+	for _, r := range f.postRules {
+		if resp := r(rawURL, data); resp != nil {
+			return resp
+		}
+	}
+	var parts []string
+	for k, v := range data {
+		parts = append(parts, k+"="+v)
+	}
+	return &Resp{Status: 200, Body: "<html>f=" + strings.Join(parts, "&") + "</html>"}
 }
 
 func newRunner(f Fetcher) *Runner {
@@ -211,4 +227,58 @@ func TestMaxParamsCap(t *testing.T) {
 		t.Fatalf("MaxParams=1 应只探测 1 个参数，实际请求 %d", f.request)
 	}
 	_ = hits
+}
+
+// TestRunFormsReflectXSS 表单字段反射型 XSS：注入标记未经转义回显即命中。
+func TestRunFormsReflectXSS(t *testing.T) {
+	f := &fakeFetch{}
+	hits := newRunner(f).RunForms([]FormTarget{
+		{Action: "https://a.com/search", Fields: []string{"q", "cat"}},
+	})
+	if len(hits) == 0 {
+		t.Fatalf("反射 XSS 应命中（桩回显不转义）: %v", hits)
+	}
+	found := false
+	for _, h := range hits {
+		if h.Param == "q" && h.Check == "xss-reflect" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("q 字段的 XSS 命中缺失: %+v", hits)
+	}
+}
+
+// TestRunFormsBudget 字段预算：MaxParams=1 时多字段表单只探测 1 个字段。
+func TestRunFormsBudget(t *testing.T) {
+	f := &fakeFetch{}
+	opts := DefaultOptions()
+	opts.MaxParams = 1
+	opts.TimeBlind = false
+	hits := New(f, opts).RunForms([]FormTarget{
+		{Action: "https://a.com/reg", Fields: []string{"u", "e", "n"}},
+	})
+	// 1 字段 × 5 请求（基线 + 4 探测）；预算生效即不超过 5
+	if f.request > 5 {
+		t.Fatalf("MaxParams=1 应只探测 1 字段（5 请求），实际 %d", f.request)
+	}
+	_ = hits
+}
+
+// TestRunFormsBaselineError 页面天然报错特征不算命中（基线求差语义）。
+func TestRunFormsBaselineError(t *testing.T) {
+	f := &fakeFetch{postRules: []func(u string, data map[string]string) *Resp{
+		func(u string, data map[string]string) *Resp {
+			// 无论注入什么都返回含 SQL 报错特征的页面
+			return &Resp{Status: 200, Body: "<html>mysql_fetch error always</html>"}
+		},
+	}}
+	hits := newRunner(f).RunForms([]FormTarget{
+		{Action: "https://a.com/l", Fields: []string{"q"}},
+	})
+	for _, h := range hits {
+		if h.Check == "sqli-error" {
+			t.Fatalf("基线已含报错特征不应命中 SQLi: %+v", hits)
+		}
+	}
 }
