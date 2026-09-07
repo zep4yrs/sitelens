@@ -72,7 +72,13 @@ checks:
   plugin_dir: data/plugins   # 用户自定义 check 目录
   nuclei_cap: 300            # Nuclei 子集数量上限
   nuclei_dir: data/nuclei    # 模板库目录（目录不存在则自动跳过）
-crawler: { max_pages: 4, respect_robots: true, max_links_per_page: 80, timeout_sec: 60 }
+crawler:
+  max_pages: 4
+  respect_robots: true
+  max_links_per_page: 80
+  timeout_sec: 60
+  headless: false             # 无头渲染（SPA 支持；需本机 Chrome/Chromium，缺失自动降级）
+  headless_timeout_sec: 20    # 单页渲染超时
 dast:
   max_params: 24             # 参数探测上限
   time_blind: true           # 时间盲注（双确认）

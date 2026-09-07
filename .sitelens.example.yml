@@ -24,6 +24,8 @@ crawler:
   max_links_per_page: 80
   timeout_sec: 60
 
+  headless: false             # 无头渲染（SPA 支持；需本机 Chrome/Chromium，缺失自动降级）
+  headless_timeout_sec: 20
 dast:
   max_params: 24
   time_blind: true
@@ -81,3 +83,4 @@ active:                      # 主动模块阈值（模块本身默认关，扫�
   probe_timeout_ms: 2500
   probe_workers: 10
   wordlist_dir: data/wordlists
+
