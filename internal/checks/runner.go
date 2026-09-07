@@ -80,7 +80,17 @@ func RunList(client *httpx.Client, targetURL string, list []Check,
 			break
 		}
 		u := joinURL(targetURL, strings.TrimLeft(chk.Path, "/"))
-		resp, gerr := client.GetFollow(u)
+		var resp *httpx.Response
+		var gerr error
+		if chk.Match.Method == "POST" {
+			ctype := chk.Match.ContentType
+			if ctype == "" {
+				ctype = "application/x-www-form-urlencoded"
+			}
+			resp, gerr = client.PostRaw(u, ctype, chk.Match.Body)
+		} else {
+			resp, gerr = client.GetFollow(u)
+		}
 		if gerr != nil || resp == nil {
 			onProgress(i+1, total, chk.Path)
 			continue
@@ -98,7 +108,17 @@ func RunList(client *httpx.Client, targetURL string, list []Check,
 			continue
 		}
 		// 二次确认：立即重放，两次都命中才采信
-		resp2, gerr2 := client.GetFollow(u)
+		var resp2 *httpx.Response
+		var gerr2 error
+		if chk.Match.Method == "POST" {
+			ctype := chk.Match.ContentType
+			if ctype == "" {
+				ctype = "application/x-www-form-urlencoded"
+			}
+			resp2, gerr2 = client.PostRaw(u, ctype, chk.Match.Body)
+		} else {
+			resp2, gerr2 = client.GetFollow(u)
+		}
 		if gerr2 != nil {
 			onProgress(i+1, total, chk.Path)
 			continue
@@ -120,9 +140,10 @@ func RunList(client *httpx.Client, targetURL string, list []Check,
 	return hits
 }
 
-// matchBody 判定：状态码（等值或任一列表）+ 正文包含 + 响应头包含。
+// matchBody 判定：状态码（等值或任一列表）+ 正文包含 + 正则 + 响应头包含。
 // Contains 为全包含（AND），ContainsAny 为任一包含（OR，Nuclei 组转换），
-// HeaderContains 对「名=值」合并区全包含，三者可并存（都须满足各自语义）。
+// RegexBody 为任一正则命中，HeaderContains 对「名=值」合并区全包含，
+// 多类条件可并存（都须满足各自语义）。
 // 修复：此前实际响应状态码从未参与比较，纯状态码 check 会对任何响应命中。
 func matchBody(m Match, status int, body string, headers map[string]string) bool {
 	if m.Status != 0 && status != m.Status {
@@ -161,6 +182,18 @@ func matchBody(m Match, status int, body string, headers map[string]string) bool
 			return false
 		}
 	}
+	if len(m.RegexBody) > 0 {
+		anyHit := false
+		for _, pat := range m.RegexBody {
+			if re := compileCached(pat); re != nil && re.MatchString(body) {
+				anyHit = true
+				break
+			}
+		}
+		if !anyHit {
+			return false
+		}
+	}
 	if len(m.HeaderContains) > 0 {
 		joined := strings.ToLower(joinHeaders(headers))
 		for _, kw := range m.HeaderContains {
@@ -172,7 +205,8 @@ func matchBody(m Match, status int, body string, headers map[string]string) bool
 	return true
 }
 
-// extractVersion 配置了版本抽取的 check：从正文按关键词提取版本号。
+// extractVersion 配置了版本抽取的 check：从正文按关键词提取版本号
+// （wp-readme → WordPress 版本，情报关联 confirmed 的关键链路）。
 func extractVersion(chk Check, body string) string {
 	keyword, _, ok := ExtractFor(chk.ID)
 	if !ok {
