@@ -94,7 +94,10 @@ func Parse(body string) *Doc {
 		tagText := body[start : start+tagEnd+1]
 		closeIdx := strings.Index(low[start:], "</script>")
 		src := attrValue(tagText, "src")
-		if src == "" && closeIdx >= 0 {
+		// 闭合串下标必须落在标签自身之后：畸形输入（fuzz 实测
+		// <sCript</sCript>）会让 closeIdx 落进标签文本内，直接切片
+		// 会反向越界 panic
+		if src == "" && closeIdx > tagEnd {
 			// SPA 数据岛：__NEXT_DATA__（JSON 岛）与 __NUXT__（内联 JS，
 			// 退化为引号内路径提取）两类都贡献路由
 			inner := body[start+tagEnd+1 : start+closeIdx]
