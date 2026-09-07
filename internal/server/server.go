@@ -26,6 +26,7 @@ import (
 	"cnb.cool/feng-qiao/sitelens/internal/checks"
 	"cnb.cool/feng-qiao/sitelens/internal/config"
 	"cnb.cool/feng-qiao/sitelens/internal/engine"
+	"cnb.cool/feng-qiao/sitelens/internal/headless"
 	"cnb.cool/feng-qiao/sitelens/internal/intel"
 	"cnb.cool/feng-qiao/sitelens/internal/loginbrute"
 	"cnb.cool/feng-qiao/sitelens/internal/netsec"
@@ -716,15 +717,30 @@ func (s *Server) hLoginBrute(w http.ResponseWriter, r *http.Request) {
 		pwds := loginbrute.LoadList(
 			filepath.Join(s.cfg.Active.WordlistDir, "weak_passwords.txt"), s.cfg.LoginBrute.MaxPasswords)
 		s.jobs.Update(jobID, func(j *store.Job) { j.Status = "running" })
-		hits, err := loginbrute.Brute(f, urlStr, users, pwds,
-			s.cfg.LoginBrute.MaxTries, s.cfg.LoginBrute.IntervalMS, captchaType,
-			func(done, total int, msg string) {
-				s.jobs.Update(jobID, func(j *store.Job) {
-					j.Status = "running"
-					j.Progress = done * 100 / max(1, total)
-					j.Message = msg
-				})
+
+		// SPA 登录页支持：开启无头渲染时先渲染登录页，用渲染后的 DOM 解析表单
+		rendered := ""
+		if s.cfg.Crawler.Headless {
+			r := headless.NewChrome(time.Duration(s.cfg.Crawler.HeadlessTimeoutSec) * time.Second)
+			if html, rerr := r.Render(urlStr); rerr == nil {
+				rendered = html
+			}
+		}
+		hits, err := loginbrute.Brute(f, loginbrute.Options{
+			PageURL:      urlStr,
+			Users:        users,
+			Passwords:    pwds,
+			MaxTries:     s.cfg.LoginBrute.MaxTries,
+			IntervalMS:   s.cfg.LoginBrute.IntervalMS,
+			CaptchaType:  captchaType,
+			RenderedBody: rendered,
+		}, func(done, total int, msg string) {
+			s.jobs.Update(jobID, func(j *store.Job) {
+				j.Status = "running"
+				j.Progress = done * 100 / max(1, total)
+				j.Message = msg
 			})
+		})
 		if err != nil {
 			s.jobs.Update(jobID, func(j *store.Job) { j.Status = "error"; j.Message = err.Error() })
 			return
