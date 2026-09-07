@@ -79,3 +79,34 @@ func TestThreeLevelExcludedDropped(t *testing.T) {
 		t.Fatalf("excluded 过滤失败: %+v", out)
 	}
 }
+
+func TestLookupAliases(t *testing.T) {
+	// 指纹名 "Microsoft IIS" 应经别名命中情报产品 "iis"
+	kb := &KB{vulns: []Entry{
+		{ID: 1, Src: "xray", Name: "HTTP.sys RCE", Product: "iis", CVE: "CVE-1",
+			Severity: "high", Affected: ""},
+	}, kev: map[string]bool{}}
+	kb.buildIndex()
+	out := kb.Match([]TechHit{{Name: "Microsoft IIS"}})
+	if len(out) != 1 || out[0].Product != "iis" {
+		t.Fatalf("IIS 别名未生效: %+v", out)
+	}
+	// 大小写/首尾空白不敏感
+	out = kb.Match([]TechHit{{Name: "  microsoft IIS "}})
+	if len(out) != 1 {
+		t.Fatalf("别名规范化失败: %+v", out)
+	}
+	// 同理 Yoast SEO -> wordpress yoast
+	kb2 := &KB{vulns: []Entry{
+		{ID: 2, Src: "xray", Name: "Yoast 泄露", Product: "wordpress yoast", CVE: "CVE-2",
+			Severity: "medium", Affected: ""},
+	}, kev: map[string]bool{}}
+	kb2.buildIndex()
+	if out := kb2.Match([]TechHit{{Name: "Yoast SEO"}}); len(out) != 1 {
+		t.Fatalf("Yoast 别名未生效: %+v", out)
+	}
+	// 无别名的技术不受影响（防误桥接）
+	if out := kb2.Match([]TechHit{{Name: "Google Analytics"}}); len(out) != 0 {
+		t.Fatalf("无别名技术被误匹配: %+v", out)
+	}
+}
