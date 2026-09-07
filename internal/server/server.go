@@ -705,8 +705,12 @@ func (s *Server) hLoginBrute(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	captchaType, _ := body["captcha_type"].(string)
+	loginMode, _ := body["login_mode"].(string)
+	jsonEndpoint, _ := body["json_endpoint"].(string)
+	jsonTemplate, _ := body["json_template"].(string)
+	successContains, _ := body["success_contains"].(string)
 	jobID := newID()
-	s.jobs.Create(jobID, "loginbrute", map[string]any{"url": urlStr}, 100)
+	s.jobs.Create(jobID, "loginbrute", map[string]any{"url": urlStr, "login_mode": loginMode}, 100)
 	if _, _, _, verr := target.Validate(urlStr, s.cfg.Scan.Resolve); verr != nil {
 		s.jobs.Update(jobID, func(j *store.Job) { j.Status = "error"; j.Message = verr.Error() })
 		writeJSON(w, 400, map[string]any{"job_id": jobID, "error": verr.Error()})
@@ -728,29 +732,45 @@ func (s *Server) hLoginBrute(w http.ResponseWriter, r *http.Request) {
 				rendered = html
 			}
 		}
-		hits, err := loginbrute.Brute(f, loginbrute.Options{
-			PageURL:     urlStr,
-			Users:       users,
-			Passwords:   pwds,
-			MaxTries:    s.cfg.LoginBrute.MaxTries,
-			IntervalMS:  s.cfg.LoginBrute.IntervalMS,
-			CaptchaType: captchaType,
-			OCRURL:      s.cfg.LoginBrute.CaptchaOCRURL,
-			FetchImage: func(rawURL string) ([]byte, error) {
-				rr, rerr := s.eng.ClientFor(scanOptions(body)).GetDirect(rawURL)
-				if rerr != nil || rr == nil {
-					return nil, rerr
-				}
-				return []byte(rr.Body), nil
-			},
-			RenderedBody: rendered,
-		}, func(done, total int, msg string) {
+		progress := func(done, total int, msg string) {
 			s.jobs.Update(jobID, func(j *store.Job) {
 				j.Status = "running"
 				j.Progress = done * 100 / max(1, total)
 				j.Message = msg
 			})
-		})
+		}
+		var hits []loginbrute.Hit
+		var err error
+		if strings.EqualFold(loginMode, "json") {
+			hits, err = loginbrute.JSONBrute(f, loginbrute.Options{
+				PageURL:         urlStr,
+				JSONEndpoint:    jsonEndpoint,
+				JSONTemplate:    jsonTemplate,
+				Users:           users,
+				Passwords:       pwds,
+				MaxTries:        s.cfg.LoginBrute.MaxTries,
+				IntervalMS:      s.cfg.LoginBrute.IntervalMS,
+				SuccessContains: successContains,
+			}, progress)
+		} else {
+			hits, err = loginbrute.Brute(f, loginbrute.Options{
+				PageURL:     urlStr,
+				Users:       users,
+				Passwords:   pwds,
+				MaxTries:    s.cfg.LoginBrute.MaxTries,
+				IntervalMS:  s.cfg.LoginBrute.IntervalMS,
+				CaptchaType: captchaType,
+				OCRURL:      s.cfg.LoginBrute.CaptchaOCRURL,
+				FetchImage: func(rawURL string) ([]byte, error) {
+					rr, rerr := s.eng.ClientFor(scanOptions(body)).GetDirect(rawURL)
+					if rerr != nil || rr == nil {
+						return nil, rerr
+					}
+					return []byte(rr.Body), nil
+				},
+				RenderedBody: rendered,
+			}, progress)
+		}
 		if err != nil {
 			s.jobs.Update(jobID, func(j *store.Job) { j.Status = "error"; j.Message = err.Error() })
 			return
