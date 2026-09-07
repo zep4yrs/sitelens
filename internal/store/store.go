@@ -48,10 +48,11 @@ type history struct {
 
 // Store 扫描历史存储。
 type Store struct {
-	mu   sync.RWMutex
-	path string
-	max  int
-	h    history
+	mu          sync.RWMutex
+	path        string
+	archivePath string
+	max         int
+	h           history
 }
 
 // New 打开（或创建）历史存储。目录不存在会自动创建。
@@ -62,8 +63,9 @@ func New(dataDir string, maxRecords int) (*Store, error) {
 	if err := os.MkdirAll(dataDir, 0o755); err != nil {
 		return nil, err
 	}
-	s := &Store{path: filepath.Join(dataDir, "history.json"), max: maxRecords,
-		h: history{NextID: 1}}
+	s := &Store{path: filepath.Join(dataDir, "history.json"),
+		archivePath: filepath.Join(dataDir, "history.archive.jsonl"),
+		max:         maxRecords, h: history{NextID: 1}}
 	data, err := os.ReadFile(s.path)
 	if err == nil {
 		if uerr := json.Unmarshal(data, &s.h); uerr != nil {
@@ -102,13 +104,28 @@ func (s *Store) Save(res *engine.Result, options map[string]any) int64 {
 	}
 	s.h.Scans = append(s.h.Scans, rec)
 
-	// 超上限裁掉最旧（id 最小）
+	// 超上限裁掉最旧：被裁记录先归档到 history.archive.jsonl（JSON Lines，
+	// 可人工查看/回灌），避免"裁剪即数据丢失"
 	if over := len(s.h.Scans) - s.max; over > 0 {
 		sort.Slice(s.h.Scans, func(i, j int) bool { return s.h.Scans[i].ID < s.h.Scans[j].ID })
+		s.archive(s.h.Scans[:over])
 		s.h.Scans = s.h.Scans[over:]
 	}
 	s.flush()
 	return id
+}
+
+// archive 把被裁剪的记录追加到归档文件（JSON Lines）。
+func (s *Store) archive(recs []ScanRecord) {
+	f, err := os.OpenFile(s.archivePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	if err != nil {
+		return
+	}
+	defer f.Close()
+	enc := json.NewEncoder(f)
+	for _, r := range recs {
+		_ = enc.Encode(r)
+	}
 }
 
 // Import 迁移导入：保留原始记录 id（PG 历史无损搬迁用）。
