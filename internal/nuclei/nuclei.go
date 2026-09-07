@@ -19,14 +19,16 @@ import (
 	"cnb.cool/feng-qiao/sitelens/internal/checks"
 )
 
-// Entry 索引条目（轻量：不解析全量 YAML）。
+// Entry 索引条目（建索引时一次全量 Convert 验证）。
 type Entry struct {
-	Path  string   `json:"path"` // 相对 dir
-	Name  string   `json:"name"` // 模板名（相关度排序用）
-	Tags  []string `json:"tags"`
-	Sev   string   `json:"sev"`
-	MTime int64    `json:"mtime"`
-	Size  int64    `json:"size"`
+	Path        string   `json:"path"`        // 相对 dir
+	Name        string   `json:"name"`        // 模板名（相关度排序用）
+	Tags        []string `json:"tags"`        // 精确 tags（来自完整 Convert）
+	Sev         string   `json:"sev"`         // 精确严重度
+	MTime       int64    `json:"mtime"`       // 文件修改时间
+	Size        int64    `json:"size"`        // 文件大小
+	Convertible bool     `json:"convertible"` // 能通过漏斗转换为可执行 check
+	LastRun     int64    `json:"lastrun"`     // 最近一次运行时间（unix nano；0=从未）
 }
 
 var (
@@ -38,7 +40,7 @@ var (
 
 // cacheSchema 索引缓存格式版本——格式变更时递增以强制重建
 // （历史缓存中 Tags 全空，无法通过条目数区分新旧格式）。
-const cacheSchema = 2
+const cacheSchema = 3
 
 type cacheFile struct {
 	Schema  int     `json:"schema"`
@@ -81,29 +83,23 @@ func Index(dir, cachePath string) ([]Entry, error) {
 			continue
 		}
 		rel = filepath.ToSlash(rel)
-		head := readHead(f, 4096)
-		e := Entry{
+		data, rerr2 := os.ReadFile(f)
+		if rerr2 != nil {
+			continue
+		}
+		checks := Convert(data)
+		if len(checks) == 0 {
+			continue // 漏斗淘汰：只把可运行的模板纳入调度全集
+		}
+		name, sev, tags := convertMeta(string(data))
+		entries = append(entries, Entry{
 			Path:  rel,
+			Name:  name,
+			Sev:   sev,
+			Tags:  tags,
 			MTime: st.ModTime().Unix(),
 			Size:  st.Size(),
-		}
-		if m := hsev.FindStringSubmatch(head); m != nil {
-			e.Sev = strings.ToLower(m[1])
-		} else {
-			e.Sev = "info"
-		}
-		if m := hname.FindStringSubmatch(head); m != nil {
-			e.Name = strings.TrimSpace(m[1])
-		}
-		if m := htags.FindStringSubmatch(head); m != nil {
-			for _, tg := range strings.Split(m[1], ",") {
-				tg = strings.TrimSpace(strings.ToLower(tg))
-				if tg != "" {
-					e.Tags = append(e.Tags, tg)
-				}
-			}
-		}
-		entries = append(entries, e)
+		})
 	}
 	if cachePath != "" {
 		if data, jerr := json.Marshal(cacheFile{Schema: cacheSchema, Entries: entries}); jerr == nil {
@@ -113,28 +109,44 @@ func Index(dir, cachePath string) ([]Entry, error) {
 	return entries, nil
 }
 
-func readHead(path string, n int64) string {
-	f, err := os.Open(path)
-	if err != nil {
-		return ""
+var (
+	metaTagsRe = regexp.MustCompile(`(?m)^\s*tags:\s*(.+)$`)
+	metaSevRe  = regexp.MustCompile(`(?m)^\s*severity:\s*(\S+)`)
+	metaNameRe = regexp.MustCompile(`(?m)^\s*name:\s*(.+)$`)
+)
+
+// convertMeta 从模板全文取精确 name/sev/tags（漏斗验证通过后的条目用）。
+func convertMeta(data string) (name, sev string, tags []string) {
+	if m := metaNameRe.FindStringSubmatch(data); m != nil {
+		name = strings.TrimSpace(m[1])
 	}
-	defer f.Close()
-	buf := make([]byte, n)
-	m, _ := f.Read(buf)
-	return string(buf[:m])
+	if m := metaSevRe.FindStringSubmatch(data); m != nil {
+		sev = strings.ToLower(m[1])
+	}
+	if sev == "" {
+		sev = "info"
+	}
+	if m := metaTagsRe.FindStringSubmatch(data); m != nil {
+		for _, tg := range strings.Split(m[1], ",") {
+			tg = strings.TrimSpace(strings.ToLower(tg))
+			if tg != "" {
+				tags = append(tags, tg)
+			}
+		}
+	}
+	return name, sev, tags
 }
 
 var sevRank = map[string]int{"critical": 0, "high": 1, "medium": 2, "low": 3, "info": 4}
 
-// Select 选子集（MoE 近似三路调度）：
-// ① tag 硬匹配置顶（severity 升序）；
-// ② 其余按与 queryText（页面标题 + 技术名）的词面重合度排序——
-//
-//	向量语义路由的轻量近似（原版为 256 维 embedding 余弦）；
-//
-// ③ 重合度为零的条目按游标轮转（cursor 由调用方持有，保证长期全覆盖）。
+// Select 选子集（MoE 三路调度，可验证的完整覆盖保证）：
+// ① tag 硬匹配置顶（severity 升序）——命中概率最高的必然在场；
+// ② 其余按 lastRun 升序（LRU：从未运行的优先）+ 词面相关度次序排列；
+// ③ 每 n 条为一批，⌈全集/n⌉ 次扫描后所有可运行模板必然各跑一遍——
+// lastRun 由调用方持久化（data/state），重启不丢进度。
+// cursor 语义由 lastRun 表取代：轮转位置由"最久未跑"自然推导。
 func Select(entries []Entry, techTags map[string]bool, queryText string,
-	n int, cursor *int) []Entry {
+	n int, lastRun map[string]int64) []Entry {
 	if n <= 0 || len(entries) == 0 {
 		return nil
 	}
@@ -159,57 +171,46 @@ func Select(entries []Entry, techTags map[string]bool, queryText string,
 		}
 		return hit[i].Path < hit[j].Path
 	})
-	// ② 相关度排序（词面重合；查询词从目标标题 + 技术名提取），
-	//    零分条目保持原序排在后面，交给 ③ 轮转覆盖
+	// 相关度排序（词面重合；查询词从目标标题 + 技术名提取）作为
+	// 同批模板内部的路由信号；LRU 主键仍是公平性的第一保证
 	qTerms := tokenize(queryText)
-	type scored struct {
-		e     Entry
-		score int
+	lr := func(e Entry) int64 {
+		if lastRun == nil {
+			return 0
+		}
+		return lastRun[e.Path]
 	}
-	var ranked, zeros []scored
-	for _, e := range rest {
+	rel := func(e Entry) int {
+		if len(qTerms) == 0 {
+			return 0
+		}
+		text := strings.ToLower(e.Name + " " + strings.Join(e.Tags, " ") + " " + e.Path)
 		s := 0
-		if len(qTerms) > 0 {
-			text := strings.ToLower(e.Name + " " + strings.Join(e.Tags, " ") + " " + e.Path)
-			for _, q := range qTerms {
-				if strings.Contains(text, q) {
-					s++
-				}
+		for _, q := range qTerms {
+			if strings.Contains(text, q) {
+				s++
 			}
 		}
-		if s > 0 {
-			ranked = append(ranked, scored{e, s})
-		} else {
-			zeros = append(zeros, scored{e, 0})
-		}
+		return s
 	}
-	sort.SliceStable(ranked, func(i, j int) bool {
-		if ranked[i].score != ranked[j].score {
-			return ranked[i].score > ranked[j].score
+	sort.SliceStable(rest, func(i, j int) bool {
+		li, lj := lr(rest[i]), lr(rest[j])
+		if li != lj {
+			return li < lj // 最久未跑优先（0 = 从未运行，最先覆盖）
 		}
-		return ranked[i].e.Path < ranked[j].e.Path
+		ri, rj := rel(rest[i]), rel(rest[j])
+		if ri != rj {
+			return ri > rj // 同批内相关度高的优先
+		}
+		return rest[i].Path < rest[j].Path
 	})
-	rest = rest[:0]
-	for _, r := range ranked {
-		rest = append(rest, r.e)
-	}
-	for _, z := range zeros {
-		rest = append(rest, z.e)
-	}
+
 	out := append([]Entry{}, hit...)
-	if len(out) < n && len(rest) > 0 {
-		start := 0
-		if cursor != nil {
-			start = *cursor % len(rest)
+	for _, e := range rest {
+		if len(out) >= n {
+			break
 		}
-		consumed := 0
-		for i := 0; i < len(rest) && len(out) < n; i++ {
-			out = append(out, rest[(start+i)%len(rest)])
-			consumed++
-		}
-		if cursor != nil {
-			*cursor = (start + consumed) % len(rest)
-		}
+		out = append(out, e)
 	}
 	if len(out) > n {
 		out = out[:n]
@@ -217,7 +218,7 @@ func Select(entries []Entry, techTags map[string]bool, queryText string,
 	return out
 }
 
-// tokenize 提取小写字母数字词（供词面重合度计算）。
+// tokenize 提取小写字母数字词（≥3 字符），供词面相关度计算。
 func tokenize(s string) []string {
 	var terms []string
 	cur := []rune{}
@@ -225,8 +226,7 @@ func tokenize(s string) []string {
 		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') {
 			cur = append(cur, r)
 		} else if len(cur) > 0 {
-			t := string(cur)
-			if len(t) >= 3 {
+			if t := string(cur); len(t) >= 3 {
 				terms = append(terms, t)
 			}
 			cur = cur[:0]
