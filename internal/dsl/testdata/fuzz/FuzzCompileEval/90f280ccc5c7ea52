@@ -1,0 +1,5 @@
+go test fuzz v1
+string("regeX(\"")
+int(262)
+string("wW")
+string("\xa5\xb1\rR?")

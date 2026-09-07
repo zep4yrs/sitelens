@@ -23,6 +23,7 @@ import (
 	"regexp"
 	"strings"
 	"sync"
+	"sync/atomic"
 )
 
 // Env 变量取值环境（求值期由调用方实现；header 名匹配大小写不敏感）。
@@ -536,9 +537,18 @@ func isIdentChar(c byte) bool {
 // or → and → ('!' ) cmp → primary
 
 type parser struct {
-	toks []token
-	pos  int
+	toks  []token
+	pos   int
+	depth int // 括号/逻辑嵌套深度（防深嵌套递归爆栈——fuzz 实测可达）
 }
+
+// maxDepth 嵌套深度上限：真实模板的 dsl 表达式嵌套不超过个位数，
+// 64 已宽松两个数量级；超出即准入拒绝而非递归到底。
+const maxDepth = 64
+
+// maxExprLen 表达式长度上限：真实 dsl 行均在数百字符内，超长即拒绝
+// （正则实参的编译成本与长度和嵌套正相关，入口封顶最省心）。
+const maxExprLen = 8192
 
 func (p *parser) peek() token { return p.toks[p.pos] }
 func (p *parser) next() token { t := p.toks[p.pos]; p.pos++; return t }
@@ -631,6 +641,11 @@ func (p *parser) parsePrimary() (node, error) {
 	case tStr:
 		return litNode{value{kind: kStr, s: t.text}}, nil
 	case tLParen:
+		p.depth++
+		defer func() { p.depth-- }()
+		if p.depth > maxDepth {
+			return nil, fmt.Errorf("dsl: 括号嵌套超过 %d 层", maxDepth)
+		}
 		inner, err := p.parseOr()
 		if err != nil {
 			return nil, err
@@ -723,6 +738,9 @@ type Program struct {
 
 // Compile 解析并校验表达式；子集外的任何形态都返回错误。
 func Compile(expr string) (*Program, error) {
+	if len(expr) > maxExprLen {
+		return nil, fmt.Errorf("dsl: 表达式超过 %d 字符上限", maxExprLen)
+	}
 	toks, err := tokenize(expr)
 	if err != nil {
 		return nil, err
@@ -753,7 +771,11 @@ func (p *Program) Eval(e Env) (bool, error) {
 // 避免生成对任意响应恒真的空转 check。
 func (p *Program) PositiveGround() bool { return p.root.positive(false) }
 
-var progCache sync.Map // expr(string) → *Program（Compile 结果含 error 的不缓存，错误路径走不到 Eval）
+var (
+	progCache    sync.Map // expr(string) → *Program（Compile 结果含 error 的不缓存，错误路径走不到 Eval）
+	progCacheN   atomic.Int64
+	progCacheMax = 16384 // 模板库 dsl 表达式总量有限；上限防不可信输入无限膨胀
+)
 
 // CompileCached 带缓存的编译：matchBody 每 scan 每 check 都会走到，
 // 同一表达式全库复用一份 AST。
@@ -765,11 +787,17 @@ func CompileCached(expr string) (*Program, error) {
 	if err != nil {
 		return nil, err
 	}
-	progCache.Store(expr, p)
+	if progCacheN.Add(1) <= int64(progCacheMax) {
+		progCache.Store(expr, p)
+	}
 	return p, nil
 }
 
-var reCache sync.Map // pattern(string) → *regexp.Regexp
+var (
+	reCache    sync.Map // pattern(string) → *regexp.Regexp
+	reCacheN   atomic.Int64
+	reCacheMax = 4096 // 生产端模式来自模板库（有限集）；上限防不可信输入无限膨胀
+)
 
 func regexCache(pat string) (*regexp.Regexp, error) {
 	if v, ok := reCache.Load(pat); ok {
@@ -779,6 +807,8 @@ func regexCache(pat string) (*regexp.Regexp, error) {
 	if err != nil {
 		return nil, fmt.Errorf("dsl: 正则编译失败: %v", err)
 	}
-	reCache.Store(pat, re)
+	if reCacheN.Add(1) <= int64(reCacheMax) {
+		reCache.Store(pat, re)
+	}
 	return re, nil
 }
