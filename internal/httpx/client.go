@@ -198,6 +198,23 @@ func (c *Client) PostForm(rawURL string, fields map[string]string) (*Response, e
 	return toResponseCap(resp, rawURL, 512_000), nil
 }
 
+// PostJSON POST JSON 请求体（单请求，不跟随重定向；JSON API 登录用）。
+func (c *Client) PostJSON(rawURL, body string) (*Response, error) {
+	c.wait()
+	req, err := c.newRequest(http.MethodPost, rawURL)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Body = io.NopCloser(strings.NewReader(body))
+	req.ContentLength = int64(len(body))
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	return toResponseCap(resp, rawURL, 512_000), nil
+}
+
 func isRedirect(code int) bool {
 	return code == 301 || code == 302 || code == 303 || code == 307 || code == 308
 }

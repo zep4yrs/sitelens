@@ -104,3 +104,12 @@ func (h *httpPoster) PostForm(rawURL string, fields map[string]string) (int, str
 	}
 	return r.Status, r.Body, nil
 }
+
+// PostJSON JSON API 提交适配。
+func (h *httpPoster) PostJSON(rawURL, body string) (int, string, error) {
+	r, err := h.c.PostJSON(rawURL, body)
+	if err != nil || r == nil {
+		return 0, "", err
+	}
+	return r.Status, r.Body, nil
+}

@@ -18,6 +18,10 @@ func (f *fakePoster) GetSmall(rawURL string) (int, string, error) {
 <input name="user"><input type="password" name="pass"></form></html>`, nil
 }
 
+func (f *fakePoster) PostJSON(rawURL, body string) (int, string, error) {
+	return f.PostForm(rawURL, map[string]string{"__raw__": body})
+}
+
 func (f *fakePoster) PostForm(rawURL string, fields map[string]string) (int, string, error) {
 	f.posts++
 	if fields["user"] == f.hitUser && fields["pass"] == f.hitPass {
@@ -64,6 +68,8 @@ type noFormPoster struct{}
 func (n *noFormPoster) GetSmall(string) (int, string, error) {
 	return 200, "<html>no form here</html>", nil
 }
+func (n *noFormPoster) PostJSON(string, string) (int, string, error) { return 200, "", nil }
+
 func (n *noFormPoster) PostForm(string, map[string]string) (int, string, error) {
 	return 200, "", nil
 }

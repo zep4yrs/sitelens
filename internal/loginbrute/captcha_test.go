@@ -114,12 +114,19 @@ func (f *fakeCaptchaPoster) PostForm(rawURL string, fields map[string]string) (i
 	return 200, `<html><form action="/login"><input type="password" name="pass"></form>bad</html>`, nil
 }
 
+// PostJSON JSON 提交（Poster 接口新增方法，测试桩保持可用）。
+func (f *fakeCaptchaPoster) PostJSON(rawURL, body string) (int, string, error) {
+	return 200, body, nil
+}
+
 type captchaPagePoster struct{}
 
 func (captchaPagePoster) GetSmall(string) (int, string, error) {
 	return 200, `<html><form action="/l"><input type="password" name="p">
 		<img src="/captcha.img" class="captcha"></form></html>`, nil
 }
+
+func (captchaPagePoster) PostJSON(string, string) (int, string, error) { return 200, "", nil }
 
 func (captchaPagePoster) PostForm(string, map[string]string) (int, string, error) {
 	return 200, "", nil

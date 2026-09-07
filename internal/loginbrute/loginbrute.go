@@ -285,20 +285,25 @@ func calcEval(text string) (int, bool) {
 type Poster interface {
 	PostForm(rawURL string, fields map[string]string) (status int, body string, err error)
 	GetSmall(rawURL string) (status int, body string, err error)
+	PostJSON(rawURL, body string) (status int, respBody string, err error)
 }
 
 // Options 爆破参数。
 type Options struct {
-	PageURL      string                              // 登录页地址
-	Users        []string                            // 用户名字典
-	Passwords    []string                            // 密码字典
-	MaxTries     int                                 // 总尝试硬上限
-	IntervalMS   int                                 // 相邻尝试间隔（毫秒，0 = 不间隔）
-	CaptchaType  string                              // 验证码类型（none/digits/calc；digits|calc 需配 OCRURL）
-	OCRURL       string                              // ddddocr sidecar 地址（空 = 无 OCR 能力）
-	CaptchaImgs  []string                            // 登录页中的验证码图片地址（相对/绝对均可）
-	FetchImage   func(rawURL string) ([]byte, error) // 验证码图片字节拉取
-	RenderedBody string                              // SPA 支持：无头渲染后的页面 HTML；非空时表单解析优先使用它
+	PageURL         string                              // 登录页地址
+	Users           []string                            // 用户名字典
+	Passwords       []string                            // 密码字典
+	MaxTries        int                                 // 总尝试硬上限
+	IntervalMS      int                                 // 相邻尝试间隔（毫秒，0 = 不间隔）
+	CaptchaType     string                              // 验证码类型（none/digits/calc；digits|calc 需配 OCRURL）
+	OCRURL          string                              // ddddocr sidecar 地址（空 = 无 OCR 能力）
+	CaptchaImgs     []string                            // 登录页中的验证码图片地址（相对/绝对均可）
+	FetchImage      func(rawURL string) ([]byte, error) // 验证码图片字节拉取
+	RenderedBody    string                              // SPA 支持：无头渲染后的页面 HTML；非空时表单解析优先使用它
+	LoginMode       string                              // form（默认）| json
+	JSONEndpoint    string                              // json 模式登录接口（空 = PageURL）
+	JSONTemplate    string                              // 含 {user}/{pass} 占位符的 JSON 模板
+	SuccessContains string                              // json 模式可选成功特征
 }
 
 // Brute 执行爆破：返回命中列表（命中一组即停，控制请求量）。
