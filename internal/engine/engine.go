@@ -44,6 +44,7 @@ type Options struct {
 	DAST         bool   // 参数级注入探测
 	Passive      bool   // 被动安全检测
 	Checks       string // none | core | all
+	NucleiCap    int    // Nuclei 单次模板上限（0 = 用配置默认 nuclei_cap）
 	AuthCookie   string // 授权扫描 Cookie
 }
 
@@ -266,7 +267,7 @@ func (e *Engine) Scan(rawURL string, opts Options, onProgress progress, cancel f
 	// 6.5) Nuclei 社区模板子集（all 级别 + 模板库存在时）
 	if opts.Checks == "all" && !cancelled() && e.cfg.Checks.NucleiCap > 0 && e.cfg.Checks.NucleiDir != "" {
 		onProgress(84, "运行 Nuclei 社区模板子集…")
-		if nl := e.nucleiSubset(res.Technologies, res.Title); len(nl) > 0 {
+		if nl := e.nucleiSubset(res.Technologies, res.Title, opts.NucleiCap); len(nl) > 0 {
 			for _, h := range checks.RunList(client, baseURL, nl, cancelled,
 				func(done, total int, msg string) {
 					if total > 0 {
@@ -475,7 +476,7 @@ func (a chromeRenderer) Render(rawURL string) (string, bool) {
 var nucleiLRUMu sync.Mutex
 
 // nucleiSubset 按已识别技术挑选 Nuclei 模板并转换为 check。
-func (e *Engine) nucleiSubset(techs []Tech, pageTitle string) []checks.Check {
+func (e *Engine) nucleiSubset(techs []Tech, pageTitle string, cap int) []checks.Check {
 	entries, err := nuclei.Index(e.cfg.Checks.NucleiDir,
 		filepath.Join(e.cfg.Store.DataDir, "nuclei_index.json"))
 	if err != nil || len(entries) == 0 {
@@ -492,7 +493,10 @@ func (e *Engine) nucleiSubset(techs []Tech, pageTitle string) []checks.Check {
 
 	nucleiLRUMu.Lock()
 	defer nucleiLRUMu.Unlock()
-	selected := nuclei.Select(entries, tags, query, e.cfg.Checks.NucleiCap, e.nucleiLRU)
+	if cap <= 0 {
+		cap = e.cfg.Checks.NucleiCap
+	}
+	selected := nuclei.Select(entries, tags, query, cap, e.nucleiLRU)
 	if len(selected) > 0 {
 		now := time.Now().UnixNano()
 		for _, ent := range selected {
