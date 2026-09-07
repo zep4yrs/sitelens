@@ -24,12 +24,14 @@ import (
 func main() {
 	cfgPath := flag.String("config", ".sitelens.yml", "配置文件路径")
 	showVersion := flag.Bool("version", false, "输出版本号并退出")
+	envFile := flag.String("env", ".env", "环境变量文件（PG 连接参数来源）")
 	flag.Usage = func() {
 		fmt.Fprintf(os.Stderr, `SiteLens Go 引擎
 
 用法：
   sitelens [flags] scan <url>    全流水线扫描，JSON 输出
   sitelens [flags] serve         启动内置 Web 服务
+  sitelens [flags] migrate-pg    迁移 Python 版 PG 扫描历史到本地文件库
 
 配置：%s（缺省用内置最佳实践默认值）
 `, *cfgPath)
@@ -48,6 +50,9 @@ func main() {
 	cfg := config.LoadOrDefault(*cfgPath)
 
 	switch args[0] {
+	case "migrate-pg":
+		loadEnvFile(*envFile)
+		os.Exit(migratePGCommand(*cfgPath))
 	case "serve":
 		srv, err := server.New(cfg)
 		if err != nil {
