@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"os"
 
+	"cnb.cool/feng-qiao/sitelens/internal/audit"
 	"cnb.cool/feng-qiao/sitelens/internal/checks"
 	"cnb.cool/feng-qiao/sitelens/internal/config"
 	"cnb.cool/feng-qiao/sitelens/internal/engine"
@@ -50,6 +51,21 @@ func main() {
 	cfg := config.LoadOrDefault(*cfgPath)
 
 	switch args[0] {
+	case "audit":
+		if len(args) < 2 {
+			flag.Usage()
+			os.Exit(2)
+		}
+		rep, err := audit.Run(args[1], cfg.Audit, nil)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "审计失败:", err)
+			os.Exit(1)
+		}
+		out, _ := json.MarshalIndent(rep, "", "  ")
+		fmt.Println(string(out))
+		fmt.Fprintf(os.Stderr, "\n审计完成：%d 文件，%d 行，%d 发现（高 %d / 中 %d / 低 %d）\n",
+			rep.Files, rep.Lines, len(rep.Findings),
+			rep.BySeverity["high"], rep.BySeverity["medium"], rep.BySeverity["low"])
 	case "migrate-pg":
 		loadEnvFile(*envFile)
 		os.Exit(migratePGCommand(*cfgPath))
