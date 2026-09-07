@@ -9,17 +9,22 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 )
 
 // Match 单条 check 的匹配条件。
 type Match struct {
-	Status         int      `json:"s"`              // 期望状态码（0 = 不限定）
-	StatusAny      []int    `json:"sany,omitempty"` // 状态码任一命中（Nuclei 组转换用）
-	Contains       []string `json:"c"`              // 正文须全部包含（AND）
-	ContainsAny    []string `json:"cany,omitempty"` // 正文任一包含（OR，Nuclei 组转换用）
-	HeaderContains []string `json:"h,omitempty"`    // 响应头区须全部包含（Nuclei 头匹配）
+	Status         int      `json:"s"`                // 期望状态码（0 = 不限定）
+	StatusAny      []int    `json:"sany,omitempty"`   // 状态码任一命中（Nuclei 组转换用）
+	Contains       []string `json:"c"`                // 正文须全部包含（AND）
+	ContainsAny    []string `json:"cany,omitempty"`   // 正文任一包含（OR，Nuclei 组转换用）
+	HeaderContains []string `json:"h,omitempty"`      // 响应头区须全部包含（Nuclei 头匹配）
+	RegexBody      []string `json:"rxbody,omitempty"` // 正文任一正则命中（OR，Nuclei regex 转换）
+	Method         string   `json:"method,omitempty"` // POST 模板请求方法
+	Body           string   `json:"body,omitempty"`   // POST 请求体
+	ContentType    string   `json:"ctype,omitempty"`  // POST Content-Type
 	Extract        *struct {
 		Keyword string `json:"keyword"`
 	} `json:"extract"`
@@ -34,6 +39,23 @@ type Check struct {
 	Title  string
 	Sev    string
 	Advice string
+}
+
+// regexCache 正则编译缓存（pattern → 编译结果或 nil 表示不可编译）。
+var regexCache sync.Map
+
+// compileCached 编译正则并缓存；非法模式返回 nil。
+func compileCached(pattern string) *regexp.Regexp {
+	if v, ok := regexCache.Load(pattern); ok {
+		re, _ := v.(*regexp.Regexp)
+		return re
+	}
+	re, err := regexp.Compile(pattern)
+	if err != nil {
+		re = nil
+	}
+	regexCache.Store(pattern, re)
+	return re
 }
 
 // cmsChecks CMS 联动：指纹命中后强制调度的专项 check。

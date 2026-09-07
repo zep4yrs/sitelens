@@ -280,15 +280,18 @@ type tplMatcher struct {
 	Type      string   `yaml:"type"`
 	Status    []int    `yaml:"status"`
 	Words     []string `yaml:"words"`
+	Regex     []string `yaml:"regex"`
 	Part      string   `yaml:"part"`
 	Condition string   `yaml:"condition"`
 }
 
 type tplHTTP struct {
-	Method            string       `yaml:"method"`
-	Path              []string     `yaml:"path"`
-	MatchersCondition string       `yaml:"matchers-condition"`
-	Matchers          []tplMatcher `yaml:"matchers"`
+	Method            string            `yaml:"method"`
+	Path              []string          `yaml:"path"`
+	Body              string            `yaml:"body"`
+	Headers           map[string]string `yaml:"headers"`
+	MatchersCondition string            `yaml:"matchers-condition"`
+	Matchers          []tplMatcher      `yaml:"matchers"`
 }
 
 type tplDoc struct {
@@ -319,9 +322,11 @@ func Convert(data []byte) []checks.Check {
 		return nil
 	}
 	req := doc.HTTP[0]
-	if !strings.EqualFold(req.Method, "GET") && req.Method != "" {
+	method := strings.ToUpper(req.Method)
+	if method != "GET" && method != "POST" {
 		return nil
 	}
+	reqCT := req.Headers["Content-Type"]
 	var path string
 	if len(req.Path) > 0 {
 		path = req.Path[0]
@@ -330,8 +335,11 @@ func Convert(data []byte) []checks.Check {
 		return nil
 	}
 	suffix := strings.SplitN(path, "{{BaseURL}}", 2)[1]
-	if suffix == "" || strings.Contains(suffix, "{{") {
+	if strings.Contains(suffix, "{{") {
 		return nil
+	}
+	if suffix == "" {
+		suffix = "/" // 根探测
 	}
 	if len(req.Matchers) == 0 {
 		return nil
@@ -349,6 +357,7 @@ func Convert(data []byte) []checks.Check {
 		wall   []string
 		wany   []string
 		h      []string
+		rx     []string
 	}
 	var groups []group
 	for _, m := range req.Matchers {
@@ -372,10 +381,22 @@ func Convert(data []byte) []checks.Check {
 			} else {
 				g.wany = words
 			}
+		case "regex":
+			pats := make([]string, 0, len(m.Regex))
+			for _, pat := range m.Regex {
+				if _, err := regexp.Compile("(?i)" + pat); err != nil {
+					return nil // RE2 不兼容的整模板跳过
+				}
+				pats = append(pats, "(?i)"+pat)
+			}
+			if len(pats) == 0 {
+				return nil
+			}
+			g.rx = pats
 		default:
 			return nil // dsl/binary/其他
 		}
-		if len(g.status) == 0 && len(g.wall) == 0 && len(g.wany) == 0 && len(g.h) == 0 {
+		if len(g.status) == 0 && len(g.wall) == 0 && len(g.wany) == 0 && len(g.h) == 0 && len(g.rx) == 0 {
 			return nil
 		}
 		groups = append(groups, g)
@@ -387,6 +408,7 @@ func Convert(data []byte) []checks.Check {
 			merged.wall = append(merged.wall, g.wall...)
 			merged.wany = append(merged.wany, g.wany...)
 			merged.h = append(merged.h, g.h...)
+			merged.rx = append(merged.rx, g.rx...)
 		}
 		// AND 语义下多组 status 各自独立列表语义有损，取交集语义由
 		// matchBody 的 StatusAny（任一）近似——仅当无词组时保留，
@@ -398,7 +420,7 @@ func Convert(data []byte) []checks.Check {
 	}
 	if len(groups) == 1 {
 		g := groups[0]
-		if len(g.status) == 0 && len(g.wall) == 0 && len(g.wany) == 0 && len(g.h) == 0 {
+		if len(g.status) == 0 && len(g.wall) == 0 && len(g.wany) == 0 && len(g.h) == 0 && len(g.rx) == 0 {
 			return nil
 		}
 	}
@@ -429,6 +451,9 @@ func Convert(data []byte) []checks.Check {
 				Contains:       g.wall,
 				ContainsAny:    g.wany,
 				HeaderContains: g.h,
+				Method:         method,
+				Body:           req.Body,
+				ContentType:    reqCT,
 			},
 			Title:  name,
 			Sev:    sev,

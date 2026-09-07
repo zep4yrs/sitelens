@@ -198,6 +198,23 @@ func (c *Client) PostForm(rawURL string, fields map[string]string) (*Response, e
 	return toResponseCap(resp, rawURL, 512_000), nil
 }
 
+// PostRaw POST 自定义 Content-Type 的原始请求体（Nuclei POST 模板等）。
+func (c *Client) PostRaw(rawURL, contentType, body string) (*Response, error) {
+	c.wait()
+	req, err := c.newRequest(http.MethodPost, rawURL)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", contentType)
+	req.Body = io.NopCloser(strings.NewReader(body))
+	req.ContentLength = int64(len(body))
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	return toResponseCap(resp, rawURL, 512_000), nil
+}
+
 // PostJSON POST JSON 请求体（单请求，不跟随重定向；JSON API 登录用）。
 func (c *Client) PostJSON(rawURL, body string) (*Response, error) {
 	c.wait()
