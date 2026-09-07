@@ -6,9 +6,9 @@
 
 FROM golang:1.26-alpine AS build
 WORKDIR /src
-# 依赖先行：go.mod/go.sum 变化才重新下载模块
+# 依赖 vendor 化：离线可构建（零运行时下载）
 COPY go.mod go.sum ./
-RUN go mod download
+COPY vendor ./vendor
 COPY cmd ./cmd
 COPY internal ./internal
 COPY web ./web
