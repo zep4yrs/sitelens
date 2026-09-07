@@ -78,6 +78,7 @@ crawler:
   max_links_per_page: 80
   timeout_sec: 60
   headless: false             # 无头渲染（SPA 支持；需本机 Chrome/Chromium，缺失自动降级）
+  headless_all_pages: false   # 渲染扩展到全部已爬页（默认仅首页）
   headless_timeout_sec: 20    # 单页渲染超时
 dast:
   max_params: 24             # 参数探测上限

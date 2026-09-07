@@ -2,6 +2,13 @@
 
 ## 未发布（预览版追加）
 
+- 爬虫 `crawler.headless_all_pages` 开关：无头渲染默认仅首页，开启后
+  扩展到全部已爬页（JS 路由二级页也贡献链接/路由；每页一次浏览器
+  渲染，页面多时显著变慢，故默认关）
+- 指纹×情报命名对齐 `internal/intel.lookupAliases`：全量比对 370 指纹
+  名 × 6511 情报产品名，仅收录经核实同属一个软件的三对别名
+  （Microsoft IIS/Yoast SEO/Akamai Bot Manager），命中 91→94，其余
+  276 项未命中经核实为情报未覆盖而非命名缺陷
 - **dsl 安全子集求值器（internal/dsl，新增第 17 个包）**：Nuclei dsl
   表达式的词法/递归下降解析 + 求值，支持 status_code/body/headers/host
   变量与 contains 族/regex/tolower/len 等函数、比较与逻辑运算；准入

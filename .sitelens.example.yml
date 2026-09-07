@@ -25,6 +25,7 @@ crawler:
   timeout_sec: 60
 
   headless: false             # 无头渲染（SPA 支持；需本机 Chrome/Chromium，缺失自动降级）
+  headless_all_pages: false   # 渲染扩展到全部已爬页（默认仅首页；页面多时显著变慢）
   headless_timeout_sec: 20
 dast:
   max_params: 24

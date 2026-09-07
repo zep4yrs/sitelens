@@ -126,3 +126,36 @@ func mustGet(t *testing.T, url string) *httpx.Response {
 func containsSub(s, sub string) bool { return strings.Contains(s, sub) }
 
 func hasHost(raw, host string) bool { return strings.Contains(raw, host) }
+
+// recordingRenderer 记录 Render 调用的 URL，恒返回空渲染结果。
+// （spa_test.go 已有带渲染内容的 fakeRenderer，这里只要调用记录。）
+type recordingRenderer struct{ called []string }
+
+func (f *recordingRenderer) Render(rawURL string) (string, bool) {
+	f.called = append(f.called, rawURL)
+	return "", true
+}
+
+// TestHeadlessAllPages 渲染范围开关：默认仅首页；开启后覆盖全部已爬页。
+func TestHeadlessAllPages(t *testing.T) {
+	srv := newSite(t, false)
+
+	r1 := &recordingRenderer{}
+	opts := config.CrawlerConfig{MaxPages: 10, RespectRobots: false, MaxLinksPerPage: 20}
+	c1 := New(testClient(), opts, srv.URL+"/")
+	c1.SetRenderer(r1)
+	c1.Crawl(mustGet(t, srv.URL+"/"), nil)
+	if len(r1.called) != 1 {
+		t.Fatalf("默认应仅渲染首页 1 次: %v", r1.called)
+	}
+
+	r2 := &recordingRenderer{}
+	opts2 := opts
+	opts2.HeadlessAllPages = true
+	c2 := New(testClient(), opts2, srv.URL+"/")
+	c2.SetRenderer(r2)
+	c2.Crawl(mustGet(t, srv.URL+"/"), nil)
+	if len(r2.called) != 4 { // / a b c 全部渲染
+		t.Fatalf("开启后应渲染全部 4 页: %v", r2.called)
+	}
+}
