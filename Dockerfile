@@ -1,8 +1,10 @@
-# SiteLens Go 版镜像（多阶段构建）
+# SiteLens Go 版镜像（多阶段构建，scratch 运行时——零基础镜像、零运行时依赖）
 # 构建：docker build -t sitelens .
 # 运行：docker run --rm -p 5000:5000 -v sitelens-state:/app/data/state sitelens
-# 说明：镜像内仅含二进制与数据文件；扫描目标请勿写 localhost
-#（容器内 localhost 指容器自身，需用宿主机地址或 --network host）。
+# 说明：
+#   - CGO_ENABLED=0 静态编译，scratch 运行时仅需 CA 证书（出站 HTTPS 探测用）
+#   - 扫描目标请勿写 localhost（容器内 localhost 指容器自身）
+#   - intel_dump.json.gz 为可选数据：挂载到 /app/data/intel_dump.json.gz 启用情报关联
 
 FROM golang:1.26-alpine AS build
 WORKDIR /src
@@ -13,18 +15,21 @@ COPY cmd ./cmd
 COPY internal ./internal
 COPY web ./web
 COPY data ./data
-# CGO=0：纯静态二进制，可在 distroless 中直接运行
-RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" \
-    -o /out/sitelens ./cmd/sitelens
+RUN CGO_ENABLED=0 GOOS=linux go build -mod=vendor -trimpath -ldflags="-s -w"     -o /out/sitelens ./cmd/sitelens
+# CA 证书供出站 HTTPS（netsec/KEV/扫描）使用；alpine 基础镜像自带
+RUN mkdir -p /out/rt/etc/ssl/certs &&     cp /etc/ssl/certs/ca-certificates.crt /out/rt/etc/ssl/certs/
 
-FROM gcr.io/distroless/static-debian12:nonroot
+FROM scratch
 WORKDIR /app
 COPY --from=build /out/sitelens /app/sitelens
-# 运行所需数据文件（指纹库/知识库/字典；intel_dump 为可选降级项）
+# 运行数据：指纹库（必需）、区间/字典（可选，缺失自动降级）
 COPY --from=build /src/data/go /app/data/go
 COPY --from=build /src/data/affected_ranges.json /app/data/affected_ranges.json
 COPY --from=build /src/data/wordlists /app/data/wordlists
-USER nonroot:nonroot
+# CA 证书（出站 HTTPS 探测）
+COPY --from=build /out/rt/etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
+# 非 root 运行
+USER 65532:65532
 EXPOSE 5000
 VOLUME ["/app/data/state"]
 ENTRYPOINT ["/app/sitelens"]

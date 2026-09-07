@@ -54,6 +54,10 @@
   "checks": "none",       // 验证引擎 none | core | all（all 追加 Nuclei 模板）
   "nuclei_cap": 300,      // Nuclei 单次模板上限（0 = 用配置默认；调大覆盖全部 4701 可运行模板）
   "auth_cookie": ""       // 认证会话 Cookie
+  "login_mode": "form",   // 登录模式 form（表单）| json（JSON API）
+  "json_endpoint": "",    // json 模式登录接口（空 = 登录页地址）
+  "json_template": "",    // json 模式 JSON 模板（含 {user}/{pass} 占位符）
+  "success_contains": ""  // json 模式可选成功响应特征
 }
 → { "job_id": "a1b2c3d4e5f6" }</pre>
   </div>
