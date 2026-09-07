@@ -36,6 +36,7 @@ type Doc struct {
 	Forms       []Form
 	HasPassword bool     // 是否存在 password 输入框（登录页特征）
 	NextRoutes  []string // SPA 数据岛（__NEXT_DATA__/__NUXT__）中的路由路径
+	CaptchaImgs []string // 疑似验证码图片地址（img src 含 captcha/code/verify 线索）
 }
 
 // Parse 解析 HTML 原文。
@@ -131,6 +132,25 @@ func Parse(body string) *Doc {
 		content := attrValue(tagText, "content")
 		if name != "" && content != "" {
 			doc.Metas[strings.ToLower(name)] = content
+		}
+		pos = start + tagEnd + 1
+	}
+
+	// <img>：仅收集疑似验证码图片（src/边邻属性含验证码线索词）
+	pos = 0
+	for {
+		i := strings.Index(low[pos:], "<img")
+		if i < 0 {
+			break
+		}
+		start := pos + i
+		tagEnd := strings.Index(low[start:], ">")
+		if tagEnd < 0 {
+			break
+		}
+		tagText := body[start : start+tagEnd+1]
+		if s := attrValue(tagText, "src"); s != "" && isCaptchaImg(tagText) {
+			doc.CaptchaImgs = append(doc.CaptchaImgs, s)
 		}
 		pos = start + tagEnd + 1
 	}
@@ -278,6 +298,17 @@ func spaRoutes(inner string) []string {
 		add(m[1])
 	}
 	return out
+}
+
+// isCaptchaImg 判断 img 标签是否疑似验证码图（src/id/class/边邻属性含线索词）。
+func isCaptchaImg(tagText string) bool {
+	low := strings.ToLower(tagText)
+	for _, kw := range []string{"captcha", "verif", "vcode", "validate", "checkcode", "verify"} {
+		if strings.Contains(low, kw) {
+			return true
+		}
+	}
+	return false
 }
 
 // attrValue 从单个标签原文取属性值（单/双引号或无引号，大小写不敏感）。

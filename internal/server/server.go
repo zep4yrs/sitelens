@@ -687,10 +687,12 @@ func (s *Server) hNetsec(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) hCaptchaCapability(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, 200, map[string]any{
-		"available": false,
-		"reason":    "验证码识别（ddddocr）未迁移至 Go 版，暂只能爆破无验证码表单",
-	})
+	available := s.cfg.LoginBrute.CaptchaOCRURL != ""
+	reason := "已就绪（ddddocr sidecar）"
+	if !available {
+		reason = "未配置 loginbrute.captcha_ocr_url；启动 python tools/ocr_server.py 并配置后即可识别验证码"
+	}
+	writeJSON(w, 200, map[string]any{"available": available, "reason": reason})
 }
 
 func (s *Server) hLoginBrute(w http.ResponseWriter, r *http.Request) {
@@ -727,12 +729,20 @@ func (s *Server) hLoginBrute(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		hits, err := loginbrute.Brute(f, loginbrute.Options{
-			PageURL:      urlStr,
-			Users:        users,
-			Passwords:    pwds,
-			MaxTries:     s.cfg.LoginBrute.MaxTries,
-			IntervalMS:   s.cfg.LoginBrute.IntervalMS,
-			CaptchaType:  captchaType,
+			PageURL:     urlStr,
+			Users:       users,
+			Passwords:   pwds,
+			MaxTries:    s.cfg.LoginBrute.MaxTries,
+			IntervalMS:  s.cfg.LoginBrute.IntervalMS,
+			CaptchaType: captchaType,
+			OCRURL:      s.cfg.LoginBrute.CaptchaOCRURL,
+			FetchImage: func(rawURL string) ([]byte, error) {
+				rr, rerr := s.eng.ClientFor(scanOptions(body)).GetDirect(rawURL)
+				if rerr != nil || rr == nil {
+					return nil, rerr
+				}
+				return []byte(rr.Body), nil
+			},
 			RenderedBody: rendered,
 		}, func(done, total int, msg string) {
 			s.jobs.Update(jobID, func(j *store.Job) {
