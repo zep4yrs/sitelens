@@ -52,11 +52,13 @@ func DefaultOptions() Options { return Options{Deep: true, Checks: "none"} }
 type progress func(percent int, msg string)
 
 // Engine 一次完整扫描的编排器。
+// matcher/kb 支持运行期热替换（SetMatcher/SetKB）：换枪为指针原子语义，
+// 进行中的扫描持旧快照不受影响，新扫描取新数据。
 type Engine struct {
-	cfg       *config.Config
-	matcher   *sitelens.Matcher
-	kb        *intel.KB
-	dastLinks []string // 爬取阶段收集的带参链接
+	cfg     *config.Config
+	dataMu  sync.Mutex
+	matcher *sitelens.Matcher
+	kb      *intel.KB
 }
 
 // New 创建引擎。matcher / kb 可为 nil（对应能力降级跳过，不阻塞扫描）。
@@ -64,7 +66,34 @@ func New(cfg *config.Config, matcher *sitelens.Matcher, kb *intel.KB) *Engine {
 	if cfg == nil {
 		cfg = config.Default()
 	}
-	return &Engine{cfg: cfg, matcher: matcher, kb: kb}
+	e := &Engine{cfg: cfg}
+	e.SetMatcher(matcher)
+	e.SetKB(kb)
+	return e
+}
+
+// SetMatcher 热替换指纹库（nil = 空 matcher，识别降级为无命中）。
+func (e *Engine) SetMatcher(m *sitelens.Matcher) {
+	e.dataMu.Lock()
+	defer e.dataMu.Unlock()
+	if m == nil {
+		m = &sitelens.Matcher{}
+	}
+	e.matcher = m
+}
+
+// SetKB 热替换漏洞情报知识库（nil = 关闭情报关联）。
+func (e *Engine) SetKB(kb *intel.KB) {
+	e.dataMu.Lock()
+	defer e.dataMu.Unlock()
+	e.kb = kb
+}
+
+// snapshot 取本次扫描全程使用的数据快照（保证单次扫描内一致性）。
+func (e *Engine) snapshot() (*sitelens.Matcher, *intel.KB) {
+	e.dataMu.Lock()
+	defer e.dataMu.Unlock()
+	return e.matcher, e.kb
 }
 
 // Scan 执行扫描，异常统一进 Result.Error（消息可直接展示）。
@@ -127,7 +156,11 @@ func (e *Engine) Scan(rawURL string, opts Options, onProgress progress, cancel f
 	res.ResponseTimeMS = int(rtMS)
 	res.Pages = append(res.Pages, PageInfo{URL: home.FinalURL, Status: home.Status})
 
+	// 数据快照：本次扫描全程使用同一份 matcher/kb（热替换不影响进行中的扫描）
+	matcher, kb := e.snapshot()
+
 	acc := newTechAcc()
+	dastLinks := []string{} // 爬取阶段收集的带参链接（DAST 探测点）
 	pages := []crawlPage{{resp: home, doc: doc}}
 
 	// 3) 同域浅爬取（DAST 开启时 jsmap 前置：API 端点回灌爬虫种子）
@@ -177,14 +210,14 @@ func (e *Engine) Scan(rawURL string, opts Options, onProgress progress, cancel f
 				doc: htmlx.Parse(p.Body),
 			})
 		}
-		e.dastLinks = cr.ParamLinks
+		dastLinks = cr.ParamLinks
 	}
 
 	// 4) 多页指纹识别
-	if e.matcher != nil {
+	if matcher != nil {
 		onProgress(55, fmt.Sprintf("指纹识别（%d 页）…", len(pages)))
 		for _, p := range pages {
-			for _, h := range e.matcher.Match(sitelens.Extract(p.resp)) {
+			for _, h := range matcher.Match(sitelens.Extract(p.resp)) {
 				acc.add(h.Name, h.Website, h.Version, h.Evidence, h.Conf, h.Cats)
 			}
 		}
@@ -269,7 +302,7 @@ func (e *Engine) Scan(rawURL string, opts Options, onProgress progress, cancel f
 			SleepSeconds:     e.cfg.DAST.SleepSeconds,
 			MaxURLLen:        e.cfg.DAST.MaxURLLen,
 		})
-		for _, f := range r.Run(e.dastLinks) {
+		for _, f := range r.Run(dastLinks) {
 			res.Verified = append(res.Verified, verifiedMap(map[string]any{
 				"check": f.Check, "title": f.Title, "severity": f.Severity,
 				"url": f.URL, "evidence": f.Evidence, "advice": f.Advice,
@@ -299,14 +332,14 @@ func (e *Engine) Scan(rawURL string, opts Options, onProgress progress, cancel f
 			onProgress(88, "WebShell 探测…")
 			res.Extras["webshell"] = modules.WebshellProbe(client, baseURL, ac, nil, cancelled)
 		}
-		if opts.ActiveFP && e.kb != nil && len(e.kb.FingerDir()) > 0 {
+		if opts.ActiveFP && kb != nil && len(kb.FingerDir()) > 0 {
 			onProgress(89, "FingerDir 主动指纹…")
 			res.Extras["active_fp"] = modules.ActiveFP(client, baseURL,
-				e.kb.FingerDir(), nil, cancelled, e.cfg.Active.FPMaxRequests)
+				kb.FingerDir(), nil, cancelled, e.cfg.Active.FPMaxRequests)
 		}
-		if opts.ServiceProbe && e.kb != nil && len(e.kb.ServiceFP()) > 0 {
+		if opts.ServiceProbe && kb != nil && len(kb.ServiceFP()) > 0 {
 			onProgress(89, "端口服务识别…")
-			res.Extras["service"] = modules.ServiceProbe(host, e.kb.ServiceFP(),
+			res.Extras["service"] = modules.ServiceProbe(host, kb.ServiceFP(),
 				e.cfg.Active.ProbePorts, e.cfg.Active.ProbeTimeoutMS,
 				e.cfg.Active.ProbeWorkers, nil, cancelled)
 		}
@@ -356,11 +389,11 @@ func (e *Engine) Scan(rawURL string, opts Options, onProgress progress, cancel f
 	}
 
 	// 11) 漏洞情报关联
-	if !cancelled() && e.kb != nil {
+	if !cancelled() && kb != nil {
 		onProgress(92, "关联漏洞情报…")
 		techs := acc.techHits()
-		res.Vulnerabilities = append(res.Vulnerabilities, e.kb.Match(techs)...)
-		res.Vulnerabilities = append(res.Vulnerabilities, cveMsFindings(e.kb.MatchCVEMs(techs, 20))...)
+		res.Vulnerabilities = append(res.Vulnerabilities, kb.Match(techs)...)
+		res.Vulnerabilities = append(res.Vulnerabilities, cveMsFindings(kb.MatchCVEMs(techs, 20))...)
 	}
 
 	onProgress(100, fmt.Sprintf("完成，识别 %d 项技术，%d 条已验证发现",

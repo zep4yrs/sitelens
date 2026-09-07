@@ -116,25 +116,62 @@ func ExtractFor(id string) (keyword, tech string, ok bool) {
 	return pair[0], pair[1], true
 }
 
-var allChecks = builtinChecks()
+var (
+	checkMu      sync.RWMutex
+	builtinList  = builtinChecks()
+	userPlugins  []Check
+	pluginMTime  int64 // 插件目录最新 mtime（0 = 从未加载）
+	pluginLoaded bool
+)
 
-var pluginsOnce sync.Once
-
-// ConfigurePlugins 加载用户自定义 check（进程内幂等：仅首次生效）。
-// 服务启动 / CLI 入口调用一次即可。
+// ConfigurePlugins 加载/重载用户自定义 check（规则用户化入口）。
+// 目录 mtime 未变化且已加载过时跳过——服务可在扫描提交时反复调用，
+// 插件目录有变动才真正重载，实现插件热更新。
 func ConfigurePlugins(dir string) {
-	pluginsOnce.Do(func() {
-		RegisterPlugins(LoadPlugins(dir))
-	})
+	checkMu.Lock()
+	defer checkMu.Unlock()
+	mt := dirMaxMTime(dir)
+	if pluginLoaded && mt == pluginMTime {
+		return
+	}
+	pluginMTime = mt
+	pluginLoaded = true
+	userPlugins = LoadPlugins(dir)
 }
 
-// RegisterPlugins 合并用户自定义 check（规则用户化入口）。
+// dirMaxMTime 目录内 .json 文件的最大 mtime；目录缺失/无文件返回 0。
+func dirMaxMTime(dir string) int64 {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return 0
+	}
+	var max int64
+	for _, f := range entries {
+		if f.IsDir() || !strings.HasSuffix(strings.ToLower(f.Name()), ".json") {
+			continue
+		}
+		if st, serr := f.Info(); serr == nil {
+			if m := st.ModTime().UnixNano(); m > max {
+				max = m
+			}
+		}
+	}
+	return max
+}
+
+// RegisterPlugins 直接注入用户自定义 check（编程入口）。
 func RegisterPlugins(checks []Check) {
-	allChecks = append(allChecks, checks...)
+	checkMu.Lock()
+	defer checkMu.Unlock()
+	userPlugins = append(userPlugins, checks...)
 }
 
-// AllChecks 返回当前全量 check 集。
-func AllChecks() []Check { return allChecks }
+// AllChecks 返回当前全量 check 集（内置 + 用户插件）。
+func AllChecks() []Check {
+	checkMu.RLock()
+	defer checkMu.RUnlock()
+	return append(append([]Check{}, builtinList...), userPlugins...)
+}
 
 // LoadPlugins 热加载用户自定义 check（data/plugins/*.json）。
 // 这是规则用户化的入口：用户按 JSON 格式投放即可扩展检测。
