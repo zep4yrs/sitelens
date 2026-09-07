@@ -1,12 +1,19 @@
-// Package nuclei Nuclei 社区模板子集装载（MoE 式两路调度）：
-// tag 与已识别技术硬匹配的模板置顶，其余按轮转游标覆盖（语义向量路由
-// 未迁移，见对照表）。模板漏斗对齐 python 分支 tools/import_nuclei.py：
-// 仅接受单 GET、path 为 {{BaseURL}} 后缀、matchers 为 status/word 的模板；
-// 需要外部回调（interactsh）的模板跳过。
+// Package nuclei Nuclei 社区模板子集装载（MoE 式三路调度）：
+// ① tag 与已识别技术硬匹配的模板置顶（severity 升序）；
+// ② 其余按 TF 余弦相似度排序（查询 = 页面标题+技术名；语义向量路由
+//
+//	的 TF 空间同构近似，无模型依赖）；
+//
+// ③ 持久化 LRU：最久未跑优先，跨重启保持轮转公平——⌈C/N⌉ 次扫描
+//
+//	完成全量轮换。模板漏斗对齐 python 分支 tools/import_nuclei.py：
+//	仅接受单 GET、path 为 {{BaseURL}} 后缀、matchers 为 status/word
+//	的模板；需要外部回调（interactsh）的模板跳过。
 package nuclei
 
 import (
 	"encoding/json"
+	"math"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -171,27 +178,21 @@ func Select(entries []Entry, techTags map[string]bool, queryText string,
 		}
 		return hit[i].Path < hit[j].Path
 	})
-	// 相关度排序（词面重合；查询词从目标标题 + 技术名提取）作为
-	// 同批模板内部的路由信号；LRU 主键仍是公平性的第一保证
+	// ② 相关度路由：TF 余弦相似度（查询 = 页面标题+技术名，
+	//    文档 = 模板名+tags+路径）。与原版 embedding 余弦同构——
+	//    同为余弦，只是向量空间为词频而非 256 维语义向量；
+	//    LRU 主键仍是公平性的第一保证
 	qTerms := tokenize(queryText)
+	qVec := termVec(qTerms)
 	lr := func(e Entry) int64 {
 		if lastRun == nil {
 			return 0
 		}
 		return lastRun[e.Path]
 	}
-	rel := func(e Entry) int {
-		if len(qTerms) == 0 {
-			return 0
-		}
-		text := strings.ToLower(e.Name + " " + strings.Join(e.Tags, " ") + " " + e.Path)
-		s := 0
-		for _, q := range qTerms {
-			if strings.Contains(text, q) {
-				s++
-			}
-		}
-		return s
+	rel := func(e Entry) float64 {
+		text := e.Name + " " + strings.Join(e.Tags, " ") + " " + e.Path
+		return cosine(qVec, termVec(tokenize(text)))
 	}
 	sort.SliceStable(rest, func(i, j int) bool {
 		li, lj := lr(rest[i]), lr(rest[j])
@@ -216,6 +217,41 @@ func Select(entries []Entry, techTags map[string]bool, queryText string,
 		out = out[:n]
 	}
 	return out
+}
+
+// termVec 词频向量（tokenize 结果计数）。
+func termVec(terms []string) map[string]float64 {
+	vec := make(map[string]float64, len(terms))
+	for _, t := range terms {
+		vec[t]++
+	}
+	return vec
+}
+
+// docVec 模板文档向量。
+func docVec(e Entry) map[string]float64 {
+	return termVec(tokenize(e.Name + " " + strings.Join(e.Tags, " ") + " " + e.Path))
+}
+
+// cosine 余弦相似度（TF 空间；零向量返回 0）。
+func cosine(a, b map[string]float64) float64 {
+	if len(a) == 0 || len(b) == 0 {
+		return 0
+	}
+	var dot, na, nb float64
+	for k, v := range a {
+		if bv, ok := b[k]; ok {
+			dot += v * bv
+		}
+		na += v * v
+	}
+	for _, v := range b {
+		nb += v * v
+	}
+	if na == 0 || nb == 0 {
+		return 0
+	}
+	return dot / (math.Sqrt(na) * math.Sqrt(nb))
 }
 
 // tokenize 提取小写字母数字词（≥3 字符），供词面相关度计算。
