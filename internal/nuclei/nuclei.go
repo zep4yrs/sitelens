@@ -425,12 +425,11 @@ func Convert(data []byte) []checks.Check {
 			merged.rx = append(merged.rx, g.rx...)
 			merged.dsl = append(merged.dsl, g.dsl...)
 		}
-		// AND 语义下多组 status 各自独立列表语义有损，取交集语义由
-		// matchBody 的 StatusAny（任一）近似——仅当无词组时保留，
-		// 有词组时丢弃 status 条件（宁少报不误报）。
-		if len(merged.wall) > 0 || len(merged.wany) > 0 || len(merged.h) > 0 || len(merged.dsl) > 0 {
-			merged.status = nil
-		}
+		// AND 语义下多组 status 合并进 StatusAny（任一）——matchBody
+		// 对 StatusAny 与词/头/正则本就是组内合取，status 条件必须
+		// 保留：靶场回归实测（lingyun），丢弃 status 的"宁少报"写法
+		// 恰恰相反——exposure 类模板（status 200 AND 词）在 404 回显页
+		// 上仅凭路径回显子串即误中，15 条假阳性全是这一行放的
 		groups = []group{merged}
 	}
 	if len(groups) == 1 {
