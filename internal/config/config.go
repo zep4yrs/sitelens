@@ -8,6 +8,7 @@ package config
 import (
 	"fmt"
 	"os"
+	"sort"
 
 	"gopkg.in/yaml.v3"
 )
@@ -231,11 +232,42 @@ func Load(path string) (*Config, error) {
 		}
 		return cfg, err
 	}
+	// 已知键检查：未知顶层键（如 crawl: vs crawler: 一字之差）会被
+	// yaml 静默忽略，用户以为生效的配置实际全程走默认——同类事故
+	// 多次发生，必须在 stderr 喊出来
+	if unknown := unknownTopKeys(data); len(unknown) > 0 {
+		fmt.Fprintf(os.Stderr, "配置警告：%s 含未知配置键 %v（请核对拼写，这些键将被忽略）\n",
+			path, unknown)
+	}
 	if err := yaml.Unmarshal(data, cfg); err != nil {
 		return cfg, err
 	}
 	cfg.fillDefaults()
 	return cfg, nil
+}
+
+// unknownTopKeys 返回配置中不属于任何已知顶层段的键（排序）。
+// 用 yaml.Node 解析以区分「键存在但值为空」与「键不存在」。
+func unknownTopKeys(data []byte) []string {
+	var m map[string]yaml.Node
+	if err := yaml.Unmarshal(data, &m); err != nil {
+		return nil
+	}
+	var out []string
+	for k := range m {
+		if !knownTopKeys[k] {
+			out = append(out, k)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+// knownTopKeys 合法顶层配置段（与 Config 字段 yaml 标签一一对应）。
+var knownTopKeys = map[string]bool{
+	"scan": true, "checks": true, "crawler": true, "dast": true,
+	"intel": true, "netsec": true, "loginbrute": true, "audit": true,
+	"batch": true, "web": true, "store": true, "active": true, "modules": true,
 }
 
 // LoadOrDefault 加载配置；出错时 stderr 告警并使用默认值

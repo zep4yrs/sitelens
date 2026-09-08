@@ -84,3 +84,22 @@ func TestBoolFalseIsLegal(t *testing.T) {
 		t.Fatal("默认应为开")
 	}
 }
+
+// TestUnknownTopKeyWarn 未知顶层键必须被检出（crawl: vs crawler: 一字之差
+// 曾导致整段爬虫配置静默失效）。
+func TestUnknownTopKeyWarn(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "cfg.yml")
+	cfgYAML := "crawler:\n  max_pages: 30\ncrawl:\n  max_pages: 99\n"
+	if err := os.WriteFile(path, []byte(cfgYAML), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	unknown := unknownTopKeys([]byte(cfgYAML))
+	if len(unknown) != 1 || unknown[0] != "crawl" {
+		t.Fatalf("应检出未知键 crawl: %v", unknown)
+	}
+	cfg := LoadOrDefault(path)
+	if cfg.Crawler.MaxPages != 30 {
+		t.Fatalf("crawler.max_pages 应生效: %d", cfg.Crawler.MaxPages)
+	}
+}
