@@ -130,14 +130,17 @@ func RunList(client *httpx.Client, targetURL string, list []Check,
 
 		// 组内首轮判定
 		var pending []int
+		reasons := map[int]string{}
 		for _, ci := range g.idx {
-			if !matchBody(selected[ci].Match, resp.Status, body, resp.Headers, host) {
+			ok, reason := matchBodyReason(selected[ci].Match, resp.Status, body, resp.Headers, host)
+			if !ok {
 				continue
 			}
 			if soft404 {
 				continue // 软 404：与不存在路径响应一致，整组共享同一响应
 			}
 			pending = append(pending, ci)
+			reasons[ci] = reason
 		}
 		// 二次确认：组内共享一次独立重放
 		if len(pending) > 0 {
@@ -146,13 +149,14 @@ func RunList(client *httpx.Client, targetURL string, list []Check,
 				body2 := stripEcho(resp2.Body, u, chk0.Path)
 				for _, ci := range pending {
 					chk := selected[ci]
-					if !matchBody(chk.Match, resp2.Status, body2, resp2.Headers, host) {
+					ok, reason := matchBodyReason(chk.Match, resp2.Status, body2, resp2.Headers, host)
+					if !ok {
 						continue
 					}
 					hits = append(hits, Hit{
 						Check: chk.ID, Title: chk.Title, Severity: chk.Sev,
 						URL: u, Advice: chk.Advice,
-						Evidence: fmt.Sprintf("HTTP %d（二次确认）", resp2.Status),
+						Evidence: fmt.Sprintf("HTTP %d（二次确认）· %s", resp2.Status, reason),
 						Version:  extractVersion(chk, body2),
 					})
 				}
@@ -172,8 +176,17 @@ func RunList(client *httpx.Client, targetURL string, list []Check,
 // 修复：此前实际响应状态码从未参与比较，纯状态码 check 会对任何响应命中。
 // dsl 求值失败（编译/类型/正则错误）一律不命中——宁少报不误报。
 func matchBody(m Match, status int, body string, headers map[string]string, host string) bool {
+	ok, _ := matchBodyReason(m, status, body, headers, host)
+	return ok
+}
+
+// matchBodyReason 同 matchBody 并返回命中原因（哪些条件、命中了什么），
+// 供证据展示——验证型扫描器的每条命中都应能自解释。
+// 语义与 matchBody 严格一致：任一条件不满足即不命中，全部满足才通过。
+func matchBodyReason(m Match, status int, body string, headers map[string]string, host string) (bool, string) {
+	var why []string
 	if m.Status != 0 && status != m.Status {
-		return false
+		return false, ""
 	}
 	if len(m.StatusAny) > 0 {
 		okStatus := false
@@ -184,61 +197,87 @@ func matchBody(m Match, status int, body string, headers map[string]string, host
 			}
 		}
 		if !okStatus {
-			return false
+			return false, ""
 		}
 	}
 	if len(m.Contains) > 0 {
 		low := strings.ToLower(body) // 对齐 Python：关键词/正文双降比较（不区分大小写）
 		for _, kw := range m.Contains {
 			if !strings.Contains(low, strings.ToLower(kw)) {
-				return false
+				return false, ""
 			}
 		}
 	}
 	if len(m.ContainsAny) > 0 {
 		low := strings.ToLower(body)
 		anyHit := false
+		marked := ""
 		for _, kw := range m.ContainsAny {
 			if strings.Contains(low, strings.ToLower(kw)) {
 				anyHit = true
+				marked = kw
 				break
 			}
 		}
 		if !anyHit {
-			return false
+			return false, ""
 		}
+		why = append(why, "词命中 "+truncateMark(marked))
 	}
 	if len(m.RegexBody) > 0 {
 		anyHit := false
+		marked := ""
 		for _, pat := range m.RegexBody {
 			if re := compileCached(pat); re != nil && re.MatchString(body) {
 				anyHit = true
+				marked = pat
 				break
 			}
 		}
 		if !anyHit {
-			return false
+			return false, ""
 		}
+		why = append(why, "正则命中 "+truncateMark(marked))
 	}
 	if len(m.HeaderContains) > 0 {
 		joined := strings.ToLower(joinHeaders(headers))
 		for _, kw := range m.HeaderContains {
 			if !strings.Contains(joined, strings.ToLower(kw)) {
-				return false
+				return false, ""
 			}
 		}
+		why = append(why, "响应头词命中")
 	}
 	for _, expr := range m.DSL {
 		prog, err := dsl.CompileCached(expr)
 		if err != nil {
-			return false
+			return false, ""
 		}
 		ok, err := prog.Eval(respEnv{status: status, body: body, headers: headers, host: host})
 		if err != nil || !ok {
-			return false
+			return false, ""
 		}
 	}
-	return true
+	if len(m.DSL) > 0 {
+		why = append(why, "dsl 表达式为真")
+	}
+	if len(why) == 0 {
+		if len(m.Contains) > 0 {
+			why = append(why, "全包含词命中")
+		} else {
+			why = append(why, "状态码命中")
+		}
+	}
+	return true, strings.Join(why, " + ")
+}
+
+// truncateMark 证据里的标记截断（超长正则/词不全量入库）。
+func truncateMark(s string) string {
+	s = strings.TrimSpace(s)
+	if len([]rune(s)) > 60 {
+		s = string([]rune(s)[:60]) + "…"
+	}
+	return s
 }
 
 // respEnv dsl 求值环境：封装单次响应的状态码/正文/头/主机名。
