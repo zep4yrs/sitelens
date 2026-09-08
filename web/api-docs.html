@@ -39,6 +39,8 @@
     <p>提交一次扫描（异步）。选项与 url 平铺在同一层 body（后端 data.get 顶层读取）：</p>
     <pre class="code">{
   "url": "https://example.com",
+  "level": "",            // 语义化模式（可选）：quick/standard/deep/full/assets/stealth/apocalypse——
+                          // 预设先套、显式键逐项覆盖；apocalypse=全模块+checks:all+nuclei_cap 6000，仅限授权目标
   "deep": true,           // 同域浅爬取（默认开）
   "active_fp": false,     // FingerDir 主动路径指纹
   "dir_scan": false,      // 目录探测
@@ -53,7 +55,7 @@
   "passive": false,       // 被动安全检测（Cookie 属性 / CSRF token，零额外请求）
   "weak_audit": false,    // 基础认证弱口令审计（需 dir_scan 发现 401 路径）
   "checks": "none",       // 验证引擎 none | core | all（all 追加 Nuclei 模板）
-  "nuclei_cap": 300,      // Nuclei 单次模板上限（0 = 用配置默认；调大覆盖全部 5412 可运行模板）
+  "nuclei_cap": 300,      // Nuclei 单次模板上限（0 = 用配置默认；调大覆盖全部 5412 可运行模板；apocalypse 预设=6000）
   "auth_cookie": ""       // 认证会话 Cookie
   "login_mode": "form",   // 登录模式 form（表单）| json（JSON API）
   "json_endpoint": "",    // json 模式登录接口（空 = 登录页地址）
