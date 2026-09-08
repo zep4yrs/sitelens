@@ -37,7 +37,7 @@ import (
 )
 
 // Version 服务版本。
-const Version = "0.0.1-preview"
+const Version = "0.0.2"
 
 // categoryNames 常见技术类别中文名（对齐 Wappalyzer 类别 id）。
 var categoryNames = map[string]string{
