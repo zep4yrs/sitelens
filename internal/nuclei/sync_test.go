@@ -57,10 +57,10 @@ func TestSyncFromTarMirror(t *testing.T) {
 	}
 
 	tarball := buildTestTar(t, map[string]string{
-		"nuclei-templates-master/http/cves/a.yaml": "id: a\n",
-		"nuclei-templates-master/http/tech/b.yaml": "id: b\n",
-		"nuclei-templates-master/dns/c.yaml":       "id: c\n", // http 外：不进镜像
-		"nuclei-templates-master/README.md":        "readme",  // 非 yaml：跳过
+		"nuclei-templates-master/cves/a.yaml":         "id: a\n",
+		"nuclei-templates-master/technologies/b.yaml": "id: b\n",
+		"nuclei-templates-master/dns/c.yaml":          "id: c\n", // 未收录类别：不进镜像
+		"nuclei-templates-master/README.md":           "readme",  // 非 yaml：跳过
 	})
 	f, err := os.Open(tarball)
 	if err != nil {
@@ -76,7 +76,7 @@ func TestSyncFromTarMirror(t *testing.T) {
 	}
 	for _, p := range []string{
 		filepath.Join(out, "http", "cves", "a.yaml"),
-		filepath.Join(out, "http", "tech", "b.yaml"),
+		filepath.Join(out, "http", "technologies", "b.yaml"),
 	} {
 		if _, err := os.Stat(p); err != nil {
 			t.Fatalf("镜像文件缺失: %s", p)
@@ -94,7 +94,7 @@ func TestSyncFromTarMirror(t *testing.T) {
 func TestSyncFromTarSecondRun(t *testing.T) {
 	out := t.TempDir()
 	tarball := buildTestTar(t, map[string]string{
-		"repo-main/http/x/y.yaml": "id: y\n",
+		"repo-main/cves/x/y.yaml": "id: y\n",
 	})
 	for round := 1; round <= 2; round++ {
 		f, err := os.Open(tarball)
