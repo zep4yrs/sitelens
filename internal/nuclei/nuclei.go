@@ -451,6 +451,12 @@ func Convert(data []byte) []checks.Check {
 	}
 	var out []checks.Check
 	for i, g := range groups {
+		// 纯状态码组不转换：只看状态码不看内容的 check 在 CDN/WAF
+		// 环境下任意路径即可命中（靶场回归实测 wp-json/server-status
+		// 类模板 404/403 误报），验证型扫描器要求至少一个内容条件
+		if len(g.wall) == 0 && len(g.wany) == 0 && len(g.h) == 0 && len(g.rx) == 0 && len(g.dsl) == 0 {
+			continue
+		}
 		id := doc.ID
 		if len(groups) > 1 {
 			id = doc.ID + "~g" + strconv.Itoa(i+1)
