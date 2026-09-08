@@ -128,9 +128,11 @@ func TestConvertGoodTemplate(t *testing.T) {
 	if c.Sev != "high" || c.Lv != 1 {
 		t.Fatalf("严重度/等级失败: %+v", c)
 	}
-	// and 条件多组合并：有词组时按"宁少报"丢弃 status，仅保留全包含词
-	if c.Match.Status != 0 || len(c.Match.Contains) != 2 {
-		t.Fatalf("matchers-and 合并失败: %+v", c.Match)
+	// and 条件多组合并：status 保留（Status 单值 + StatusAny 列表，
+	// 与词条件合取）——靶场回归实测：丢弃 status 会让 exposure 模板
+	// 在 404 回显页上凭路径子串误中
+	if c.Match.Status != 200 || len(c.Match.StatusAny) != 1 || len(c.Match.Contains) != 2 {
+		t.Fatalf("matchers-and 合并失败（status 应保留）: %+v", c.Match)
 	}
 }
 
