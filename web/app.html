@@ -122,6 +122,9 @@
           <button type="button" class="cdd-opt active" data-v="standard"><b>标准识别</b><span>同域浅爬取 · 约 15 秒</span></button>
           <button type="button" class="cdd-opt" data-v="deep"><b>深度识别</b><span>+主动路径指纹 +端口服务 +DAST · 约 40 秒</span></button>
           <button type="button" class="cdd-opt" data-v="full"><b>全面识别</b><span>+目录探测 +子域名 +WebShell · 数分钟</span></button>
+          <button type="button" class="cdd-opt" data-v="assets"><b>资产测绘</b><span>+子域名 +接管探测 +目录（发现面，不跑验证）· 数分钟</span></button>
+          <button type="button" class="cdd-opt" data-v="stealth"><b>隐匿模式</b><span>浏览器 UA 穿透 WAF + 被动检测 · 约 20 秒</span></button>
+          <button type="button" class="cdd-opt" data-v="apocalypse"><b style="color:#b3261e">毁天灭地</b><span>全模块 + 全量 5412 模板验证 · 仅限授权目标 · 10 分钟+</span></button>
         </div>
       </div>
       <input class="tb" id="opt-cookie" style="flex:1;min-width:200px" placeholder="认证会话（可选）Cookie: session=…" autocomplete="off">
@@ -222,15 +225,22 @@ if (["scan", "netsec", "loginbrute"].indexOf(initialTab) >= 0) switchTab(initial
 var currentScanId = null;
 var currentJobId = null;
 var LEVELS = {
-  quick:    { deep: false },
-  standard: { deep: true },
-  deep:     { deep: true, active_fp: true, service_probe: true, checks: "core", dast: true },
-  full:     { deep: true, active_fp: true, dir_scan: true, dir_bypass: true,
-              subdomain: true, webshell: true, service_probe: true,
-              checks: "all", dast: true, netsec: true, passive: true }
+  quick:      { deep: false },
+  standard:   { deep: true },
+  deep:       { deep: true, active_fp: true, service_probe: true, checks: "core", dast: true },
+  full:       { deep: true, active_fp: true, dir_scan: true, dir_bypass: true,
+                subdomain: true, webshell: true, service_probe: true,
+                checks: "all", dast: true, netsec: true, passive: true },
+  assets:     { deep: true, dir_scan: true, subdomain: true, takeover: true, active_fp: true },
+  stealth:    { deep: true, browser_ua: true, passive: true, netsec: true },
+  apocalypse: { deep: true, active_fp: true, dir_scan: true, dir_bypass: true,
+                subdomain: true, takeover: true, webshell: true, weak_audit: true,
+                service_probe: true, checks: "all", dast: true, netsec: true,
+                passive: true, browser_ua: true, nuclei_cap: 6000 }
 };
 var EST = { base: 5, deep: 8, active_fp: 12, dir_scan: 180, dir_bypass: 40,
-            subdomain: 50, service_probe: 15, webshell: 120 };
+            subdomain: 50, service_probe: 15, webshell: 120, takeover: 40,
+            weak_audit: 60, checks_all: 420, checks_core: 40 };
 var STAGES = [
   [3, "校验目标（SSRF 防护）"], [12, "采集首页"], [30, "解析证据 / 同域爬取"],
   [50, "运行 7 个检测器"], [72, "验证引擎 + 安全响应头评分"], [80, "关联漏洞情报（三级判定）"],
@@ -239,7 +249,14 @@ var STAGES = [
 
 function estimateSeconds(options) {
   var t = EST.base;
-  Object.keys(options).forEach(function (k) { if (options[k] && EST[k]) t += EST[k]; });
+  Object.keys(options).forEach(function (k) {
+    if (!options[k]) return;
+    if (k === "checks") { // 验证引擎按档位估时（core 41 条 / all 全量模板）
+      t += options[k] === "all" ? (EST.checks_all || 420) : (EST.checks_core || 0);
+      return;
+    }
+    if (EST[k]) t += EST[k];
+  });
   return t;
 }
 function fmtT(sec) {
@@ -276,9 +293,12 @@ document.addEventListener("click", function () {
   document.querySelectorAll(".cdd.open").forEach(function (r) { r.classList.remove("open"); });
 });
 var levelDD = initCDD("level", function (v) {
-  document.getElementById("hint").textContent =
-    v === "full" ? "全面识别包含主动探测模块（目录 / 子域名 / WebShell），仅限自有或已授权目标。" : "";
-  document.getElementById("hint").className = v === "full" ? "hint warn" : "hint";
+  var hints = {
+    full: "全面识别包含主动探测模块（目录 / 子域名 / WebShell），仅限自有或已授权目标。",
+    apocalypse: "毁天灭地 = 全部主动模块 + 全量 5412 模板验证，请求量与耗时最大，仅限自有或已书面授权的目标。"
+  };
+  document.getElementById("hint").textContent = hints[v] || "";
+  document.getElementById("hint").className = (v === "full" || v === "apocalypse") ? "hint warn" : "hint";
 });
 var capDD = initCDD("lb-cap");
 
