@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -224,6 +225,21 @@ func (e *Engine) Scan(rawURL string, opts Options, onProgress progress, cancel f
 		dastLinks = cr.ParamLinks
 		for _, f := range cr.Forms {
 			if f.Action != "" && len(f.Names) > 0 {
+				// GET 表单：字段合成 query URL 喂给 URL 参数探测——
+				// DVWA 类靶场的 SQLi/XSS 漏洞页菜单链接不带参数，
+				// 参数在 GET 表单里，不合成则 DAST 永远探不到
+				if strings.EqualFold(f.Method, "get") {
+					if u, err := url.Parse(f.Action); err == nil {
+						q := u.Query()
+						for _, n := range f.Names {
+							if n != "" {
+								q.Set(n, "1")
+							}
+						}
+						u.RawQuery = q.Encode()
+						dastLinks = append(dastLinks, u.String())
+					}
+				}
 				dastFormTargets = append(dastFormTargets, dast.FormTarget{Action: f.Action, Fields: f.Names})
 			}
 		}
