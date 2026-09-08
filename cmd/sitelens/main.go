@@ -33,6 +33,8 @@ func main() {
   sitelens [flags] scan <url>    全流水线扫描，JSON 输出
   sitelens [flags] serve         启动内置 Web 服务
   sitelens [flags] migrate-pg    迁移 Python 版 PG 扫描历史到本地文件库
+  sitelens [flags] update-nuclei [url]
+                                 镜像官方 Nuclei 模板库到 nuclei_dir
 
 配置：%s（缺省用内置最佳实践默认值）
 `, *cfgPath)
@@ -66,6 +68,8 @@ func main() {
 		fmt.Fprintf(os.Stderr, "\n审计完成：%d 文件，%d 行，%d 发现（高 %d / 中 %d / 低 %d）\n",
 			rep.Files, rep.Lines, len(rep.Findings),
 			rep.BySeverity["high"], rep.BySeverity["medium"], rep.BySeverity["low"])
+	case "update-nuclei":
+		os.Exit(updateNucleiCommand(cfg, flag.Arg(1)))
 	case "migrate-pg":
 		loadEnvFile(*envFile)
 		os.Exit(migratePGCommand(*cfgPath))

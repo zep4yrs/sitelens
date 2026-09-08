@@ -144,7 +144,11 @@ func (e *Engine) Scan(rawURL string, opts Options, onProgress progress, cancel f
 	home, ferr := client.GetFollow(baseURL)
 	rtMS := time.Since(t0).Milliseconds()
 	if ferr != nil || home == nil {
+		// 底层错误带出（refused/timeout/SSRF 拒绝原因一目了然）
 		res.Error = "连接失败：" + baseURL
+		if ferr != nil {
+			res.Error += "（" + ferr.Error() + "）"
+		}
 		finish()
 		return res
 	}
@@ -445,6 +449,7 @@ func (e *Engine) newClient(opts Options) *httpx.Client {
 		MaxBodyBytes: sc.MaxBodyMB * 1024 * 1024,
 		UserAgent:    uaFor(sc.UserAgent, opts.BrowserUA),
 		AuthCookie:   opts.AuthCookie,
+		Resolve:      sc.Resolve,
 	})
 }
 

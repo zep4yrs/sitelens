@@ -44,12 +44,14 @@ type ClientOptions struct {
 	MaxBodyBytes int           // 正文留存上限，0=3MB
 	UserAgent    string        // 空 = SiteLens 自报 UA
 	AuthCookie   string        // 附加到每个请求的 Cookie 头（授权扫描用）
+	Resolve      bool          // 重定向逐跳校验是否解析并拒绝私网（继承引擎 resolve 姿态；本地靶场矩阵设 false）
 }
 
 // Client 限速 HTTP 客户端（自动重定向禁用，逐跳校验后手动跟随）。
 type Client struct {
 	http      *http.Client
 	interval  time.Duration
+	resolve   bool
 	mu        sync.Mutex
 	last      time.Time
 	userAgent string
@@ -78,6 +80,7 @@ func NewWithOptions(o ClientOptions) *Client {
 		maxHops:   o.MaxHops,
 		maxBody:   o.MaxBodyBytes,
 		cookie:    o.AuthCookie,
+		resolve:   o.Resolve,
 	}
 	c.http = &http.Client{
 		Timeout: o.Timeout,
@@ -140,7 +143,8 @@ func (c *Client) GetFollowWith(rawURL string, extra map[string]string) (*Respons
 		}
 		resp, err = c.http.Do(req)
 		if err != nil {
-			return nil, &target.Error{Msg: "连接失败：" + cur}
+			// 底层错误原样带出（refused/timeout/proxy 一目了然）
+			return nil, &target.Error{Msg: "连接失败：" + cur + "：" + err.Error()}
 		}
 		if !isRedirect(resp.StatusCode) {
 			break
@@ -153,7 +157,9 @@ func (c *Client) GetFollowWith(rawURL string, extra map[string]string) (*Respons
 		if perr != nil {
 			break
 		}
-		if _, _, _, verr := target.Validate(next, true); verr != nil {
+		// 逐跳校验继承配置的 resolve 姿态：公网默认 true（防重定向 SSRF）；
+		// 本地/内网靶场矩阵 resolve=false 时重定向不再被私网拦截
+		if _, _, _, verr := target.Validate(next, c.resolve); verr != nil {
 			return nil, verr // 重定向目标未过校验：拒绝跟随
 		}
 		cur = next

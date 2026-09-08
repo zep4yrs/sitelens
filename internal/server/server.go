@@ -4,6 +4,7 @@ package server
 
 import (
 	"context"
+	"crypto/subtle"
 	"encoding/csv"
 	"encoding/json"
 	"errors"
@@ -247,10 +248,11 @@ func (s *Server) startKEVDaemon() {
 // ---- 中间件 ----
 
 // guard 可选 API 鉴权：设置 token 后 /api/* 需要 X-Token 头。
+// 比较用常量时间实现（防时序侧信道逐字节猜 token）。
 func (s *Server) guard(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if s.apiToken != "" && strings.HasPrefix(r.URL.Path, "/api/") {
-			if r.Header.Get("X-Token") != s.apiToken {
+			if subtle.ConstantTimeCompare([]byte(r.Header.Get("X-Token")), []byte(s.apiToken)) != 1 {
 				writeJSON(w, 401, map[string]any{"error": "未授权：缺少或错误的 X-Token"})
 				return
 			}
