@@ -172,19 +172,17 @@ func TestConvertRegexBodyAttached(t *testing.T) {
 
 func TestConvertMultiGroupSplit(t *testing.T) {
 	cs := Convert([]byte(multiGroupTpl))
-	if len(cs) != 2 {
-		t.Fatalf("or 多组应拆成 2 条: %d", len(cs))
+	// 纯状态码组不转换（CDN/WAF 环境任意路径即中，靶场回归实测），
+	// 仅保留 word 组 → 1 条
+	if len(cs) != 1 {
+		t.Fatalf("or 多组应拆分且纯状态码组被拒: %d", len(cs))
 	}
-	if cs[0].ID != "nuclei-multi-or~g1" || cs[1].ID != "nuclei-multi-or~g2" {
-		t.Fatalf("拆分 id 异常: %s %s", cs[0].ID, cs[1].ID)
-	}
-	// status 组：200/301 任一
-	if len(cs[0].Match.StatusAny) != 2 {
-		t.Fatalf("StatusAny 转换失败: %+v", cs[0].Match)
+	if cs[0].ID != "nuclei-multi-or~g2" {
+		t.Fatalf("应保留 word 组（g2）: %+v", cs[0].ID)
 	}
 	// word or 组：ContainsAny
-	if len(cs[1].Match.ContainsAny) != 1 {
-		t.Fatalf("ContainsAny 转换失败: %+v", cs[1].Match)
+	if len(cs[0].Match.ContainsAny) != 1 {
+		t.Fatalf("ContainsAny 转换失败: %+v", cs[0].Match)
 	}
 }
 

@@ -331,9 +331,14 @@ func joinHeaders(headers map[string]string) string {
 }
 
 // stripEcho 剔除响应中回显的请求 URL 与路径（防自指误报）。
+// Apache 类 404 页回显的是去 query 的路径，故两种形态都剔——
+// 否则路径中的关键词（如 /wprm_recipe）会留在正文里喂给词匹配。
 func stripEcho(body string, reqURL string, path string) string {
 	body = strings.ReplaceAll(body, reqURL, "")
 	body = strings.ReplaceAll(body, path, "")
+	if u, err := url.Parse(path); err == nil && u.Path != "" && u.Path != "/" {
+		body = strings.ReplaceAll(body, u.Path, "")
+	}
 	return body
 }
 
