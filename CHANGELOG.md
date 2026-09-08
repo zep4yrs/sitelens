@@ -2,6 +2,10 @@
 
 ## 未发布（预览版追加）
 
+- **图形安装向导**：SiteLens-Setup.exe 双击安装——品牌化 WinForms
+  向导（选目录→进度条→完成页，深板岩头带+呼吸点词标），--silent
+  静默模式供脚本；零第三方工具（.NET 自带 csc 编译），构建链见
+  tools/build_installer.py
 - **靶场规模回归（lingyun，7 模式全量）揪出并修复两类误报**：
   ① AND-merge 丢弃 status 的"宁少报"写法方向反了——exposure 模板在
   404 回显页仅凭路径子串即误中（apocalypse 单次 15 条假阳性，修复后
