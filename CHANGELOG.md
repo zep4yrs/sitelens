@@ -2,6 +2,10 @@
 
 ## 未发布（v0.0.3 候选）
 
+- **DVWA 官方镜像认证扫描实测**（ghcr 双容器 + 认证断言门）：full 模式
+  命中 LFI（读到 /etc/passwd）与 phpinfo 真实缺陷；apocalypse 9 verified
+  残余噪声仅 1 条（已知上游模板问题），矩阵报告更新至 docs/
+
 - **1.0.0 校准基建第一轮**：误报/漏报矩阵报告（docs/误报漏报矩阵报告.md）
   ——干净站零误报断言×2 通过；DVWA 官方镜像认证扫描命中 LFI→/etc/passwd
   与 phpinfo 真实缺陷；修复重定向逐跳校验写死 resolve=true（本地靶场
