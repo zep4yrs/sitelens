@@ -229,6 +229,50 @@ func TestScanRejectsBadTarget(t *testing.T) {
 	}
 }
 
+// TestScanOptionsLevels 语义化模式预设：预设生效、显式键覆盖、
+// 未知 level 忽略、nuclei_cap 请求覆盖（此前文档宣称支持但从未解析）。
+func TestScanOptionsLevels(t *testing.T) {
+	// quick：只关 deep，其余默认关
+	o := scanOptions(map[string]any{"level": "quick"})
+	if o.Deep {
+		t.Fatal("quick 预设 deep 应为 false")
+	}
+	// apocalypse：全开 + 全量模板
+	o = scanOptions(map[string]any{"level": "apocalypse"})
+	if !o.Deep || !o.DirScan || !o.DirBypass || !o.Subdomain || !o.Takeover ||
+		!o.Webshell || !o.WeakAudit || !o.ActiveFP || !o.ServiceProbe ||
+		!o.DAST || !o.Netsec || !o.Passive || !o.BrowserUA {
+		t.Fatalf("apocalypse 应全模块开启: %+v", o)
+	}
+	if o.Checks != "all" || o.NucleiCap != 6000 {
+		t.Fatalf("apocalypse 应 checks=all 且 nuclei_cap=6000: %+v", o)
+	}
+	// 显式键覆盖预设：apocalypse 但单关目录探测
+	o = scanOptions(map[string]any{"level": "apocalypse", "dir_scan": false})
+	if o.DirScan {
+		t.Fatal("显式 dir_scan=false 应覆盖预设")
+	}
+	// 大小写与空白规范化
+	o = scanOptions(map[string]any{"level": "  Full "})
+	if !o.Subdomain || !o.Netsec {
+		t.Fatalf("level 规范化失败: %+v", o)
+	}
+	// 未知 level：静默忽略，保持默认
+	o = scanOptions(map[string]any{"level": "nope"})
+	if !o.Deep || o.DirScan {
+		t.Fatalf("未知 level 应走默认: %+v", o)
+	}
+	// nuclei_cap 请求覆盖（独立于 level）
+	o = scanOptions(map[string]any{"nuclei_cap": 1234.0})
+	if o.NucleiCap != 1234 {
+		t.Fatalf("nuclei_cap 请求覆盖未生效: %+v", o)
+	}
+	o = scanOptions(map[string]any{})
+	if o.NucleiCap != 0 {
+		t.Fatalf("默认应走配置 nuclei_cap（0）: %+v", o)
+	}
+}
+
 func TestNetsecContract(t *testing.T) {
 	_, api := newServer(t)
 	code, body := postJSON(t, api.URL+"/api/netsec", `{"host":""}`)

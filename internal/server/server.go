@@ -367,8 +367,34 @@ func (s *Server) hScan(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, map[string]any{"job_id": jobID})
 }
 
+// levelPresets 语义化扫描模式（level 参数）：先套预设，显式键仍可逐项覆盖。
+// 与前端 web/app.html 的 LEVELS 表保持同一语义；毁天灭地为全模块+
+// 全量模板验证，仅授权目标使用。
+var levelPresets = map[string]map[string]any{
+	"quick":      {"deep": false},
+	"standard":   {"deep": true},
+	"deep":       {"deep": true, "active_fp": true, "service_probe": true, "checks": "core", "dast": true},
+	"full":       {"deep": true, "active_fp": true, "dir_scan": true, "dir_bypass": true, "subdomain": true, "webshell": true, "service_probe": true, "checks": "all", "dast": true, "netsec": true, "passive": true},
+	"assets":     {"deep": true, "dir_scan": true, "subdomain": true, "takeover": true, "active_fp": true},
+	"stealth":    {"deep": true, "browser_ua": true, "passive": true, "netsec": true},
+	"apocalypse": {"deep": true, "active_fp": true, "dir_scan": true, "dir_bypass": true, "subdomain": true, "takeover": true, "webshell": true, "weak_audit": true, "service_probe": true, "checks": "all", "dast": true, "netsec": true, "passive": true, "browser_ua": true, "nuclei_cap": 6000},
+}
+
 // scanOptions 平铺 payload → 引擎选项（对齐 Python /api/scan）。
+// 支持 level 语义化模式（预设先套、显式键覆盖），未识别 level 静默忽略。
 func scanOptions(body map[string]any) engine.Options {
+	if lv, _ := body["level"].(string); lv != "" {
+		if preset, ok := levelPresets[strings.ToLower(strings.TrimSpace(lv))]; ok {
+			merged := make(map[string]any, len(body)+len(preset))
+			for k, v := range preset {
+				merged[k] = v
+			}
+			for k, v := range body {
+				merged[k] = v
+			}
+			body = merged
+		}
+	}
 	o := engine.DefaultOptions()
 	o.Deep = boolOf(body["deep"], true)
 	o.ActiveFP = boolOf(body["active_fp"], false)
@@ -385,6 +411,18 @@ func scanOptions(body map[string]any) engine.Options {
 	o.Passive = boolOf(body["passive"], false)
 	if v, ok := body["checks"].(string); ok && v != "" {
 		o.Checks = v
+	}
+	// 此前文档宣称支持 nuclei_cap 请求覆盖但从未解析（静默忽略）——补上
+	//（JSON 数字为 float64，level 预设为 int，两形态都收）
+	switch v := body["nuclei_cap"].(type) {
+	case float64:
+		if v > 0 {
+			o.NucleiCap = int(v)
+		}
+	case int:
+		if v > 0 {
+			o.NucleiCap = v
+		}
 	}
 	if c, ok := body["auth_cookie"].(string); ok {
 		o.AuthCookie = truncateStr(c, 1000)
