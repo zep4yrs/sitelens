@@ -196,7 +196,8 @@
     ["batch", "/batch", "批量"],
     ["history", "/history", "历史"],
     ["intel", "/intel", "情报库"],
-    ["verified", "/history#verified", "已验证"]
+    ["verified", "/history#verified", "已验证"],
+    ["settings", "/settings", "设置"]
   ];
   function navKey() {
     var p = location.pathname, h = location.hash || "";
@@ -209,6 +210,7 @@
     if (p.indexOf("/audit") === 0) return "audit";
     if (p.indexOf("/batch") === 0) return "batch";
     if (p.indexOf("/intel") === 0) return "intel";
+    if (p.indexOf("/settings") === 0) return "settings";
     return "";
   }
   function slUpdateNav() {
