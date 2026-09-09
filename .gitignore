@@ -32,3 +32,9 @@ data/intel_dump.json.gz
 /alljob.json
 /hj*.json
 /hd*.json
+
+# 夜间靶场矩阵/取证临时产物
+tmp_matrix*
+tmp_fixture*
+tmp_sitelens_linux
+tmp_at.log

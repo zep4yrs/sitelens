@@ -6,7 +6,9 @@
 package crawler
 
 import (
+	"fmt"
 	"net/url"
+	"os"
 	"regexp"
 	"strings"
 	"time"
@@ -15,6 +17,16 @@ import (
 	"cnb.cool/feng-qiao/sitelens/internal/htmlx"
 	"cnb.cool/feng-qiao/sitelens/internal/httpx"
 )
+
+// crawlDebug 环境变量 SITLENS_CRAWL_DEBUG 非空时输出爬取决策日志
+// （stderr）：诊断"认证站点只爬到 1 页"类覆盖问题。
+var crawlDebug = os.Getenv("SITLENS_CRAWL_DEBUG") != ""
+
+func crawlLog(format string, a ...any) {
+	if crawlDebug {
+		fmt.Fprintf(os.Stderr, "[crawl] "+format+"\n", a...)
+	}
+}
 
 // Page 一页采集结果。
 type Page struct {
@@ -175,6 +187,7 @@ func (c *Crawler) Crawl(home *httpx.Response, extraSeeds []string) *Result {
 			}
 		}
 
+		crawlLog("page +%s (pages=%d queue=%d links=%d forms=%d status=%d)", resp.FinalURL, len(res.Pages), len(queue), len(doc.Links), len(doc.Forms), resp.Status)
 		res.Pages = append(res.Pages, Page{
 			URL:        resp.FinalURL,
 			FinalURL:   resp.FinalURL,
@@ -247,9 +260,11 @@ func (c *Crawler) Crawl(home *httpx.Response, extraSeeds []string) *Result {
 			budget--
 			k := normalize(abs)
 			if queued[k] || visited[k] || !c.allowed(abs) {
+				crawlLog("link skip %s (queued=%v visited=%v allowed=%v)", abs, queued[k], visited[k], c.allowed(abs))
 				continue
 			}
 			if len(res.Pages)+len(queue) >= c.opts.MaxPages {
+				crawlLog("link cap-skip %s", abs)
 				continue
 			}
 			queued[k] = true
