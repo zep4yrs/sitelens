@@ -1,6 +1,6 @@
 # 更新日志
 
-## 未发布（v0.0.3 候选）
+## v1.0.0（2026-09-09，正式版）
 
 - **DVWA 官方镜像认证扫描实测**（ghcr 双容器 + 认证断言门）：full 模式
   命中 LFI（读到 /etc/passwd）与 phpinfo 真实缺陷；apocalypse 9 verified
