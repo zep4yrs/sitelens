@@ -1,0 +1,43 @@
+# CNB CI — SiteLens 站点透视
+# main push：引擎回归（vet/test）
+# tag push（v*）：构建 Windows lite 安装包并上传 Release 资产
+#
+# 说明：
+#   - Go 交叉编译产出 Windows exe（纯 Go 无 cgo，Linux runner 可构建）
+#   - intel_dump.json.gz 不入仓库（保密红线）：CI 构建 lite 版（不含情报库）；
+#     full 版（含情报库 + Nuclei 模板库）由本地脚本构建后随发布渠道分发
+#   - Release 上传使用流水线内置 CNB_TOKEN（对本仓库有写权限）
+
+.main: &regression
+  docker:
+    image: golang:1.26
+  stages:
+    - name: 引擎回归
+      script:
+        - go vet ./...
+        - go test -count=1 ./internal/... ./cmd/...
+
+main:
+  push:
+    - *regression
+  pull_request:
+    - *regression
+
+"v*":
+  tag_push:
+    - name: 构建 Windows 安装包
+      docker:
+        image: golang:1.26
+      stages:
+        - name: build
+          script:
+            - apt-get update -qq && apt-get install -y -qq zip jq >/dev/null
+            - GOOS=windows GOARCH=amd64 go build -ldflags "-s -w" -o SiteLens/sitelens.exe ./cmd/sitelens
+            - mkdir -p SiteLens/data
+            - cp -r data/go SiteLens/data/go
+            - cp -r data/wordlists SiteLens/data/wordlists
+            - cp data/affected_ranges.json SiteLens/data/affected_ranges.json
+            - cp README.md docs/产品说明.md SiteLens/ 2>/dev/null || true
+            - mkdir -p dist
+            - (cd SiteLens && zip -qr ../dist/SiteLens-1.0.0-lite-win64.zip .)
+            - bash tools/release_upload.sh dist/SiteLens-1.0.0-lite-win64.zip
