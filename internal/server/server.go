@@ -100,6 +100,10 @@ func New(cfg *config.Config) (*Server, error) {
 		log.Printf("指纹库加载失败（扫描将无指纹识别）：%v", err)
 	}
 	if kb, err := intel.Load(cfg.Intel.DumpPath, cfg.Intel.RangesPath); err == nil {
+		// OSV 覆盖合并（update-osv 产物）：区间补全 + CVSS 评分
+		if n := intel.ApplyOverridesFile(kb, cfg.Intel.OverridesPath); n > 0 {
+			log.Printf("情报覆盖合并：%d 条（%s）", n, cfg.Intel.OverridesPath)
+		}
 		s.kb.Store(kb)
 	} else {
 		log.Printf("知识库加载失败（情报关联降级）：%v", err)

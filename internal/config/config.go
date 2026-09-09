@@ -100,6 +100,7 @@ type IntelConfig struct {
 	TechnologiesPath string `yaml:"technologies_path"` // 指纹规则文件路径
 	SearchLimit      int    `yaml:"search_limit"`      // /api/vuln-search 返回上限
 	UpdateHours      int    `yaml:"update_hours"`      // KEV 自动更新间隔（小时，0=关闭）
+	OverridesPath    string `yaml:"overrides_path"`    // OSV 同步覆盖文件（存在则启动合并）
 }
 
 // NetsecConfig TLS/DNS 网络层检测。
@@ -195,6 +196,7 @@ func Default() *Config {
 			TechnologiesPath: "data/go/technologies.json",
 			SearchLimit:      40,
 			UpdateHours:      24,
+			OverridesPath:    "data/intel_overrides.json",
 		},
 		Netsec: NetsecConfig{TLSTimeoutSec: 8, MailCheck: true},
 		LoginBrute: LoginBruteConfig{
@@ -317,6 +319,9 @@ func (c *Config) fillDefaults() {
 
 	if c.Intel.DumpPath == "" {
 		c.Intel.DumpPath = d.Intel.DumpPath
+	}
+	if c.Intel.OverridesPath == "" {
+		c.Intel.OverridesPath = d.Intel.OverridesPath
 	}
 	if c.Intel.RangesPath == "" {
 		c.Intel.RangesPath = d.Intel.RangesPath
