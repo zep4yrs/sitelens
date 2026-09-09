@@ -64,6 +64,7 @@ func categoryName(id string) string {
 // Server Web 服务。
 type Server struct {
 	cfg      *config.Config
+	cfgPath  string // 用户配置文件路径（设置页保存目标）
 	eng      *engine.Engine
 	matcher  *sitelens.Matcher
 	kb       atomic.Pointer[intel.KB] // 热替换安全：指向当前知识库快照
@@ -74,13 +75,24 @@ type Server struct {
 	techIDs  []string // 类别全集（CSV 宽表列序）
 	techCnt  int
 
+	cfgMu    sync.Mutex // 保护 cfg 与 apiToken 的设置页热更新
 	dataMu   sync.Mutex
 	lastData map[string]int64 // 数据文件路径 → 上次加载时的 mtime（热更新基线）
+
+	osvMu       sync.Mutex // OSV 同步互斥（同时只允许一个同步任务）
+	osvRunning  bool
+	osvTotal    int
+	osvLastTime string
+	osvLastMsg  string
+	osvLastN    int
 }
 
 // New 装配服务（加载指纹库/知识库/历史存储/用户插件）。
-func New(cfg *config.Config) (*Server, error) {
-	s := &Server{cfg: cfg, jobs: store.NewJobManagerWithCap(200),
+func New(cfg *config.Config, cfgPath string) (*Server, error) {
+	if cfgPath == "" {
+		cfgPath = ".sitelens.yml"
+	}
+	s := &Server{cfg: cfg, cfgPath: cfgPath, jobs: store.NewJobManagerWithCap(200),
 		sem:      make(chan struct{}, cfg.Scan.MaxConcurrent),
 		lastData: map[string]int64{}}
 	checks.ConfigurePlugins(cfg.Checks.PluginDir)
@@ -145,6 +157,7 @@ func (s *Server) Handler() http.Handler {
 		"/": "index.html", "/app": "app.html", "/batch": "batch.html",
 		"/history": "history.html", "/api-docs": "api-docs.html",
 		"/intel": "intel.html", "/audit": "audit.html", "/about": "about.html",
+		"/settings": "settings.html",
 	}
 	for route, file := range pages {
 		mux.HandleFunc(route, func(w http.ResponseWriter, r *http.Request) {
@@ -164,6 +177,10 @@ func (s *Server) Handler() http.Handler {
 	// API
 	mux.HandleFunc("GET /api/version", s.hVersion)
 	mux.HandleFunc("GET /api/stats", s.hStats)
+	mux.HandleFunc("GET /api/settings", s.hSettingsGet)
+	mux.HandleFunc("PUT /api/settings", s.hSettingsPut)
+	mux.HandleFunc("POST /api/osv-sync", s.hOsvSync)
+	mux.HandleFunc("GET /api/osv-sync", s.hOsvStatus)
 	mux.HandleFunc("GET /api/categories", s.hCategories)
 	mux.HandleFunc("POST /api/admin/reload", s.hAdminReload)
 	// 内置 SPA 靶页：JS 延迟注入登录表单，用于无头渲染/登录爆破链路自测

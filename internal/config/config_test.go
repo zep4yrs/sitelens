@@ -4,6 +4,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"gopkg.in/yaml.v3"
 )
 
 func TestDefaultSane(t *testing.T) {
@@ -101,5 +103,31 @@ func TestUnknownTopKeyWarn(t *testing.T) {
 	cfg := LoadOrDefault(path)
 	if cfg.Crawler.MaxPages != 30 {
 		t.Fatalf("crawler.max_pages 应生效: %d", cfg.Crawler.MaxPages)
+	}
+}
+
+// TestUpsertYAMLTypes upsert 写回的值必须保留类型（int/bool），
+// 否则重新解析时 int 字段失败并整体回退默认。
+func TestUpsertYAMLTypes(t *testing.T) {
+	base := []byte("crawler:\n  max_pages: 4\n  respect_robots: true\nscan:\n  rate_interval_ms: 400\n")
+	out, err := UpsertYAMLSections(base, map[string]map[string]any{
+		"crawler": {"max_pages": 31, "respect_robots": false},
+		"checks":  {"nuclei_cap": 310},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var cfg Config
+	if err := yaml.Unmarshal(out, &cfg); err != nil {
+		t.Fatalf("写回 yml 解析失败: %v", err)
+	}
+	if cfg.Crawler.MaxPages != 31 || cfg.Crawler.RespectRobots {
+		t.Fatalf("爬取值错误: %+v", cfg.Crawler)
+	}
+	if cfg.Checks.NucleiCap != 310 {
+		t.Fatalf("checks 段 upsert 失败: %+v", cfg.Checks)
+	}
+	if cfg.Scan.RateIntervalMS != 400 {
+		t.Fatalf("未纳管键应保留: %d", cfg.Scan.RateIntervalMS)
 	}
 }
