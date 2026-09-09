@@ -1,90 +1,142 @@
 <!DOCTYPE html>
 <html lang="zh-CN">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>设置 · SiteLens 站点透视</title>
-  <script>/* 主题防闪白（与全站一致） */document.documentElement.dataset.theme=localStorage.getItem('sl-theme')||'';</script>
-  <script src="/js/common.js"></script>
-  <style>
-    .wrap{max-width:760px;margin:0 auto;padding:24px 16px 64px}
-    h1{font-size:22px;margin:0 0 4px}
-    .sub{color:var(--muted-foreground);font-size:13px;margin-bottom:24px}
-    .card{border:1px solid var(--border);border-radius:var(--radius);padding:18px 20px;margin-bottom:18px;background:var(--card)}
-    .card h2{font-size:15px;margin:0 0 14px}
-    .row{display:flex;align-items:center;gap:12px;margin-bottom:12px;flex-wrap:wrap}
-    .row label{width:150px;flex:none;font-size:13px;color:var(--muted-foreground)}
-    .row input[type=text],.row input[type=number]{flex:1;min-width:220px;background:var(--background);border:1px solid var(--border);border-radius:var(--radius);padding:8px 10px;color:var(--foreground);font-size:13px}
-    .row .hint{font-size:12px;color:var(--muted-foreground);flex-basis:100%;padding-left:150px}
-    .btn{background:var(--primary);color:var(--primary-foreground);border:1px solid var(--primary);border-radius:var(--radius);padding:9px 18px;font-size:13px;cursor:pointer}
-    .btn:hover{opacity:.9}
-    .btn:disabled{opacity:.5;cursor:not-allowed}
-    .btn.sub{background:var(--background);color:var(--foreground);border-color:var(--border)}
-    .ok{color:#16a34a}.err{color:#dc2626}
-    .note{font-size:12px;color:var(--muted-foreground);margin-top:8px}
-    #osvMsg{font-size:13px;margin-left:12px}
-  </style>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>设置 — SiteLens</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<script>if(localStorage.getItem("sitelens-theme")==="dark")document.documentElement.classList.add("dark")</script>
+<style>
+  .sec{margin:0 0 26px}
+  .sec-title{display:flex;align-items:center;gap:10px;margin:0 0 14px;font-family:var(--font-mono);
+    font-size:14.5px;font-weight:600}
+  .row{display:flex;align-items:center;gap:12px;margin-bottom:12px;flex-wrap:wrap}
+  .row label{width:170px;flex:none;font-size:13.5px;color:var(--muted-fg)}
+  .row input[type=text],.row input[type=number]{background:var(--input);border:1px solid var(--border);
+    border-radius:var(--radius);padding:8px 10px;color:var(--foreground);font-size:13.5px;width:260px}
+  .row input[type=checkbox]{width:16px;height:16px;accent-color:var(--primary)}
+  .row .hint{font-size:12.5px;color:var(--muted-fg);flex-basis:100%;padding-left:182px;line-height:1.6}
+  .row .hint.inline{flex-basis:auto;padding-left:0}
+  .badge{display:inline-block;padding:2px 8px;border-radius:6px;font-size:11px;font-weight:700;
+    font-family:var(--font-mono);letter-spacing:.04em}
+  .badge.hot{color:var(--ok);border:1px solid color-mix(in srgb,var(--ok) 40%,transparent);
+    background:color-mix(in srgb,var(--ok) 8%,transparent)}
+  .badge.reboot{color:var(--warn);border:1px solid color-mix(in srgb,var(--warn) 40%,transparent);
+    background:color-mix(in srgb,var(--warn) 8%,transparent)}
+  .actions{display:flex;align-items:center;gap:14px;margin-top:6px}
+  .btn{background:var(--primary);color:var(--primary-fg,var(--foreground));border:1px solid var(--primary);
+    border-radius:var(--radius);padding:9px 20px;font-size:13.5px;font-weight:500;cursor:pointer}
+  .btn:hover{opacity:.88}
+  .btn:disabled{opacity:.5;cursor:not-allowed}
+  #saveMsg,#osvMsg{font-size:13px}
+  .ok{color:var(--ok)}.err{color:var(--danger)}
+  .note{font-size:12.5px;color:var(--muted-fg);margin:10px 0 0;line-height:1.7}
+</style>
 </head>
 <body>
-<div class="wrap">
+<script src="/js/common.js"></script>
+
+<main class="page">
   <h1>设置</h1>
-  <div class="sub">生效时机：扫描/爬取/Token 保存后立即生效（对下一次扫描）；监听地址需重启服务。保存会重排 yml（注释保留、未纳管键保留）。</div>
+  <p class="sub">保存后：扫描 / 爬取 / Token 立即生效（对下一次扫描）；监听地址需重启服务。
+    保存采用「读改写」：已有注释与未纳管配置键均保留。</p>
 
-  <div class="card">
-    <h2>网络与 Token</h2>
-    <div class="row"><label>监听地址</label><input type="text" id="listen" placeholder="127.0.0.1:5000"><span class="hint">修改后需重启服务生效</span></div>
-    <div class="row"><label>API Token</label><input type="text" id="api_token" placeholder="空 = 不启用鉴权"><span class="hint">设置后 /api/* 需携带 X-Token 头（立即生效）</span></div>
+  <div class="sec">
+    <div class="sec-title">网络与 Token</div>
+    <div class="row">
+      <label>监听地址</label>
+      <input type="text" id="listen" placeholder="127.0.0.1:5000">
+      <span class="badge reboot">重启生效</span>
+    </div>
+    <div class="row">
+      <label>API Token</label>
+      <input type="text" id="api_token" placeholder="空 = 不启用鉴权">
+      <span class="badge hot">立即生效</span>
+    </div>
+    <p class="note">设置 Token 后，/api/* 需携带 X-Token 请求头（前端自动携带，存储键 sitelens-token）。</p>
   </div>
 
-  <div class="card">
-    <h2>爬取</h2>
-    <div class="row"><label>max_pages</label><input type="number" id="max_pages" min="1"><span class="hint">最多爬取页面数（立即生效）</span></div>
-    <div class="row"><label>max_links_per_page</label><input type="number" id="max_links_per_page" min="1"></div>
-    <div class="row"><label>crawl timeout_sec</label><input type="number" id="crawl_timeout" min="0"><span class="hint">0 = 不限</span></div>
-    <div class="row"><label>遵循 robots.txt</label><input type="checkbox" id="respect_robots"><span class="hint">扫描本地/授权靶场（robots 全站禁爬）时需关闭（立即生效）</span></div>
+  <div class="sec">
+    <div class="sec-title">爬取</div>
+    <div class="row">
+      <label>max_pages</label>
+      <input type="number" id="max_pages" min="1">
+      <span class="badge hot">立即生效</span>
+    </div>
+    <div class="row">
+      <label>max_links_per_page</label>
+      <input type="number" id="max_links_per_page" min="1">
+      <span class="badge hot">立即生效</span>
+    </div>
+    <div class="row">
+      <label>爬取总时长（秒）</label>
+      <input type="number" id="crawl_timeout" min="0">
+      <span class="badge hot">立即生效</span>
+      <span class="hint inline">0 = 不限</span>
+    </div>
+    <div class="row">
+      <label>遵循 robots.txt</label>
+      <input type="checkbox" id="respect_robots">
+      <span class="badge hot">立即生效</span>
+      <span class="hint inline">扫描本地 / 授权靶场（robots 全站禁爬）时需关闭</span>
+    </div>
   </div>
 
-  <div class="card">
-    <h2>扫描</h2>
-    <div class="row"><label>rate_interval_ms</label><input type="number" id="rate_interval_ms" min="0"><span class="hint">请求最小间隔（限速），0 = 不限（立即生效）</span></div>
-    <div class="row"><label>scan timeout_sec</label><input type="number" id="scan_timeout" min="1"></div>
-    <div class="row"><label>nuclei_cap</label><input type="number" id="nuclei_cap" min="1"><span class="hint">Nuclei 模板子集上限（立即生效）</span></div>
+  <div class="sec">
+    <div class="sec-title">扫描</div>
+    <div class="row">
+      <label>rate_interval_ms</label>
+      <input type="number" id="rate_interval_ms" min="0">
+      <span class="badge hot">立即生效</span>
+      <span class="hint inline">请求最小间隔（限速），0 = 不限</span>
+    </div>
+    <div class="row">
+      <label>单请求超时（秒）</label>
+      <input type="number" id="scan_timeout" min="1">
+      <span class="badge hot">立即生效</span>
+    </div>
+    <div class="row">
+      <label>nuclei_cap</label>
+      <input type="number" id="nuclei_cap" min="1">
+      <span class="badge hot">立即生效</span>
+      <span class="hint inline">Nuclei 模板子集上限</span>
+    </div>
   </div>
 
-  <div class="card">
-    <h2>OSV 情报同步</h2>
+  <div class="sec">
+    <div class="sec-title">OSV 情报同步</div>
     <div class="row">
       <button class="btn" id="osvBtn">从 OSV.dev 同步</button>
       <span id="osvMsg"></span>
     </div>
-    <div class="note">为 vuln_kb 全部 CVE 补全受影响区间与 CVSS 评分（api.osv.dev，公开接口）。写入 overrides 文件并即时合并进知识库。</div>
+    <p class="note">为 vuln_kb 全部 CVE 补全受影响区间与 CVSS 评分（api.osv.dev 公开接口）。
+      结果写入 overrides 文件并即时合并进知识库；同步进行中不可重复触发。</p>
   </div>
 
-  <div class="card">
-    <h2>情报覆盖文件</h2>
-    <div class="row"><label>overrides 路径</label><input type="text" id="overrides_path" style="flex:1"><span class="hint">修改后需重启生效</span></div>
+  <div class="sec">
+    <div class="sec-title">情报覆盖文件</div>
+    <div class="row">
+      <label>overrides 路径</label>
+      <input type="text" id="overrides_path" style="width:420px">
+      <span class="badge reboot">重启生效</span>
+    </div>
   </div>
 
-  <button class="btn" id="save">保存设置</button>
-  <span id="saveMsg"></span>
-</div>
+  <div class="actions">
+    <button class="btn" id="save">保存设置</button>
+    <span id="saveMsg"></span>
+  </div>
+</main>
 
 <script>
 (function () {
-  var $ = function (id) { return document.getElementById(id); };
-  function api(method, url, body) {
-    return window.api[method.toLowerCase()](url, body).then(function (j) {
-      return { code: 200, j: j };
-    }).catch(function (e) {
-      return { code: 0, j: { error: String(e.message || e) } };
-    });
-  }
+  function $(id) { return document.getElementById(id); }
   function setv(id, v) { $(id).value = v; }
   function getv(id) { return $(id).value.trim(); }
+  function num(id) { return parseInt(getv(id), 10) || 0; }
 
-  api('GET', '/api/settings').then(function (r) {
-    if (r.code !== 200) return;
-    var c = r.j.config;
+  window.api.get('/api/settings').then(function (c) {
     setv('listen', c.web.listen);
     setv('api_token', c.web.api_token || '');
     setv('max_pages', c.crawler.max_pages);
@@ -95,46 +147,46 @@
     setv('scan_timeout', c.scan.timeout_sec);
     setv('nuclei_cap', c.checks.nuclei_cap);
     setv('overrides_path', c.intel.overrides_path);
-  });
+  }).catch(function () {});
 
   $('save').addEventListener('click', function () {
-    var b = $('save'); b.disabled = true;
-    var body = {
+    var b = $('save'), m = $('saveMsg');
+    b.disabled = true; m.textContent = '保存中…'; m.className = '';
+    window.api.put('/api/settings', {
       web: { listen: getv('listen'), api_token: getv('api_token') },
       crawler: {
-        max_pages: parseInt(getv('max_pages'), 10) || 0,
+        max_pages: num('max_pages'),
         respect_robots: $('respect_robots').checked,
-        max_links_per_page: parseInt(getv('max_links_per_page'), 10) || 0,
-        timeout_sec: parseInt(getv('crawl_timeout'), 10) || 0
+        max_links_per_page: num('max_links_per_page'),
+        timeout_sec: num('crawl_timeout')
       },
-      scan: {
-        rate_interval_ms: parseInt(getv('rate_interval_ms'), 10) || 0,
-        timeout_sec: parseInt(getv('scan_timeout'), 10) || 0
-      },
-      checks: { nuclei_cap: parseInt(getv('nuclei_cap'), 10) || 0 },
+      scan: { rate_interval_ms: num('rate_interval_ms'), timeout_sec: num('scan_timeout') },
+      checks: { nuclei_cap: num('nuclei_cap') },
       intel: { overrides_path: getv('overrides_path') }
-    };
-    api('PUT', '/api/settings', body).then(function (r) {
+    }).then(function () {
       b.disabled = false;
-      var m = $('saveMsg');
-      m.className = r.j.ok ? 'ok' : 'err';
-      m.textContent = r.j.ok ? '已保存 ✓' : (r.j.error || '保存失败');
+      m.className = 'ok'; m.textContent = '已保存 ✓';
+    }).catch(function (e) {
+      b.disabled = false;
+      m.className = 'err'; m.textContent = e.message;
     });
   });
 
   $('osvBtn').addEventListener('click', function () {
     var b = $('osvBtn'), m = $('osvMsg');
-    b.disabled = true; m.textContent = '同步中…'; m.className = '';
-    api('POST', '/api/osv-sync', {}).then(function () {
+    b.disabled = true; m.textContent = '同步中…';
+    window.api.post('/api/osv-sync', {}).then(function () {
       var timer = setInterval(function () {
-        api('GET', '/api/osv-sync', null).then(function (r) {
-          if (!r.j.running) {
+        window.api.get('/api/osv-sync').then(function (st) {
+          if (!st.running) {
             clearInterval(timer); b.disabled = false;
-            m.className = r.j.last_msg === '同步完成' ? 'ok' : 'err';
-            m.textContent = (r.j.last_msg || '') + ' ' + (r.j.last_n || 0) + ' 条 @ ' + (r.j.last_at || '');
+            m.className = st.last_msg === '同步完成' ? 'ok' : 'err';
+            m.textContent = (st.last_msg || '') + ' ' + (st.last_n || 0) + ' 条 @ ' + (st.last_at || '');
           }
         });
       }, 1500);
+    }).catch(function (e) {
+      b.disabled = false; m.className = 'err'; m.textContent = e.message;
     });
   });
 })();
