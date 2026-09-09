@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -23,7 +24,7 @@ func newServer(t *testing.T) (*Server, *httptest.Server) {
 	cfg.Scan.RateIntervalMS = 0
 	cfg.Store.DataDir = t.TempDir()
 
-	s, err := New(cfg)
+	s, err := New(cfg, filepath.Join(t.TempDir(), "cfg.yml"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -305,7 +306,7 @@ func TestTokenGuard(t *testing.T) {
 	cfg := config.Default()
 	cfg.Scan.Resolve = false
 	cfg.Store.DataDir = t.TempDir()
-	s, err := New(cfg)
+	s, err := New(cfg, "")
 	if err != nil {
 		t.Fatal(err)
 	}

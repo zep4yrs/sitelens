@@ -77,7 +77,7 @@ func main() {
 		loadEnvFile(*envFile)
 		os.Exit(migratePGCommand(*cfgPath))
 	case "serve":
-		srv, err := server.New(cfg)
+		srv, err := server.New(cfg, *cfgPath)
 		if err != nil {
 			fmt.Fprintln(os.Stderr, "服务装配失败:", err)
 			os.Exit(1)
