@@ -305,10 +305,10 @@ type tplDoc struct {
 // zenscrape/zenserp 的 API-key 正则命中任意长串、acme-challenge 的 XSS
 // 词命中转义回显、archibus 的词命中任何登录页。转换层直接拒收。
 var noisyTemplates = map[string]bool{
-	"zenscrape-api-key":            true,
-	"zenserp-api-key":              true,
-	"acme-xss":                     true,
-	"archibus-webcentral-panel":    true,
+	"zenscrape-api-key":         true,
+	"zenserp-api-key":           true,
+	"acme-xss":                  true,
+	"archibus-webcentral-panel": true,
 }
 
 // Convert 单模板 → checks（多 matcher 组且 OR 时拆分为 ~gN 后缀的多条）。
