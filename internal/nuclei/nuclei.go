@@ -301,6 +301,16 @@ type tplDoc struct {
 	HTTP []tplHTTP `yaml:"http"`
 }
 
+// noisyTemplates 靶场校准定谳的误报模板（词表/正则过泛，Evidence 自证）：
+// zenscrape/zenserp 的 API-key 正则命中任意长串、acme-challenge 的 XSS
+// 词命中转义回显、archibus 的词命中任何登录页。转换层直接拒收。
+var noisyTemplates = map[string]bool{
+	"zenscrape-api-key":            true,
+	"zenserp-api-key":              true,
+	"acme-xss":                     true,
+	"archibus-webcentral-panel":    true,
+}
+
 // Convert 单模板 → checks（多 matcher 组且 OR 时拆分为 ~gN 后缀的多条）。
 // 不支持的形态返回 nil。
 func Convert(data []byte) []checks.Check {
@@ -316,6 +326,9 @@ func Convert(data []byte) []checks.Check {
 	}
 	if doc.ID == "" || doc.Info.Name == "" || len(doc.HTTP) == 0 {
 		return nil
+	}
+	if noisyTemplates[strings.ToLower(doc.ID)] {
+		return nil // 靶场校准定谳的误报模板
 	}
 	req := doc.HTTP[0]
 	method := strings.ToUpper(req.Method)
