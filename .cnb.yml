@@ -1,16 +1,16 @@
 # CNB CI — SiteLens 站点透视
 #
 # 事件矩阵：
-#   main push / pull_request   → 引擎回归（vet + test）
-#   v* tag_push                → 构建安装包（Windows lite zip + Linux 二进制）
-#                                并上传到该 tag 的 Release 资产
+#   main push / pull_request   → 引擎回归（gofmt / vet / test）
+#   v* tag_push                → 构建发布产物并上传 Release 资产：
+#       1) Windows lite 安装包（无情报库，保密红线）
+#       2) Linux amd64 二进制
+#       3) Windows full 完整版（需本地/密钥提供 intel_dump，见下）
 #
-# 说明：
-#   - Go 交叉编译产出 Windows exe（纯 Go 无 cgo，Linux runner 可构建）
-#   - intel_dump.json.gz 不入仓库（保密红线）：CI 构建 lite 版（不含情报库）；
-#     full 版（含情报库 + Nuclei 模板库）由本地脚本构建后随发布渠道分发
-#   - Release 上传使用流水线内置 CNB_TOKEN（对本仓库有写权限）
-#   - 上传失败不阻塞流水线（资产可手动补传）
+# 保密红线：intel_dump.json.gz（情报库）不入任何托管仓库。
+#   CI 的 full 构建仅在流水线变量 SITLENS_INTEL_DUMP 给出 base64 内容时
+#   才会打包完整版；未配置时自动跳过，只产出 lite 版。
+#   Release 上传使用流水线内置 CNB_TOKEN；上传失败不阻塞流水线。
 
 .main: &regression
   docker:
@@ -18,6 +18,7 @@
   stages:
     - name: 引擎回归
       script:
+        - gofmt -l internal/ cmd/ && test -z "$(gofmt -l internal/ cmd/)"
         - go vet ./...
         - go test -count=1 ./internal/... ./cmd/...
 
@@ -29,7 +30,7 @@ main:
 
 "v*":
   tag_push:
-    - name: 构建 Windows 安装包
+    - name: 构建 Windows lite 安装包
       docker:
         image: golang:1.26
       stages:
@@ -49,8 +50,26 @@ main:
       docker:
         image: golang:1.26
       stages:
-        - name: build-linux
+        - name: build
           script:
             - apt-get update -qq && apt-get install -y -qq zip >/dev/null
+            - mkdir -p dist
             - GOOS=linux GOARCH=amd64 go build -ldflags "-s -w" -o dist/sitelens-linux-amd64 ./cmd/sitelens
-            - echo "linux 二进制构建完成"
+            - (cd dist && zip -q SiteLens-1.0.0-linux-amd64.zip sitelens-linux-amd64)
+    - name: 构建 Windows full 完整版（需情报库变量）
+      docker:
+        image: golang:1.26
+      stages:
+        - name: build
+          script:
+            - |
+              if [ -z "$SITLENS_INTEL_DUMP" ]; then
+                echo "未配置 SITLENS_INTEL_DUMP（base64 情报库），跳过 full 版";
+                exit 0;
+              fi
+              echo "$SITLENS_INTEL_DUMP" | base64 -d > /tmp/intel_dump.json.gz
+              mkdir -p SiteLens/data
+              cp -r data/go data/wordlists data/affected_ranges.json SiteLens/data/ 2>/dev/null || true
+              GOOS=windows GOARCH=amd64 go build -ldflags "-s -w" -o SiteLens/sitelens.exe ./cmd/sitelens
+              (cd SiteLens && zip -qr ../dist/SiteLens-1.0.0-full-win64.zip .)
+              echo "full 版构建完成"
