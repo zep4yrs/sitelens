@@ -7,7 +7,7 @@ __pycache__/
 server.log
 .mimosa/
 
-# 可再生的大型数据（tools/fetch_nuclei.py + import_nuclei.py 可重新拉取转换）
+# 可再生的大型数据（sitelens update-nuclei 可重新拉取官方模板库）
 data/nuclei/
 docs/build/
 
