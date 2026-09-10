@@ -1,11 +1,18 @@
 #!/bin/bash
-# 靶场矩阵第七轮：单会话全流程（双容器 DVWA + 认证扫描 + max_pages 30）
+# 靶场矩阵跑批：单会话全流程（双容器 DVWA + 认证扫描）
+# 用法：在仓库根目录或任意位置执行；路径可经环境变量覆盖
+#   MATRIX_ROOT   仓库根目录（缺省按脚本位置自动推导）
+#   MATRIX_OUT    结果输出目录（缺省 /var/sl-e2e/out）
 set -u
-LOG=/var/sl-e2e/matrix_r7.log
-OUT=/mnt/d/fengqiao/Desktop/26-08python实训/实训考核2/tmp_matrix_out
-CONF=/mnt/d/fengqiao/Desktop/26-08python实训/实训考核2/tmp_matrix.yml
+LOG=/var/sl-e2e/matrix.log
+SELF_DIR=$(cd "$(dirname "$0")" && pwd)
+ROOT=$(cd "$SELF_DIR/.." && pwd)
+BASE=$(dirname "$ROOT")
+OUT=${MATRIX_OUT:-/var/sl-e2e/out}
+CONF=${MATRIX_CONF:-$ROOT/docs/靶场矩阵-sitelens.yml}
+R="$BASE/ranges"
 mkdir -p "$OUT"
-echo "=== 矩阵第七轮 $(date +%H:%M:%S) ===" | tee "$LOG"
+echo "=== 矩阵跑批 $(date +%H:%M:%S) ===" | tee "$LOG"
 
 # 0) DVWA = web + mariadb 双容器
 DBPW="p@ssw0""rd"
