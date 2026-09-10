@@ -1,12 +1,16 @@
 <div align="center">
-  <img src="docs/hero.svg" alt="SiteLens 站点透视 — 验证型 Web 站点安全评估平台" width="880">
+  <img src="assets/logo.png" width="110" alt="SiteLens logo">
+</div>
+
+<br>
+
+<div align="center">
+  <img src="assets/banner.png" width="100%" alt="SiteLens 站点透视 — 看见站点，更看清风险。">
 </div>
 
 <div align="center">
 
-**输入一个网址，得到的是可复现的验证结论，而不是一堆猜测。**
-
-[安装](#-五分钟上手) · [扫描模式](#-七种扫描模式) · [证据链](#-证据链长什么样) · [产品说明](docs/产品说明.md) · [开发文档](docs/开发文档.md)
+**[五分钟上手](#五分钟上手) · [扫描模式](#七种扫描模式) · [证据链](#证据链长什么样) · [产品说明](docs/产品说明.md) · [开发文档](docs/开发文档.md)**
 
 </div>
 
