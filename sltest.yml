@@ -1,3 +1,0 @@
-scan:
-  rate_interval_ms: 150
-  resolve: false
