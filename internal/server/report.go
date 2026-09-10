@@ -93,7 +93,7 @@ func htmlReport(rec *store.ScanRecord) string {
 				if v.KEV {
 					kev = "KEV!"
 				}
-				b.WriteString("<tr><td class=\"sev-" + sevClass(v.Severity) + "\">" + sevClass(v.SeverityZh) + "</td><td>" + esc(v.Tech) + "</td><td>" + esc(v.CVE) + "</td><td>" + esc(v.Name) + "</td><td>" + esc(v.Verdict) + "</td><td>" + kev + "</td></tr>")
+				b.WriteString("<tr><td class=\"sev-" + sevClass(v.Severity) + "\">" + esc(v.SeverityZh) + "</td><td>" + esc(v.Tech) + "</td><td>" + esc(v.CVE) + "</td><td>" + esc(v.Name) + "</td><td>" + esc(v.Verdict) + "</td><td>" + kev + "</td></tr>")
 			}
 			b.WriteString("</table>")
 		}
