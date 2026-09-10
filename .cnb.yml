@@ -60,19 +60,17 @@ main:
             - mkdir -p dist
             - GOOS=linux GOARCH=amd64 go build -ldflags "-s -w" -o dist/sitelens-linux-amd64 ./cmd/sitelens
             - (cd dist && zip -q SiteLens-1.0.0-linux-amd64.zip sitelens-linux-amd64)
-    - name: 构建 Windows full 完整版（需情报库变量）
+    - name: 构建 Windows full 完整版（需私有数据仓库）
       docker:
         image: golang:1.26
       stages:
         - name: build
           script:
             - |
-              if [ -z "$SITLENS_INTEL_DUMP" ]; then
-                echo "未配置 SITLENS_INTEL_DUMP（base64 情报库），跳过 full 版";
-                exit 0;
-              fi
-              echo "$SITLENS_INTEL_DUMP" | base64 -d > /tmp/intel_dump.json.gz
+              # 从私有数据仓库拉取情报库（CNB 内置 token 对同组织私有仓库可读）
+              git clone --depth 1 "https://$CNB_TOKEN@cnb.cool/feng-qiao/sitelens-data.git" /tmp/datarepo
               mkdir -p SiteLens/data
+              cp /tmp/datarepo/intel_dump.json.gz SiteLens/data/intel_dump.json.gz
               cp -r data/go data/wordlists data/affected_ranges.json SiteLens/data/ 2>/dev/null || true
               GOOS=windows GOARCH=amd64 go build -ldflags "-s -w" -o SiteLens/sitelens.exe ./cmd/sitelens
               (cd SiteLens && zip -qr ../dist/SiteLens-1.0.0-full-win64.zip .)
