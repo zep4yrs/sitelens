@@ -12,15 +12,28 @@ import (
 	"cnb.cool/feng-qiao/sitelens/internal/versioncmp"
 )
 
-// Hit 一条已验证发现。
+// HitResponse 证据链的响应快照。
+type HitResponse struct {
+	Status  int    `json:"status"`
+	Size    int    `json:"size"`
+	Snippet string `json:"snippet"` // 命中正文摘要（压缩空白后取头部）
+}
+
+// Hit 一条已验证发现。Request/Response/Signals/Replay 构成证据链
+// （2.0 验证器地基）：请求可重放、响应可核对、信号可解释、命令可复现。
 type Hit struct {
-	Check    string `json:"check"`
-	Version  string `json:"version,omitempty"` // 版本抽取成功时携带
-	Title    string `json:"title"`
-	Severity string `json:"severity"`
-	URL      string `json:"url"`
-	Evidence string `json:"evidence"`
-	Advice   string `json:"advice"`
+	Check     string       `json:"check"`
+	Version   string       `json:"version,omitempty"` // 版本抽取成功时携带
+	Title     string       `json:"title"`
+	Severity  string       `json:"severity"`
+	URL       string       `json:"url"`
+	Evidence  string       `json:"evidence"`
+	Advice    string       `json:"advice"`
+	Request   string       `json:"request,omitempty"`   // 重放请求（HTTP 报文文本）
+	Response  *HitResponse `json:"response,omitempty"`  // 命中响应快照
+	Signals   []string     `json:"signals,omitempty"`   // 通道命中信号明细
+	Replay    string       `json:"replay,omitempty"`    // curl 一键复现命令
+	Confirmed bool         `json:"confirmed,omitempty"` // 经独立二次确认
 }
 
 // Options 执行参数。
@@ -156,8 +169,13 @@ func RunList(client *httpx.Client, targetURL string, list []Check,
 					hits = append(hits, Hit{
 						Check: chk.ID, Title: chk.Title, Severity: chk.Sev,
 						URL: u, Advice: chk.Advice,
-						Evidence: fmt.Sprintf("HTTP %d（二次确认）· %s", resp2.Status, reason),
-						Version:  extractVersion(chk, body2),
+						Evidence:  fmt.Sprintf("HTTP %d（二次确认）· %s", resp2.Status, reason),
+						Version:   extractVersion(chk, body2),
+						Request:   requestText(u, host, chk.Match),
+						Response:  &HitResponse{Status: resp2.Status, Size: len(resp2.Body), Snippet: hitSnippet(body2)},
+						Signals:   strings.Split(reason, " + "),
+						Replay:    curlReplay(u, chk.Match),
+						Confirmed: true,
 					})
 				}
 			}
@@ -278,6 +296,71 @@ func truncateMark(s string) string {
 		s = string([]rune(s)[:60]) + "…"
 	}
 	return s
+}
+
+// requestText 重放请求文本（HTTP 报文形态）：与实际发出的请求语义一致
+// （方法/路径/Host/Content-Type/正文；UA/Cookie 等运行时头不落证据，
+// 避免把会话敏感信息写进报告）。
+func requestText(u, host string, m Match) string {
+	method := m.Method
+	if method == "" {
+		method = "GET"
+	}
+	path := "/"
+	if parsed, err := url.Parse(u); err == nil && parsed.Path != "" {
+		path = parsed.Path
+		if parsed.RawQuery != "" {
+			path += "?" + parsed.RawQuery
+		}
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "%s %s HTTP/1.1\r\nHost: %s\r\n", method, path, host)
+	if method == "POST" {
+		ct := m.ContentType
+		if ct == "" {
+			ct = "application/x-www-form-urlencoded"
+		}
+		fmt.Fprintf(&b, "Content-Type: %s\r\n", ct)
+		fmt.Fprintf(&b, "Content-Length: %d\r\n", len(m.Body))
+	}
+	b.WriteString("\r\n")
+	b.WriteString(m.Body)
+	return b.String()
+}
+
+// shellQuote 单引号包裹（内部单引号按 POSIX 规则转义）。
+func shellQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
+}
+
+// curlReplay 一键复现命令：粘贴即重放（-sk --path-as-is 与引擎姿态一致）。
+func curlReplay(u string, m Match) string {
+	var b strings.Builder
+	b.WriteString("curl -sk --path-as-is")
+	if m.Method == "POST" {
+		b.WriteString(" -X POST")
+		ct := m.ContentType
+		if ct == "" {
+			ct = "application/x-www-form-urlencoded"
+		}
+		b.WriteString(" -H " + shellQuote("Content-Type: "+ct))
+		if m.Body != "" {
+			b.WriteString(" --data-raw " + shellQuote(m.Body))
+		}
+	}
+	b.WriteString(" " + shellQuote(u))
+	return b.String()
+}
+
+// hitSnippet 命中正文摘要：压缩空白后取头部（证据链里给人看的窗口；
+// 全量响应以重放命令复现为准，避免把整页内容塞进报告）。
+func hitSnippet(body string) string {
+	collapsed := strings.Join(strings.Fields(body), " ")
+	r := []rune(collapsed)
+	if len(r) > 240 {
+		return string(r[:240]) + "…"
+	}
+	return collapsed
 }
 
 // respEnv dsl 求值环境：封装单次响应的状态码/正文/头/主机名。
