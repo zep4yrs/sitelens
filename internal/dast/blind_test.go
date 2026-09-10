@@ -1,7 +1,6 @@
 package dast
 
 import (
-	"fmt"
 	"strings"
 	"testing"
 )
