@@ -1,19 +1,25 @@
 package dast
 
 import (
+	"net/url"
 	"strings"
 	"testing"
 )
 
-// routeFetcher 按 payload 关键词路由响应尺寸：
+// routeFetcher 按 payload 关键词路由响应尺寸（先解码 URL 再匹配——
+// setParam 落盘的是 url.Values.Encode 编码形态，空格/等号已被转义）：
 // AND 1=1 → 与基线同尺寸（1000B），AND 1=2 → 偏离（400B）。
 type routeFetcher struct{}
 
 func (f *routeFetcher) GetSmall(u string) *Resp {
+	val := ""
+	if p, err := url.Parse(u); err == nil {
+		val = p.Query().Get("id")
+	}
 	switch {
-	case strings.Contains(u, "AND 1=1"):
+	case strings.Contains(val, "AND 1=1"):
 		return &Resp{Status: 200, Body: repeatStr("x", 1000)}
-	case strings.Contains(u, "AND 1=2"):
+	case strings.Contains(val, "AND 1=2"):
 		return &Resp{Status: 200, Body: repeatStr("x", 400)}
 	default:
 		return &Resp{Status: 200, Body: repeatStr("x", 1000)}

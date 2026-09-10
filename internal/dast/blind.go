@@ -68,7 +68,8 @@ func (r *Runner) boolBlind(tgt Target, done *int, total int) *Finding {
 	}
 }
 
-// sizeSimilar 两尺寸相差 ≤ BoolBlindSizePct 视为相似。
+// sizeSimilar 两尺寸相差 ≤ BoolBlindSizePct% 视为相似。
+// 用乘法比较（先除后比会因整数截断把 10.75% 算成 10%）。
 func sizeSimilar(a, b int) bool {
 	if a == b {
 		return true
@@ -81,7 +82,7 @@ func sizeSimilar(a, b int) bool {
 	if b > base {
 		base = b
 	}
-	return base > 0 && diff*100/base <= BoolBlindSizePct
+	return base > 0 && diff*100 <= base*BoolBlindSizePct
 }
 
 // boolPayloads 按原值形态构造真/假 payload（数字型 / 字符串型）。
