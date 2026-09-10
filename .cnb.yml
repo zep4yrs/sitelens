@@ -1,20 +1,22 @@
 # CNB CI — SiteLens 站点透视
 #
 # 事件矩阵：
-#   main push / pull_request   → 引擎回归（gofmt / vet / test）
+#   main push / pull_request   → 引擎回归（gofmt / vet / test / -race / govulncheck / 前端 esc 测试）
 #   v* tag_push                → 构建发布产物并上传 Release 资产：
-#       1) Windows lite 安装包（无情报库，保密红线）
-#       2) Linux amd64 二进制
-#       3) Windows full 完整版（需本地/密钥提供 intel_dump，见下）
+#       1) Windows lite 安装包 zip + NSIS 安装器 Setup.exe（无情报库）
+#       2) Linux amd64 二进制 zip
+#       3) Windows full 完整版 zip + NSIS 安装器 Setup.exe（含情报库）
 #
-# 保密红线：intel_dump.json.gz（情报库）不入任何托管仓库。
-#   CI 的 full 构建仅在流水线变量 SITLENS_INTEL_DUMP 给出 base64 内容时
-#   才会打包完整版；未配置时自动跳过，只产出 lite 版。
+# 情报库方案：full 构建从私有数据仓库 feng-qiao/sitelens-data 拉取
+#   intel_dump.json.gz（使用流水线内置 CNB_TOKEN，同组织私有仓库可读）。
+#   旧的 SITLENS_INTEL_DUMP base64 流水线变量方案已废弃。
+#   保密边界说明：intel_dump 仍不入本仓库 git；full 产物只上传到本私有仓库的
+#   Release 资产（仅仓库协作者可见），不会出现在任何公开位置。
 #   Release 上传使用流水线内置 CNB_TOKEN；上传失败不阻塞流水线。
 
 .main: &regression
   docker:
-    image: golang:1.26
+    image: golang:1.26.8
   stages:
     - name: 引擎回归
       script:
@@ -22,9 +24,11 @@
         - go vet ./...
         - go test -count=1 ./internal/... ./cmd/...
         - go test -race -count=1 ./internal/... # 实抓过 2 次 race（测试桩并发），列为阻断门禁
-    - name: 依赖漏洞扫描
-      script:
         - go install golang.org/x/vuln/cmd/govulncheck@latest && govulncheck ./...
+    - name: 前端转义回归
+      script:
+        - apt-get update -qq && apt-get install -y -qq nodejs >/dev/null
+        - node --test web/js/esc.test.mjs
 
 main:
   push:
@@ -34,13 +38,13 @@ main:
 
 "v*":
   tag_push:
-    - name: 构建 Windows lite 安装包
+    - name: 构建 Windows lite（zip + NSIS 安装器）
       docker:
-        image: golang:1.26
+        image: golang:1.26.8
       stages:
         - name: build
           script:
-            - apt-get update -qq && apt-get install -y -qq zip jq >/dev/null
+            - apt-get update -qq && apt-get install -y -qq zip nsis >/dev/null
             - GOOS=windows GOARCH=amd64 go build -ldflags "-s -w" -o SiteLens/sitelens.exe ./cmd/sitelens
             - mkdir -p SiteLens/data
             - cp -r data/go SiteLens/data/go
@@ -49,10 +53,13 @@ main:
             - cp README.md docs/产品说明.md SiteLens/ 2>/dev/null || true
             - mkdir -p dist
             - (cd SiteLens && zip -qr ../dist/SiteLens-1.0.0-lite-win64.zip .)
+            # LANG=C.UTF-8 必须设置：C locale 下 makensis 对中文文件名（产品说明.md）会段错误
+            - LANG=C.UTF-8 LC_ALL=C.UTF-8 makensis -V2 -DVERSION=1.0.0 -DSRCDIR="$PWD" -DSTAGEDIR=SiteLens -DOUTFILE="$PWD/dist/SiteLens-1.0.0-setup-lite.exe" installer/installer.nsi
             - bash tools/release_upload.sh dist/SiteLens-1.0.0-lite-win64.zip || echo "上传失败（可手动补传）"
+            - bash tools/release_upload.sh dist/SiteLens-1.0.0-setup-lite.exe || echo "上传失败（可手动补传）"
     - name: build-linux
       docker:
-        image: golang:1.26
+        image: golang:1.26.8
       stages:
         - name: build
           script:
@@ -60,18 +67,26 @@ main:
             - mkdir -p dist
             - GOOS=linux GOARCH=amd64 go build -ldflags "-s -w" -o dist/sitelens-linux-amd64 ./cmd/sitelens
             - (cd dist && zip -q SiteLens-1.0.0-linux-amd64.zip sitelens-linux-amd64)
-    - name: 构建 Windows full 完整版（需私有数据仓库）
+            - bash tools/release_upload.sh dist/SiteLens-1.0.0-linux-amd64.zip || echo "上传失败（可手动补传）"
+    - name: 构建 Windows full 完整版（zip + NSIS 安装器，含情报库）
       docker:
-        image: golang:1.26
+        image: golang:1.26.8
       stages:
         - name: build
           script:
             - |
               # 从私有数据仓库拉取情报库（CNB 内置 token 对同组织私有仓库可读）
               git clone --depth 1 "https://$CNB_TOKEN@cnb.cool/feng-qiao/sitelens-data.git" /tmp/datarepo
+              apt-get update -qq && apt-get install -y -qq zip nsis >/dev/null
               mkdir -p SiteLens/data
               cp /tmp/datarepo/intel_dump.json.gz SiteLens/data/intel_dump.json.gz
-              cp -r data/go data/wordlists data/affected_ranges.json SiteLens/data/ 2>/dev/null || true
+              cp -r data/go data/wordlists SiteLens/data/ 2>/dev/null || true
+              cp data/affected_ranges.json SiteLens/data/ 2>/dev/null || true
               GOOS=windows GOARCH=amd64 go build -ldflags "-s -w" -o SiteLens/sitelens.exe ./cmd/sitelens
+              cp README.md docs/产品说明.md SiteLens/ 2>/dev/null || true
               (cd SiteLens && zip -qr ../dist/SiteLens-1.0.0-full-win64.zip .)
-              echo "full 版构建完成"
+              # LANG=C.UTF-8 必须设置：C locale 下 makensis 对中文文件名（产品说明.md）会段错误
+              LANG=C.UTF-8 LC_ALL=C.UTF-8 makensis -V2 -DVERSION=1.0.0 -DSRCDIR="$PWD" -DSTAGEDIR=SiteLens -DOUTFILE="$PWD/dist/SiteLens-1.0.0-setup-full.exe" installer/installer.nsi
+              # full 产物上传到本私有仓库 Release（仅协作者可见；intel_dump 不入 git）
+              bash tools/release_upload.sh dist/SiteLens-1.0.0-full-win64.zip || echo "上传失败（可手动补传）"
+              bash tools/release_upload.sh dist/SiteLens-1.0.0-setup-full.exe || echo "上传失败（可手动补传）"
