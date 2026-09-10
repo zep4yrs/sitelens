@@ -26,58 +26,61 @@ main:
   pull_request:
     - *regression
 
-"v*":
-  tag_push:
-    - name: 构建 Windows lite（zip + NSIS 安装器）
-      docker:
-        image: golang:1.26.8
-      stages:
-        - name: build
-          script:
-            - apt-get update -qq && apt-get install -y -qq zip jq nsis >/dev/null
-            - GOOS=windows GOARCH=amd64 go build -ldflags "-s -w" -o SiteLens/sitelens.exe ./cmd/sitelens
-            - mkdir -p SiteLens/data
-            - cp -r data/go SiteLens/data/go
-            - cp -r data/wordlists SiteLens/data/wordlists
-            - cp data/affected_ranges.json SiteLens/data/affected_ranges.json
-            - cp README.md docs/产品说明.md SiteLens/ 2>/dev/null || true
-            - mkdir -p dist
-            - (cd SiteLens && zip -qr ../dist/SiteLens-1.0.0-lite-win64.zip .)
-            # LANG=C.UTF-8 必须设置：C locale 下 makensis 对中文文件名（产品说明.md）会段错误
-            - LANG=C.UTF-8 LC_ALL=C.UTF-8 makensis -V2 -DVERSION=1.0.0 -DSRCDIR="$PWD" -DSTAGEDIR=SiteLens -DOUTFILE="$PWD/dist/SiteLens-1.0.0-setup-lite.exe" installer/installer.nsi
-            - bash tools/release_upload.sh dist/SiteLens-1.0.0-lite-win64.zip
-            - bash tools/release_upload.sh dist/SiteLens-1.0.0-setup-lite.exe
-    - name: build-linux
-      docker:
-        image: golang:1.26.8
-      stages:
-        - name: build
-          script:
-            - apt-get update -qq && apt-get install -y -qq zip jq >/dev/null
-            - mkdir -p dist
-            - GOOS=linux GOARCH=amd64 go build -ldflags "-s -w" -o dist/sitelens-linux-amd64 ./cmd/sitelens
-            - (cd dist && zip -q SiteLens-1.0.0-linux-amd64.zip sitelens-linux-amd64)
-            - bash tools/release_upload.sh dist/SiteLens-1.0.0-linux-amd64.zip
-    - name: 构建 Windows full 完整版（zip + NSIS 安装器，含情报库）
-      docker:
-        image: golang:1.26.8
-      stages:
-        - name: build
-          script:
-            - |
-              # 情报库来自本仓库 v1.0.0 Release 私有资产（intel_dump 不入 git；
-              # 跨仓库 clone sitelens-data 的旧方案因流水线 token 作用域不足已废弃）。
-              # 拉取失败则本阶段明确失败，绝不产出缺情报库的"伪 full"包。
-              apt-get update -qq && apt-get install -y -qq zip nsis jq >/dev/null
-              mkdir -p SiteLens/data dist
-              bash tools/release_fetch_asset.sh v1.0.0 intel_dump.json.gz SiteLens/data/intel_dump.json.gz
-              cp -r data/go data/wordlists SiteLens/data/ 2>/dev/null || true
-              cp data/affected_ranges.json SiteLens/data/ 2>/dev/null || true
-              GOOS=windows GOARCH=amd64 go build -ldflags "-s -w" -o SiteLens/sitelens.exe ./cmd/sitelens
-              cp README.md docs/产品说明.md SiteLens/ 2>/dev/null || true
-              (cd SiteLens && zip -qr ../dist/SiteLens-1.0.0-full-win64.zip .)
-              # LANG=C.UTF-8 必须设置：C locale 下 makensis 对中文文件名（产品说明.md）会段错误
-              LANG=C.UTF-8 LC_ALL=C.UTF-8 makensis -V2 -DVERSION=1.0.0 -DSRCDIR="$PWD" -DSTAGEDIR=SiteLens -DOUTFILE="$PWD/dist/SiteLens-1.0.0-setup-full.exe" installer/installer.nsi
-              # full 产物上传到本私有仓库 Release（仅协作者可见；intel_dump 不入 git）
-              bash tools/release_upload.sh dist/SiteLens-1.0.0-full-win64.zip
-              bash tools/release_upload.sh dist/SiteLens-1.0.0-setup-full.exe
+# # 发版构建已停用（2026-09-10 起，日常提交不自动构建）。恢复发版：
+#   去掉本行以下每行行首 "# " 恢复 YAML，提交后推送新版本 tag（如 v1.0.1）
+#   即自动构建 5 产物并上传 Release。full 阶段依赖 Release 资产 intel_dump.json.gz（勿删）。
+# "v*":
+#   tag_push:
+#     - name: 构建 Windows lite（zip + NSIS 安装器）
+#       docker:
+#         image: golang:1.26.8
+#       stages:
+#         - name: build
+#           script:
+#             - apt-get update -qq && apt-get install -y -qq zip jq nsis >/dev/null
+#             - GOOS=windows GOARCH=amd64 go build -ldflags "-s -w" -o SiteLens/sitelens.exe ./cmd/sitelens
+#             - mkdir -p SiteLens/data
+#             - cp -r data/go SiteLens/data/go
+#             - cp -r data/wordlists SiteLens/data/wordlists
+#             - cp data/affected_ranges.json SiteLens/data/affected_ranges.json
+#             - cp README.md docs/产品说明.md SiteLens/ 2>/dev/null || true
+#             - mkdir -p dist
+#             - (cd SiteLens && zip -qr ../dist/SiteLens-1.0.0-lite-win64.zip .)
+#             # LANG=C.UTF-8 必须设置：C locale 下 makensis 对中文文件名（产品说明.md）会段错误
+#             - LANG=C.UTF-8 LC_ALL=C.UTF-8 makensis -V2 -DVERSION=1.0.0 -DSRCDIR="$PWD" -DSTAGEDIR=SiteLens -DOUTFILE="$PWD/dist/SiteLens-1.0.0-setup-lite.exe" installer/installer.nsi
+#             - bash tools/release_upload.sh dist/SiteLens-1.0.0-lite-win64.zip
+#             - bash tools/release_upload.sh dist/SiteLens-1.0.0-setup-lite.exe
+#     - name: build-linux
+#       docker:
+#         image: golang:1.26.8
+#       stages:
+#         - name: build
+#           script:
+#             - apt-get update -qq && apt-get install -y -qq zip jq >/dev/null
+#             - mkdir -p dist
+#             - GOOS=linux GOARCH=amd64 go build -ldflags "-s -w" -o dist/sitelens-linux-amd64 ./cmd/sitelens
+#             - (cd dist && zip -q SiteLens-1.0.0-linux-amd64.zip sitelens-linux-amd64)
+#             - bash tools/release_upload.sh dist/SiteLens-1.0.0-linux-amd64.zip
+#     - name: 构建 Windows full 完整版（zip + NSIS 安装器，含情报库）
+#       docker:
+#         image: golang:1.26.8
+#       stages:
+#         - name: build
+#           script:
+#             - |
+#               # 情报库来自本仓库 v1.0.0 Release 私有资产（intel_dump 不入 git；
+#               # 跨仓库 clone sitelens-data 的旧方案因流水线 token 作用域不足已废弃）。
+#               # 拉取失败则本阶段明确失败，绝不产出缺情报库的"伪 full"包。
+#               apt-get update -qq && apt-get install -y -qq zip nsis jq >/dev/null
+#               mkdir -p SiteLens/data dist
+#               bash tools/release_fetch_asset.sh v1.0.0 intel_dump.json.gz SiteLens/data/intel_dump.json.gz
+#               cp -r data/go data/wordlists SiteLens/data/ 2>/dev/null || true
+#               cp data/affected_ranges.json SiteLens/data/ 2>/dev/null || true
+#               GOOS=windows GOARCH=amd64 go build -ldflags "-s -w" -o SiteLens/sitelens.exe ./cmd/sitelens
+#               cp README.md docs/产品说明.md SiteLens/ 2>/dev/null || true
+#               (cd SiteLens && zip -qr ../dist/SiteLens-1.0.0-full-win64.zip .)
+#               # LANG=C.UTF-8 必须设置：C locale 下 makensis 对中文文件名（产品说明.md）会段错误
+#               LANG=C.UTF-8 LC_ALL=C.UTF-8 makensis -V2 -DVERSION=1.0.0 -DSRCDIR="$PWD" -DSTAGEDIR=SiteLens -DOUTFILE="$PWD/dist/SiteLens-1.0.0-setup-full.exe" installer/installer.nsi
+#               # full 产物上传到本私有仓库 Release（仅协作者可见；intel_dump 不入 git）
+#               bash tools/release_upload.sh dist/SiteLens-1.0.0-full-win64.zip
+#               bash tools/release_upload.sh dist/SiteLens-1.0.0-setup-full.exe
