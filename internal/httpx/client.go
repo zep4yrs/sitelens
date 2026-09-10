@@ -129,12 +129,23 @@ func (c *Client) GetFollow(rawURL string) (*Response, error) {
 
 // GetFollowWith 同 GetFollow，附加额外请求头（403 绕过重试等场景）。
 func (c *Client) GetFollowWith(rawURL string, extra map[string]string) (*Response, error) {
+	return c.MethodFollowWith(http.MethodGet, rawURL, extra)
+}
+
+// MethodFollowWith 指定方法的跟随重定向请求（HEAD/OPTIONS 等只读变体）。
+// 非法方法直接拒绝；每一跳都过 target.Validate SSRF 校验（同 GetFollowWith）。
+func (c *Client) MethodFollowWith(method, rawURL string, extra map[string]string) (*Response, error) {
+	switch method {
+	case http.MethodGet, http.MethodHead, http.MethodOptions:
+	default:
+		return nil, &target.Error{Msg: "方法不允许（仅 GET/HEAD/OPTIONS，无害化红线）"}
+	}
 	c.wait()
 	cur := rawURL
 	var resp *http.Response
 	var err error
 	for hop := 0; hop < c.maxHops; hop++ {
-		req, rerr := c.newRequest(http.MethodGet, cur)
+		req, rerr := c.newRequest(method, cur)
 		if rerr != nil {
 			return nil, &target.Error{Msg: "URL 构造失败"}
 		}

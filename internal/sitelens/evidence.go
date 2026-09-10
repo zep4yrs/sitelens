@@ -20,6 +20,7 @@ type Evidence struct {
 	ScriptSrcs  []string          // <script src> 外链地址
 	Metas       map[string]string // meta name/property(小写) → content
 	CookieNames []string          // Set-Cookie 的 Cookie 名列表
+	FaviconHash int64             // 站点 favicon 的 FOFA icon_hash（0 = 未采集）
 }
 
 // Header 大小写不敏感取响应头。

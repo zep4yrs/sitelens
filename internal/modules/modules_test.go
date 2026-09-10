@@ -80,12 +80,18 @@ func TestDirScanFindsAndFilters(t *testing.T) {
 func TestDirScanBypass403(t *testing.T) {
 	dir := writeWordlist(t, "dir_default.txt", []string{"secret"})
 	mux := http.NewServeMux()
-	mux.HandleFunc("/secret", func(w http.ResponseWriter, r *http.Request) {
-		if r.Header.Get("X-Original-URL") == "/" {
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		// 改写头绕过：请求根路径、声明真实路径，后端按头路由
+		if r.Header.Get("X-Original-URL") == "/secret" {
 			fmt.Fprint(w, "<html>bypassed secret content</html>")
 			return
 		}
-		w.WriteHeader(403)
+		if r.URL.Path == "/secret" {
+			w.WriteHeader(403)
+			fmt.Fprint(w, "denied")
+			return
+		}
+		fmt.Fprint(w, strings.Repeat("roothome", 10))
 	})
 	srv := httptest.NewServer(mux)
 	defer srv.Close()
@@ -95,6 +101,9 @@ func TestDirScanBypass403(t *testing.T) {
 	hits := DirScan(client(), srv.URL, cfg, nil, nil)
 	if len(hits) != 1 || hits[0].Status != 200 {
 		t.Fatalf("绕过后应 200 命中: %+v", hits)
+	}
+	if hits[0].Bypass == "" {
+		t.Fatalf("绕过成功应记录技术名: %+v", hits[0])
 	}
 }
 

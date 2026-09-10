@@ -123,6 +123,7 @@ function renderRows(scans) {
       '<button class="btn ghost small" onclick="openDetail(' + s.id + ')">详情</button> ' +
       '<button class="btn ghost small" onclick="exportAs(' + s.id + ',\'wide\')">宽表</button> ' +
       '<button class="btn ghost small" onclick="exportAs(' + s.id + ',\'csv\')">CSV</button> ' +
+      '<button class="btn ghost small" onclick="exportAs(' + s.id + ',\'md\')">MD</button> ' +
       '<button class="btn ghost small" onclick="delScan(' + s.id + ')">删</button></td>' +
       "</tr>";
   }).join("");
@@ -154,6 +155,7 @@ function renderDetail(r, scanId, url) {
     '<button class="btn ghost small" onclick="exportAs(' + scanId + ',\'json\')">JSON</button>' +
     '<button class="btn ghost small" onclick="exportAs(' + scanId + ',\'wide\')">宽表 CSV</button>' +
     '<button class="btn ghost small" onclick="exportAs(' + scanId + ',\'html\')">HTML 报告</button>' +
+    '<button class="btn ghost small" onclick="exportAs(' + scanId + ',\'md\')">MD 报告</button>' +
     "</span></div>";
 
   /* 采集失败 / 被 WAF 拦截的说明（引擎 error 字段） */

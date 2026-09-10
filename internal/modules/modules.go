@@ -8,6 +8,7 @@ package modules
 import (
 	"fmt"
 	"net"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -27,6 +28,7 @@ type PageHit struct {
 	Status int    `json:"status"`
 	Size   int    `json:"size"`
 	Title  string `json:"title"`
+	Bypass string `json:"bypass,omitempty"` // 403 绕过成功的技术名（空 = 未绕过）
 }
 
 // loadWords 字典加载：去空行 + 截取上限。
@@ -64,17 +66,107 @@ func soft404Sizes(client *httpx.Client, baseURL string) map[int]bool {
 	return sizes
 }
 
-// bypassHeaders 403 绕过重试常用头（Python dir_bypass 同款思路）。
-func bypassHeaders() map[string]string {
-	return map[string]string{
-		"X-Forwarded-For": "127.0.0.1",
-		"Referer":         "base",
-		"X-Original-URL":  "base",
+// bypassMaxAttempts 单次扫描的绕过请求总量硬上限（无害化控量）。
+const bypassMaxAttempts = 60
+
+// bypassVariant 一条 403 绕过变体。只读无害红线：仅发 GET/HEAD/OPTIONS，
+// 不发 PUT/POST/DELETE/TRACE 等写方法或回显方法。
+type bypassVariant struct {
+	kind   string // path / header / rewrite / method
+	note   string // 命中后写入 PageHit.Bypass
+	url    string
+	header map[string]string
+	method string
+	seg    string // 路径段关键词（rewrite 类判正文用）
+}
+
+// buildBypassVariants 生成全部绕过变体：
+//   - path：尾斜杠 / 点段 / 双斜杠 / ..;/ 容器路径混淆 / 尾空格 / 尾点编码
+//   - header：伪造内网来源、代理头、Referer（对原 URL 重放）
+//   - rewrite：请求根路径 + X-Original-URL / X-Rewrite-URL 指向目标路径
+//   - method：HEAD / OPTIONS（只读方法）
+func buildBypassVariants(u, path, baseURL string, rootSize int) []bypassVariant {
+	var vs []bypassVariant
+	for _, suf := range []string{"/", "/.", "//", "/..;/", "%20", "%2e"} {
+		vs = append(vs, bypassVariant{kind: "path", note: "path:" + suf, url: u + suf})
+	}
+	for _, h := range []struct{ k, v string }{
+		{"X-Forwarded-For", "127.0.0.1"},
+		{"X-Forwarded-Host", "localhost"},
+		{"Client-IP", "127.0.0.1"},
+		{"X-Custom-IP-Authorization", "127.0.0.1"},
+		{"Referer", baseURL},
+	} {
+		vs = append(vs, bypassVariant{kind: "header", note: "header:" + h.k,
+			url: u, header: map[string]string{h.k: h.v}})
+	}
+	seg := strings.Trim(strings.TrimLeft(path, "/"), "/")
+	if seg != "" && rootSize > 0 {
+		vs = append(vs, bypassVariant{kind: "rewrite", note: "rewrite:X-Original-URL",
+			url: baseURL + "/", seg: seg, header: map[string]string{"X-Original-URL": "/" + seg}})
+		vs = append(vs, bypassVariant{kind: "rewrite", note: "rewrite:X-Rewrite-URL",
+			url: baseURL + "/", seg: seg, header: map[string]string{"X-Rewrite-URL": "/" + seg}})
+	}
+	vs = append(vs, bypassVariant{kind: "method", note: "method:HEAD", url: u, method: http.MethodHead})
+	vs = append(vs, bypassVariant{kind: "method", note: "method:OPTIONS", url: u, method: http.MethodOptions})
+	return vs
+}
+
+// bypassHit 判定一条绕过变体是否真绕过：
+//   - path/header：目标 URL 返回 200、尺寸不在软 404 基线且异于根页
+//     （catch-all 站点对任意路径都回根页——拿根页当绕过成功 = 误报）
+//   - rewrite：根路径返回 200、正文含路径段关键词、尺寸异于根页和软 404 基线
+//   - method：HEAD/OPTIONS 返回 200
+func bypassHit(v bypassVariant, r *httpx.Response, rootSize int, baseline map[int]bool) bool {
+	if r == nil {
+		return false
+	}
+	switch v.kind {
+	case "rewrite":
+		return r.Status == 200 && len(r.Body) != rootSize && !baseline[len(r.Body)] &&
+			strings.Contains(strings.ToLower(r.Body), strings.ToLower(v.seg))
+	case "method":
+		return r.Status == 200
+	default:
+		if r.Status != 200 || baseline[len(r.Body)] {
+			return false
+		}
+		return rootSize <= 0 || len(r.Body) != rootSize
 	}
 }
 
+// tryBypass403 对单个 403 URL 顺序尝试全部变体，返回首个命中响应与技术名。
+// attempts 为跨命中共享的请求量计数（硬上限 bypassMaxAttempts）。
+func tryBypass403(client *httpx.Client, u, path, baseURL string, rootSize int,
+	baseline map[int]bool, attempts *int, cancel func() bool) (*httpx.Response, string) {
+	for _, v := range buildBypassVariants(u, path, baseURL, rootSize) {
+		if *attempts >= bypassMaxAttempts {
+			return nil, ""
+		}
+		if cancel != nil && cancel() {
+			return nil, ""
+		}
+		*attempts++
+		var r *httpx.Response
+		var err error
+		if v.method == http.MethodHead || v.method == http.MethodOptions {
+			r, err = client.MethodFollowWith(v.method, v.url, v.header)
+		} else {
+			r, err = client.GetFollowWith(v.url, v.header)
+		}
+		if err != nil || r == nil {
+			continue
+		}
+		if bypassHit(v, r, rootSize, baseline) {
+			return r, v.note
+		}
+	}
+	return nil, ""
+}
+
 // DirScan 目录探测：命中 = 200/401/403 且尺寸不在软404基线；
-// 403 且 bypass 开启时以伪造来源头重试一次。
+// 403 且 bypass 开启时按变体表做只读绕过尝试（路径变异/信任头/HEAD·OPTIONS），
+// 命中的技术记入 PageHit.Bypass。
 func DirScan(client *httpx.Client, baseURL string, cfg config.ActiveConfig,
 	progress func(done, total int, msg string), cancel func() bool) []PageHit {
 	words := loadWords(cfg.WordlistDir, "dir_default.txt", cfg.DirMaxPaths)
@@ -83,6 +175,14 @@ func DirScan(client *httpx.Client, baseURL string, cfg config.ActiveConfig,
 	}
 	base := strings.TrimRight(baseURL, "/")
 	baseline := soft404Sizes(client, baseURL)
+	// 根页基线尺寸：rewrite 类绕过需与根页区分（否则拿到的只是首页 = 误报）
+	rootSize := 0
+	if cfg.DirBypass403 {
+		if rr, err := client.GetFollow(baseURL); err == nil && rr != nil {
+			rootSize = len(rr.Body)
+		}
+	}
+	attempts := 0
 	hits := []PageHit{}
 	for i, w := range words {
 		if cancel != nil && cancel() {
@@ -97,20 +197,21 @@ func DirScan(client *httpx.Client, baseURL string, cfg config.ActiveConfig,
 			continue
 		}
 		status := r.Status
+		bypassNote := ""
 		if status == 403 && cfg.DirBypass403 {
-			h := bypassHeaders()
-			h["Referer"] = baseURL
-			h["X-Original-URL"] = "/"
-			if r2, e2 := client.GetFollowWith(u, h); e2 == nil && r2 != nil {
+			if r2, via := tryBypass403(client, u, "/"+strings.TrimLeft(w, "/"),
+				base, rootSize, baseline, &attempts, cancel); r2 != nil {
 				status = r2.Status
 				r = r2
+				bypassNote = via
 			}
 		}
 		if (status == 200 || status == 401 || status == 403) && !baseline[len(r.Body)] {
 			hits = append(hits, PageHit{
 				URL: u, Path: "/" + strings.TrimLeft(w, "/"),
 				Status: status, Size: len(r.Body),
-				Title: htmlx.Parse(r.Body).Title,
+				Title:  htmlx.Parse(r.Body).Title,
+				Bypass: bypassNote,
 			})
 		}
 		if progress != nil {

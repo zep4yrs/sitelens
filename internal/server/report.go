@@ -103,3 +103,81 @@ func htmlReport(rec *store.ScanRecord) string {
 	b.WriteString("</body></html>")
 	return b.String()
 }
+
+// mdCell Markdown 表格单元格转义：竖线会断列。
+func mdCell(s string) string {
+	return strings.ReplaceAll(s, "|", "\\|")
+}
+
+// markdownReport Markdown 报告（/api/export/{id}?fmt=md）：结构与 htmlReport
+// 对齐，便于直接贴进 wiki / 工单 / 交付文档。
+func markdownReport(rec *store.ScanRecord) string {
+	var b strings.Builder
+	b.WriteString("# SiteLens 扫描报告\n\n")
+	b.WriteString("- 目标：" + mdCell(rec.URL) + "（" + mdCell(rec.Host) + "）\n")
+	b.WriteString("- 扫描时间：" + rec.ScannedAt + "｜耗时 " + strconv.FormatFloat(rec.Duration, 'f', 2, 64) + "s\n")
+	b.WriteString("- 标题：" + mdCell(rec.Title) + "｜HTTP " + strconv.Itoa(rec.Status) + "\n")
+	sec := rec.SecurityGrade
+	if rec.Result != nil && rec.Result.Security != nil {
+		sec = fmt.Sprintf("%s（%d 分）", rec.Result.Security.Grade, rec.Result.Security.Score)
+	}
+	b.WriteString("- 安全评分：" + sec + "\n\n")
+	if rec.Result == nil {
+		b.WriteString("> 无详细结果数据。\n")
+		return b.String()
+	}
+
+	// 技术清单
+	techs := rec.Result.Technologies
+	b.WriteString("## 识别技术（" + strconv.Itoa(len(techs)) + "）\n\n")
+	if len(techs) == 0 {
+		b.WriteString("无\n\n")
+	} else {
+		b.WriteString("| 技术 | 版本 | 置信度 | 类别 |\n|---|---|---|---|\n")
+		for _, t := range techs {
+			cats := make([]string, 0, len(t.Categories))
+			for _, c := range t.Categories {
+				cats = append(cats, categoryName(c))
+			}
+			b.WriteString("| " + mdCell(t.Name) + " | " + mdCell(t.Version) + " | " + strconv.Itoa(t.Confidence) + "% | " + mdCell(strings.Join(cats, " / ")) + " |\n")
+		}
+		b.WriteString("\n")
+	}
+
+	// 已验证发现
+	verified := rec.Result.Verified
+	b.WriteString("## 已验证发现（" + strconv.Itoa(len(verified)) + "）\n\n")
+	if len(verified) == 0 {
+		b.WriteString("无\n\n")
+	} else {
+		b.WriteString("| 严重度 | 标题 | URL | 证据 | 建议 |\n|---|---|---|---|---|\n")
+		for _, v := range verified {
+			sev, _ := v["severity"].(string)
+			tit, _ := v["title"].(string)
+			u, _ := v["url"].(string)
+			ev, _ := v["evidence"].(string)
+			ad, _ := v["advice"].(string)
+			b.WriteString("| " + sevClass(sev) + " | " + mdCell(tit) + " | " + mdCell(u) + " | " + mdCell(ev) + " | " + mdCell(ad) + " |\n")
+		}
+		b.WriteString("\n")
+	}
+
+	// 漏洞情报
+	vulns := rec.Result.Vulnerabilities
+	b.WriteString("## 漏洞情报关联（" + strconv.Itoa(len(vulns)) + "）\n\n")
+	if len(vulns) == 0 {
+		b.WriteString("无\n\n")
+	} else {
+		b.WriteString("| 严重度 | 技术 | CVE | 名称 | 判定 | KEV |\n|---|---|---|---|---|---|\n")
+		for _, v := range vulns {
+			kev := ""
+			if v.KEV {
+				kev = "KEV!"
+			}
+			b.WriteString("| " + mdCell(v.SeverityZh) + " | " + mdCell(v.Tech) + " | " + mdCell(v.CVE) + " | " + mdCell(v.Name) + " | " + mdCell(v.Verdict) + " | " + kev + " |\n")
+		}
+		b.WriteString("\n")
+	}
+	b.WriteString("> 由 SiteLens " + Version + " 生成；发现为辅助人工复查线索，非最终判决。\n")
+	return b.String()
+}

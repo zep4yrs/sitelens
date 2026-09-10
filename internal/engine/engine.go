@@ -248,8 +248,12 @@ func (e *Engine) Scan(rawURL string, opts Options, onProgress progress, cancel f
 	// 4) 多页指纹识别
 	if matcher != nil {
 		onProgress(55, fmt.Sprintf("指纹识别（%d 页）…", len(pages)))
+		// favicon 指纹：整站采集一次，注入每页证据（FOFA icon_hash 通道）
+		favHash := sitelens.FaviconHashOf(client, baseURL)
 		for _, p := range pages {
-			for _, h := range matcher.Match(sitelens.Extract(p.resp)) {
+			ev := sitelens.Extract(p.resp)
+			ev.FaviconHash = favHash
+			for _, h := range matcher.Match(ev) {
 				acc.add(h.Name, h.Website, h.Version, h.Evidence, h.Conf, h.Cats)
 			}
 		}
@@ -370,6 +374,16 @@ func (e *Engine) Scan(rawURL string, opts Options, onProgress progress, cancel f
 			onProgress(87, "目录探测…")
 			dirHits = modules.DirScan(client, baseURL, ac, nil, cancelled)
 			res.Extras["dir"] = dirHits
+			// 403 绕过命中的路径单列成块（可被绕过的访问控制 = 独立发现）
+			var bypassed []modules.PageHit
+			for _, h := range dirHits {
+				if h.Bypass != "" {
+					bypassed = append(bypassed, h)
+				}
+			}
+			if len(bypassed) > 0 {
+				res.Extras["bypass"] = bypassed
+			}
 		}
 		if opts.Webshell {
 			onProgress(88, "WebShell 探测…")
