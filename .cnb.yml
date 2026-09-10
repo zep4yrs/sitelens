@@ -23,6 +23,10 @@
       script:
         - gofmt -l internal/ cmd/ && test -z "$(gofmt -l internal/ cmd/)"
         - go vet ./...
+        - go mod verify
+        # vendor 一致性门禁：仓库里 go.mod 与 vendor 脱节（只提交依赖改动漏跑
+        # go mod vendor）会在此红掉，本地补跑 tidy+vendor 一并提交即可
+        - go mod tidy && go mod vendor && git diff --exit-code -- go.mod go.sum vendor/ || { echo "× vendor 与 go.mod 不同步：本地执行 go mod tidy && go mod vendor 后一并提交"; exit 1; }
         - go test -count=1 ./internal/... ./cmd/...
         - go test -race -count=1 ./internal/... # 实抓过 2 次 race（测试桩并发），列为阻断门禁
         - go install golang.org/x/vuln/cmd/govulncheck@latest && govulncheck ./...
