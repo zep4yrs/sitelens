@@ -1,75 +1,45 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="880" height="440" viewBox="0 0 880 440" role="img" aria-label="SiteLens 站点透视控制台">
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="360" viewBox="0 0 1200 360" role="img" aria-labelledby="heroTitle heroDesc">
+  <title id="heroTitle">SiteLens 站点透视 — 验证型 Web 站点安全评估平台</title>
+  <desc id="heroDesc">输入网址，输出可复现的验证结论：左为项目名与承诺，右为一条带 curl 复现命令的真实发现证据卡。</desc>
   <defs>
     <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
       <stop offset="0" stop-color="#0b1220"/>
       <stop offset="1" stop-color="#0f172a"/>
     </linearGradient>
-    <linearGradient id="scan" x1="0" y1="0" x2="1" y2="0">
-      <stop offset="0" stop-color="#14b8a6" stop-opacity="0"/>
-      <stop offset=".5" stop-color="#22d3ee" stop-opacity=".35"/>
-      <stop offset="1" stop-color="#14b8a6" stop-opacity="0"/>
-    </linearGradient>
     <linearGradient id="teal" x1="0" y1="0" x2="1" y2="0">
       <stop offset="0" stop-color="#14b8a6"/>
       <stop offset="1" stop-color="#22d3ee"/>
     </linearGradient>
-    <pattern id="grid" width="28" height="28" patternUnits="userSpaceOnUse">
-      <path d="M28 0H0V28" fill="none" stroke="#1e293b" stroke-width="1"/>
+    <pattern id="grid" width="32" height="32" patternUnits="userSpaceOnUse">
+      <path d="M32 0H0V32" fill="none" stroke="#16233b" stroke-width="1"/>
     </pattern>
   </defs>
 
-  <rect width="880" height="440" rx="14" fill="url(#bg)"/>
-  <rect width="880" height="440" rx="14" fill="url(#grid)" opacity=".45"/>
+  <rect width="1200" height="360" fill="url(#bg)"/>
+  <rect width="1200" height="360" fill="url(#grid)" opacity=".5"/>
 
-  <!-- 窗口标题栏 -->
-  <rect x="0" y="0" width="880" height="40" rx="14" fill="#111c30"/>
-  <circle cx="24" cy="20" r="6" fill="#f87171"/><circle cx="44" cy="20" r="6" fill="#fbbf24"/><circle cx="64" cy="20" r="6" fill="#34d399"/>
-  <text x="440" y="25" text-anchor="middle" font-family="-apple-system,'Segoe UI',sans-serif" font-size="14" fill="#94a3b8">SiteLens 站点透视 · 本地控制台</text>
+  <!-- 左：品类语境 → 项目名 → 具体承诺 → 证明 -->
+  <text x="64" y="86" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI','PingFang SC',sans-serif" font-size="18" fill="#5eead4">验证型 WEB 站点安全评估 · GO 单二进制 · 零外部依赖</text>
+  <text x="64" y="158" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI','PingFang SC',sans-serif" font-size="64" font-weight="800" fill="#f1f5f9">SiteLens 站点透视</text>
+  <text x="64" y="212" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI','PingFang SC',sans-serif" font-size="24" fill="#e2e8f0">输入网址，输出可复现的验证结论</text>
+  <text x="64" y="256" font-family="ui-monospace,SFMono-Regular,Menlo,monospace" font-size="18" fill="#64748b">372 指纹 · 11024 漏洞情报 · 5400+ 模板 · 每条发现带证据链</text>
+  <text x="64" y="298" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI','PingFang SC',sans-serif" font-size="16" fill="#475569">靶场实测：DVWA LFI 读到 /etc/passwd · 干净站零误报 ×2 · govulncheck 零漏洞</text>
 
-  <!-- URL 栏 -->
-  <rect x="24" y="56" width="640" height="34" rx="8" fill="#16233b" stroke="#24365a"/>
-  <text x="40" y="78" font-family="ui-monospace,Consolas,monospace" font-size="13" fill="#7dd3fc">https://</text>
-  <text x="92" y="78" font-family="ui-monospace,Consolas,monospace" font-size="13" fill="#e2e8f0">target.example.com</text>
-  <rect x="676" y="56" width="180" height="34" rx="8" fill="url(#teal)"/>
-  <text x="766" y="78" text-anchor="middle" font-family="-apple-system,'Segoe UI',sans-serif" font-size="13" font-weight="700" fill="#06281f">开始透视 · full</text>
+  <!-- 分隔竖线 -->
+  <rect x="660" y="80" width="1" height="200" fill="#24365a"/>
 
-  <!-- 扫描线 -->
-  <rect x="0" y="118" width="880" height="3" fill="url(#scan)"/>
+  <!-- 右：真实证据卡（一条布尔盲注发现） -->
+  <rect x="704" y="76" width="432" height="212" rx="12" fill="#101b2f" stroke="#24365a"/>
+  <rect x="728" y="100" width="58" height="26" rx="5" fill="#7f1d1d"/>
+  <text x="757" y="118" text-anchor="middle" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI','PingFang SC',sans-serif" font-size="16" font-weight="700" fill="#fecaca">HIGH</text>
+  <text x="800" y="119" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI','PingFang SC',sans-serif" font-size="20" fill="#e2e8f0">布尔盲注（差分确认）</text>
+  <text x="728" y="152" font-family="ui-monospace,SFMono-Regular,Menlo,monospace" font-size="16" fill="#64748b">真 payload 1000B ≈ 基线</text>
+  <text x="728" y="176" font-family="ui-monospace,SFMono-Regular,Menlo,monospace" font-size="16" fill="#64748b">假 payload  400B 显著偏离</text>
+  <rect x="722" y="192" width="396" height="76" rx="8" fill="#0b1220"/>
+  <text x="738" y="218" font-family="ui-monospace,SFMono-Regular,Menlo,monospace" font-size="16" fill="#5eead4">$ curl -sk --path-as-is \</text>
+  <text x="738" y="244" font-family="ui-monospace,SFMono-Regular,Menlo,monospace" font-size="16" fill="#5eead4">  'https://target.example.com/v?id=1…'</text>
+  <text x="728" y="316" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI','PingFang SC',sans-serif" font-size="16" fill="#94a3b8">二次确认 · 证据可核对 · 命令可复现</text>
 
-  <!-- 左列：技术栈透视读数 -->
-  <text x="30" y="150" font-family="-apple-system,'Segoe UI',sans-serif" font-size="13" fill="#64748b">技术栈透视</text>
-  <g font-family="ui-monospace,Consolas,monospace" font-size="13">
-    <rect x="24" y="162" width="168" height="30" rx="6" fill="#16233b"/><text x="36" y="182" fill="#5eead4">Nginx</text><text x="170" y="182" text-anchor="end" fill="#94a3b8">1.24.0</text>
-    <rect x="24" y="198" width="168" height="30" rx="6" fill="#16233b"/><text x="36" y="218" fill="#5eead4">PHP</text><text x="170" y="218" text-anchor="end" fill="#94a3b8">8.1.2</text>
-    <rect x="24" y="234" width="168" height="30" rx="6" fill="#16233b"/><text x="36" y="254" fill="#5eead4">MySQL</text><text x="170" y="254" text-anchor="end" fill="#94a3b8">8.0</text>
-    <rect x="24" y="270" width="168" height="30" rx="6" fill="#16233b"/><text x="36" y="290" fill="#5eead4">WordPress</text><text x="170" y="290" text-anchor="end" fill="#94a3b8">6.4</text>
-    <rect x="24" y="306" width="168" height="30" rx="6" fill="#16233b"/><text x="36" y="326" fill="#94a3b8">icon_hash</text><text x="170" y="326" text-anchor="end" fill="#fbbf24">-2133341160</text>
-  </g>
-
-  <!-- 右列：已验证发现（证据链卡片） -->
-  <text x="216" y="150" font-family="-apple-system,'Segoe UI',sans-serif" font-size="13" fill="#64748b">已验证发现（证据链）</text>
-  <rect x="210" y="162" width="646" height="174" rx="10" fill="#101b2f" stroke="#24365a"/>
-  <rect x="226" y="178" width="52" height="22" rx="4" fill="#7f1d1d"/>
-  <text x="252" y="193" text-anchor="middle" font-family="-apple-system,'Segoe UI',sans-serif" font-size="12" font-weight="700" fill="#fecaca">HIGH</text>
-  <text x="290" y="194" font-family="-apple-system,'Segoe UI',sans-serif" font-size="14" fill="#e2e8f0">布尔盲注（SQL 差分确认）</text>
-  <text x="226" y="220" font-family="ui-monospace,Consolas,monospace" font-size="12" fill="#64748b">param</text>
-  <text x="286" y="220" font-family="ui-monospace,Consolas,monospace" font-size="12" fill="#e2e8f0">id=1 AND 1=1 → 1000B ≈ 基线 · AND 1=2 → 400B 偏离</text>
-  <text x="226" y="242" font-family="ui-monospace,Consolas,monospace" font-size="12" fill="#64748b">signals</text>
-  <text x="286" y="242" font-family="ui-monospace,Consolas,monospace" font-size="12" fill="#94a3b8">状态码命中 + 词命中（双确认）</text>
-  <rect x="222" y="256" width="618" height="66" rx="8" fill="#0b1220"/>
-  <text x="236" y="278" font-family="ui-monospace,Consolas,monospace" font-size="12" fill="#5eead4">$ curl -sk --path-as-is \</text>
-  <text x="236" y="298" font-family="ui-monospace,Consolas,monospace" font-size="12" fill="#5eead4">  'https://target.example.com/v?id=1 AND 1=1'</text>
-  <text x="236" y="314" font-family="ui-monospace,Consolas,monospace" font-size="11" fill="#475569"># 一键复现 · 证据可核对 · 二次确认通过</text>
-
-  <!-- 底部模式条 -->
-  <g font-family="-apple-system,'Segoe UI',sans-serif" font-size="12" text-anchor="middle">
-    <rect x="24" y="356" width="100" height="28" rx="6" fill="#16233b"/><text x="74" y="374" fill="#94a3b8">quick</text>
-    <rect x="132" y="356" width="100" height="28" rx="6" fill="#16233b"/><text x="182" y="374" fill="#94a3b8">standard</text>
-    <rect x="240" y="356" width="100" height="28" rx="6" fill="#16233b"/><text x="290" y="374" fill="#94a3b8">deep</text>
-    <rect x="348" y="356" width="100" height="28" rx="6" fill="url(#teal)"/><text x="398" y="374" font-weight="700" fill="#06281f">full ●</text>
-    <rect x="456" y="356" width="100" height="28" rx="6" fill="#16233b"/><text x="506" y="374" fill="#94a3b8">assets</text>
-    <rect x="564" y="356" width="100" height="28" rx="6" fill="#16233b"/><text x="614" y="374" fill="#94a3b8">stealth</text>
-    <rect x="672" y="356" width="120" height="28" rx="6" fill="#16233b"/><text x="732" y="374" fill="#fbbf24">apocalypse</text>
-  </g>
-  <text x="856" y="420" text-anchor="end" font-family="-apple-system,'Segoe UI',sans-serif" font-size="11" fill="#475569">SiteLens 站点透视 · 验证型评估 · 只读无害</text>
+  <!-- 底部渐变线 -->
+  <rect x="0" y="344" width="1200" height="4" fill="url(#teal)" opacity=".7"/>
 </svg>
