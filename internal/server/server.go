@@ -227,6 +227,11 @@ func (s *Server) Run() error {
 		_ = srv.Shutdown(ctx)
 		close(done)
 	}()
+	// SEC-8 加固：非回环监听且未设 Token 时给出醒目警告
+	//（此时全部 /api/* 对所在网络开放，包括主动扫描与爆破能力）
+	if !strings.HasPrefix(s.cfg.Web.Listen, "127.0.0.1") && !strings.HasPrefix(s.cfg.Web.Listen, "localhost") && s.apiToken == "" {
+		log.Printf("警告：监听 %s 为非回环地址且未设置 API Token，全部 API 对所在网络开放（含主动扫描能力）。生产部署请设置 SLENS_API_TOKEN 或 web.api_token", s.cfg.Web.Listen)
+	}
 	log.Printf("SiteLens %s 监听 http://%s", Version, s.cfg.Web.Listen)
 	err := srv.ListenAndServe()
 	if errors.Is(err, http.ErrServerClosed) {
@@ -920,6 +925,7 @@ func (s *Server) hAuditDemo(w http.ResponseWriter, r *http.Request) {
 		"def login(user, pwd):",
 		"    if hashlib.md5(pwd).hexdigest() == ADMIN_PASSWORD:",
 		"        return True",
+		"    return False",
 		"",
 		"def load_config(path):",
 		"    return yaml." + "load(open(path))",

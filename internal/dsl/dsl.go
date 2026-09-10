@@ -62,10 +62,13 @@ func (v value) truth() (bool, error) {
 
 type node interface {
 	eval(e Env) (value, error)
-	// positive 报告该子树在给定取反奇偶下是否构成「正向命中依据」：
-	// 引用了 status_code/body/header 且不在奇数次取反之下。用于
-	// Convert 准入——纯排除式（如 !contains(host,...)）不转换为
-	// check，避免对任意响应恒真的空转模板。
+	// positive 报告该子树是否构成「正向命中依据」：引用了
+	// status_code/body/header 等目标变量、且不在任意次数取反之下。
+	// 注意：实现为保守判定——neg 参数仅在文档语义上表示「处于取反
+	// 之下」，notNode 一律返回 false（取反下的引用不作为正向依据），
+	// 不做奇偶累积。用于 Convert 准入——纯排除式（如
+	// !contains(host,...)）不转换为 check，避免对任意响应恒真的
+	// 空转模板。
 	positive(negated bool) bool
 }
 

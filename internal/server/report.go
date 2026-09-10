@@ -9,6 +9,23 @@ import (
 	"cnb.cool/feng-qiao/sitelens/internal/store"
 )
 
+// sevClass 严重度白名单映射：仅允许固定枚举进入 class 属性位与展示位，
+// 其余一律降级为 info（防御插件/模板/历史回灌注入自由串——SEC-4 加固）。
+func sevClass(sev string) string {
+	switch strings.ToLower(strings.TrimSpace(sev)) {
+	case "critical":
+		return "critical"
+	case "high":
+		return "high"
+	case "medium":
+		return "medium"
+	case "low":
+		return "low"
+	default:
+		return "info"
+	}
+}
+
 // htmlReport 渲染单次扫描的 HTML 报告（fmt=html 导出）。
 func htmlReport(rec *store.ScanRecord) string {
 	var b strings.Builder
@@ -60,7 +77,7 @@ func htmlReport(rec *store.ScanRecord) string {
 				u, _ := v["url"].(string)
 				ev, _ := v["evidence"].(string)
 				ad, _ := v["advice"].(string)
-				b.WriteString("<tr><td class=\"sev-" + esc(sev) + "\">" + esc(sev) + "</td><td>" + esc(tit) + "</td><td>" + esc(u) + "</td><td>" + esc(ev) + "</td><td>" + esc(ad) + "</td></tr>")
+				b.WriteString("<tr><td class=\"sev-" + sevClass(sev) + "\">" + sevClass(sev) + "</td><td>" + esc(tit) + "</td><td>" + esc(u) + "</td><td>" + esc(ev) + "</td><td>" + esc(ad) + "</td></tr>")
 			}
 			b.WriteString("</table>")
 		}
@@ -76,7 +93,7 @@ func htmlReport(rec *store.ScanRecord) string {
 				if v.KEV {
 					kev = "KEV!"
 				}
-				b.WriteString("<tr><td class=\"sev-" + esc(v.Severity) + "\">" + esc(v.SeverityZh) + "</td><td>" + esc(v.Tech) + "</td><td>" + esc(v.CVE) + "</td><td>" + esc(v.Name) + "</td><td>" + esc(v.Verdict) + "</td><td>" + kev + "</td></tr>")
+				b.WriteString("<tr><td class=\"sev-" + sevClass(v.Severity) + "\">" + sevClass(v.SeverityZh) + "</td><td>" + esc(v.Tech) + "</td><td>" + esc(v.CVE) + "</td><td>" + esc(v.Name) + "</td><td>" + esc(v.Verdict) + "</td><td>" + kev + "</td></tr>")
 			}
 			b.WriteString("</table>")
 		}
