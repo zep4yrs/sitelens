@@ -3,6 +3,7 @@ package modules
 import (
 	"fmt"
 	"net"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -67,10 +68,11 @@ func TestServiceProbeNoBanner(t *testing.T) {
 
 func TestServiceProbeCancel(t *testing.T) {
 	rows := []intel.ServiceFPRow{{Service: "s", Pattern: `^x`, Product: "p"}}
-	calls := 0
+	// race 提示：cancel 回调在 worker goroutine 内并发调用，计数须原子
+	var calls atomic.Int64
 	hits := ServiceProbe("127.0.0.1", rows, DefaultProbePorts, 100, 4, nil, func() bool {
-		calls++
-		return calls > 21
+		calls.Add(1)
+		return calls.Load() > 21
 	})
 	_ = hits // 取消路径不 panic 即可
 }
