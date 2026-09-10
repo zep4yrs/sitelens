@@ -1,20 +1,4 @@
-# CNB CI — SiteLens 站点透视
-#
-# 事件矩阵：
-#   main push / pull_request   → 引擎回归（gofmt / vet / test / -race / govulncheck / 前端 esc 测试）
-#   v* tag_push                → 构建发布产物并上传 Release 资产：
-#       1) Windows lite 安装包 zip + NSIS 安装器 Setup.exe（无情报库）
-#       2) Linux amd64 二进制 zip
-#       3) Windows full 完整版 zip + NSIS 安装器 Setup.exe（含情报库）
-#
-# 情报库方案：full 构建从**本仓库 v1.0.0 Release 私有资产**取回 intel_dump.json.gz
-#   （tools/release_fetch_asset.sh；CNB_TOKEN 对本仓库资产有读权限）。
-#   旧方案一（SITLENS_INTEL_DUMP base64 变量）与旧方案二（跨仓库 clone
-#   feng-qiao/sitelens-data）均已废弃——流水线内置 token 为本仓库作用域，
-#   对其他私有仓库无权限（第五轮审查定位：Repository Not Found 根因）。
-#   保密边界：intel_dump 不入任何 git 仓库；Release 资产仅本私有仓库
-#   协作者可见。Release 上传使用流水线内置 CNB_TOKEN；上传失败即阶段失败
-#   （"绿了但产物缺失"的假绿比红更糟——lite/linux 曾因缺 jq + 吞错静默丢产物）。
+
 
 .main: &regression
   docker:
