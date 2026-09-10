@@ -59,7 +59,9 @@ func extractZip(f io.ReaderAt, size int64, dir string, maxFileBytes int64) error
 		maxFileBytes = 8 << 20
 	}
 	const maxTotalBytes = 400 << 20 // 累计解压预算：400MB（压缩炸弹防护）
+	const maxEntries = 2000         // 条目数上限：防海量小文件 IO/inode 放大
 	var totalBytes int64
+	entries := 0
 	for _, zf := range zr.File {
 		name := filepath.Clean(zf.Name)
 		if strings.Contains(name, "..") || filepath.IsAbs(name) {
@@ -70,11 +72,19 @@ func extractZip(f io.ReaderAt, size int64, dir string, maxFileBytes int64) error
 			continue
 		}
 		if zf.FileInfo().IsDir() {
+			entries++
+			if entries > maxEntries {
+				return fmt.Errorf("条目数超过上限（>%d），已中止", maxEntries)
+			}
 			_ = os.MkdirAll(filepath.Join(dir, name), 0o755)
 			continue
 		}
 		if uint64(maxFileBytes) < zf.UncompressedSize64 {
 			continue // 单文件超限
+		}
+		entries++
+		if entries > maxEntries {
+			return fmt.Errorf("条目数超过上限（>%d），已中止", maxEntries)
 		}
 		totalBytes += int64(zf.UncompressedSize64)
 		if totalBytes > maxTotalBytes {
