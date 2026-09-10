@@ -48,7 +48,8 @@ func loadTechMeta(cfg *config.Config) (techMeta, error) {
 	return techMeta{cats: cats, count: len(box.Technologies)}, nil
 }
 
-// extractZip zip 安全解压：拒绝绝对路径与 .. 穿越，单文件大小受限。
+// extractZip zip 安全解压：拒绝绝对路径与 .. 穿越、跳过符号链接条目、
+// 单文件与累计解压总量双重受限（防压缩炸弹撑爆磁盘）。
 func extractZip(f io.ReaderAt, size int64, dir string, maxFileBytes int64) error {
 	zr, err := zip.NewReader(f, size)
 	if err != nil {
@@ -57,16 +58,29 @@ func extractZip(f io.ReaderAt, size int64, dir string, maxFileBytes int64) error
 	if maxFileBytes <= 0 {
 		maxFileBytes = 8 << 20
 	}
+	const maxTotalBytes = 400 << 20 // 累计解压预算：400MB（压缩炸弹防护）
+	var totalBytes int64
 	for _, zf := range zr.File {
 		name := filepath.Clean(zf.Name)
 		if strings.Contains(name, "..") || filepath.IsAbs(name) {
 			continue // zip-slip 防护
 		}
-		target := filepath.Join(dir, name)
-		if zf.FileInfo().IsDir() {
-			_ = os.MkdirAll(target, 0o755)
+		// 符号链接条目跳过：防写入后成为越界读跳板
+		if zf.Mode()&os.ModeSymlink != 0 {
 			continue
 		}
+		if zf.FileInfo().IsDir() {
+			_ = os.MkdirAll(filepath.Join(dir, name), 0o755)
+			continue
+		}
+		if uint64(maxFileBytes) < zf.UncompressedSize64 {
+			continue // 单文件超限
+		}
+		totalBytes += int64(zf.UncompressedSize64)
+		if totalBytes > maxTotalBytes {
+			return fmt.Errorf("累计解压量超限（>%dMB），已中止", maxTotalBytes/(1<<20))
+		}
+		target := filepath.Join(dir, name)
 		if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
 			continue
 		}
@@ -74,7 +88,8 @@ func extractZip(f io.ReaderAt, size int64, dir string, maxFileBytes int64) error
 		if err != nil {
 			continue
 		}
-		dst, err := os.Create(target)
+		// O_EXCL：已存在文件不覆盖（防与其他条目竞态覆盖）
+		dst, err := os.OpenFile(target, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
 		if err != nil {
 			rc.Close()
 			continue
