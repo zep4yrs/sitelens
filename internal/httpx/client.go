@@ -121,6 +121,20 @@ func (c *Client) newRequest(method, rawURL string) (*http.Request, error) {
 	return req, nil
 }
 
+// SetCookie 运行时注入会话 Cookie（登录流捕获后供整次扫描复用）。
+func (c *Client) SetCookie(cookie string) {
+	c.mu.Lock()
+	c.cookie = cookie
+	c.mu.Unlock()
+}
+
+// SetTimeout 运行时调整单请求超时。
+func (c *Client) SetTimeout(d time.Duration) {
+	c.mu.Lock()
+	c.http.Timeout = d
+	c.mu.Unlock()
+}
+
 // GetFollow 手动跟随重定向的 GET：每一跳都过 target.Validate SSRF 校验
 // （协议白名单 + DNS 解析 + 私网拒绝）。返回最终到达的响应。
 func (c *Client) GetFollow(rawURL string) (*Response, error) {

@@ -2,6 +2,18 @@
 
 ## 未发布（v1.5，向 2.0 验证器靠齐）
 
+- **认证深化（P2）**：auth 配置段（login_url/user_field/pass_field/
+  凭证/成功标记），扫描前自动登录并捕获会话 Cookie 全扫描复用
+  （爬虫/DAST/目录探测共用认证态）；httpx 新增 SetCookie/SetTimeout
+- **布尔差分盲注（P1）**：boolBlind——真 payload（AND 1=1）响应与基线
+  相似 + 假 payload（AND 1=2）显著偏离，双向差分 + 双确认；数字型/
+  字符串型双 payload；config dast.bool_blind 默认开。修复尺寸相似度
+  整数除法截断（10.75% 被算成 10%）
+- **SSRF 出带回调（P4）**：内置自托管 beacon（/b/<128 位随机 token>，
+  进程内注册表），dast 把 beacon 地址注入候选参数，目标回连即出带确认；
+  默认关（ssrf.beacon_enabled），base 指向目标可达的扫描器地址
+- **靶场回归门禁（P3）**：tools/regression_nightly.sh——起农场→
+  认证态矩阵跑批→零误报 + 真实命中双断言→拆场，退出码接入 CI
 - **证据链（2.0 地基，第一块）**：每条验证发现新增四件套——重放请求文本
   （HTTP 报文形态）、响应快照（状态码/尺寸/命中正文摘要）、通道命中信号明细
   （词/正则/头/dsl 逐项）、curl 一键复现命令（POSIX 单引号转义，与引擎

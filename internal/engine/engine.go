@@ -11,6 +11,8 @@ import (
 	"sync"
 	"time"
 
+	"cnb.cool/feng-qiao/sitelens/internal/authn"
+	"cnb.cool/feng-qiao/sitelens/internal/beacon"
 	"cnb.cool/feng-qiao/sitelens/internal/checks"
 	"cnb.cool/feng-qiao/sitelens/internal/config"
 	"cnb.cool/feng-qiao/sitelens/internal/crawler"
@@ -139,6 +141,18 @@ func (e *Engine) Scan(rawURL string, opts Options, onProgress progress, cancel f
 	onProgress(5, "校验目标："+baseURL)
 
 	client := e.newClient(opts)
+
+	// 认证深化：配置了登录流则以凭证登录，捕获的会话 Cookie 供
+	// 整次扫描（爬虫/DAST/目录探测）复用；用户显式给的 Cookie 优先
+	if e.cfg.Auth.LoginURL != "" && opts.AuthCookie == "" {
+		onProgress(8, "认证登录…")
+		if cookie, ok, msg := authn.Login(client, e.cfg.Auth); ok {
+			client.SetCookie(cookie)
+			onProgress(9, "认证成功："+msg)
+		} else {
+			onProgress(9, "认证未确认："+msg)
+		}
+	}
 
 	// 2) 采集首页
 	t0 := time.Now()
@@ -337,6 +351,12 @@ func (e *Engine) Scan(rawURL string, opts Options, onProgress progress, cancel f
 	// 8) DAST：参数级探测（JS 攻击面已在爬取前提取，端点回灌了爬虫种子）
 	if opts.DAST {
 		onProgress(85, "参数级 DAST 探测…")
+		// SSRF 出带：配置启用且扫描器 beacon 可被目标触达时才生效
+		beaconBase := ""
+		if e.cfg.Ssrf.BeaconEnabled && e.cfg.Ssrf.BeaconBase != "" {
+			beacon.Reset()
+			beaconBase = strings.TrimRight(e.cfg.Ssrf.BeaconBase, "/")
+		}
 		r := dast.New(dastFetcher{client}, dast.Options{
 			MaxParams:        e.cfg.DAST.MaxParams,
 			TimeBlind:        e.cfg.DAST.TimeBlind,
@@ -344,6 +364,8 @@ func (e *Engine) Scan(rawURL string, opts Options, onProgress progress, cancel f
 			BlindThresholdMS: e.cfg.DAST.BlindThresholdMS,
 			SleepSeconds:     e.cfg.DAST.SleepSeconds,
 			MaxURLLen:        e.cfg.DAST.MaxURLLen,
+			BeaconBase:       beaconBase,
+			MaxProbes:        e.cfg.Ssrf.MaxProbes,
 		})
 		for _, f := range r.RunForms(dastFormTargets) {
 			res.Verified = append(res.Verified, verifiedMap(map[string]any{
