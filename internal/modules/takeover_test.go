@@ -2,6 +2,7 @@ package modules
 
 import (
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"cnb.cool/feng-qiao/sitelens/internal/config"
@@ -64,18 +65,18 @@ func TestTakeoverProbeDoubleCondition(t *testing.T) {
 func TestTakeoverProbeCap(t *testing.T) {
 	cfg := testActiveCfg()
 	cfg.TakeoverMax = 3
-	probed := 0
+	var probed atomic.Int64
 	res := TakeoverProbeWith([]string{"1.example.com", "2.example.com", "3.example.com",
 		"4.example.com", "5.example.com"}, cfg,
-		func(done, total int, msg string) { probed++ },
+		func(done, total int, msg string) { probed.Add(1) },
 		nil,
 		func(string) (string, error) { return "x.github.io.", nil },
 		func(string) (int, string, error) { return 404, "There isn't a GitHub Pages site here.", nil })
 	if len(res) != 3 {
 		t.Fatalf("TakeoverMax=3 应只探测 3 个: %d", len(res))
 	}
-	if probed != 3 {
-		t.Fatalf("进度回调次数应等于探测数 3: %d", probed)
+	if probed.Load() != 3 {
+		t.Fatalf("进度回调次数应等于探测数 3: %d", probed.Load())
 	}
 }
 
