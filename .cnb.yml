@@ -7,12 +7,13 @@
 #       2) Linux amd64 二进制 zip
 #       3) Windows full 完整版 zip + NSIS 安装器 Setup.exe（含情报库）
 #
-# 情报库方案：full 构建从私有数据仓库 feng-qiao/sitelens-data 拉取
-#   intel_dump.json.gz（使用流水线内置 CNB_TOKEN，同组织私有仓库可读）。
-#   旧的 SITLENS_INTEL_DUMP base64 流水线变量方案已废弃。
-#   保密边界说明：intel_dump 仍不入本仓库 git；full 产物只上传到本私有仓库的
-#   Release 资产（仅仓库协作者可见），不会出现在任何公开位置。
-#   Release 上传使用流水线内置 CNB_TOKEN；上传失败不阻塞流水线。
+# 情报库方案：full 构建从**本仓库 v1.0.0 Release 私有资产**取回 intel_dump.json.gz
+#   （tools/release_fetch_asset.sh；CNB_TOKEN 对本仓库资产有读权限）。
+#   旧方案一（SITLENS_INTEL_DUMP base64 变量）与旧方案二（跨仓库 clone
+#   feng-qiao/sitelens-data）均已废弃——流水线内置 token 为本仓库作用域，
+#   对其他私有仓库无权限（第五轮审查定位：Repository Not Found 根因）。
+#   保密边界：intel_dump 不入任何 git 仓库；Release 资产仅本私有仓库
+#   协作者可见。Release 上传使用流水线内置 CNB_TOKEN；上传失败不阻塞流水线。
 
 .main: &regression
   docker:
@@ -75,11 +76,12 @@ main:
         - name: build
           script:
             - |
-              # 从私有数据仓库拉取情报库（CNB 内置 token 对同组织私有仓库可读）
-              git clone --depth 1 "https://$CNB_TOKEN@cnb.cool/feng-qiao/sitelens-data.git" /tmp/datarepo
-              apt-get update -qq && apt-get install -y -qq zip nsis >/dev/null
-              mkdir -p SiteLens/data
-              cp /tmp/datarepo/intel_dump.json.gz SiteLens/data/intel_dump.json.gz
+              # 情报库来自本仓库 v1.0.0 Release 私有资产（intel_dump 不入 git；
+              # 跨仓库 clone sitelens-data 的旧方案因流水线 token 作用域不足已废弃）。
+              # 拉取失败则本阶段明确失败，绝不产出缺情报库的"伪 full"包。
+              apt-get update -qq && apt-get install -y -qq zip nsis jq >/dev/null
+              mkdir -p SiteLens/data dist
+              bash tools/release_fetch_asset.sh v1.0.0 intel_dump.json.gz SiteLens/data/intel_dump.json.gz
               cp -r data/go data/wordlists SiteLens/data/ 2>/dev/null || true
               cp data/affected_ranges.json SiteLens/data/ 2>/dev/null || true
               GOOS=windows GOARCH=amd64 go build -ldflags "-s -w" -o SiteLens/sitelens.exe ./cmd/sitelens
