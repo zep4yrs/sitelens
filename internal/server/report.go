@@ -9,8 +9,9 @@ import (
 	"cnb.cool/feng-qiao/sitelens/internal/store"
 )
 
-// sevClass 严重度白名单映射：仅允许固定枚举进入 class 属性位与展示位，
+// sevClass 严重度白名单映射：仅允许固定枚举进入 class 属性位，
 // 其余一律降级为 info（防御插件/模板/历史回灌注入自由串——SEC-4 加固）。
+// 展示位（SeverityZh 中文原文）不经此函数，直接 esc 输出。
 func sevClass(sev string) string {
 	switch strings.ToLower(strings.TrimSpace(sev)) {
 	case "critical":

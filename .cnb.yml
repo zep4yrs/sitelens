@@ -21,6 +21,10 @@
         - gofmt -l internal/ cmd/ && test -z "$(gofmt -l internal/ cmd/)"
         - go vet ./...
         - go test -count=1 ./internal/... ./cmd/...
+        - go test -race -count=1 ./internal/... # 实抓过 2 次 race（测试桩并发），列为阻断门禁
+    - name: 依赖漏洞扫描
+      script:
+        - go install golang.org/x/vuln/cmd/govulncheck@latest && govulncheck ./...
 
 main:
   push:

@@ -152,6 +152,8 @@ type bodyFetcher func(url string) (int, string, error)
 
 // TakeoverProbe 生产入口：逐子域 CNAME + 特征页判定，并发受限，
 // 探测总量受 cfg.TakeoverMax 封顶（0=默认 50）。
+// 注意：progress 回调会在 worker goroutine 内被并发调用——调用方传入
+// 的闭包须自行保证并发安全（如原子计数器）。
 func TakeoverProbe(client *httpx.Client, subdomains []string,
 	cfg config.ActiveConfig, progress func(done, total int, msg string),
 	cancel func() bool) []TakeoverHit {
