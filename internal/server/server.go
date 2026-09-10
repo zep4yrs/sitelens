@@ -4,6 +4,7 @@ package server
 
 import (
 	"context"
+	crand "crypto/rand"
 	"crypto/subtle"
 	"encoding/csv"
 	"encoding/json"
@@ -993,13 +994,21 @@ func newID() string {
 	return fmt.Sprintf("%08x%s", time.Now().UnixNano()&0xffffffff, randHex(4))
 }
 
+// randHex 加密随机十六进制串（唯一性后缀；审计 STD-2：时间派生熵低且名不符实）。
 func randHex(n int) string {
-	const hexDigits = "0123456789abcdef"
 	b := make([]byte, n)
-	for i := range b {
-		b[i] = hexDigits[time.Now().UnixNano()>>uint(i*3)&0xf]
+	if _, err := crand.Read(b); err != nil {
+		// crypto/rand 失败极罕见；退化为时间戳派生并保留原语义
+		for i := range b {
+			b[i] = byte(time.Now().UnixNano() >> uint(i*3) & 0xf)
+		}
 	}
-	return string(b)
+	const hexDigits = "0123456789abcdef"
+	out := make([]byte, n)
+	for i := range out {
+		out[i] = hexDigits[b[i]&0xf]
+	}
+	return string(out)
 }
 
 func techMap(res *engine.Result) map[string]engine.Tech {
