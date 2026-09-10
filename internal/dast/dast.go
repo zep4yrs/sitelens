@@ -35,6 +35,7 @@ var sqlErrors = []string{
 type Options struct {
 	MaxParams        int   // 最多探测的参数个数
 	TimeBlind        bool  // 是否做时间盲注（每参数多 2 个请求）
+	BoolBlind        bool  // 是否做布尔差分盲注（每参数 5 个请求）
 	BlindThresholdMS int64 // 时间盲注延迟判定阈值（毫秒）
 	SleepSeconds     int   // 注入的 SLEEP 秒数
 	MaxURLLen        int   // 探测 URL 长度上限，超过则跳过
@@ -45,6 +46,7 @@ func DefaultOptions() Options {
 	return Options{
 		MaxParams:        24,
 		TimeBlind:        true,
+		BoolBlind:        true,
 		BlindThresholdMS: 3500,
 		SleepSeconds:     4,
 		MaxURLLen:        2048,
@@ -168,6 +170,11 @@ func (r *Runner) Run(links []string) []Finding {
 
 		if r.opts.TimeBlind && !r.stopped() {
 			if f := r.timeBlind(tgt, &done, total); f != nil {
+				hits = append(hits, *f)
+			}
+		}
+		if r.opts.BoolBlind && !r.stopped() {
+			if f := r.boolBlind(tgt, &done, total); f != nil {
 				hits = append(hits, *f)
 			}
 		}
