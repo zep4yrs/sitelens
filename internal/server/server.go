@@ -25,6 +25,7 @@ import (
 	"time"
 
 	"cnb.cool/feng-qiao/sitelens/internal/audit"
+	"cnb.cool/feng-qiao/sitelens/internal/beacon"
 	"cnb.cool/feng-qiao/sitelens/internal/checks"
 	"cnb.cool/feng-qiao/sitelens/internal/config"
 	"cnb.cool/feng-qiao/sitelens/internal/engine"
@@ -174,6 +175,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/loginbrute", redirect("/app#loginbrute"))
 	mux.HandleFunc("/verified", redirect("/history#verified"))
 	mux.HandleFunc("/js/", s.serveAssetPrefix)
+	mux.HandleFunc("/b/", s.hBeacon)
 
 	// API
 	mux.HandleFunc("GET /api/version", s.hVersion)
@@ -697,6 +699,14 @@ func (s *Server) hExport(w http.ResponseWriter, r *http.Request) {
 	default:
 		writeJSON(w, 400, map[string]any{"error": "未知格式"})
 	}
+}
+
+// hBeacon SSRF 出带回调接收端：记录路径随机令牌（/b/<token>）。
+// 无状态、无敏感数据；token 128 位随机不可预测，仅供 dast 出带判定。
+func (s *Server) hBeacon(w http.ResponseWriter, r *http.Request) {
+	beacon.Hit(strings.TrimPrefix(r.URL.Path, "/b/"))
+	w.Header().Set("Cache-Control", "no-store")
+	_, _ = w.Write([]byte("ok"))
 }
 
 func (s *Server) hDiff(w http.ResponseWriter, r *http.Request) {

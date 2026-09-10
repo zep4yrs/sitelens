@@ -28,6 +28,26 @@ type Config struct {
 	Store      StoreConfig      `yaml:"store"`
 	Active     ActiveConfig     `yaml:"active"`
 	Modules    ModulesConfig    `yaml:"modules"`
+	Auth       AuthConfig       `yaml:"auth"`
+	Ssrf       SsrfConfig       `yaml:"ssrf"`
+}
+
+// AuthConfig 登录流认证：扫描前以配置凭证登录，会话 Cookie 全扫描复用。
+type AuthConfig struct {
+	LoginURL      string `yaml:"login_url"`  // 登录端点（空 = 禁用认证态）
+	UserField     string `yaml:"user_field"` // 用户名字段名
+	PassField     string `yaml:"pass_field"` // 密码字段名
+	Username      string `yaml:"username"`
+	Password      string `yaml:"password"`
+	SuccessMarker string `yaml:"success_marker"` // 响应正文成功标记（可选）
+}
+
+// SsrfConfig 出带回调（自托管 beacon）：目标侧回连扫描器内置 beacon
+// 端点以确认 SSRF 可达。beacon_base 形如 http://<扫描器局域网IP>:5412。
+type SsrfConfig struct {
+	BeaconEnabled bool   `yaml:"beacon_enabled"` // 默认关（主动能力折中）
+	BeaconBase    string `yaml:"beacon_base"`    // 目标可达的扫描器基地址
+	MaxProbes     int    `yaml:"max_probes"`     // 单扫描探测参数上限
 }
 
 // StoreConfig 历史持久化（文件式，替代 Python 版的 PG 依赖）。
