@@ -340,6 +340,7 @@ func (e *Engine) Scan(rawURL string, opts Options, onProgress progress, cancel f
 		r := dast.New(dastFetcher{client}, dast.Options{
 			MaxParams:        e.cfg.DAST.MaxParams,
 			TimeBlind:        e.cfg.DAST.TimeBlind,
+			BoolBlind:        e.cfg.DAST.BoolBlind,
 			BlindThresholdMS: e.cfg.DAST.BlindThresholdMS,
 			SleepSeconds:     e.cfg.DAST.SleepSeconds,
 			MaxURLLen:        e.cfg.DAST.MaxURLLen,

@@ -88,6 +88,7 @@ type CrawlerConfig struct {
 type DASTConfig struct {
 	MaxParams        int   `yaml:"max_params"`         // 最多探测的参数个数
 	TimeBlind        bool  `yaml:"time_blind"`         // 时间盲注开关
+	BoolBlind        bool  `yaml:"bool_blind"`         // 布尔差分盲注开关
 	BlindThresholdMS int64 `yaml:"blind_threshold_ms"` // 延迟判定阈值（毫秒）
 	SleepSeconds     int   `yaml:"sleep_seconds"`      // 注入的 SLEEP 秒数
 	MaxURLLen        int   `yaml:"max_url_len"`        // 探测 URL 长度上限
@@ -186,6 +187,7 @@ func Default() *Config {
 		DAST: DASTConfig{
 			MaxParams:        24,
 			TimeBlind:        true,
+			BoolBlind:        true,
 			BlindThresholdMS: 3500,
 			SleepSeconds:     4,
 			MaxURLLen:        2048,
