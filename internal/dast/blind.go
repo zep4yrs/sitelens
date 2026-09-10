@@ -62,8 +62,10 @@ func (r *Runner) boolBlind(tgt Target, done *int, total int) *Finding {
 		Severity: "high",
 		URL:      tgt.URL,
 		Param:    tgt.Param,
+		Payload:  tPayload,
 		Evidence: fmt.Sprintf("真payload 尺寸 %dB 与基线 %dB 相似，假payload %dB 显著偏离（双确认）",
 			sizeT, size0, sizeF),
+		Replay: curlReplay(uT),
 		Advice: "参数值拼接入 SQL 语句已被差分证实，改用参数化查询/预编译语句",
 	}
 }

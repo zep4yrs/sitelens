@@ -1,8 +1,0 @@
-scan:
-  resolve: false            # 靶场矩阵专用：允许私网/环回目标（DVWA 容器）
-  rate_interval_ms: 0
-  timeout_sec: 12
-web:
-  listen: 127.0.0.1:5090
-store:
-  data_dir: /var/sl-e2e/store
