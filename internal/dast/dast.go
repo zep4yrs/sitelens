@@ -166,6 +166,8 @@ func (r *Runner) Run(links []string) []Finding {
 				continue
 			}
 			if hit := judge(probe.kind, resp, baseBody, tgt); hit != nil {
+				hit.Payload = probe.value
+				hit.Replay = curlReplay(probeURL)
 				hits = append(hits, *hit)
 			}
 		}
@@ -177,6 +179,11 @@ func (r *Runner) Run(links []string) []Finding {
 		}
 		if r.opts.BoolBlind && !r.stopped() {
 			if f := r.boolBlind(tgt, &done, total); f != nil {
+				hits = append(hits, *f)
+			}
+		}
+		if r.opts.BoolBlind && !r.stopped() {
+			if f := r.deserProbe(tgt, &done, total); f != nil {
 				hits = append(hits, *f)
 			}
 		}
@@ -378,6 +385,13 @@ type Finding struct {
 	Param    string `json:"param"`
 	Evidence string `json:"evidence"`
 	Advice   string `json:"advice"`
+	Payload  string `json:"payload,omitempty"` // 注入的探针值（证据链）
+	Replay   string `json:"replay,omitempty"`  // curl 一键复现命令（证据链）
+}
+
+// curlReplay DAST 探针的复现命令（GET 语义，与探测行为一致）。
+func curlReplay(u string) string {
+	return "curl -sk --path-as-is '" + strings.ReplaceAll(u, "'", `'\''`) + "'"
 }
 
 // collectParams 从爬取到的链接收集待探测参数：按「主机+路径+参数名」去重，上限 cap。
