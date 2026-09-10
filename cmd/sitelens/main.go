@@ -35,6 +35,8 @@ func main() {
   sitelens [flags] migrate-pg    迁移 Python 版 PG 扫描历史到本地文件库
   sitelens [flags] update-nuclei [url]
                                  镜像官方 Nuclei 模板库到 nuclei_dir
+  sitelens [flags] update-afrog [url]
+                                 镜像 afrog 社区 POC 库到 nuclei_dir/afrog
   sitelens [flags] update-osv    从 OSV.dev 同步受影响区间与 CVSS 评分
 
 配置：%s（缺省用内置最佳实践默认值）
@@ -73,6 +75,8 @@ func main() {
 		os.Exit(updateOSVCommand(cfg, 8))
 	case "update-nuclei":
 		os.Exit(updateNucleiCommand(cfg, flag.Arg(1)))
+	case "update-afrog":
+		os.Exit(updateAfrogCommand(cfg, flag.Arg(1)))
 	case "migrate-pg":
 		loadEnvFile(*envFile)
 		os.Exit(migratePGCommand(*cfgPath))

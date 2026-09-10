@@ -31,6 +31,8 @@ type ruleChannels struct {
 		Content []string `json:"content"` // 内联脚本正则组
 	} `json:"scripts"`
 	Dom []string `json:"dom"` // DOM 选择器（暂不实现，保留通道）
+
+	IconHash []int64 `json:"icon_hash"` // FOFA icon_hash（favicon mmh3，见 favicon.go）
 }
 
 // unmarshalRules 容错解析规则：整体直解失败时对 html 通道降级重试。
@@ -52,7 +54,8 @@ func unmarshalRules(raw json.RawMessage) (*ruleChannels, bool) {
 			Src     []string `json:"src"`
 			Content []string `json:"content"`
 		} `json:"scripts"`
-		Dom []string `json:"dom"`
+		Dom      []string `json:"dom"`
+		IconHash []int64  `json:"icon_hash"`
 	}
 	if err := json.Unmarshal(raw, &loose); err != nil {
 		return nil, false
@@ -63,6 +66,7 @@ func unmarshalRules(raw json.RawMessage) (*ruleChannels, bool) {
 	rc.HTML = loose.HTML.HTML
 	rc.Dom = append(loose.Dom, loose.HTML.DOM...)
 	rc.Scripts = loose.Scripts
+	rc.IconHash = loose.IconHash
 	return rc, true
 }
 
@@ -70,14 +74,15 @@ func unmarshalRules(raw json.RawMessage) (*ruleChannels, bool) {
 // 纯字面量模式走 strings.Contains 快路径（指纹库大多数模式如此），
 // 仅带正则元字符的模式编译为 regexp —— 单页匹配成本的数量级优化。
 type compiledTech struct {
-	tech    *Technology
-	headers map[string][]pattern
-	cookies []pattern
-	meta    map[string]*regexp.Regexp
-	html    []pattern
-	src     []pattern
-	inline  []pattern
-	usable  bool // 至少存在一个可用通道
+	tech       *Technology
+	headers    map[string][]pattern
+	cookies    []pattern
+	meta       map[string]*regexp.Regexp
+	html       []pattern
+	src        []pattern
+	inline     []pattern
+	iconHashes []int64
+	usable     bool // 至少存在一个可用通道
 }
 
 // pattern 字面量或正则的单个匹配模式。
@@ -240,9 +245,10 @@ func loadFrom(data json.RawMessage) ([]*compiledTech, error) {
 		ct.html = compilePats(rules.HTML)
 		ct.src = compilePats(rules.Scripts.Src)
 		ct.inline = compilePats(rules.Scripts.Content)
+		ct.iconHashes = rules.IconHash
 		ct.usable = len(ct.headers) > 0 || len(ct.cookies) > 0 ||
 			len(ct.meta) > 0 || len(ct.html) > 0 ||
-			len(ct.src) > 0 || len(ct.inline) > 0
+			len(ct.src) > 0 || len(ct.inline) > 0 || len(ct.iconHashes) > 0
 		if ct.usable {
 			out = append(out, ct)
 		}
@@ -336,6 +342,14 @@ func (ct *compiledTech) match(ev *Evidence) (string, string, bool) {
 					return fmt.Sprintf("内联JS %s", truncate(text, 40)),
 						versionFromMatch(subs), true
 				}
+			}
+		}
+	}
+	// icon_hash 通道：favicon mmh3 指纹（0 = 未采集，不参与匹配）
+	if len(ct.iconHashes) > 0 && ev.FaviconHash != 0 {
+		for _, h := range ct.iconHashes {
+			if h == ev.FaviconHash {
+				return fmt.Sprintf("icon_hash=%d", ev.FaviconHash), "", true
 			}
 		}
 	}

@@ -520,7 +520,7 @@ function renderResult(r, scanId) {
   var titles = { active_fp: "主动路径指纹", dir_scan: "目录探测", subdomain: "子域名",
                  service: "端口服务", netsec: "TLS / DNS 安全", weak_audit: "登录爆破结果",
                  webshell: "WebShell 路径探测", jsmap: "JS 攻击面", dast: "DAST 检测",
-                 passive: "被动安全检测" };
+                 passive: "被动安全检测", bypass: "403 绕过探测", dir: "目录探测" };
   Object.keys(ex).forEach(function (key) {
     var items = ex[key] || [];
     html += '<div class="sec-title">' + esc(titles[key] || key) +
@@ -542,7 +542,8 @@ function exportButtons() {
   return '<button class="btn ghost small" onclick="exportAs(\'json\')">JSON</button>' +
     '<button class="btn ghost small" onclick="exportAs(\'csv\')">明细 CSV</button>' +
     '<button class="btn ghost small" onclick="exportAs(\'wide\')">宽表 CSV</button>' +
-    '<button class="btn ghost small" onclick="exportAs(\'html\')">HTML 报告</button>';
+    '<button class="btn ghost small" onclick="exportAs(\'html\')">HTML 报告</button>' +
+    '<button class="btn ghost small" onclick="exportAs(\'md\')">MD 报告</button>';
 }
 window.exportAs = function (fmt) {
   if (currentScanId) location.href = "/api/export/" + currentScanId + "?fmt=" + fmt;

@@ -1,5 +1,32 @@
 # 更新日志
 
+## 未发布（v1.0.1 候选，2026-09-10）
+
+- **403/401 绕过探测升级**（吸收同类作品思路后重设计）：目录探测命中 403 时
+  从"单次伪造来源头重试"升级为变体表——路径变异（尾斜杠/点段/双斜杠/..;/
+  尾空格/尾点编码）× 信任头（X-Forwarded-For/Host、Client-IP、
+  X-Custom-IP-Authorization、Referer）× 改写头（X-Original-URL/X-Rewrite-URL，
+  请求根路径+声明真实路径，正文含路径段关键词且异于根页才算）× 只读方法
+  （HEAD/OPTIONS）。命中技术记入 PageHit.bypass，可绕过路径独立成
+  extras.bypass 区块。无害化红线：仅 GET/HEAD/OPTIONS，不发写方法；
+  单扫描绕过请求总量硬上限 60。防御强化：path/header 变体命中须异于根页
+  尺寸（catch-all 站点回根页不算绕过）
+- **favicon mmh3 指纹（FOFA icon_hash 通道）**：murmur3 x86_32 纯 Go 实现
+  （与官方 mmh3 C 实现逐位锚定）+ FOFA base64 换行语义（codecs.encode
+  等价，76 字符换行）；指纹规则新增 icon_hash 通道，内置 GitLab/Grafana/
+  Jenkins/Tomcat/WordPress 五条真实哈希；引擎每扫描采集一次 /favicon.ico
+- **模板漏斗三前端**：path 形态（原有）+ **raw 请求形态**（官方 nuclei 库
+  大量模板/新版 afrog/TscanPlus POC——此前全部静默拒收）+ **afrog 经典
+  形态**（rules+expression，纯 && 链同请求合并/纯 || 链拆分/混合逻辑拒收，
+  多请求 AND 链无法诚实降为单请求 → 宁少报拒收）。修复 path 字段 string
+  单值写法被 yaml 层整模板拒收的真实漏检面（strList 双形态兼容）。
+  索引缓存 schema v4→v5
+- **update-afrog 子命令**：镜像 afrog 社区 POC 库（codeload zip）到
+  nuclei_dir/afrog，zip-slip 防御 + 条目/单文件双上限
+- **报告导出新增 Markdown 格式**（/api/export/{id}?fmt=md，历史页与结果页
+  同步加按钮）；修复 lite/linux 阶段缺 jq 上传静默失败（CI 假绿）与
+  full 阶段情报库改源（本仓库 Release 私有资产自取）
+
 ## v1.0.0（2026-09-09，正式版）
 
 - **DVWA 官方镜像认证扫描实测**（ghcr 双容器 + 认证断言门）：full 模式

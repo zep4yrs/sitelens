@@ -42,7 +42,8 @@ type Entry struct {
 // cacheSchema 索引缓存格式版本——格式变更时递增以强制重建
 // （历史缓存中 Tags 全空，无法通过条目数区分新旧格式）。
 // v4：dsl 安全子集接入 + RegexBody 装配修复，转换结果变化。
-const cacheSchema = 4
+// v5：raw 请求形态 + afrog 经典形态接入，同批文件可转换面扩大。
+const cacheSchema = 5
 
 type cacheFile struct {
 	Schema  int     `json:"schema"`
@@ -93,7 +94,7 @@ func Index(dir, cachePath string) ([]Entry, error) {
 		if rerr2 != nil {
 			continue
 		}
-		checks := Convert(data)
+		checks := convertAny(data)
 		if len(checks) == 0 {
 			continue // 漏斗淘汰：只把可运行的模板纳入调度全集
 		}
@@ -281,9 +282,29 @@ type tplMatcher struct {
 	Condition string   `yaml:"condition"`
 }
 
+// strList 兼容 path 的两种 YAML 形态：单值字符串与字符串列表。
+// 官方 nuclei 库两种写法都大量存在——此前仅声明 []string，把全部
+// string 单值写法的模板在 yaml 解析层静默拒收（真实漏检面，本轮修复）。
+type strList []string
+
+// UnmarshalYAML 标量收成单元素列表，序列收成列表。
+func (s *strList) UnmarshalYAML(value *yaml.Node) error {
+	if value.Kind == yaml.ScalarNode {
+		*s = strList{value.Value}
+		return nil
+	}
+	var out []string
+	if err := value.Decode(&out); err != nil {
+		return err
+	}
+	*s = out
+	return nil
+}
+
 type tplHTTP struct {
 	Method            string            `yaml:"method"`
-	Path              []string          `yaml:"path"`
+	Path              strList           `yaml:"path"`
+	Raw               []string          `yaml:"raw"` // HTTP 报文形态（官方库/afrog/TscanPlus 常用，列表）
 	Body              string            `yaml:"body"`
 	Headers           map[string]string `yaml:"headers"`
 	MatchersCondition string            `yaml:"matchers-condition"`
@@ -311,46 +332,143 @@ var noisyTemplates = map[string]bool{
 	"archibus-webcentral-panel": true,
 }
 
+// normReq 三种模板前端（path 形态 / raw 请求形态 / afrog rules 形态）
+// 归一化后的单请求语义，交给公共组转换 buildChecks。
+type normReq struct {
+	method, pathSuffix, body, contentType string
+	matchers                              []tplMatcher
+	cond                                  string
+}
+
 // Convert 单模板 → checks（多 matcher 组且 OR 时拆分为 ~gN 后缀的多条）。
 // 不支持的形态返回 nil。
 func Convert(data []byte) []checks.Check {
-	if len(data) > 512*1024 {
+	doc, req, ok := parseTplPath(data)
+	if !ok {
 		return nil
+	}
+	nr, ok := normFromTpl(req)
+	if !ok {
+		return nil
+	}
+	return buildChecks("nuclei-"+doc.ID, "Nuclei 社区模板 "+doc.ID, doc.Info.Name,
+		doc.Info.Severity, nr)
+}
+
+// parseTplPath 解析 path 形态模板的公共门禁与首请求。
+func parseTplPath(data []byte) (tplDoc, tplHTTP, bool) {
+	var doc tplDoc
+	if len(data) > 512*1024 {
+		return doc, tplHTTP{}, false
 	}
 	if strings.Contains(string(data[:min(3000, len(data))]), "interactsh") {
-		return nil // 需要外部回调，跳过
+		return doc, tplHTTP{}, false // 需要外部回调，跳过
 	}
-	var doc tplDoc
 	if yaml.Unmarshal(data, &doc) != nil {
-		return nil
+		return doc, tplHTTP{}, false
 	}
 	if doc.ID == "" || doc.Info.Name == "" || len(doc.HTTP) == 0 {
-		return nil
+		return doc, tplHTTP{}, false
 	}
 	if noisyTemplates[strings.ToLower(doc.ID)] {
-		return nil // 靶场校准定谳的误报模板
+		return doc, tplHTTP{}, false // 靶场校准定谳的误报模板
 	}
-	req := doc.HTTP[0]
+	return doc, doc.HTTP[0], true
+}
+
+// normFromTpl path 形态归一化：方法白名单 + {{BaseURL}} 后缀提取。
+func normFromTpl(req tplHTTP) (normReq, bool) {
 	method := strings.ToUpper(req.Method)
 	if method != "GET" && method != "POST" {
-		return nil
+		return normReq{}, false
 	}
-	reqCT := req.Headers["Content-Type"]
 	var path string
 	if len(req.Path) > 0 {
 		path = req.Path[0]
 	}
 	if path == "" || !strings.Contains(path, "{{BaseURL}}") {
-		return nil
+		return normReq{}, false
 	}
 	suffix := strings.SplitN(path, "{{BaseURL}}", 2)[1]
 	if strings.Contains(suffix, "{{") {
-		return nil
+		return normReq{}, false
 	}
 	if suffix == "" {
 		suffix = "/" // 根探测
 	}
 	if len(req.Matchers) == 0 {
+		return normReq{}, false
+	}
+	cond := strings.ToLower(req.MatchersCondition)
+	cond = strings.TrimSpace(cond)
+	if cond == "" {
+		cond = "or"
+	}
+	return normReq{
+		method:      method,
+		pathSuffix:  suffix,
+		body:        req.Body,
+		contentType: req.Headers["Content-Type"],
+		matchers:    req.Matchers,
+		cond:        cond,
+	}, true
+}
+
+// parseRawRequest 解析 raw 请求文本（HTTP 报文形态）：首行 METHOD 路径 协议，
+// 随后请求头，空行后为请求体。路径必须含 {{BaseURL}} 且不含其余占位符。
+func parseRawRequest(raw string) (method, suffix string, headers map[string]string, body string, ok bool) {
+	lines := strings.Split(raw, "\n")
+	if len(lines) == 0 {
+		return "", "", nil, "", false
+	}
+	parts := strings.Fields(strings.TrimSpace(lines[0]))
+	if len(parts) < 2 {
+		return "", "", nil, "", false
+	}
+	method = strings.ToUpper(parts[0])
+	if method != "GET" && method != "POST" {
+		return "", "", nil, "", false
+	}
+	if !strings.Contains(parts[1], "{{BaseURL}}") {
+		return "", "", nil, "", false
+	}
+	suffix = strings.SplitN(parts[1], "{{BaseURL}}", 2)[1]
+	if strings.Contains(suffix, "{{") {
+		return "", "", nil, "", false
+	}
+	if suffix == "" {
+		suffix = "/"
+	}
+	headers = map[string]string{}
+	i := 1
+	for ; i < len(lines); i++ {
+		l := strings.TrimRight(lines[i], "\r")
+		if strings.TrimSpace(l) == "" {
+			i++
+			break
+		}
+		k, v, found := strings.Cut(l, ":")
+		if !found {
+			return "", "", nil, "", false
+		}
+		headers[strings.TrimSpace(k)] = strings.TrimSpace(v)
+	}
+	body = strings.TrimSpace(strings.Join(lines[i:], "\n"))
+	return method, suffix, headers, body, true
+}
+
+// ConvertRaw raw 请求形态 → checks。官方 nuclei 库大量模板、新版 afrog、
+// TscanPlus POC 均为此形态（http[0].raw 报文 + matchers）。
+func ConvertRaw(data []byte) []checks.Check {
+	doc, req, ok := parseTplPath(data)
+	if !ok {
+		return nil
+	}
+	if len(req.Raw) == 0 || strings.TrimSpace(req.Raw[0]) == "" || len(req.Matchers) == 0 {
+		return nil
+	}
+	method, suffix, headers, body, ok := parseRawRequest(req.Raw[0])
+	if !ok {
 		return nil
 	}
 	cond := strings.ToLower(req.MatchersCondition)
@@ -358,6 +476,24 @@ func Convert(data []byte) []checks.Check {
 	if cond == "" {
 		cond = "or"
 	}
+	// raw 里的自定义请求头除 Content-Type 外 Check 模型不承载：
+	// 丢弃只会造成少报（漏检），不会造成误报，与"宁少报"红线一致
+	return buildChecks("nuclei-"+doc.ID, "Nuclei 社区模板 "+doc.ID, doc.Info.Name,
+		doc.Info.Severity, normReq{
+			method:      method,
+			pathSuffix:  suffix,
+			body:        body,
+			contentType: headers["Content-Type"],
+			matchers:    req.Matchers,
+			cond:        cond,
+		})
+}
+
+// buildChecks 公共组转换：matchers → 组（status/word/regex/dsl），
+// AND 多组合并，纯状态码组拒收，装配为 checks.Check。
+// 组转换与装配语义与历史版本逐行等价（含靶场回归教训注释）。
+func buildChecks(checkID, advicePrefix, name, sevStr string, nr normReq) []checks.Check {
+	cond := nr.cond
 
 	// 组转换：status → StatusAny；word body+and → Contains；word body+or →
 	// ContainsAny；word header → HeaderContains（全包含语义）；
@@ -371,7 +507,7 @@ func Convert(data []byte) []checks.Check {
 		dsl    []string
 	}
 	var groups []group
-	for _, m := range req.Matchers {
+	for _, m := range nr.matchers {
 		var g group
 		switch strings.ToLower(m.Type) {
 		case "status":
@@ -452,13 +588,12 @@ func Convert(data []byte) []checks.Check {
 		}
 	}
 
-	sev := strings.ToLower(doc.Info.Severity)
+	sev := strings.ToLower(sevStr)
 	switch sev {
 	case "critical", "high", "medium", "low":
 	default:
 		sev = "info"
 	}
-	name := doc.Info.Name
 	if len(name) > 120 {
 		name = name[:120]
 	}
@@ -470,14 +605,14 @@ func Convert(data []byte) []checks.Check {
 		if len(g.wall) == 0 && len(g.wany) == 0 && len(g.h) == 0 && len(g.rx) == 0 && len(g.dsl) == 0 {
 			continue
 		}
-		id := doc.ID
+		id := checkID
 		if len(groups) > 1 {
-			id = doc.ID + "~g" + strconv.Itoa(i+1)
+			id = checkID + "~g" + strconv.Itoa(i+1)
 		}
 		out = append(out, checks.Check{
-			ID:   "nuclei-" + id,
+			ID:   id,
 			Lv:   1,
-			Path: suffix,
+			Path: nr.pathSuffix,
 			Match: checks.Match{
 				Status:         firstOrZero(g.status),
 				StatusAny:      g.status,
@@ -486,13 +621,13 @@ func Convert(data []byte) []checks.Check {
 				HeaderContains: g.h,
 				RegexBody:      g.rx,
 				DSL:            g.dsl,
-				Method:         method,
-				Body:           req.Body,
-				ContentType:    reqCT,
+				Method:         nr.method,
+				Body:           nr.body,
+				ContentType:    nr.contentType,
 			},
 			Title:  name,
 			Sev:    sev,
-			Advice: "Nuclei 社区模板 " + doc.ID + "：按模板建议修复",
+			Advice: advicePrefix + "：按模板建议修复",
 		})
 	}
 	return out
@@ -506,10 +641,21 @@ func firstOrZero(list []int) int {
 }
 
 // LoadFile 解析单个模板文件。
+// convertAny 三前端依次尝试：path 形态 → raw 请求形态 → afrog 经典形态。
+func convertAny(data []byte) []checks.Check {
+	if cs := Convert(data); len(cs) > 0 {
+		return cs
+	}
+	if cs := ConvertRaw(data); len(cs) > 0 {
+		return cs
+	}
+	return ConvertAfrog(data)
+}
+
 func LoadFile(path string) ([]checks.Check, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err
 	}
-	return Convert(data), nil
+	return convertAny(data), nil
 }

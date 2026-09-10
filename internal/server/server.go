@@ -689,6 +689,11 @@ func (s *Server) hExport(w http.ResponseWriter, r *http.Request) {
 	case "html":
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		_, _ = w.Write([]byte(htmlReport(rec)))
+	case "md":
+		w.Header().Set("Content-Type", "text/markdown; charset=utf-8")
+		w.Header().Set("Content-Disposition",
+			fmt.Sprintf("attachment; filename=sitelens-%d.md", id))
+		_, _ = w.Write([]byte(markdownReport(rec)))
 	default:
 		writeJSON(w, 400, map[string]any{"error": "未知格式"})
 	}
