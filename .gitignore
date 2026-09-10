@@ -53,3 +53,8 @@ data/.nuclei_cursor
 data/import-report.txt
 data/nuclei_checks.json
 __pycache__/
+
+# 本地产物（安装器构建）
+/dist/
+/build/
+/makensis.log
