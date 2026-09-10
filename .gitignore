@@ -41,3 +41,15 @@ tmp_at.log
 
 # OSV 同步产物（可再生成，不入库）
 data/intel_overrides.json
+
+# 构建产物与本地运行时文件（2026-09-09 清理后防回流）
+sitelens-linux
+sitelens.exe
+sitelens.exe~
+engine.test.exe
+server.log
+sltest.yml
+data/.nuclei_cursor
+data/import-report.txt
+data/nuclei_checks.json
+__pycache__/
