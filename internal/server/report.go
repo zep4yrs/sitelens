@@ -78,7 +78,15 @@ func htmlReport(rec *store.ScanRecord) string {
 				u, _ := v["url"].(string)
 				ev, _ := v["evidence"].(string)
 				ad, _ := v["advice"].(string)
-				b.WriteString("<tr><td class=\"sev-" + sevClass(sev) + "\">" + sevClass(sev) + "</td><td>" + esc(tit) + "</td><td>" + esc(u) + "</td><td>" + esc(ev) + "</td><td>" + esc(ad) + "</td></tr>")
+				rep, _ := v["replay"].(string)
+				cell := esc(ev)
+				if rep != "" {
+					// 证据链：curl 一键复现命令随报告交付（2.0 验证器语义）
+					cell += `<details style="margin-top:6px"><summary style="cursor:pointer">复现命令</summary>` +
+						`<pre style="white-space:pre-wrap;background:#0f172a;color:#e2e8f0;padding:8px;border-radius:6px;overflow:auto">` +
+						esc(rep) + "</pre></details>"
+				}
+				b.WriteString("<tr><td class=\"sev-" + sevClass(sev) + "\">" + sevClass(sev) + "</td><td>" + esc(tit) + "</td><td>" + esc(u) + "</td><td>" + cell + "</td><td>" + esc(ad) + "</td></tr>")
 			}
 			b.WriteString("</table>")
 		}

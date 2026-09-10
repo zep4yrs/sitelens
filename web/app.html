@@ -482,10 +482,15 @@ function renderResult(r, scanId) {
   if (ver.length) {
     html += '<div class="tbl-wrap"><table class="vulns"><tr><th>严重度</th><th>检测项</th><th>命中地址</th><th>修复建议</th></tr>';
     ver.forEach(function (v) {
+      var rep = "";
+      if (v.replay) {
+        rep = '<details style="margin-top:4px"><summary style="cursor:pointer;font-size:12px">复现</summary>' +
+          '<pre class="mono" style="white-space:pre-wrap;font-size:11.5px;margin:4px 0 0">' + esc(v.replay) + "</pre></details>";
+      }
       html += "<tr><td>" + sevBadge(v.severity) + "</td>" +
         '<td class="mono">' + esc(v.check) + " " + esc(v.title) + "</td>" +
         '<td class="mono" style="font-size:12px;word-break:break-all">' + esc(v.url) +
-        "（" + esc(v.evidence) + "）</td><td>" + esc(v.advice) + "</td></tr>";
+        "（" + esc(v.evidence) + "）" + rep + "</td><td>" + esc(v.advice) + "</td></tr>";
     });
     html += "</table></div>";
   } else {

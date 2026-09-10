@@ -283,6 +283,9 @@ func (e *Engine) Scan(rawURL string, opts Options, onProgress progress, cancel f
 			res.Verified = append(res.Verified, verifiedMap(map[string]any{
 				"check": h.Check, "title": h.Title, "severity": h.Severity,
 				"url": h.URL, "evidence": h.Evidence, "advice": h.Advice,
+				"request": h.Request, "replay": h.Replay,
+				"response": h.Response, "signals": h.Signals,
+				"confirmed": h.Confirmed,
 			}))
 			// 版本抽取回填：wp-readme 等命中可为技术补版本，
 			// 让情报关联从 possible 升级为 confirmed
@@ -308,7 +311,10 @@ func (e *Engine) Scan(rawURL string, opts Options, onProgress progress, cancel f
 				res.Verified = append(res.Verified, verifiedMap(map[string]any{
 					"check": h.Check, "title": h.Title, "severity": h.Severity,
 					"url": h.URL, "evidence": h.Evidence, "advice": h.Advice,
-					"src": "nuclei",
+					"src":     "nuclei",
+					"request": h.Request, "replay": h.Replay,
+					"response": h.Response, "signals": h.Signals,
+					"confirmed": h.Confirmed,
 				}))
 			}
 		}
