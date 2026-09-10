@@ -13,7 +13,8 @@
 #   feng-qiao/sitelens-data）均已废弃——流水线内置 token 为本仓库作用域，
 #   对其他私有仓库无权限（第五轮审查定位：Repository Not Found 根因）。
 #   保密边界：intel_dump 不入任何 git 仓库；Release 资产仅本私有仓库
-#   协作者可见。Release 上传使用流水线内置 CNB_TOKEN；上传失败不阻塞流水线。
+#   协作者可见。Release 上传使用流水线内置 CNB_TOKEN；上传失败即阶段失败
+#   （"绿了但产物缺失"的假绿比红更糟——lite/linux 曾因缺 jq + 吞错静默丢产物）。
 
 .main: &regression
   docker:
@@ -49,7 +50,7 @@ main:
       stages:
         - name: build
           script:
-            - apt-get update -qq && apt-get install -y -qq zip nsis >/dev/null
+            - apt-get update -qq && apt-get install -y -qq zip jq nsis >/dev/null
             - GOOS=windows GOARCH=amd64 go build -ldflags "-s -w" -o SiteLens/sitelens.exe ./cmd/sitelens
             - mkdir -p SiteLens/data
             - cp -r data/go SiteLens/data/go
@@ -60,19 +61,19 @@ main:
             - (cd SiteLens && zip -qr ../dist/SiteLens-1.0.0-lite-win64.zip .)
             # LANG=C.UTF-8 必须设置：C locale 下 makensis 对中文文件名（产品说明.md）会段错误
             - LANG=C.UTF-8 LC_ALL=C.UTF-8 makensis -V2 -DVERSION=1.0.0 -DSRCDIR="$PWD" -DSTAGEDIR=SiteLens -DOUTFILE="$PWD/dist/SiteLens-1.0.0-setup-lite.exe" installer/installer.nsi
-            - bash tools/release_upload.sh dist/SiteLens-1.0.0-lite-win64.zip || echo "上传失败（可手动补传）"
-            - bash tools/release_upload.sh dist/SiteLens-1.0.0-setup-lite.exe || echo "上传失败（可手动补传）"
+            - bash tools/release_upload.sh dist/SiteLens-1.0.0-lite-win64.zip
+            - bash tools/release_upload.sh dist/SiteLens-1.0.0-setup-lite.exe
     - name: build-linux
       docker:
         image: golang:1.26.8
       stages:
         - name: build
           script:
-            - apt-get update -qq && apt-get install -y -qq zip >/dev/null
+            - apt-get update -qq && apt-get install -y -qq zip jq >/dev/null
             - mkdir -p dist
             - GOOS=linux GOARCH=amd64 go build -ldflags "-s -w" -o dist/sitelens-linux-amd64 ./cmd/sitelens
             - (cd dist && zip -q SiteLens-1.0.0-linux-amd64.zip sitelens-linux-amd64)
-            - bash tools/release_upload.sh dist/SiteLens-1.0.0-linux-amd64.zip || echo "上传失败（可手动补传）"
+            - bash tools/release_upload.sh dist/SiteLens-1.0.0-linux-amd64.zip
     - name: 构建 Windows full 完整版（zip + NSIS 安装器，含情报库）
       docker:
         image: golang:1.26.8
@@ -94,5 +95,5 @@ main:
               # LANG=C.UTF-8 必须设置：C locale 下 makensis 对中文文件名（产品说明.md）会段错误
               LANG=C.UTF-8 LC_ALL=C.UTF-8 makensis -V2 -DVERSION=1.0.0 -DSRCDIR="$PWD" -DSTAGEDIR=SiteLens -DOUTFILE="$PWD/dist/SiteLens-1.0.0-setup-full.exe" installer/installer.nsi
               # full 产物上传到本私有仓库 Release（仅协作者可见；intel_dump 不入 git）
-              bash tools/release_upload.sh dist/SiteLens-1.0.0-full-win64.zip || echo "上传失败（可手动补传）"
-              bash tools/release_upload.sh dist/SiteLens-1.0.0-setup-full.exe || echo "上传失败（可手动补传）"
+              bash tools/release_upload.sh dist/SiteLens-1.0.0-full-win64.zip
+              bash tools/release_upload.sh dist/SiteLens-1.0.0-setup-full.exe
