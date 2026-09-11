@@ -23,8 +23,8 @@ info:
 		t.Errorf("CVE 抽取不对: %v", cves)
 	}
 
-	// 多 CVE 去重 + 上限 8
-	multi := "x CVE-2023-1 y CVE-2023-2 z CVE-2023-1 cve-2023-3"
+	// 多 CVE 去重 + 大小写归一
+	multi := "x CVE-2023-1234 y CVE-2023-2345 z CVE-2023-1234 cve-2023-3456"
 	_, _, _, cves = convertMeta(multi)
 	if len(cves) != 3 {
 		t.Errorf("多 CVE 去重失败: %v", cves)
