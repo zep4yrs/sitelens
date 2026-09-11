@@ -16,19 +16,28 @@ import (
 
 // Match 单条 check 的匹配条件。
 type Match struct {
-	Status         int      `json:"s"`                // 期望状态码（0 = 不限定）
-	StatusAny      []int    `json:"sany,omitempty"`   // 状态码任一命中（Nuclei 组转换用）
-	Contains       []string `json:"c"`                // 正文须全部包含（AND）
-	ContainsAny    []string `json:"cany,omitempty"`   // 正文任一包含（OR，Nuclei 组转换用）
-	HeaderContains []string `json:"h,omitempty"`      // 响应头区须全部包含（Nuclei 头匹配）
-	RegexBody      []string `json:"rxbody,omitempty"` // 正文任一正则命中（OR，Nuclei regex 转换）
-	DSL            []string `json:"dsl,omitempty"`    // dsl 表达式须全部为真（安全子集，见 internal/dsl）
-	Method         string   `json:"method,omitempty"` // POST 模板请求方法
-	Body           string   `json:"body,omitempty"`   // POST 请求体
-	ContentType    string   `json:"ctype,omitempty"`  // POST Content-Type
+	Status         int           `json:"s"`                // 期望状态码（0 = 不限定）
+	StatusAny      []int         `json:"sany,omitempty"`   // 状态码任一命中（Nuclei 组转换用）
+	Contains       []string      `json:"c"`                // 正文须全部包含（AND）
+	ContainsAny    []string      `json:"cany,omitempty"`   // 正文任一包含（OR，Nuclei 组转换用）
+	HeaderContains []string      `json:"h,omitempty"`      // 响应头区须全部包含（Nuclei 头匹配）
+	RegexBody      []string      `json:"rxbody,omitempty"` // 正文任一正则命中（OR，Nuclei regex 转换）
+	DSL            []string      `json:"dsl,omitempty"`    // dsl 表达式须全部为真（安全子集，见 internal/dsl）
+	Extracts       []ExtractSpec `json:"exs,omitempty"`    // 命名抽取变量（供 dsl 引用）
+	Method         string        `json:"method,omitempty"` // POST 模板请求方法
+	Body           string        `json:"body,omitempty"`   // POST 请求体
+	ContentType    string        `json:"ctype,omitempty"`  // POST Content-Type
 	Extract        *struct {
 		Keyword string `json:"keyword"`
 	} `json:"extract"`
+}
+
+// ExtractSpec 命名抽取（nuclei extractors regex 形态）：从响应抽取变量
+// 供 dsl 表达式引用（如版本号 → compare_versions 区间判断）。
+type ExtractSpec struct {
+	Name  string   `json:"n"`
+	Part  string   `json:"part,omitempty"` // body(默认) | header
+	Regex []string `json:"rx"`
 }
 
 // Check 单条验证规则（id 唯一）。
