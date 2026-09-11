@@ -37,7 +37,7 @@ func TestRunListPathClustering(t *testing.T) {
 		{ID: "b", Lv: 1, Path: "/hit", Match: Match{Status: 200, ContainsAny: []string{"nope", "marker"}}, Title: "B", Sev: "medium"},
 		{ID: "c", Lv: 1, Path: "/hit", Match: Match{Status: 200, Contains: []string{"missing-keyword"}}, Title: "C", Sev: "low"},
 	}
-	hits := RunList(client, srv.URL, list, nil, nil)
+	hits := RunList(client, srv.URL, list, nil, nil, nil)
 
 	if totalReq.Load() != 2 {
 		t.Fatalf("同路径 3 条 check 应只发 2 次请求（1 首轮 + 1 组级确认）: %d", totalReq.Load())
@@ -61,7 +61,7 @@ func TestRunListPathClustering(t *testing.T) {
 		{ID: "y", Lv: 1, Path: "/p2", Match: Match{Status: 200}, Title: "Y", Sev: "info"},
 		{ID: "z", Lv: 1, Path: "/p3", Match: Match{Status: 200}, Title: "Z", Sev: "info"},
 	}
-	RunList(client, srv.URL, list2, nil, nil)
+	RunList(client, srv.URL, list2, nil, nil, nil)
 	if totalReq.Load() != 3 {
 		t.Fatalf("不同路径应各自请求 3 次: %d", totalReq.Load())
 	}
