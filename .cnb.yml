@@ -38,6 +38,7 @@ main:
         - name: build
           script:
             - apt-get update -qq && apt-get install -y -qq zip jq nsis >/dev/null
+            - export SITLENS_BODY_FILE="$PWD/tools/release-body-2.0.0.md"
             - GOOS=windows GOARCH=amd64 go build -ldflags "-s -w" -o SiteLens/sitelens.exe ./cmd/sitelens
             - mkdir -p SiteLens/data
             - cp -r data/go SiteLens/data/go
@@ -72,6 +73,7 @@ main:
               # 跨仓库 clone sitelens-data 的旧方案因流水线 token 作用域不足已废弃）。
               # 拉取失败则本阶段明确失败，绝不产出缺情报库的"伪 full"包。
               apt-get update -qq && apt-get install -y -qq zip nsis jq >/dev/null
+              export SITLENS_BODY_FILE="$PWD/tools/release-body-2.0.0.md"
               mkdir -p SiteLens/data dist
               bash tools/release_fetch_asset.sh v1.0.0 intel_dump.json.gz SiteLens/data/intel_dump.json.gz
               bash tools/release_fetch_asset.sh v1.0.0 nuclei-templates.tar.gz /tmp/nuclei-templates.tar.gz
