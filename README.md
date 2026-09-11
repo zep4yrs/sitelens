@@ -10,7 +10,7 @@
 
 <div align="center">
 
-**[五分钟上手](#五分钟上手) · [扫描模式](#七种扫描模式) · [证据链](#证据链长什么样) · [产品说明](docs/产品说明.md) · [开发文档](docs/开发文档.md)**
+**[五分钟上手](#五分钟上手) · [配置](#配置) · [七种扫描模式](#七种扫描模式) · [证据链](#证据链长什么样) · [产品说明](docs/产品说明.md) · [开发文档](docs/开发文档.md)**
 
 </div>
 
@@ -55,6 +55,14 @@ go build -o sitelens.exe ./cmd/sitelens
 ./sitelens.exe serve             # Web 控制台，默认 http://127.0.0.1:5000
 ./sitelens.exe scan <url>        # 命令行全流水线扫描，JSON 输出
 ```
+
+## 配置
+
+配置文件从示例复制：把 [`.sitelens.example.yml`](.sitelens.example.yml) 复制为 `.sitelens.yml`，放在工作目录即可被自动加载；不改也能跑，默认零外部依赖。
+
+- **完整键位语义见该示例文件内的注释**（`scan` / `checks` / `crawler` / `dast` / `auth` 等段）；
+- **监听非 localhost 时必须配 API Token**：`serve --addr 0.0.0.0:5000` 需要一个 token 才允许启动，否则进程直接退出（见 `internal/server/server.go`）。这是硬校验，不是可选项；
+- 主动验证能力默认关闭，只有显式开启才会发包（且带硬上限）。
 
 ## 七种扫描模式
 
@@ -110,7 +118,7 @@ go build -o sitelens.exe ./cmd/sitelens
 
 ## 工程质量
 
-- **18 个包的单元测试**（47 个测试文件）+ CI 阻断级 `-race` 竞态门禁
+- **18 个包的单元测试**（52 个测试文件）+ CI 阻断级 `-race` 竞态门禁
 - **govulncheck** 依赖漏洞扫描，当前零发现
 - **百万次级 fuzz** 锤炼模板转换漏斗与 DSL 安全子集求值器
 - **靶场回归门禁**：`tools/regression_nightly.sh`（农场→矩阵→**内置回归靶场零误报断言**→拆场；这是固定靶场的门禁口径，不代表真实互联网环境的误报率承诺）
@@ -138,6 +146,18 @@ go build -o sitelens.exe ./cmd/sitelens
 | **11.0+ 自进化攻防平台** | SELF-EVOLVING | 持续学习，自我进化 | 持续学习 · 策略优化 · 知识增长 · 模型迭代 · 验证经验反哺 |
 
 **能力演进**：发现能力 → 证明能力 → 攻击链能力 → 黑白盒融合 → ML 推理 → 红蓝闭环 → 知识积累 → Agent 决策 → 自主验证 → 多 Agent → 自进化
+
+**已定型的版本宣发图**（3.0 利用器 / 4.0 攻击链）：
+
+<div align="center">
+  <img src="assets/banner-3.0-exploit.png" width="100%" alt="SiteLens 3.0 利用器 — 从验证漏洞，到证明影响。Exploit Validation">
+</div>
+
+<div align="center">
+  <img src="assets/banner-4.0-attackchain.png" width="100%" alt="SiteLens 4.0 攻击链·黑白盒验证 — 从单点突破，到攻击链分析。Attack Chain Analysis">
+</div>
+
+它由什么组成：`cmd/sitelens` 单入口、`internal/` 引擎/指纹/情报/报告模块、`data/` 数据资产、`web/` 前端。模块划分见 [开发文档](docs/开发文档.md)。
 
 ## 合规
 
