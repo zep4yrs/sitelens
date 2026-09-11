@@ -347,7 +347,6 @@ type tplHTTP struct {
 	Extractors        []tplExtractor    `yaml:"extractors"`
 }
 
-
 type tplDoc struct {
 	ID   string `yaml:"id"`
 	Info struct {
