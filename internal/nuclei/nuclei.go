@@ -79,35 +79,60 @@ func Index(dir, cachePath string) ([]Entry, error) {
 		}
 	}
 
-	entries := make([]Entry, 0, len(files))
+	// 两轮扫描：非 legacy 目录（官方 http/requests 形态 + afrog）优先，
+	// legacy/ 旧语料补位——同名模板视为同一发现，保留新形态版本。
+	// 模板库支持多来源并存：任何来源的 YAML 都走同一漏斗，按名称去重。
+	legacyPrefix := "legacy/"
+	var first, second []string
 	for _, f := range files {
-		st, serr := os.Stat(f)
-		if serr != nil || st.Size() > 512*1024 {
-			continue
+		rel := f
+		if r, err := filepath.Rel(dir, f); err == nil {
+			rel = filepath.ToSlash(r)
 		}
-		rel, rerr := filepath.Rel(dir, f)
-		if rerr != nil {
-			continue
+		if strings.HasPrefix(rel, legacyPrefix) {
+			second = append(second, f)
+		} else {
+			first = append(first, f)
 		}
-		rel = filepath.ToSlash(rel)
-		data, rerr2 := os.ReadFile(f)
-		if rerr2 != nil {
-			continue
+	}
+	passes := [][]string{first, second}
+
+	entries := make([]Entry, 0, len(files))
+	seenName := map[string]bool{}
+	for pi, pass := range passes {
+		for _, f := range pass {
+			st, serr := os.Stat(f)
+			if serr != nil || st.Size() > 512*1024 {
+				continue
+			}
+			rel, rerr := filepath.Rel(dir, f)
+			if rerr != nil {
+				continue
+			}
+			rel = filepath.ToSlash(rel)
+			data, rerr2 := os.ReadFile(f)
+			if rerr2 != nil {
+				continue
+			}
+			checks := convertAny(data)
+			if len(checks) == 0 {
+				continue // 漏斗淘汰：只把可运行的模板纳入调度全集
+			}
+			name, sev, tags := convertMeta(string(data))
+			if pi == 1 && seenName[name] {
+				continue // legacy 与新语料同名：新语料已收录，跳过
+			}
+			seenName[name] = true
+			entries = append(entries, Entry{
+				Path:        rel,
+				Name:        name,
+				Sev:         sev,
+				Tags:        tags,
+				MTime:       st.ModTime().Unix(),
+				Size:        st.Size(),
+				Convertible: true, // 建入索引即漏斗通过（Convert 非空）
+			})
 		}
-		checks := convertAny(data)
-		if len(checks) == 0 {
-			continue // 漏斗淘汰：只把可运行的模板纳入调度全集
-		}
-		name, sev, tags := convertMeta(string(data))
-		entries = append(entries, Entry{
-			Path:        rel,
-			Name:        name,
-			Sev:         sev,
-			Tags:        tags,
-			MTime:       st.ModTime().Unix(),
-			Size:        st.Size(),
-			Convertible: true, // 建入索引即漏斗通过（Convert 非空）
-		})
 	}
 	if cachePath != "" {
 		if data, jerr := json.Marshal(cacheFile{Schema: cacheSchema, Files: len(files), Entries: entries}); jerr == nil {
