@@ -97,7 +97,7 @@ go build -o sitelens.exe ./cmd/sitelens
 
 ## 工程质量
 
-- **23 个包的单元测试** + CI 阻断级 `-race` 竞态门禁
+- **18 个包的单元测试**（47 个测试文件）+ CI 阻断级 `-race` 竞态门禁
 - **govulncheck** 依赖漏洞扫描，当前零发现
 - **百万次级 fuzz** 锤炼模板转换漏斗与 DSL 安全子集求值器
 - **靶场回归门禁**：`tools/regression_nightly.sh`（农场→矩阵→零误报断言→拆场）
