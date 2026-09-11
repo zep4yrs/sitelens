@@ -60,14 +60,14 @@ func SyncNVD(outPath, apiKey string, progress func(done, total int, skipped int)
 				strings.TrimSpace(string(body[:min(len(body), 200)])))
 		}
 		var page struct {
-			TotalResults     int `json:"totalResults"`
-			ResultsPerPage   int `json:"resultsPerPage"`
+			TotalResults    int `json:"totalResults"`
+			ResultsPerPage  int `json:"resultsPerPage"`
 			Vulnerabilities []struct {
 				Cve struct {
-					ID            string `json:"id"`
-					Published     string `json:"published"`
-					LastModified  string `json:"lastModified"`
-					VulnStatus    string `json:"vulnStatus"`
+					ID           string `json:"id"`
+					Published    string `json:"published"`
+					LastModified string `json:"lastModified"`
+					VulnStatus   string `json:"vulnStatus"`
 					Descriptions []struct {
 						Lang  string `json:"lang"`
 						Value string `json:"value"`

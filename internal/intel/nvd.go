@@ -16,7 +16,7 @@ import (
 
 // NVDProd 一条 CPE 受影响产品约束（vendor/product + 可选版本边界）。
 type NVDProd struct {
-	VP string `json:"vp"` // vendor/product
+	VP string `json:"vp"`           // vendor/product
 	EE string `json:"ee,omitempty"` // versionEndExcluding
 	EI string `json:"ei,omitempty"` // versionEndIncluding
 	SE string `json:"se,omitempty"` // versionStartExcluding
@@ -29,11 +29,11 @@ type NVDEntry struct {
 	CVE    string    `json:"cve"`
 	Pub    string    `json:"pub,omitempty"`
 	Mod    string    `json:"mod,omitempty"`
-	Sev    string    `json:"sev,omitempty"`    // base severity（小写）
-	Score  float64   `json:"score,omitempty"`  // CVSS base score
-	Vector string    `json:"vec,omitempty"`    // CVSS vector string
-	Descr  string    `json:"descr,omitempty"`  // 英文首条描述（截断）
-	Prods  []NVDProd `json:"prods,omitempty"`  // 受影响产品约束（去重）
+	Sev    string    `json:"sev,omitempty"`   // base severity（小写）
+	Score  float64   `json:"score,omitempty"` // CVSS base score
+	Vector string    `json:"vec,omitempty"`   // CVSS vector string
+	Descr  string    `json:"descr,omitempty"` // 英文首条描述（截断）
+	Prods  []NVDProd `json:"prods,omitempty"` // 受影响产品约束（去重）
 }
 
 // NVDStore 内存索引（不可变，可并发读）。

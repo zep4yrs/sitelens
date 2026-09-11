@@ -29,15 +29,15 @@ import (
 
 // Entry 索引条目（建索引时一次全量 Convert 验证）。
 type Entry struct {
-	Path        string   `json:"path"`        // 相对 dir
-	Name        string   `json:"name"`        // 模板名（相关度排序用）
-	Tags        []string `json:"tags"`        // 精确 tags（来自完整 Convert）
-	Sev         string   `json:"sev"`         // 精确严重度
+	Path        string   `json:"path"`           // 相对 dir
+	Name        string   `json:"name"`           // 模板名（相关度排序用）
+	Tags        []string `json:"tags"`           // 精确 tags（来自完整 Convert）
+	Sev         string   `json:"sev"`            // 精确严重度
 	CVEs        []string `json:"cves,omitempty"` // 模板声明的 CVE（模板情报层）
-	MTime       int64    `json:"mtime"`       // 文件修改时间
-	Size        int64    `json:"size"`        // 文件大小
-	Convertible bool     `json:"convertible"` // 能通过漏斗转换为可执行 check
-	LastRun     int64    `json:"lastrun"`     // 最近一次运行时间（unix nano；0=从未）
+	MTime       int64    `json:"mtime"`          // 文件修改时间
+	Size        int64    `json:"size"`           // 文件大小
+	Convertible bool     `json:"convertible"`    // 能通过漏斗转换为可执行 check
+	LastRun     int64    `json:"lastrun"`        // 最近一次运行时间（unix nano；0=从未）
 }
 
 // cacheSchema 索引缓存格式版本——格式变更时递增以强制重建
