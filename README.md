@@ -172,6 +172,7 @@ go build -o sitelens.exe ./cmd/sitelens
 - **govulncheck** 依赖漏洞扫描，当前零发现
 - **百万次级 fuzz** 锤炼模板转换漏斗与 DSL 安全子集求值器
 - **靶场回归门禁**：`tools/regression_nightly.sh`（农场→矩阵→**内置回归靶场零误报断言**→拆场；这是固定靶场的门禁口径，不代表真实互联网环境的误报率承诺）
+- **模板规模**：全库可运行模板 **88,892 条**（官方 nuclei-templates + afrog-pocs + Wordfence CVE 镜像，统一漏斗准入 + 靶场实弹校准）
 
 ## 路线图 —— 产品远景
 
