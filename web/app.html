@@ -414,12 +414,12 @@ function setProgress(p, msg, job) {
   if (!evs.length) { feedEl.innerHTML = ""; return; }
   var hits = 0, bypass = 0;
   var rows = evs.slice(-8).reverse().map(function (ev) {
-    var ico = "▸", color = "#94a3b8";
-    if (ev.kind === "hit") { hits++; ico = "🎯"; color = "#f87171"; }
-    else if (ev.kind === "bypass") { bypass++; ico = "🟠"; color = "#fbbf24"; }
-    else if (ev.kind === "auth") { ico = "🔐"; color = "#5eead4"; }
+    var color = "#94a3b8";
+    if (ev.kind === "hit") { hits++; color = "#f87171"; }
+    else if (ev.kind === "bypass") { bypass++; color = "#fbbf24"; }
+    else if (ev.kind === "auth") { color = "#5eead4"; }
     return '<div style="display:flex;gap:6px;align-items:baseline;padding:2px 0">' +
-      '<span>' + ico + "</span><span style=\"color:" + color + ';flex:1;word-break:break-all">' +
+      '<span style="color:' + color + ';flex:1;word-break:break-all">' +
       esc(ev.text) + "</span></div>";
   }).join("");
   var head = '实时动态';
@@ -579,11 +579,10 @@ function renderResult(r, scanId) {
     html += '<div class="sec-title">最值得关注 <span class="count">' + top.length + "</span>" +
       '<span class="hint" style="margin-left:8px">按严重度与证据强度排序 · 完整明细见下方与导出</span></div>';
     top.forEach(function (v) {
-      var ic = (v.severity === "critical" || v.severity === "high") ? "🔴" : (v.severity === "medium" ? "🟠" : "🟡");
       var evN = 1 + (v.request ? 1 : 0) + (v.response ? 1 : 0) + ((v.signals || []).length ? 1 : 0) + (v.confirmed ? 1 : 0);
       html += '<div class="card" style="margin-bottom:10px">' +
         '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">' +
-        '<span>' + ic + "</span><b>" + esc(v.title || v.check || "") + "</b>" +
+        "<b>" + esc(v.title || v.check || "") + "</b>" +
         sevBadge(v.severity) +
         '<span class="hint">证据 ' + evN + "/5 · " + (v.confirmed ? "二次确认通过" : "单轮命中") + "</span></div>" +
         '<div class="mono" style="word-break:break-all;font-size:12.5px;margin-top:6px">' + esc(v.url || "") + "</div>" +
