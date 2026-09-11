@@ -34,22 +34,23 @@ import (
 
 // Options 每次扫描可单独指定的开关（对齐 /api/scan 平铺 payload）。
 type Options struct {
-	Deep         bool   // 同域浅爬取
-	ActiveFP     bool   // FingerDir 主动路径指纹
-	DirScan      bool   // 目录探测
-	DirBypass    bool   // 403 绕过重试
-	Subdomain    bool   // 子域名枚举
-	ServiceProbe bool   // 端口服务识别
-	BrowserUA    bool   // 浏览器 UA
-	WeakAudit    bool   // 敏感信息审计
-	Webshell     bool   // WebShell 探测
-	Takeover     bool   // 子域名接管探测（需先开 Subdomain 产出候选）
-	Netsec       bool   // TLS/DNS 安全检测
-	DAST         bool   // 参数级注入探测
-	Passive      bool   // 被动安全检测
-	Checks       string // none | core | all
-	NucleiCap    int    // Nuclei 单次模板上限（0 = 用配置默认 nuclei_cap）
-	AuthCookie   string // 授权扫描 Cookie
+	Deep         bool                    // 同域浅爬取
+	ActiveFP     bool                    // FingerDir 主动路径指纹
+	DirScan      bool                    // 目录探测
+	DirBypass    bool                    // 403 绕过重试
+	Subdomain    bool                    // 子域名枚举
+	ServiceProbe bool                    // 端口服务识别
+	BrowserUA    bool                    // 浏览器 UA
+	WeakAudit    bool                    // 敏感信息审计
+	Webshell     bool                    // WebShell 探测
+	Takeover     bool                    // 子域名接管探测（需先开 Subdomain 产出候选）
+	Netsec       bool                    // TLS/DNS 安全检测
+	DAST         bool                    // 参数级注入探测
+	Passive      bool                    // 被动安全检测
+	Checks       string                  // none | core | all
+	NucleiCap    int                     // Nuclei 单次模板上限（0 = 用配置默认 nuclei_cap）
+	AuthCookie   string                  // 授权扫描 Cookie
+	OnEvent      func(kind, text string) // 实时事件回调（阶段/命中/认证，nil = 不回调）
 }
 
 // DefaultOptions 对齐 Python 默认：deep 开、checks 关、其余关。
@@ -142,17 +143,26 @@ func (e *Engine) Scan(rawURL string, opts Options, onProgress progress, cancel f
 
 	client := e.newClient(opts)
 	authDone := false
+	// 实时事件流：阶段/命中/认证/绕过 统一经此推给 job 事件环
+	emit := func(kind, text string) {
+		if opts.OnEvent != nil {
+			opts.OnEvent(kind, text)
+		}
+	}
 
 	// 认证深化：配置了登录流则以凭证登录，捕获的会话 Cookie 供
 	// 整次扫描（爬虫/DAST/目录探测）复用；用户显式给的 Cookie 优先
 	if e.cfg.Auth.LoginURL != "" && opts.AuthCookie == "" {
 		onProgress(8, "认证登录…")
+		emit("auth", "登录中："+e.cfg.Auth.LoginURL)
 		if cookie, ok, msg := authn.Login(client, e.cfg.Auth); ok {
 			client.SetCookie(cookie)
 			authDone = true
 			onProgress(9, "认证成功："+msg)
+			emit("auth", "登录成功（"+msg+"），后续扫描带认证态")
 		} else {
 			onProgress(9, "认证未确认："+msg)
+			emit("auth", "登录未确认："+msg)
 		}
 	}
 
@@ -315,6 +325,8 @@ func (e *Engine) Scan(rawURL string, opts Options, onProgress progress, cancel f
 				if total > 0 {
 					onProgress(75+done*10/total, "check："+msg)
 				}
+			}, func(h checks.Hit) {
+				emit("hit", h.Severity+" · "+h.Title+" — "+h.URL)
 			})
 		for _, h := range hits {
 			res.Verified = append(res.Verified, verifiedMap(map[string]any{
@@ -344,6 +356,8 @@ func (e *Engine) Scan(rawURL string, opts Options, onProgress progress, cancel f
 					if total > 0 {
 						onProgress(84, fmt.Sprintf("nuclei %d/%d", done, total))
 					}
+				}, func(h checks.Hit) {
+					emit("hit", h.Severity+" · "+h.Title+" — "+h.URL)
 				}) {
 				res.Verified = append(res.Verified, verifiedMap(map[string]any{
 					"check": h.Check, "title": h.Title, "severity": h.Severity,
@@ -389,6 +403,9 @@ func (e *Engine) Scan(rawURL string, opts Options, onProgress progress, cancel f
 			MaxURLLen:        e.cfg.DAST.MaxURLLen,
 			BeaconBase:       beaconBase,
 			MaxProbes:        e.cfg.Ssrf.MaxProbes,
+			OnHit: func(f dast.Finding) {
+				emit("hit", f.Severity+" · "+f.Title+" — "+f.Param)
+			},
 		})
 		for _, f := range r.RunForms(dastFormTargets) {
 			res.Verified = append(res.Verified, verifiedMap(map[string]any{
@@ -431,6 +448,7 @@ func (e *Engine) Scan(rawURL string, opts Options, onProgress progress, cancel f
 			for _, h := range dirHits {
 				if h.Bypass != "" {
 					bypassed = append(bypassed, h)
+					emit("bypass", "403 可绕过："+h.Path+"（"+h.Bypass+"）")
 				}
 			}
 			if len(bypassed) > 0 {

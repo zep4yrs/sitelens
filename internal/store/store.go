@@ -14,6 +14,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"time"
 
 	"cnb.cool/feng-qiao/sitelens/internal/engine"
 )
@@ -309,6 +310,14 @@ type Job struct {
 	Total    int            `json:"total"`
 	Payload  map[string]any `json:"payload"`
 	Result   map[string]any `json:"result"`
+	Events   []JobEvent     `json:"events,omitempty"` // 实时事件流（环形，新事件在尾部）
+}
+
+// JobEvent 扫描实时事件（阶段切换/命中/认证/绕过…），供前端实时动态面板。
+type JobEvent struct {
+	TS   int64  `json:"ts"`
+	Kind string `json:"kind"` // stage/hit/bypass/auth/deser/info
+	Text string `json:"text"`
 }
 
 // JobManager 作业注册表。
@@ -355,6 +364,23 @@ func (m *JobManager) Update(id string, fn func(j *Job)) {
 	defer m.mu.Unlock()
 	if j, ok := m.jobs[id]; ok {
 		fn(j)
+	}
+}
+
+// jobEventCap 实时事件环形上限（超出淘汰最旧）。
+const jobEventCap = 80
+
+// AppendEvent 追加一条实时事件（时间戳服务端生成）。
+func (m *JobManager) AppendEvent(id, kind, text string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	j, ok := m.jobs[id]
+	if !ok || text == "" {
+		return
+	}
+	j.Events = append(j.Events, JobEvent{TS: time.Now().Unix(), Kind: kind, Text: text})
+	if len(j.Events) > jobEventCap {
+		j.Events = j.Events[len(j.Events)-jobEventCap:]
 	}
 }
 

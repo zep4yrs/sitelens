@@ -383,6 +383,7 @@ function renderLivePanel(options) {
   document.getElementById("result").innerHTML =
     '<div class="livebox card"><div class="lv-head">扫描进行中' +
     '<button class="btn ghost small" id="cancel-btn" onclick="cancelScan()">取消扫描</button></div>' + rows +
+    '<div class="lv-feed" id="lv-feed"></div>' +
     '<div class="lv-meta">已用时 <b id="lv-elapsed">0 秒</b> · 预计剩余 <b id="lv-eta">' +
     fmtT(liveEst) + "</b></div></div>";
   liveTimer = setInterval(function () {
@@ -400,11 +401,33 @@ function markStage(p) {
     if (el && p > st[0]) { el.querySelector(".s-ico").textContent = "✓"; el.classList.add("done"); }
   });
 }
-function setProgress(p, msg) {
+function setProgress(p, msg, job) {
   document.getElementById("bar").style.width = p + "%";
   document.getElementById("st-state").textContent = "scanning";
   document.getElementById("st-msg").textContent = msg || "";
   markStage(p);
+
+  /* 实时动态：引擎事件流（阶段/命中/绕过/认证）尾部 8 条，命中计数高亮 */
+  var feedEl = document.getElementById("lv-feed");
+  if (!feedEl || !job) return;
+  var evs = job.events || [];
+  if (!evs.length) { feedEl.innerHTML = ""; return; }
+  var hits = 0, bypass = 0;
+  var rows = evs.slice(-8).reverse().map(function (ev) {
+    var ico = "▸", color = "#94a3b8";
+    if (ev.kind === "hit") { hits++; ico = "🎯"; color = "#f87171"; }
+    else if (ev.kind === "bypass") { bypass++; ico = "🟠"; color = "#fbbf24"; }
+    else if (ev.kind === "auth") { ico = "🔐"; color = "#5eead4"; }
+    return '<div style="display:flex;gap:6px;align-items:baseline;padding:2px 0">' +
+      '<span>' + ico + "</span><span style=\"color:" + color + ';flex:1;word-break:break-all">' +
+      esc(ev.text) + "</span></div>";
+  }).join("");
+  var head = '实时动态';
+  if (hits || bypass) {
+    head += ' · <span style="color:#f87171">命中 ' + hits + "</span>" +
+      (bypass ? ' · <span style="color:#fbbf24">绕过 ' + bypass + "</span>" : "");
+  }
+  feedEl.innerHTML = '<div class="hint" style="margin-bottom:4px">' + head + "</div>" + rows;
 }
 
 function startScan() {
@@ -464,7 +487,7 @@ function pollJob(jobId, onProgress) {
           clearInterval(timer); resolve({ cancelled: true, message: job.message });
         }
         else if (job.status === "error") { clearInterval(timer); reject(new Error(job.message || "任务失败")); }
-        else if (onProgress) onProgress(job.progress || 0, job.message);
+        else if (onProgress) onProgress(job.progress || 0, job.message, job);
       }).catch(function (e) { clearInterval(timer); reject(e); });
     }, 1000);
   });

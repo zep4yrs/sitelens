@@ -61,9 +61,10 @@ func sortHits(hits []Hit) {
 }
 
 // RunChecks 执行 check 集（core = 核心集，all = 核心+扩展+联动）。
+// onHit 在每条命中产生时即时回调（nil = 不回调），供上层实时事件流使用。
 func RunChecks(client *httpx.Client, targetURL string, level string,
 	includeIDs []string, cancelCheck func() bool,
-	onProgress func(done, total int, msg string)) []Hit {
+	onProgress func(done, total int, msg string), onHit func(Hit)) []Hit {
 	if onProgress == nil {
 		onProgress = func(int, int, string) {}
 	}
@@ -77,12 +78,14 @@ func RunChecks(client *httpx.Client, targetURL string, level string,
 			selected = append(selected, c)
 		}
 	}
-	return RunList(client, targetURL, selected, cancelCheck, onProgress)
+	return RunList(client, targetURL, selected, cancelCheck, onProgress, onHit)
 }
 
 // RunList 执行给定 check 集（Nuclei 子集等外部规则装载入口）。
+// onHit 在每条命中产生时即时回调（nil = 不回调）。
 func RunList(client *httpx.Client, targetURL string, list []Check,
-	cancelCheck func() bool, onProgress func(done, total int, msg string)) []Hit {
+	cancelCheck func() bool, onProgress func(done, total int, msg string),
+	onHit func(Hit)) []Hit {
 	if onProgress == nil {
 		onProgress = func(int, int, string) {}
 	}
@@ -168,7 +171,7 @@ func RunList(client *httpx.Client, targetURL string, list []Check,
 					if !ok {
 						continue
 					}
-					hits = append(hits, Hit{
+					h := Hit{
 						Check: chk.ID, Title: chk.Title, Severity: chk.Sev,
 						URL: u, Advice: chk.Advice,
 						Evidence:  fmt.Sprintf("HTTP %d（二次确认）· %s", resp2.Status, reason),
@@ -178,7 +181,11 @@ func RunList(client *httpx.Client, targetURL string, list []Check,
 						Signals:   strings.Split(reason, " + "),
 						Replay:    curlReplay(u, chk.Match),
 						Confirmed: true,
-					})
+					}
+					if onHit != nil {
+						onHit(h)
+					}
+					hits = append(hits, h)
 				}
 			}
 		}
