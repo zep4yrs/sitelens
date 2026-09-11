@@ -21,10 +21,17 @@ package dsl
 import (
 	"fmt"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
 )
+
+// VarSource 可选扩展：验证器把抽取变量（extractor 输出，如版本号）注入
+// 求值环境；未实现时对应变量求值报错（不命中）。
+type VarSource interface {
+	Var(name string) (string, bool)
+}
 
 // Env 变量取值环境（求值期由调用方实现；header 名匹配大小写不敏感）。
 type Env interface {
@@ -308,6 +315,19 @@ func (n callNode) eval(e Env) (value, error) {
 			return value{}, err
 		}
 		return value{kind: kBool, b: re.MatchString(s)}, nil
+	case "compare_versions":
+		if len(n.args) != 2 {
+			return value{}, fmt.Errorf("dsl: compare_versions 需要 2 个参数")
+		}
+		va, err := evalString(n.args[0], e)
+		if err != nil {
+			return value{}, err
+		}
+		vb, err := evalString(n.args[1], e)
+		if err != nil {
+			return value{}, err
+		}
+		return value{kind: kBool, b: compareVersions(va, vb)}, nil
 	case "len":
 		if len(n.args) != 1 {
 			return value{}, fmt.Errorf("dsl: len 需要 1 个参数")
@@ -338,6 +358,7 @@ func evalString(n node, e Env) (string, error) {
 var targetCallNames = map[string]bool{
 	"contains": true, "contains_all": true, "contains_any": true,
 	"icontains": true, "regex": true, "starts_with": true, "ends_with": true,
+	"compare_versions": true,
 }
 
 func (n callNode) positive(neg bool) bool {
@@ -379,7 +400,10 @@ type litNode struct{ v value }
 func (n litNode) eval(Env) (value, error) { return n.v, nil }
 func (n litNode) positive(bool) bool      { return false }
 
-type varNode struct{ name string }
+type varNode struct {
+	name  string
+	known bool // compile 期声明的抽取变量（extractor 输出）
+}
 
 func (n varNode) eval(e Env) (value, error) {
 	switch n.name {
@@ -390,11 +414,17 @@ func (n varNode) eval(e Env) (value, error) {
 	case "host":
 		return value{kind: kStr, s: e.Host()}, nil
 	}
+	if vs, ok := e.(VarSource); ok {
+		if s, found := vs.Var(n.name); found {
+			return value{kind: kStr, s: s}, nil
+		}
+	}
 	return value{}, fmt.Errorf("dsl: 未知变量 %s", n.name)
 }
 
 func (n varNode) positive(bool) bool {
-	// 裸变量引用（如 body 非空真值）不单独成依据，防止恒真模板
+	// 裸变量引用（如 body 非空真值）不单独成依据，防止恒真模板。
+	// 抽取变量的正向性由外层函数（compare_versions 等）的 dataCallNames 传播。
 	return false
 }
 
@@ -541,7 +571,8 @@ func isIdentChar(c byte) bool {
 type parser struct {
 	toks  []token
 	pos   int
-	depth int // 括号/逻辑嵌套深度（防深嵌套递归爆栈——fuzz 实测可达）
+	depth int             // 括号/逻辑嵌套深度（防深嵌套递归爆栈——fuzz 实测可达）
+	extra map[string]bool // compile 期声明的抽取变量名（extractor 输出）
 }
 
 // maxDepth 嵌套深度上限：真实模板的 dsl 表达式嵌套不超过个位数，
@@ -713,10 +744,10 @@ func (p *parser) parsePrimary() (node, error) {
 			}
 			return idxNode{mapName: name, key: k}, nil
 		default:
-			if !knownVars[name] {
+			if !knownVars[name] && !p.extra[name] {
 				return nil, fmt.Errorf("dsl: 未知变量 %s", name)
 			}
-			return varNode{name: name}, nil
+			return varNode{name: name, known: true}, nil
 		}
 	}
 	return nil, fmt.Errorf("dsl: 意外的记号 %q", t.text)
@@ -724,11 +755,60 @@ func (p *parser) parsePrimary() (node, error) {
 
 func arityOf(name string) int {
 	switch name {
-	case "contains", "icontains", "regex", "starts_with", "ends_with":
+	case "compare_versions", "contains", "icontains", "regex", "starts_with", "ends_with":
 		return 2
 	default:
 		return 1
 	}
+}
+
+// compareVersions 语义对齐 nuclei compare_versions：点分数字逐段比较，
+// 空版本一律不成立（抽取未命中等价于未证明）。
+func compareVersions(version, constraint string) bool {
+	version = strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(version), "v"))
+	constraint = strings.TrimSpace(constraint)
+	if version == "" || constraint == "" {
+		return false
+	}
+	op, cv := "=", constraint
+	for _, o := range []string{"<=", ">=", "==", "!=", "<", ">"} {
+		if strings.HasPrefix(cv, o) {
+			op, cv = o, strings.TrimSpace(strings.TrimPrefix(cv, o))
+			break
+		}
+	}
+	if cv == "" {
+		return false
+	}
+	a := versionParts(version)
+	b := versionParts(cv)
+	n := len(a)
+	if len(b) > n {
+		n = len(b)
+	}
+	for i := 0; i < n; i++ {
+		var x, y int64
+		if i < len(a) {
+			x, _ = strconv.ParseInt(a[i], 10, 64)
+		}
+		if i < len(b) {
+			y, _ = strconv.ParseInt(b[i], 10, 64)
+		}
+		if x != y {
+			return (x < y && (op == "<" || op == "<=")) || (x > y && (op == ">" || op == ">="))
+		}
+	}
+	switch op {
+	case "<", ">":
+		return false
+	default:
+		return true
+	}
+}
+
+// versionParts 点分版本切段（非数字段由调用方按词法兜底）。
+func versionParts(v string) []string {
+	return strings.Split(v, ".")
 }
 
 // ---- 对外 API ----
@@ -740,6 +820,16 @@ type Program struct {
 
 // Compile 解析并校验表达式；子集外的任何形态都返回错误。
 func Compile(expr string) (*Program, error) {
+	return compileExpr(expr, nil)
+}
+
+// CompileWithVars 带抽取变量名表的编译：变量名在 compile 期登记后，
+// 表达式可引用并计入正向命中依据（PositiveGround）。
+func CompileWithVars(expr string, extra []string) (*Program, error) {
+	return compileExpr(expr, extra)
+}
+
+func compileExpr(expr string, extra []string) (*Program, error) {
 	if len(expr) > maxExprLen {
 		return nil, fmt.Errorf("dsl: 表达式超过 %d 字符上限", maxExprLen)
 	}
@@ -747,7 +837,11 @@ func Compile(expr string) (*Program, error) {
 	if err != nil {
 		return nil, err
 	}
-	p := &parser{toks: toks}
+	known := map[string]bool{}
+	for _, n := range extra {
+		known[n] = true
+	}
+	p := &parser{toks: toks, extra: known}
 	root, err := p.parseOr()
 	if err != nil {
 		return nil, err

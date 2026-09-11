@@ -4,8 +4,10 @@ package checks
 import (
 	"fmt"
 	"net/url"
+	"regexp"
 	"sort"
 	"strings"
+	"sync"
 
 	"cnb.cool/feng-qiao/sitelens/internal/dsl"
 	"cnb.cool/feng-qiao/sitelens/internal/httpx"
@@ -149,8 +151,13 @@ func RunList(client *httpx.Client, targetURL string, list []Check,
 		// 组内首轮判定
 		var pending []int
 		reasons := map[int]string{}
+		groupChecks := make([]Check, 0, len(g.idx))
 		for _, ci := range g.idx {
-			ok, reason := matchBodyReason(selected[ci].Match, resp.Status, body, resp.Headers, host)
+			groupChecks = append(groupChecks, selected[ci])
+		}
+		extractVars := extractVars(groupChecks, resp.Headers, resp.Body)
+		for _, ci := range g.idx {
+			ok, reason := matchBodyReason(selected[ci].Match, resp.Status, body, resp.Headers, host, extractVars)
 			if !ok {
 				continue
 			}
@@ -167,7 +174,7 @@ func RunList(client *httpx.Client, targetURL string, list []Check,
 				body2 := stripEcho(resp2.Body, u, chk0.Path)
 				for _, ci := range pending {
 					chk := selected[ci]
-					ok, reason := matchBodyReason(chk.Match, resp2.Status, body2, resp2.Headers, host)
+					ok, reason := matchBodyReason(chk.Match, resp2.Status, body2, resp2.Headers, host, extractVars)
 					if !ok {
 						continue
 					}
@@ -203,14 +210,14 @@ func RunList(client *httpx.Client, targetURL string, list []Check,
 // 修复：此前实际响应状态码从未参与比较，纯状态码 check 会对任何响应命中。
 // dsl 求值失败（编译/类型/正则错误）一律不命中——宁少报不误报。
 func matchBody(m Match, status int, body string, headers map[string]string, host string) bool {
-	ok, _ := matchBodyReason(m, status, body, headers, host)
+	ok, _ := matchBodyReason(m, status, body, headers, host, nil)
 	return ok
 }
 
 // matchBodyReason 同 matchBody 并返回命中原因（哪些条件、命中了什么），
 // 供证据展示——验证型扫描器的每条命中都应能自解释。
 // 语义与 matchBody 严格一致：任一条件不满足即不命中，全部满足才通过。
-func matchBodyReason(m Match, status int, body string, headers map[string]string, host string) (bool, string) {
+func matchBodyReason(m Match, status int, body string, headers map[string]string, host string, extractVars map[string]string) (bool, string) {
 	var why []string
 	if m.Status != 0 && status != m.Status {
 		return false, ""
@@ -276,11 +283,11 @@ func matchBodyReason(m Match, status int, body string, headers map[string]string
 		why = append(why, "响应头词命中")
 	}
 	for _, expr := range m.DSL {
-		prog, err := dsl.CompileCached(expr)
+		prog, err := compileDSLVars(expr, extractVarNames(m.Extracts))
 		if err != nil {
 			return false, ""
 		}
-		ok, err := prog.Eval(respEnv{status: status, body: body, headers: headers, host: host})
+		ok, err := prog.Eval(respEnv{status: status, body: body, headers: headers, host: host, vars: extractVars})
 		if err != nil || !ok {
 			return false, ""
 		}
@@ -296,6 +303,61 @@ func matchBodyReason(m Match, status int, body string, headers map[string]string
 		}
 	}
 	return true, strings.Join(why, " + ")
+}
+
+// extractVars 按 Match.Extracts 从响应抽取命名变量（组内 check 共享响应）。
+// 正则优先用第一个捕获组；每个变量首个命中的正则生效。
+func extractVars(list []Check, headers map[string]string, body string) map[string]string {
+	vars := map[string]string{}
+	for _, chk := range list {
+		for _, ex := range chk.Match.Extracts {
+			if _, dup := vars[ex.Name]; dup || ex.Name == "" {
+				continue
+			}
+			hay := body
+			if ex.Part == "header" {
+				hay = joinHeaders(headers)
+			}
+			for _, pat := range ex.Regex {
+				re := regexp.MustCompile(pat)
+				mm := re.FindStringSubmatch(hay)
+				if len(mm) > 1 {
+					vars[ex.Name] = mm[1]
+					break
+				}
+			}
+		}
+	}
+	return vars
+}
+
+// extractVarNames 抽取变量名列表（编译 dsl 时的已知变量集）。
+func extractVarNames(exs []ExtractSpec) []string {
+	names := make([]string, 0, len(exs))
+	for _, ex := range exs {
+		if ex.Name != "" {
+			names = append(names, ex.Name)
+		}
+	}
+	return names
+}
+
+// dslVarsCache dsl 编译缓存（键 = 表达式 + 变量名表；变量名参与编译期
+// 已知集合，不同表不可复用 AST）。
+var dslVarsCache sync.Map
+
+// compileDSLVars 带抽取变量名表的 dsl 编译缓存。
+func compileDSLVars(expr string, names []string) (*dsl.Program, error) {
+	key := expr + "\x00" + strings.Join(names, "\x00")
+	if p, ok := dslVarsCache.Load(key); ok {
+		return p.(*dsl.Program), nil
+	}
+	prog, err := dsl.CompileWithVars(expr, names)
+	if err != nil {
+		return nil, err
+	}
+	dslVarsCache.Store(key, prog)
+	return prog, nil
 }
 
 // truncateMark 证据里的标记截断（超长正则/词不全量入库）。
@@ -378,6 +440,13 @@ type respEnv struct {
 	body    string
 	headers map[string]string
 	host    string
+	vars    map[string]string
+}
+
+// Var 抽取变量取值（dsl.VarSource）：不存在返回 false（表达式不命中）。
+func (e respEnv) Var(name string) (string, bool) {
+	v, ok := e.vars[name]
+	return v, ok
 }
 
 func (e respEnv) StatusCode() int { return e.status }

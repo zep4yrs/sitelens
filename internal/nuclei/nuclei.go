@@ -307,6 +307,16 @@ type tplMatcher struct {
 	Condition string   `yaml:"condition"`
 }
 
+// tplExtractor 命名抽取（nuclei extractors regex 形态）：从响应抽取变量
+// 供后续 dsl 表达式引用（如版本号 → compare_versions 区间判断）。
+type tplExtractor struct {
+	Type     string   `yaml:"type"`
+	Name     string   `yaml:"name"`
+	Part     string   `yaml:"part"`
+	Regex    []string `yaml:"regex"`
+	Internal bool     `yaml:"internal"`
+}
+
 // strList 兼容 path 的两种 YAML 形态：单值字符串与字符串列表。
 // 官方 nuclei 库两种写法都大量存在——此前仅声明 []string，把全部
 // string 单值写法的模板在 yaml 解析层静默拒收（真实漏检面，本轮修复）。
@@ -334,7 +344,9 @@ type tplHTTP struct {
 	Headers           map[string]string `yaml:"headers"`
 	MatchersCondition string            `yaml:"matchers-condition"`
 	Matchers          []tplMatcher      `yaml:"matchers"`
+	Extractors        []tplExtractor    `yaml:"extractors"`
 }
+
 
 type tplDoc struct {
 	ID   string `yaml:"id"`
@@ -364,6 +376,7 @@ type normReq struct {
 	method, pathSuffix, body, contentType string
 	matchers                              []tplMatcher
 	cond                                  string
+	extracts                              []checks.ExtractSpec
 }
 
 // Convert 单模板 → checks（多 matcher 组且 OR 时拆分为 ~gN 后缀的多条）。
@@ -441,7 +454,21 @@ func normFromTpl(req tplHTTP) (normReq, bool) {
 		contentType: req.Headers["Content-Type"],
 		matchers:    req.Matchers,
 		cond:        cond,
+		extracts:    extractSpecs(req.Extractors),
 	}, true
+}
+
+// extractSpecs 从模板 extractors 块抽取命名变量定义（regex 形态，
+// internal 回传型与空名跳过）。
+func extractSpecs(exs []tplExtractor) []checks.ExtractSpec {
+	out := make([]checks.ExtractSpec, 0, len(exs))
+	for _, ex := range exs {
+		if ex.Type != "regex" || ex.Name == "" || len(ex.Regex) == 0 || ex.Internal {
+			continue
+		}
+		out = append(out, checks.ExtractSpec{Name: ex.Name, Part: ex.Part, Regex: ex.Regex})
+	}
+	return out
 }
 
 // parseRawRequest 解析 raw 请求文本（HTTP 报文形态）：首行 METHOD 路径 协议，
@@ -654,6 +681,7 @@ func buildChecks(checkID, advicePrefix, name, sevStr string, nr normReq) []check
 				Method:         nr.method,
 				Body:           nr.body,
 				ContentType:    nr.contentType,
+				Extracts:       nr.extracts,
 			},
 			Title:  name,
 			Sev:    sev,
