@@ -598,9 +598,16 @@ func buildChecks(checkID, advicePrefix, name, sevStr string, nr normReq) []check
 			g.rx = pats
 		case "dsl":
 			// 安全子集准入：任一表达式编译失败或含纯排除式（对任意
-			// 响应可能恒真）即整模板跳过，与 regex RE2 准入同策略
+			// 响应可能恒真）即整模板跳过，与 regex RE2 准入同策略。
+			// 抽取变量名计入已知集（compare_versions 引用抽取变量）。
+			exNames := make([]string, 0, len(nr.extracts))
+			for _, ex := range nr.extracts {
+				if ex.Name != "" {
+					exNames = append(exNames, ex.Name)
+				}
+			}
 			for _, expr := range m.DSL {
-				prog, err := dsl.Compile(expr)
+				prog, err := dsl.CompileWithVars(expr, exNames)
 				if err != nil {
 					return nil
 				}
