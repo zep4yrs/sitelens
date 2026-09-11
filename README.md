@@ -24,7 +24,7 @@ SiteLens 不是只报"可能有问题"的扫描器——每条发现都做**二�
 |---|---|---|
 | DVWA（官方镜像，认证态） | full / apocalypse | **真实命中 LFI（读到 `/etc/passwd`）与 phpinfo** |
 | pikachu / sqli-labs / upload-labs / xsslabs | full | 反射 XSS、SQL 注入、文件上传缺陷命中 |
-| 干净站点（对照） | full × 2 轮 | **零误报** |
+| 干净站点（对照） | full × 2 轮 | **内置回归靶场零误报门禁通过** |
 | 劫持探测 | takeover | 子域接管指纹命中，可自证 |
 
 同一条扫描管线，在"该报的地方报得准、不该报的地方不吭声"，这就是它和玩具扫描器的区别。
@@ -100,7 +100,7 @@ go build -o sitelens.exe ./cmd/sitelens
 - **18 个包的单元测试**（47 个测试文件）+ CI 阻断级 `-race` 竞态门禁
 - **govulncheck** 依赖漏洞扫描，当前零发现
 - **百万次级 fuzz** 锤炼模板转换漏斗与 DSL 安全子集求值器
-- **靶场回归门禁**：`tools/regression_nightly.sh`（农场→矩阵→零误报断言→拆场）
+- **靶场回归门禁**：`tools/regression_nightly.sh`（农场→矩阵→**内置回归靶场零误报断言**→拆场；这是固定靶场的门禁口径，不代表真实互联网环境的误报率承诺）
 
 ## 路线图
 
