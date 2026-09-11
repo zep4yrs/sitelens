@@ -339,24 +339,21 @@ function buildOptions() {
   var o = {};
   if (tgSet.sub) { o.subdomain = true; o.takeover = true; }
   if (tgSet.srv) { o.service_probe = true; }
-  var vf = vfValue;
-  if (vf !== "passive") {
-    o.deep = true;
-    o.dast = true;
-    o.dir_scan = true;
-    o.webshell = true;
-    o.active_fp = true;
-    if (vf === "deepv") { o.dir_bypass = true; } // + 403 绕过变体表 + 盲注双确认
-  } else {
+  if (vfValue === "passive") {
+    // 被动：零额外请求，不做任何注入类验证；范围探测（子域/端口）仍可运行
     o.netsec = true;
     o.passive = true;
+    return o;
   }
+  o.deep = true;
+  o.dast = true;
+  o.dir_scan = true;
+  o.webshell = true;
+  o.active_fp = true;
+  o.netsec = true;
+  o.passive = true; // 被动检测零成本，主动扫描时同样开启（对齐原 full 预设）
+  if (vfValue === "deepv") { o.dir_bypass = true; } // + 403 绕过变体表 + 盲注双确认
   o.checks = stValue === "full" ? "all" : "core";
-  if (stValue === "full") {
-    o.netsec = true;
-    o.passive = true;
-    if (vf !== "passive") { o.deep = true; }
-  }
   return o;
 }
 
