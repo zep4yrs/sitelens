@@ -466,6 +466,11 @@ func (s *Server) runScanJob(jobID, urlStr string, opts engine.Options) {
 	s.sem <- struct{}{}
 	defer func() { <-s.sem }()
 
+	// 实时事件流：引擎阶段/命中/认证事件写入 job 事件环，前端轮询消费
+	opts.OnEvent = func(kind, text string) {
+		s.jobs.AppendEvent(jobID, kind, text)
+	}
+
 	res := s.eng.Scan(urlStr, opts, func(p int, msg string) {
 		s.jobs.Update(jobID, func(j *store.Job) { j.Progress = p; j.Message = msg })
 	}, func() bool { return s.jobs.CancelRequested(jobID) })
@@ -507,6 +512,14 @@ func (s *Server) jobOut(w http.ResponseWriter, id string, withResults bool) {
 	out := map[string]any{
 		"job_id": j.ID, "status": j.Status, "progress": j.Progress,
 		"message": j.Message, "done": j.Done, "total": j.Total,
+	}
+	// 实时事件流：最多带最近 40 条（前端实时动态面板）
+	if n := len(j.Events); n > 0 {
+		evs := j.Events
+		if n > 40 {
+			evs = evs[n-40:]
+		}
+		out["events"] = evs
 	}
 	if j.Status == "done" && j.Result != nil {
 		out["status"] = "done"

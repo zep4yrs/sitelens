@@ -29,7 +29,7 @@ func TestEvidenceChain(t *testing.T) {
 		Title: "配置面板暴露", Sev: "medium",
 		Advice: "限制访问",
 	}
-	hits := RunList(httpx.New(0), srv.URL, []Check{chk}, nil, nil)
+	hits := RunList(httpx.New(0), srv.URL, []Check{chk}, nil, nil, nil)
 	if len(hits) != 1 {
 		t.Fatalf("应命中 1 条, got %d", len(hits))
 	}
