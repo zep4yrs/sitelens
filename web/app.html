@@ -243,8 +243,9 @@ var EST = { base: 5, deep: 8, active_fp: 12, dir_scan: 180, dir_bypass: 40,
             weak_audit: 60, checks_all: 420, checks_core: 40 };
 var STAGES = [
   [3, "校验目标（SSRF 防护）"], [12, "采集首页"], [30, "解析证据 / 同域爬取"],
-  [50, "运行 7 个检测器"], [72, "验证引擎 + 安全响应头评分"], [80, "关联漏洞情报（三级判定）"],
-  [88, "可选主动模块"]
+  [50, "运行 7 个检测器"], [72, "验证引擎 + 安全响应头评分"], [78, "关联漏洞情报（三级判定）"],
+  [80, "被动安全检测"], [84, "Nuclei 模板子集"], [85, "参数级 DAST"],
+  [87, "目录探测"], [88, "WebShell 探测"]
 ];
 
 function estimateSeconds(options) {
@@ -432,14 +433,89 @@ api.get("/api/categories").then(function (r) {
 function renderResult(r, scanId) {
   var html = "";
 
+  /* 证据链复现/复制的注册表：键为渲染期序号，值为核心文本 */
+  window._EV = window._EV || {};
+  var evSeq = 0;
+  function regEv(t) { var k = "e" + (++evSeq); window._EV[k] = t || ""; return k; }
+  window.copyEvd = function (k) {
+    var t = (window._EV || {})[k] || "";
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(t);
+    } else {
+      var ta = document.createElement("textarea");
+      ta.value = t; document.body.appendChild(ta); ta.select();
+      document.execCommand("copy"); document.body.removeChild(ta);
+    }
+  };
+  function replayDetails(text) {
+    if (!text) return "";
+    var k = regEv(text);
+    return '<details style="margin-top:6px"><summary style="cursor:pointer;font-size:12px">curl 复现命令 <button class="btn ghost small" onclick="event.preventDefault();copyEvd(\'' + k + '\')">复制</button></summary>' +
+      '<pre class="mono" style="white-space:pre-wrap;font-size:11.5px;margin:4px 0 0">' + esc(text) + "</pre></details>";
+  }
+  function evdPane(v) {
+    var p = "";
+    if (v.replay) {
+      p += '<div style="margin-top:6px"><b style="font-size:12px">复现命令</b>' +
+        '<pre class="mono" style="white-space:pre-wrap;font-size:11.5px;margin:4px 0 0">' + esc(v.replay) + "</pre>" +
+        '<button class="btn ghost small" onclick="copyEvd(\'' + regEv(v.replay) + '\')">复制命令</button></div>';
+    }
+    if (v.request) {
+      p += '<div style="margin-top:6px"><b style="font-size:12px">请求</b>' +
+        '<pre class="mono" style="white-space:pre-wrap;font-size:11.5px;margin:4px 0 0">' + esc(v.request) + "</pre></div>";
+    }
+    if (v.response) {
+      p += '<div style="margin-top:6px"><b style="font-size:12px">响应</b>' +
+        '<span class="hint"> HTTP ' + esc(String(v.response.status)) + " · " + esc(String(v.response.size)) + "B</span>" +
+        '<pre class="mono" style="white-space:pre-wrap;font-size:11.5px;margin:4px 0 0">' + esc(v.response.snippet || "") + "</pre></div>";
+    }
+    if ((v.signals || []).length) {
+      p += '<div style="margin-top:6px"><b style="font-size:12px">信号</b>' +
+        '<span class="hint"> ' + esc(v.signals.join(" · ")) + "</span></div>";
+    }
+    return p;
+  }
+
   /* 采集失败 / 被 WAF 拦截时给出明确原因与建议（引擎 error 字段） */
   if (r.error) {
     var is403 = String(r.error).indexOf("403") >= 0;
     html += '<div class="card" style="border-color:color-mix(in srgb,var(--warn) 50%,transparent);margin-bottom:16px">' +
       '<b style="color:var(--warn)">⚠ ' + esc(r.error) + '</b>' +
-      (is403 ? '<span class="hint" style="display:block;margin-top:4px">目标可能按 UA / WAF 拦截了扫描器（本工具默认自报 SiteLens/1.0）。' +
+      (is403 ? '<span class="hint" style="display:block;margin-top:4px">目标可能按 UA / WAF 拦截了扫描器（本工具默认自报 SiteLens/2.0）。' +
         '可勾选上方「浏览器 UA」后重新扫描。</span>' : '') +
       "</div>";
+  }
+
+  /* 风险摘要卡：机器先做第一层判断，把最值得关注的发现推到最前（评审#8） */
+  var verAll = r.verified || [];
+  var sevRank = { critical: 0, high: 1, medium: 2, low: 3, info: 4 };
+  var ranked = verAll.slice().sort(function (a, b) {
+    var ra = sevRank[a.severity] != null ? sevRank[a.severity] : 9;
+    var rb = sevRank[b.severity] != null ? sevRank[b.severity] : 9;
+    var d = ra - rb;
+    if (d) return d;
+    if (!!b.confirmed !== !!a.confirmed) return b.confirmed ? 1 : -1;
+    return (b.request ? 1 : 0) - (a.request ? 1 : 0);
+  });
+  var top = ranked.slice(0, 3);
+  if (top.length) {
+    html += '<div class="sec-title">最值得关注 <span class="count">' + top.length + "</span>" +
+      '<span class="hint" style="margin-left:8px">按严重度与证据强度排序 · 完整明细见下方与导出</span></div>';
+    top.forEach(function (v) {
+      var ic = (v.severity === "critical" || v.severity === "high") ? "🔴" : (v.severity === "medium" ? "🟠" : "🟡");
+      var evN = 1 + (v.request ? 1 : 0) + (v.response ? 1 : 0) + ((v.signals || []).length ? 1 : 0) + (v.confirmed ? 1 : 0);
+      html += '<div class="card" style="margin-bottom:10px">' +
+        '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">' +
+        '<span>' + ic + "</span><b>" + esc(v.title || v.check || "") + "</b>" +
+        sevBadge(v.severity) +
+        '<span class="hint">证据 ' + evN + "/5 · " + (v.confirmed ? "二次确认通过" : "单轮命中") + "</span></div>" +
+        '<div class="mono" style="word-break:break-all;font-size:12.5px;margin-top:6px">' + esc(v.url || "") + "</div>" +
+        replayDetails(v.replay || "") +
+        "</div>";
+    });
+    if (ranked.length > 3) {
+      html += '<p class="hint" style="margin:4px 0 12px">其余 ' + (ranked.length - 3) + " 条见下方「已验证发现」与导出文件。</p>";
+    }
   }
 
   var sec = r.security || {};
@@ -482,15 +558,12 @@ function renderResult(r, scanId) {
   if (ver.length) {
     html += '<div class="tbl-wrap"><table class="vulns"><tr><th>严重度</th><th>检测项</th><th>命中地址</th><th>修复建议</th></tr>';
     ver.forEach(function (v) {
-      var rep = "";
-      if (v.replay) {
-        rep = '<details style="margin-top:4px"><summary style="cursor:pointer;font-size:12px">复现</summary>' +
-          '<pre class="mono" style="white-space:pre-wrap;font-size:11.5px;margin:4px 0 0">' + esc(v.replay) + "</pre></details>";
-      }
+      var pane = evdPane(v);
+      var block = pane ? '<details style="margin-top:4px"><summary style="cursor:pointer;font-size:12px">证据链</summary>' + pane + "</details>" : "";
       html += "<tr><td>" + sevBadge(v.severity) + "</td>" +
         '<td class="mono">' + esc(v.check) + " " + esc(v.title) + "</td>" +
         '<td class="mono" style="font-size:12px;word-break:break-all">' + esc(v.url) +
-        "（" + esc(v.evidence) + "）" + rep + "</td><td>" + esc(v.advice) + "</td></tr>";
+        "（" + esc(v.evidence) + "）" + block + "</td><td>" + esc(v.advice) + "</td></tr>";
     });
     html += "</table></div>";
   } else {

@@ -22,18 +22,20 @@ type HitResponse struct {
 // Hit 一条已验证发现。Request/Response/Signals/Replay 构成证据链
 // （2.0 验证器地基）：请求可重放、响应可核对、信号可解释、命令可复现。
 type Hit struct {
-	Check     string       `json:"check"`
-	Version   string       `json:"version,omitempty"` // 版本抽取成功时携带
-	Title     string       `json:"title"`
-	Severity  string       `json:"severity"`
-	URL       string       `json:"url"`
-	Evidence  string       `json:"evidence"`
-	Advice    string       `json:"advice"`
-	Request   string       `json:"request,omitempty"`   // 重放请求（HTTP 报文文本）
-	Response  *HitResponse `json:"response,omitempty"`  // 命中响应快照
-	Signals   []string     `json:"signals,omitempty"`   // 通道命中信号明细
-	Replay    string       `json:"replay,omitempty"`    // curl 一键复现命令
-	Confirmed bool         `json:"confirmed,omitempty"` // 经独立二次确认
+	Check      string       `json:"check"`
+	Version    string       `json:"version,omitempty"` // 版本抽取成功时携带
+	Title      string       `json:"title"`
+	Severity   string       `json:"severity"`
+	URL        string       `json:"url"`
+	Evidence   string       `json:"evidence"`
+	Advice     string       `json:"advice"`
+	Request    string       `json:"request,omitempty"`    // 重放请求（HTTP 报文文本）
+	Response   *HitResponse `json:"response,omitempty"`   // 命中响应快照
+	Signals    []string     `json:"signals,omitempty"`    // 通道命中信号明细
+	Replay     string       `json:"replay,omitempty"`     // curl 一键复现命令
+	Confirmed  bool         `json:"confirmed,omitempty"`  // 经独立二次确认
+	Hypothesis string       `json:"hypothesis,omitempty"` // 验证假设（2.0 证据链扩展位）
+	Impact     string       `json:"impact,omitempty"`     // 影响面说明（2.0 证据链扩展位）
 }
 
 // Options 执行参数。

@@ -387,18 +387,20 @@ type RespSnap struct {
 }
 
 type Finding struct {
-	Check    string    `json:"check"`
-	Title    string    `json:"title"`
-	Severity string    `json:"severity"`
-	URL      string    `json:"url"`
-	Param    string    `json:"param"`
-	Evidence string    `json:"evidence"`
-	Advice   string    `json:"advice"`
-	Payload  string    `json:"payload,omitempty"`  // 注入的探针值（证据链）
-	Replay   string    `json:"replay,omitempty"`   // curl 一键复现命令（证据链）
-	Request  string    `json:"request,omitempty"`  // 重放请求文本（证据链）
-	Response *RespSnap `json:"response,omitempty"` // 命中响应快照（证据链）
-	Signals  []string  `json:"signals,omitempty"`  // 通道命中信号明细（证据链）
+	Check      string    `json:"check"`
+	Title      string    `json:"title"`
+	Severity   string    `json:"severity"`
+	URL        string    `json:"url"`
+	Param      string    `json:"param"`
+	Evidence   string    `json:"evidence"`
+	Advice     string    `json:"advice"`
+	Payload    string    `json:"payload,omitempty"`    // 注入的探针值（证据链）
+	Replay     string    `json:"replay,omitempty"`     // curl 一键复现命令（证据链）
+	Request    string    `json:"request,omitempty"`    // 重放请求文本（证据链）
+	Response   *RespSnap `json:"response,omitempty"`   // 命中响应快照（证据链）
+	Signals    []string  `json:"signals,omitempty"`    // 通道命中信号明细（证据链）
+	Hypothesis string    `json:"hypothesis,omitempty"` // 验证假设（2.0 证据链扩展位）
+	Impact     string    `json:"impact,omitempty"`     // 影响面说明（2.0 证据链扩展位）
 }
 
 // curlReplay DAST 探针的复现命令（GET 语义，与探测行为一致）。
