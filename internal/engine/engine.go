@@ -466,9 +466,16 @@ func (e *Engine) Scan(rawURL string, opts Options, onProgress progress, cancel f
 		}
 		if opts.ServiceProbe && kb != nil && len(kb.ServiceFP()) > 0 {
 			onProgress(89, "端口服务识别…")
-			res.Extras["service"] = modules.ServiceProbe(host, kb.ServiceFP(),
+			services := modules.ServiceProbe(host, kb.ServiceFP(),
 				e.cfg.Active.ProbePorts, e.cfg.Active.ProbeTimeoutMS,
 				e.cfg.Active.ProbeWorkers, nil, cancelled)
+			res.Extras["service"] = services
+			// 3.0 协议模板检测（非 HTTP）：tcp 模板跑探测到的服务端口，
+			// dns 模板查目标域名；同闸授权语义
+			onProgress(90, "协议模板检测（tcp/dns/ssl）…")
+			if hits := e.netprotoScan(host, services, emit, cancelled); len(hits) > 0 {
+				res.Extras["netproto"] = hits
+			}
 		}
 		if opts.WeakAudit {
 			// 基础认证弱口令：目录探测发现的 401 路径（表单弱口令走登录爆破端点）

@@ -267,10 +267,10 @@ func compileRE2(pattern string) (*regexp.Regexp, error) {
 // netEnv 协议模板 dsl 求值环境：body 即原始响应，response 经 VarSource 注入。
 type netEnv struct{ response string }
 
-func (e netEnv) StatusCode() int   { return 0 }
-func (e netEnv) Body() string      { return e.response }
+func (e netEnv) StatusCode() int      { return 0 }
+func (e netEnv) Body() string         { return e.response }
 func (e netEnv) Header(string) string { return "" }
-func (e netEnv) Host() string      { return "" }
+func (e netEnv) Host() string         { return "" }
 func (e netEnv) Var(name string) (string, bool) {
 	if name == "response" {
 		return e.response, true

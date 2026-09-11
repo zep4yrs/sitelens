@@ -111,6 +111,10 @@ func Dial(t Target, cfg Config, resolve bool) (*Conn, error) {
 	return dial(t, cfg)
 }
 
+// DialForTest 仅供单元测试/本地靶场：跳过安全闸直连
+// （loopback 监听器场景）。产品代码一律 Dial。
+func DialForTest(t Target, cfg Config) (*Conn, error) { return dial(t, cfg) }
+
 func dial(t Target, cfg Config) (*Conn, error) {
 	addr := net.JoinHostPort(t.Host, strconv.Itoa(t.Port))
 	d := net.Dialer{Timeout: cfg.timeout()}
@@ -122,7 +126,7 @@ func dial(t Target, cfg Config) (*Conn, error) {
 	case "tls":
 		tc := tls.Client(nc, &tls.Config{
 			ServerName:         t.Host,
-			MinVersion:         tls.VersionTLS12, // 客户端安全基线；旧协议探测留显式开关（3.1）
+			MinVersion:         tls.VersionTLS12,  // 客户端安全基线；旧协议探测留显式开关（3.1）
 			InsecureSkipVerify: cfg.TLSSkipVerify, //nolint:gosec // 模板显式配置项，默认 false
 		})
 		nc.SetDeadline(time.Now().Add(cfg.timeout()))

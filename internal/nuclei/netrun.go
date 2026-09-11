@@ -8,6 +8,10 @@ import (
 	"cnb.cool/feng-qiao/sitelens/internal/netx"
 )
 
+// netDialer 拨号 seam：运行期恒为 netx.Dial（带安全闸）；测试换
+// netx.DialForTest 打 loopback 监听器。
+var netDialer = netx.Dial
+
 // RunNetCheck 对单目标执行协议模板。
 //   - tcp：逐 payload Send+Recv（无 payload 则只读 banner），拼接响应匹配；
 //   - dns：按 name/type 查询（{{FQDN}}/{{Hostname}} 替换为 t.Host），记录串拼接匹配；
@@ -34,7 +38,7 @@ func runTCP(nc *NetCheck, t netx.Target, cfg netx.Config, resolve bool) (bool, s
 	if t.Port == 0 {
 		return false, "", fmt.Errorf("netrun: tcp 模板 %s 无端口可用", nc.ID)
 	}
-	conn, err := netx.Dial(t, cfg, resolve)
+	conn, err := netDialer(t, cfg, resolve)
 	if err != nil {
 		return false, "", err // 连接失败 ≠ 未命中：目标端口没开是常态
 	}
@@ -80,7 +84,7 @@ func runSSL(nc *NetCheck, t netx.Target, cfg netx.Config, resolve bool) (bool, s
 	if t.Port == 0 {
 		t.Port = 443
 	}
-	conn, err := netx.Dial(t, cfg, resolve)
+	conn, err := netDialer(t, cfg, resolve)
 	if err != nil {
 		return false, "", err
 	}
