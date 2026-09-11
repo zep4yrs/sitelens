@@ -376,7 +376,9 @@ func (n callNode) positive(neg bool) bool {
 func readsTarget(n node) bool {
 	switch t := n.(type) {
 	case varNode:
-		return t.name == "body" || t.name == "header" || t.name == "headers" || t.name == "status_code"
+		// 已知抽取变量（版本号等）与内置目标变量同属"读取目标数据"
+		return t.known || t.name == "body" || t.name == "header" ||
+			t.name == "headers" || t.name == "status_code"
 	case idxNode:
 		return t.mapName == "header" || t.mapName == "headers"
 	case callNode:
@@ -594,6 +596,7 @@ var knownFuncs = map[string]bool{
 	"contains": true, "contains_all": true, "contains_any": true, "icontains": true,
 	"regex": true, "to_lower": true, "tolower": true, "to_upper": true, "toupper": true,
 	"starts_with": true, "ends_with": true, "len": true,
+	"compare_versions": true,
 }
 
 var knownVars = map[string]bool{
