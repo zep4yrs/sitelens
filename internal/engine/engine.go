@@ -521,6 +521,7 @@ func (e *Engine) Scan(rawURL string, opts Options, onProgress progress, cancel f
 		techs := acc.techHits()
 		res.Vulnerabilities = append(res.Vulnerabilities, kb.Match(techs)...)
 		res.Vulnerabilities = append(res.Vulnerabilities, cveMsFindings(kb.MatchCVEMs(techs, 20))...)
+		attachTemplates(e, res.Vulnerabilities)
 	}
 
 	onProgress(100, fmt.Sprintf("完成，识别 %d 项技术，%d 条已验证发现",
@@ -597,6 +598,33 @@ func (a chromeRenderer) Render(rawURL string) (string, bool) {
 // 落盘 data/state/nuclei_schedule.json，跨进程重启保持轮转公平——
 // 数学保证：可运行全集 C、单次上限 N，⌈C/N⌉ 次扫描后全部模板各跑一遍。
 var nucleiLRUMu sync.Mutex
+
+// attachTemplates 模板情报层：CVE → 可运行模板路径。
+// 索引走缓存（首次已建，秒级命中），单 CVE 最多挂 6 条避免报告膨胀。
+func attachTemplates(e *Engine, findings []intel.Finding) {
+	if len(findings) == 0 || e.cfg.Checks.NucleiDir == "" {
+		return
+	}
+	entries, err := nuclei.Index(e.cfg.Checks.NucleiDir,
+		filepath.Join(e.cfg.Store.DataDir, "nuclei_index.json"))
+	if err != nil || len(entries) == 0 {
+		return
+	}
+	byCVE := map[string][]string{}
+	for i := range entries {
+		for _, c := range entries[i].CVEs {
+			if len(byCVE[c]) < 6 {
+				byCVE[c] = append(byCVE[c], entries[i].Path)
+			}
+		}
+	}
+	for i := range findings {
+		cve := strings.ToUpper(findings[i].CVE)
+		if cve != "" {
+			findings[i].Templates = byCVE[cve]
+		}
+	}
+}
 
 // nucleiSubset 按已识别技术挑选 Nuclei 模板并转换为 check。
 func (e *Engine) nucleiSubset(techs []Tech, pageTitle string, cap int) []checks.Check {

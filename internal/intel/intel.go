@@ -64,24 +64,25 @@ type TechHit struct {
 
 // Finding 一条情报关联结论。
 type Finding struct {
-	ID         int64   `json:"id"`
-	Tech       string  `json:"tech"`
-	Version    string  `json:"version"`
-	Src        string  `json:"src"`
-	Name       string  `json:"name"`
-	Title      string  `json:"title"`
-	Product    string  `json:"product"`
-	CVE        string  `json:"cve"`
-	Type       string  `json:"type"`
-	Severity   string  `json:"severity"`
-	SeverityZh string  `json:"severity_zh"`
-	CVSSScore  float64 `json:"cvss_score"`
-	CVSSSev    string  `json:"cvss_sev"`
-	Ref        string  `json:"ref"`
-	Desc       string  `json:"desc"`
-	Verdict    string  `json:"verdict"` // confirmed | possible
-	Affected   string  `json:"affected"`
-	KEV        bool    `json:"kev"`
+	ID         int64    `json:"id"`
+	Tech       string   `json:"tech"`
+	Version    string   `json:"version"`
+	Src        string   `json:"src"`
+	Name       string   `json:"name"`
+	Title      string   `json:"title"`
+	Product    string   `json:"product"`
+	CVE        string   `json:"cve"`
+	Type       string   `json:"type"`
+	Severity   string   `json:"severity"`
+	SeverityZh string   `json:"severity_zh"`
+	CVSSScore  float64  `json:"cvss_score"`
+	CVSSSev    string   `json:"cvss_sev"`
+	Ref        string   `json:"ref"`
+	Desc       string   `json:"desc"`
+	Verdict    string   `json:"verdict"` // confirmed | possible
+	Affected   string   `json:"affected"`
+	KEV        bool     `json:"kev"`
+	Templates  []string `json:"templates,omitempty"` // 可直接复跑的模板路径（模板情报层）
 }
 
 var severityOrder = map[string]int{
@@ -111,6 +112,7 @@ type KB struct {
 	tscanCount int
 	fingerDir  []FingerDirRow
 	serviceFP  []ServiceFPRow
+	nvd        *NVDStore // 旁路挂载，可 nil
 }
 
 // ServiceFPRow 端口服务 banner 指纹行。
@@ -282,6 +284,7 @@ func (k *KB) Match(techs []TechHit) []Finding {
 						Verdict: "confirmed", Src: "intel-range",
 						Product: tech.Name,
 					})
+					k.nvdFill(&out[len(out)-1])
 				}
 			}
 			continue
@@ -325,6 +328,7 @@ func (k *KB) Match(techs []TechHit) []Finding {
 				Desc: v.Descr, Verdict: verdict, Affected: affected,
 				KEV: k.kev[strings.ToUpper(v.CVE)],
 			})
+			k.nvdFill(&out[len(out)-1])
 		}
 	}
 	sort.Slice(out, func(i, j int) bool {

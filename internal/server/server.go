@@ -118,6 +118,11 @@ func New(cfg *config.Config, cfgPath string) (*Server, error) {
 		if n := intel.ApplyOverridesFile(kb, cfg.Intel.OverridesPath); n > 0 {
 			log.Printf("情报覆盖合并：%d 条（%s）", n, cfg.Intel.OverridesPath)
 		}
+		// NVD 全量字典旁路挂载（update-nvd 产物，缺失则跳过）
+		if nvd, nerr := intel.LoadNVD(cfg.Intel.NVDPath); nerr == nil && nvd != nil {
+			kb.AttachNVD(nvd)
+			log.Printf("NVD 字典挂载：%d 条", nvd.Len())
+		}
 		s.kb.Store(kb)
 	} else {
 		log.Printf("知识库加载失败（情报关联降级）：%v", err)
