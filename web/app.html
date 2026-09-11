@@ -18,6 +18,14 @@
   #hint.warn{color:var(--warn)}
 
   /* 自定义下拉（扫描等级 / 验证码） */
+  .chip-row,.seg{display:flex;gap:8px;flex-wrap:wrap}
+  .opt-group{display:flex;align-items:center;gap:10px;margin:6px 0}
+  .g-label{font-size:12.5px;color:var(--muted-fg);width:42px;flex:none}
+  .chip,.seg-opt{padding:6px 14px;border:1px solid var(--border);border-radius:999px;
+    font-size:13px;cursor:pointer;user-select:none;background:var(--card)}
+  .chip:hover,.seg-opt:hover{border-color:color-mix(in srgb,var(--primary) 45%,var(--border))}
+  .chip.on,.seg-opt.on{border-color:var(--ring);background:color-mix(in srgb,var(--primary) 12%,transparent);
+    color:var(--primary);font-weight:600}
   .cdd{position:relative;width:300px}
   .cdd-btn{display:flex;align-items:center;gap:8px;width:100%;height:38px;padding:0 6px 0 12px;
     background:var(--input);border:1px solid var(--border);border-radius:var(--radius);
@@ -112,19 +120,28 @@
       <button class="btn" id="go" onclick="startScan()">▶ 开始扫描</button>
     </div>
     <div class="opt-row">
-      <div class="cdd" id="level" data-value="standard">
-        <button type="button" class="cdd-btn">
-          <span class="cdd-label"><b>标准识别</b><span class="cdd-desc">同域浅爬取 · 约 15 秒</span></span>
-          <svg class="cdd-chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>
-        </button>
-        <div class="cdd-pop">
-          <button type="button" class="cdd-opt" data-v="quick"><b>快速识别</b><span>仅首页被动指纹 · 约 5 秒</span></button>
-          <button type="button" class="cdd-opt active" data-v="standard"><b>标准识别</b><span>同域浅爬取 · 约 15 秒</span></button>
-          <button type="button" class="cdd-opt" data-v="deep"><b>深度识别</b><span>+主动路径指纹 +端口服务 +DAST · 约 40 秒</span></button>
-          <button type="button" class="cdd-opt" data-v="full"><b>全面识别</b><span>+目录探测 +子域名 +WebShell · 数分钟</span></button>
-          <button type="button" class="cdd-opt" data-v="assets"><b>资产测绘</b><span>+子域名 +接管探测 +目录（发现面，不跑验证）· 数分钟</span></button>
-          <button type="button" class="cdd-opt" data-v="stealth"><b>隐匿模式</b><span>浏览器 UA 穿透 WAF + 被动检测 · 约 20 秒</span></button>
-          <button type="button" class="cdd-opt" data-v="apocalypse"><b style="color:#b3261e">毁天灭地</b><span>全模块 + 全量 5412 模板验证 · 仅限授权目标 · 10 分钟+</span></button>
+      <div class="opt-group">
+        <span class="g-label">范围</span>
+        <div class="chip-row" id="tg-row">
+          <span class="chip on" data-tg="web" title="Web 站点为恒选目标">Web 站点</span>
+          <span class="chip" data-tg="sub">子域资产</span>
+          <span class="chip" data-tg="srv">端口服务</span>
+        </div>
+      </div>
+      <div class="opt-group">
+        <span class="g-label">验证</span>
+        <div class="seg" id="vf-row">
+          <span class="seg-opt" data-vf="passive" title="零额外请求：响应头评分 + 被动特征">被动</span>
+          <span class="seg-opt on" data-vf="active" title="参数级注入 / 目录 / WebShell / 主动路径指纹">主动</span>
+          <span class="seg-opt" data-vf="deepv" title="主动 + 403 绕过变体表 + 时间/布尔盲注双确认">深度盲态</span>
+        </div>
+      </div>
+      <div class="opt-group">
+        <span class="g-label">强度</span>
+        <div class="seg" id="st-row">
+          <span class="seg-opt" data-st="fast" title="核心验证集">快速</span>
+          <span class="seg-opt on" data-st="std" title="扩展验证集">标准</span>
+          <span class="seg-opt" data-st="full" title="全量模板子集 + 无头渲染">完整</span>
         </div>
       </div>
       <input class="tb" id="opt-cookie" style="flex:1;min-width:200px" placeholder="认证会话（可选）Cookie: session=…" autocomplete="off">
@@ -224,20 +241,8 @@ if (["scan", "netsec", "loginbrute"].indexOf(initialTab) >= 0) switchTab(initial
 /* ================= 综合扫描 ================= */
 var currentScanId = null;
 var currentJobId = null;
-var LEVELS = {
-  quick:      { deep: false },
-  standard:   { deep: true },
-  deep:       { deep: true, active_fp: true, service_probe: true, checks: "core", dast: true },
-  full:       { deep: true, active_fp: true, dir_scan: true, dir_bypass: true,
-                subdomain: true, webshell: true, service_probe: true,
-                checks: "all", dast: true, netsec: true, passive: true },
-  assets:     { deep: true, dir_scan: true, subdomain: true, takeover: true, active_fp: true },
-  stealth:    { deep: true, browser_ua: true, passive: true, netsec: true },
-  apocalypse: { deep: true, active_fp: true, dir_scan: true, dir_bypass: true,
-                subdomain: true, takeover: true, webshell: true, weak_audit: true,
-                service_probe: true, checks: "all", dast: true, netsec: true,
-                passive: true, browser_ua: true, nuclei_cap: 6000 }
-};
+/* 预设等级（quick/standard/deep/full）已由「范围 × 验证 × 强度」三维选择器
+   合成取代；引擎 API 仍接受 level 参数与任意布尔组合（兼容脚本调用）。 */
 var EST = { base: 5, deep: 8, active_fp: 12, dir_scan: 180, dir_bypass: 40,
             subdomain: 50, service_probe: 15, webshell: 120, takeover: 40,
             weak_audit: 60, checks_all: 420, checks_core: 40 };
@@ -293,15 +298,67 @@ function initCDD(rootId, onPick) {
 document.addEventListener("click", function () {
   document.querySelectorAll(".cdd.open").forEach(function (r) { r.classList.remove("open"); });
 });
-var levelDD = initCDD("level", function (v) {
-  var hints = {
-    full: "全面识别包含主动探测模块（目录 / 子域名 / WebShell），仅限自有或已授权目标。",
-    apocalypse: "毁天灭地 = 全部主动模块 + 全量 5412 模板验证，请求量与耗时最大，仅限自有或已书面授权的目标。"
-  };
-  document.getElementById("hint").textContent = hints[v] || "";
-  document.getElementById("hint").className = (v === "full" || v === "apocalypse") ? "hint warn" : "hint";
-});
 var capDD = initCDD("lb-cap");
+
+/* ---- 三维选择器：范围（多选）× 验证（单选）× 强度（单选）→ 合成引擎开关 ---- */
+var tgSet = { web: true };
+var vfValue = "active";
+var stValue = "std";
+function wireRow(rowId, multi, onPick) {
+  var row = document.getElementById(rowId);
+  row.addEventListener("click", function (e) {
+    var el = e.target.closest(".chip,.seg-opt");
+    if (!el) return;
+    if (multi) {
+      if (el.getAttribute("data-tg") === "web") return; // Web 站点恒选
+      el.classList.toggle("on");
+      tgSet[el.getAttribute("data-tg")] = el.classList.contains("on");
+    } else {
+      row.querySelectorAll(".on").forEach(function (x) { x.classList.remove("on"); });
+      el.classList.add("on");
+      onPick(el.getAttribute(el.hasAttribute("data-vf") ? "data-vf" : "data-st"));
+    }
+  });
+}
+wireRow("tg-row", true);
+wireRow("vf-row", false, function (v) {
+  vfValue = v;
+  var h = document.getElementById("hint");
+  if (!h) return;
+  if (v === "deepv") {
+    h.textContent = "深度盲态会发送受控注入探针与 403 绕过变体，仅限自有或已书面授权的目标。";
+    h.className = "hint warn";
+  } else {
+    h.textContent = "";
+    h.className = "hint";
+  }
+});
+wireRow("st-row", false, function (v) { stValue = v; });
+
+function buildOptions() {
+  var o = {};
+  if (tgSet.sub) { o.subdomain = true; o.takeover = true; }
+  if (tgSet.srv) { o.service_probe = true; }
+  var vf = vfValue;
+  if (vf !== "passive") {
+    o.deep = true;
+    o.dast = true;
+    o.dir_scan = true;
+    o.webshell = true;
+    o.active_fp = true;
+    if (vf === "deepv") { o.dir_bypass = true; } // + 403 绕过变体表 + 盲注双确认
+  } else {
+    o.netsec = true;
+    o.passive = true;
+  }
+  o.checks = stValue === "full" ? "all" : "core";
+  if (stValue === "full") {
+    o.netsec = true;
+    o.passive = true;
+    if (vf !== "passive") { o.deep = true; }
+  }
+  return o;
+}
 
 /* 本机未装 ddddocr 时禁用需要 OCR 的验证码模式 */
 api.get("/api/captcha/capability").then(function (c) {
@@ -356,7 +413,7 @@ function setProgress(p, msg) {
 function startScan() {
   var url = document.getElementById("url").value.trim();
   if (!url) { document.getElementById("url").focus(); return; }
-  var options = Object.assign({}, LEVELS[levelDD.value] || { deep: true });
+  var options = buildOptions();
   var ck = document.getElementById("opt-cookie").value.trim();
   if (ck) options.auth_cookie = ck;
   if (document.getElementById("opt-ua").checked) options.browser_ua = true;
