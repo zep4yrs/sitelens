@@ -13,8 +13,8 @@ import (
 	"strings"
 )
 
-// AfrogFetchURL afrog 主仓 main 分支 zip（codeload 直链）。
-const AfrogFetchURL = "https://codeload.github.com/affrog/afrog/zip/refs/heads/main"
+// AfrogFetchURL afrog-pocs 官方 POC 库 main 分支 zip（codeload 直链，MIT）。
+const AfrogFetchURL = "https://codeload.github.com/zan8in/afrog-pocs/zip/refs/heads/main"
 
 // afrogZipEntryCap zip 条目总量上限（对齐 server.extractZip 的防御语义）。
 const afrogZipEntryCap = 2000
@@ -52,10 +52,11 @@ func SyncAfrogFromZip(buf []byte, outDir string) (kept, removed int, err error) 
 		if !strings.HasSuffix(name, ".yaml") && !strings.HasSuffix(name, ".yml") {
 			continue
 		}
-		// 剥掉仓库根前缀（afrog-main/），只收 Pocs/** 分类目录
+		// 剥掉 zip 仓库根前缀（afrog-pocs-main/），保留分类目录结构
+		//（afrog-pocs 布局：根级 CNVD/ CVE/ default-pwd/ disclosure/ 等分类）
 		rel := name
-		if i := strings.Index(name, "/Pocs/"); i >= 0 {
-			rel = "Pocs/" + name[i+len("/Pocs/"):]
+		if i := strings.Index(name, "/"); i >= 0 {
+			rel = name[i+1:]
 		} else {
 			continue
 		}

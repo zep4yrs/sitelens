@@ -319,7 +319,8 @@ type tplDoc struct {
 		// Tags 可能是逗号字符串或列表（Nuclei 两种形态都有），转换不消费它，
 		// 不声明字段以免 yaml 类型不匹配导致整模板解析失败
 	} `yaml:"info"`
-	HTTP []tplHTTP `yaml:"http"`
+	HTTP     []tplHTTP `yaml:"http"`
+	Requests []tplHTTP `yaml:"requests"` // 上游 2025 改版：模板请求键全面迁移到 requests
 }
 
 // noisyTemplates 靶场校准定谳的误报模板（词表/正则过泛，Evidence 自证）：
@@ -367,13 +368,17 @@ func parseTplPath(data []byte) (tplDoc, tplHTTP, bool) {
 	if yaml.Unmarshal(data, &doc) != nil {
 		return doc, tplHTTP{}, false
 	}
-	if doc.ID == "" || doc.Info.Name == "" || len(doc.HTTP) == 0 {
+	if doc.ID == "" || doc.Info.Name == "" || (len(doc.HTTP) == 0 && len(doc.Requests) == 0) {
 		return doc, tplHTTP{}, false
 	}
 	if noisyTemplates[strings.ToLower(doc.ID)] {
 		return doc, tplHTTP{}, false // 靶场校准定谳的误报模板
 	}
-	return doc, doc.HTTP[0], true
+	reqs := doc.HTTP
+	if len(reqs) == 0 {
+		reqs = doc.Requests // 上游改版后的 requests 键形态
+	}
+	return doc, reqs[0], true
 }
 
 // normFromTpl path 形态归一化：方法白名单 + {{BaseURL}} 后缀提取。
