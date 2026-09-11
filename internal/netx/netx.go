@@ -122,6 +122,7 @@ func dial(t Target, cfg Config) (*Conn, error) {
 	case "tls":
 		tc := tls.Client(nc, &tls.Config{
 			ServerName:         t.Host,
+			MinVersion:         tls.VersionTLS12, // 客户端安全基线；旧协议探测留显式开关（3.1）
 			InsecureSkipVerify: cfg.TLSSkipVerify, //nolint:gosec // 模板显式配置项，默认 false
 		})
 		nc.SetDeadline(time.Now().Add(cfg.timeout()))
@@ -172,6 +173,45 @@ func (c *Conn) Recv() ([]byte, error) {
 
 // Close 关闭连接。
 func (c *Conn) Close() error { return c.nc.Close() }
+
+// TLSSummary TLS 连接的证书摘要串（主体/颁发者/SAN/DNS/协议版本），
+// 供 ssl 协议模板 word/regex 匹配；非 TLS 连接返回 ("", false)。
+func (c *Conn) TLSSummary() (string, bool) {
+	tc, ok := c.nc.(*tls.Conn)
+	if !ok {
+		return "", false
+	}
+	st := tc.ConnectionState()
+	var b strings.Builder
+	if len(st.PeerCertificates) > 0 {
+		cert := st.PeerCertificates[0]
+		b.WriteString("subject=" + cert.Subject.String() + "\n")
+		b.WriteString("issuer=" + cert.Issuer.String() + "\n")
+		for _, d := range cert.DNSNames {
+			b.WriteString("san=" + d + "\n")
+		}
+		for _, ip := range cert.IPAddresses {
+			b.WriteString("san_ip=" + ip.String() + "\n")
+		}
+	}
+	b.WriteString("version=" + tlsVersionName(st.Version) + "\n")
+	return b.String(), true
+}
+
+func tlsVersionName(v uint16) string {
+	switch v {
+	case tls.VersionTLS10:
+		return "TLS 1.0"
+	case tls.VersionTLS11:
+		return "TLS 1.1"
+	case tls.VersionTLS12:
+		return "TLS 1.2"
+	case tls.VersionTLS13:
+		return "TLS 1.3"
+	default:
+		return "unknown"
+	}
+}
 
 // DNSRecordTypes 支持的查询类型。
 var DNSRecordTypes = map[string]bool{

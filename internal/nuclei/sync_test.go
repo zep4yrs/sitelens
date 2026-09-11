@@ -59,7 +59,7 @@ func TestSyncFromTarMirror(t *testing.T) {
 	tarball := buildTestTar(t, map[string]string{
 		"nuclei-templates-master/cves/a.yaml":         "id: a\n",
 		"nuclei-templates-master/technologies/b.yaml": "id: b\n",
-		"nuclei-templates-master/dns/c.yaml":          "id: c\n", // 未收录类别：不进镜像
+		"nuclei-templates-master/dns/c.yaml":          "id: c\n", // 3.0 协议类别：收
 		"nuclei-templates-master/README.md":           "readme",  // 非 yaml：跳过
 	})
 	f, err := os.Open(tarball)
@@ -71,12 +71,13 @@ func TestSyncFromTarMirror(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SyncFromTar: %v", err)
 	}
-	if kept != 2 || removed != 1 {
+	if kept != 3 || removed != 1 {
 		t.Fatalf("保留/剪枝计数错误: kept=%d removed=%d", kept, removed)
 	}
 	for _, p := range []string{
 		filepath.Join(out, "http", "cves", "a.yaml"),
 		filepath.Join(out, "http", "technologies", "b.yaml"),
+		filepath.Join(out, "dns", "c.yaml"), // 协议类别落盘为顶层目录
 	} {
 		if _, err := os.Stat(p); err != nil {
 			t.Fatalf("镜像文件缺失: %s", p)
@@ -85,8 +86,9 @@ func TestSyncFromTarMirror(t *testing.T) {
 	if _, err := os.Stat(stale); !os.IsNotExist(err) {
 		t.Fatalf("已下架文件应被剪枝")
 	}
-	if _, err := os.Stat(filepath.Join(out, "dns")); !os.IsNotExist(err) {
-		t.Fatalf("http 外子树不应进镜像")
+	// 未收录类别（file/headless/token-spray 等）仍不应进镜像
+	if _, err := os.Stat(filepath.Join(out, "file")); !os.IsNotExist(err) {
+		t.Fatalf("未收录类别不应进镜像")
 	}
 }
 
