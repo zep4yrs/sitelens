@@ -10,7 +10,7 @@
 
 <div align="center">
 
-**[五分钟上手](#五分钟上手) · [配置](#配置) · [七种扫描模式](#七种扫描模式) · [证据链](#证据链长什么样) · [产品说明](docs/产品说明.md) · [开发文档](docs/开发文档.md)**
+**[产品架构](#产品架构) · [五分钟上手](#五分钟上手) · [配置](#配置) · [七种扫描模式](#七种扫描模式) · [证据链](#证据链长什么样) · [产品说明](docs/产品说明.md) · [开发文档](docs/开发文档.md)**
 
 </div>
 
@@ -28,6 +28,56 @@
 如果你需要的是更多的警报，成熟组合很好；如果你需要的是更少但可复核的结论——这就是 SiteLens 的位置。
 
 ---
+
+## 产品架构
+
+SiteLens 是**单二进制、零外部依赖**的验证器：CLI、Web 控制台、扫描引擎、数据资产与前端全部打进一个可执行文件，下载即跑。
+
+### 分层结构
+
+```
+cmd/sitelens        进程入口：scan / serve / audit / update-* 子命令
+internal/
+  engine            扫描编排器：阶段调度、进度回调、取消、结果聚合
+  target/httpx      目标校验（SSRF 防护）与 HTTP 采集
+  crawler           同域爬取 + headless 渲染（chromedp）
+  sitelens          指纹识别（响应头/Cookie/Meta/HTML/Script/icon_hash）
+  intel             漏洞情报库：CVE/CVSS/KEV 三级判定
+  checks/nuclei     验证型 check 与 Nuclei 模板漏斗
+  modules           可选模块：目录/子域/接管/端口/WebShell
+  dast              参数级主动探测（XSS/SQLi/重定向/穿越/盲注）
+  audit             白盒污点分析
+  security          安全响应头评分
+  store             扫描历史持久化 + 异步作业管理
+  server            HTTP 服务：REST API + 内嵌 SPA + 报告导出
+data                指纹库 / 情报库 / 字典等数据资产
+web                 内嵌前端（HTML/CSS/JS，零构建）
+```
+
+### 一次扫描的数据流
+
+引擎 `engine.Scan` 是一条**顺序流水线**，每个阶段都可独立降级（数据缺失只跳过该能力，不阻塞整体）：
+
+```
+目标校验 → 认证登录 → 首页采集 → JS 攻击面提取 → 同域爬取
+   → 指纹识别 → 安全头评分 → 专项 check → Nuclei 模板子集
+   → 被动检测 → DAST 参数探测 → 子域/目录/端口/WebShell 枚举
+   → TLS/DNS 检测 → 情报关联 → 安全评分
+```
+
+**关键设计**：指纹库（`sitelens.Matcher`）与情报库（`intel.KB`）支持运行期热替换，进行中的扫描持旧快照、新扫描取新数据，互不干扰；单次扫描全程用同一份数据快照，保证结果自洽。
+
+### 三条交付形态
+
+| 形态 | 入口 | 说明 |
+|---|---|---|
+| CLI | `sitelens scan <url>` | 全流水线扫描，stdout 出 JSON，可直接管道消费 |
+| Web 控制台 | `sitelens serve` | 内嵌 SPA + REST API，默认 `http://127.0.0.1:5000` |
+| 白盒审计 | `sitelens audit <dir>` | 源码污点分析，输出 JSON 报告 |
+
+三者共用同一个 `internal/engine` 编排器与 `internal/store` 历史库——**同一套引擎，三种用法**。
+
+模块划分与扩展方式见 [开发文档](docs/开发文档.md)。
 
 ## 它能证明什么（真实靶场实测）
 
@@ -156,8 +206,6 @@ go build -o sitelens.exe ./cmd/sitelens
 <div align="center">
   <img src="assets/banner-4.0-attackchain.png" width="100%" alt="SiteLens 4.0 攻击链·黑白盒验证 — 从单点突破，到攻击链分析。Attack Chain Analysis">
 </div>
-
-它由什么组成：`cmd/sitelens` 单入口、`internal/` 引擎/指纹/情报/报告模块、`data/` 数据资产、`web/` 前端。模块划分见 [开发文档](docs/开发文档.md)。
 
 ## 合规
 
