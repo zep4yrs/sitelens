@@ -5,12 +5,23 @@ package authn
 
 import (
 	"fmt"
+	"net/url"
 	"strings"
 	"time"
 
 	"cnb.cool/feng-qiao/sitelens/internal/config"
 	"cnb.cool/feng-qiao/sitelens/internal/httpx"
 )
+
+// FormSig 登录表单签名（调用方从各自 HTML 解析类型映射，authn 不耦合解析器）。
+type FormSig struct {
+	Action      string
+	HasPassword bool
+	Inputs      []InputSig
+}
+
+// InputSig 表单输入字段签名。
+type InputSig struct{ Name, Type, Value string }
 
 // Login 执行一次登录流：POST user_field/pass_field → 校验成功标记 →
 // 提取会话 Cookie。返回 (cookie, 是否成功, 说明)。
@@ -71,4 +82,76 @@ func captureSetCookie(resp *httpx.Response) string {
 		pairs = append(pairs, strings.TrimSpace(kv[0])+"="+strings.TrimSpace(kv[1]))
 	}
 	return strings.Join(pairs, "; ")
+}
+
+// AutoDetect 自动发现登录表单并登录：在已爬取页面解析出的表单里找
+// 含 password 输入框的表单，按字段名语义填入凭证后提交。
+// 会话失败判定与 Login 一致（Set-Cookie 捕获或成功标记）。
+func AutoDetect(client *httpx.Client, forms []FormSig, pageURL string,
+	cfg config.AuthConfig) (string, bool, string) {
+	if cfg.Username == "" || cfg.Password == "" {
+		return "", false, "未配置凭证（auth.username/password）"
+	}
+	for _, f := range forms {
+		if !f.HasPassword {
+			continue
+		}
+		return LoginForm(client, f.Action, pageURL, f.Inputs, cfg)
+	}
+	return "", false, "页面中未发现登录表单"
+}
+
+// LoginForm 对单个表单提交凭证：字段按名/类型语义分配
+// （password 型或含 pass → 密码；含 user/email/login/account → 用户名；
+// hidden 保留原值）。字段名无法辨认的非关键输入留空。
+func LoginForm(client *httpx.Client, action, pageURL string, inputs []InputSig,
+	cfg config.AuthConfig) (string, bool, string) {
+	postURL := pageURL
+	if action != "" {
+		base, err := url.Parse(pageURL)
+		ref, rerr := url.Parse(action)
+		if err != nil || rerr != nil {
+			return "", false, "表单 action 解析失败"
+		}
+		postURL = base.ResolveReference(ref).String()
+	}
+	data := map[string]string{}
+	userSet, passSet := false, false
+	for _, in := range inputs {
+		if in.Name == "" || in.Type == "submit" || in.Type == "button" || in.Type == "image" {
+			continue
+		}
+		low := strings.ToLower(in.Name)
+		switch {
+		case in.Type == "password" || strings.Contains(low, "pass"):
+			data[in.Name] = cfg.Password
+			passSet = true
+		case strings.Contains(low, "user") || strings.Contains(low, "email") ||
+			strings.Contains(low, "login") || strings.Contains(low, "account") ||
+			(cfg.UserField != "" && in.Name == cfg.UserField):
+			data[in.Name] = cfg.Username
+			userSet = true
+		case in.Type == "hidden":
+			data[in.Name] = in.Value
+		default:
+			data[in.Name] = in.Value
+		}
+	}
+	if !passSet || !userSet {
+		return "", false, "表单字段无法辨认用户名/密码输入"
+	}
+	client.SetTimeout(15 * time.Second)
+	resp, err := client.PostForm(postURL, data)
+	if err != nil || resp == nil {
+		return "", false, "登录提交失败"
+	}
+	cookie := captureSetCookie(resp)
+	marker := strings.TrimSpace(cfg.SuccessMarker)
+	if marker != "" && strings.Contains(resp.Body, marker) {
+		return cookie, true, "成功标记命中"
+	}
+	if cookie != "" {
+		return cookie, true, "Set-Cookie 捕获"
+	}
+	return "", false, fmt.Sprintf("未确认登录成功（HTTP %d）", resp.Status)
 }

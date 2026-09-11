@@ -141,6 +141,7 @@ func (e *Engine) Scan(rawURL string, opts Options, onProgress progress, cancel f
 	onProgress(5, "校验目标："+baseURL)
 
 	client := e.newClient(opts)
+	authDone := false
 
 	// 认证深化：配置了登录流则以凭证登录，捕获的会话 Cookie 供
 	// 整次扫描（爬虫/DAST/目录探测）复用；用户显式给的 Cookie 优先
@@ -148,6 +149,7 @@ func (e *Engine) Scan(rawURL string, opts Options, onProgress progress, cancel f
 		onProgress(8, "认证登录…")
 		if cookie, ok, msg := authn.Login(client, e.cfg.Auth); ok {
 			client.SetCookie(cookie)
+			authDone = true
 			onProgress(9, "认证成功："+msg)
 		} else {
 			onProgress(9, "认证未确认："+msg)
@@ -237,6 +239,27 @@ func (e *Engine) Scan(rawURL string, opts Options, onProgress progress, cancel f
 			})
 		}
 		dastLinks = cr.ParamLinks
+		// 认证深化：未配置 login_url 时，从爬到的表单里自动发现登录表单
+		// （含 password 输入框）并以凭证登录——DAST/目录探测随后带认证态
+		if e.cfg.Auth.LoginURL == "" && opts.AuthCookie == "" &&
+			e.cfg.Auth.Username != "" && e.cfg.Auth.Password != "" && !authDone {
+			sigs := make([]authn.FormSig, 0, len(cr.Forms))
+			for _, f := range cr.Forms {
+				if !f.HasPassword {
+					continue
+				}
+				sg := authn.FormSig{Action: f.Action, HasPassword: true}
+				for _, in := range f.Inputs {
+					sg.Inputs = append(sg.Inputs, authn.InputSig{Name: in.Name, Type: in.Type, Value: in.Value})
+				}
+				sigs = append(sigs, sg)
+			}
+			if cookie, ok, msg := authn.AutoDetect(client, sigs, baseURL, e.cfg.Auth); ok {
+				client.SetCookie(cookie)
+				authDone = true
+				onProgress(45, "自动发现登录表单并登录："+msg)
+			}
+		}
 		for _, f := range cr.Forms {
 			if f.Action != "" && len(f.Names) > 0 {
 				// GET 表单：字段合成 query URL 喂给 URL 参数探测——

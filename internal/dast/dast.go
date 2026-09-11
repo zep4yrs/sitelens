@@ -168,6 +168,8 @@ func (r *Runner) Run(links []string) []Finding {
 			if hit := judge(probe.kind, resp, baseBody, tgt); hit != nil {
 				hit.Payload = probe.value
 				hit.Replay = curlReplay(probeURL)
+				hit.Signals = []string{probe.kind + " 探针命中"}
+				chainEvidence(hit, probeURL, resp)
 				hits = append(hits, *hit)
 			}
 		}
@@ -377,21 +379,68 @@ func shortLabel(tgt Target) string {
 }
 
 // Finding 一条 DAST 检测发现。
+// RespSnap 证据链响应快照。
+type RespSnap struct {
+	Status  int    `json:"status"`
+	Size    int    `json:"size"`
+	Snippet string `json:"snippet"`
+}
+
 type Finding struct {
-	Check    string `json:"check"`
-	Title    string `json:"title"`
-	Severity string `json:"severity"`
-	URL      string `json:"url"`
-	Param    string `json:"param"`
-	Evidence string `json:"evidence"`
-	Advice   string `json:"advice"`
-	Payload  string `json:"payload,omitempty"` // 注入的探针值（证据链）
-	Replay   string `json:"replay,omitempty"`  // curl 一键复现命令（证据链）
+	Check    string    `json:"check"`
+	Title    string    `json:"title"`
+	Severity string    `json:"severity"`
+	URL      string    `json:"url"`
+	Param    string    `json:"param"`
+	Evidence string    `json:"evidence"`
+	Advice   string    `json:"advice"`
+	Payload  string    `json:"payload,omitempty"`  // 注入的探针值（证据链）
+	Replay   string    `json:"replay,omitempty"`   // curl 一键复现命令（证据链）
+	Request  string    `json:"request,omitempty"`  // 重放请求文本（证据链）
+	Response *RespSnap `json:"response,omitempty"` // 命中响应快照（证据链）
+	Signals  []string  `json:"signals,omitempty"`  // 通道命中信号明细（证据链）
 }
 
 // curlReplay DAST 探针的复现命令（GET 语义，与探测行为一致）。
 func curlReplay(u string) string {
 	return "curl -sk --path-as-is '" + strings.ReplaceAll(u, "'", `'\''`) + "'"
+}
+
+// reqText 重放请求文本（GET 探针语义）。
+func reqText(u string) string {
+	path, host := "/", ""
+	if p, err := url.Parse(u); err == nil {
+		if p.Path != "" {
+			path = p.Path
+		}
+		if p.RawQuery != "" {
+			path += "?" + p.RawQuery
+		}
+		host = p.Host
+	}
+	return "GET " + path + " HTTP/1.1\r\nHost: " + host + "\r\n\r\n"
+}
+
+// snippetOf 命中正文摘要（压缩空白取头部，全量以复现命令为准）。
+func snippetOf(body string) string {
+	c := strings.Join(strings.Fields(body), " ")
+	r := []rune(c)
+	if len(r) > 240 {
+		return string(r[:240]) + "…"
+	}
+	return c
+}
+
+// chainEvidence 为命中发现填充统一证据链（请求/响应/信号）。
+func chainEvidence(f *Finding, probeURL string, resp *Resp) {
+	if f == nil {
+		return
+	}
+	f.Request = reqText(probeURL)
+	f.Replay = curlReplay(probeURL)
+	if resp != nil {
+		f.Response = &RespSnap{Status: resp.Status, Size: len(resp.Body), Snippet: snippetOf(resp.Body)}
+	}
 }
 
 // collectParams 从爬取到的链接收集待探测参数：按「主机+路径+参数名」去重，上限 cap。
