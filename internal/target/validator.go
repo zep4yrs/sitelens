@@ -70,6 +70,46 @@ func Validate(rawURL string, resolve bool) (string, string, int, error) {
 	return scheme, host, port, nil
 }
 
+// netxSchemes 非 HTTP 协议（internal/netx）允许的 scheme 白名单。
+var netxSchemes = map[string]bool{
+	"tcp": true, "tls": true, "udp": true, "dns": true,
+}
+
+// ValidateHostPort 非 HTTP 协议目标闸：协议白名单（tcp/tls/udp/dns）+
+// 主机黑名单/保留后缀拒绝 + DNS 解析逐 IP 公网校验。端口规则与
+// Validate 一致（dns 可为 0 = 使用系统解析器，不直连目标端口）。
+func ValidateHostPort(scheme, host string, port int, resolve bool) error {
+	scheme = strings.ToLower(scheme)
+	if !netxSchemes[scheme] {
+		return &Error{"仅支持 tcp/tls/udp/dns 协议"}
+	}
+	host = strings.ToLower(strings.TrimSpace(strings.TrimSuffix(strings.ToLower(host), ".")))
+	if host == "" {
+		return &Error{"目标缺少主机名"}
+	}
+	if blockedHosts[host] || strings.HasSuffix(host, ".local") || strings.HasSuffix(host, ".internal") {
+		return &Error{"不允许扫描内网或保留主机名"}
+	}
+	if scheme != "dns" {
+		if port <= 0 || port >= 65536 {
+			return &Error{"端口号不合法"}
+		}
+	}
+	// 字面 IP 无条件校验（零成本）；域名才受 resolve 开关控制
+	if addr, aerr := netip.ParseAddr(host); aerr == nil {
+		if isBlockedIP(addr) {
+			return &Error{"目标是内网/保留地址，已拦截"}
+		}
+		return nil
+	}
+	if resolve {
+		if verr := ensurePublicHost(host); verr != nil {
+			return verr
+		}
+	}
+	return nil
+}
+
 // ensurePublicHost DNS 解析后逐 IP 校验：任一地址落在私网/保留段即拒绝。
 func ensurePublicHost(host string) error {
 	ips, err := net.LookupHost(host)
