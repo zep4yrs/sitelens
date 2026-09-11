@@ -58,3 +58,6 @@ __pycache__/
 /dist/
 /build/
 /makensis.log
+
+# 工具本地缓存目录
+.mimosa/
