@@ -37,6 +37,8 @@ func main() {
                                  镜像官方 Nuclei 模板库到 nuclei_dir
   sitelens [flags] update-afrog [url]
                                  镜像 afrog 社区 POC 库到 nuclei_dir/afrog
+  sitelens [flags] update-fp [url]
+                                 镜像 enthec/webappanalyzer 社区指纹并合并精编库
   sitelens [flags] update-osv    从 OSV.dev 同步受影响区间与 CVSS 评分
   sitelens [flags] update-nvd    全量镜像 NVD CVE 字典（NVD_API_KEY 可选）
 
@@ -80,6 +82,8 @@ func main() {
 		os.Exit(updateNucleiCommand(cfg, flag.Arg(1)))
 	case "update-afrog":
 		os.Exit(updateAfrogCommand(cfg, flag.Arg(1)))
+	case "update-fp":
+		os.Exit(updateFPCommand(cfg, flag.Arg(1)))
 	case "migrate-pg":
 		loadEnvFile(*envFile)
 		os.Exit(migratePGCommand(*cfgPath))

@@ -96,6 +96,8 @@ type pattern struct {
 
 // compilePats 编译模式组：无正则元字符的按字面量快路径处理；
 // 正则模式提取字面量门控（gate），门不命中即跳过正则执行。
+// 编译失败的模式跳过不 panic——社区指纹库（千级条目）里个别
+// RE2 不支持的形态（反向引用/环视）不该炸掉整个扫描进程。
 func compilePats(patterns []string) []pattern {
 	out := make([]pattern, 0, len(patterns))
 	for _, p := range patterns {
@@ -104,10 +106,13 @@ func compilePats(patterns []string) []pattern {
 		}
 		if isSimpleLiteral(p) {
 			out = append(out, pattern{lit: strings.ToLower(p), raw: p, isLit: true})
-		} else {
-			out = append(out, pattern{re: regexp.MustCompile("(?i)" + p), raw: p,
-				gate: literalGate(p)})
+			continue
 		}
+		re, err := regexp.Compile("(?i)" + p)
+		if err != nil {
+			continue
+		}
+		out = append(out, pattern{re: re, raw: p, gate: literalGate(p)})
 	}
 	return out
 }
