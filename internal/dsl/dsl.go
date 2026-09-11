@@ -750,7 +750,9 @@ func (p *parser) parsePrimary() (node, error) {
 			if !knownVars[name] && !p.extra[name] {
 				return nil, fmt.Errorf("dsl: 未知变量 %s", name)
 			}
-			return varNode{name: name, known: true}, nil
+			// known 仅标抽取变量：内置 host 不算「读取目标数据」，
+			// 否则 contains(host,"x") 会被误判为正向命中依据。
+			return varNode{name: name, known: p.extra[name]}, nil
 		}
 	}
 	return nil, fmt.Errorf("dsl: 意外的记号 %q", t.text)
