@@ -38,6 +38,7 @@ func main() {
   sitelens [flags] update-afrog [url]
                                  镜像 afrog 社区 POC 库到 nuclei_dir/afrog
   sitelens [flags] update-osv    从 OSV.dev 同步受影响区间与 CVSS 评分
+  sitelens [flags] update-nvd    全量镜像 NVD CVE 字典（NVD_API_KEY 可选）
 
 配置：%s（缺省用内置最佳实践默认值）
 `, *cfgPath)
@@ -73,6 +74,8 @@ func main() {
 			rep.BySeverity["high"], rep.BySeverity["medium"], rep.BySeverity["low"])
 	case "update-osv":
 		os.Exit(updateOSVCommand(cfg, 8))
+	case "update-nvd":
+		os.Exit(updateNVDCommand(cfg))
 	case "update-nuclei":
 		os.Exit(updateNucleiCommand(cfg, flag.Arg(1)))
 	case "update-afrog":
@@ -114,6 +117,8 @@ func runScan(cfg *config.Config, rawURL string) {
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "警告：知识库加载失败（%v），跳过情报关联\n", err)
 		kb = nil
+	} else if nvd, nerr := intel.LoadNVD(cfg.Intel.NVDPath); nerr == nil && nvd != nil {
+		kb.AttachNVD(nvd)
 	}
 	eng := engine.New(cfg, matcher, kb)
 	opts := engine.Options{

@@ -33,6 +33,7 @@ type Entry struct {
 	Name        string   `json:"name"`        // 模板名（相关度排序用）
 	Tags        []string `json:"tags"`        // 精确 tags（来自完整 Convert）
 	Sev         string   `json:"sev"`         // 精确严重度
+	CVEs        []string `json:"cves,omitempty"` // 模板声明的 CVE（模板情报层）
 	MTime       int64    `json:"mtime"`       // 文件修改时间
 	Size        int64    `json:"size"`        // 文件大小
 	Convertible bool     `json:"convertible"` // 能通过漏斗转换为可执行 check
@@ -43,7 +44,8 @@ type Entry struct {
 // （历史缓存中 Tags 全空，无法通过条目数区分新旧格式）。
 // v4：dsl 安全子集接入 + RegexBody 装配修复，转换结果变化。
 // v5：raw 请求形态 + afrog 经典形态接入，同批文件可转换面扩大。
-const cacheSchema = 5
+// v6：Entry 增 CVEs 字段（模板情报层）。
+const cacheSchema = 6
 
 type cacheFile struct {
 	Schema  int     `json:"schema"`
@@ -118,7 +120,7 @@ func Index(dir, cachePath string) ([]Entry, error) {
 			if len(checks) == 0 {
 				continue // 漏斗淘汰：只把可运行的模板纳入调度全集
 			}
-			name, sev, tags := convertMeta(string(data))
+			name, sev, tags, cves := convertMeta(string(data))
 			if pi == 1 && seenName[name] {
 				continue // legacy 与新语料同名：新语料已收录，跳过
 			}
@@ -128,6 +130,7 @@ func Index(dir, cachePath string) ([]Entry, error) {
 				Name:        name,
 				Sev:         sev,
 				Tags:        tags,
+				CVEs:        cves,
 				MTime:       st.ModTime().Unix(),
 				Size:        st.Size(),
 				Convertible: true, // 建入索引即漏斗通过（Convert 非空）
@@ -146,10 +149,11 @@ var (
 	metaTagsRe = regexp.MustCompile(`(?m)^\s*tags:\s*(.+)$`)
 	metaSevRe  = regexp.MustCompile(`(?m)^\s*severity:\s*(\S+)`)
 	metaNameRe = regexp.MustCompile(`(?m)^\s*name:\s*(.+)$`)
+	metaCveRe  = regexp.MustCompile(`(?i)CVE-\d{4}-\d{4,7}`)
 )
 
-// convertMeta 从模板全文取精确 name/sev/tags（漏斗验证通过后的条目用）。
-func convertMeta(data string) (name, sev string, tags []string) {
+// convertMeta 从模板全文取精确 name/sev/tags/cves（漏斗验证通过后的条目用）。
+func convertMeta(data string) (name, sev string, tags []string, cves []string) {
 	if m := metaNameRe.FindStringSubmatch(data); m != nil {
 		name = strings.TrimSpace(m[1])
 	}
@@ -167,7 +171,18 @@ func convertMeta(data string) (name, sev string, tags []string) {
 			}
 		}
 	}
-	return name, sev, tags
+	seenCve := map[string]bool{}
+	for _, c := range metaCveRe.FindAllString(data, 8) {
+		c = strings.ToUpper(c)
+		if !seenCve[c] {
+			seenCve[c] = true
+			cves = append(cves, c)
+		}
+		if len(cves) >= 8 {
+			break
+		}
+	}
+	return name, sev, tags, cves
 }
 
 var sevRank = map[string]int{"critical": 0, "high": 1, "medium": 2, "low": 3, "info": 4}

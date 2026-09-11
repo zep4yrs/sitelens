@@ -40,6 +40,7 @@ func (k *KB) Stats() map[string]any {
 		"intel_with_cvss":   withCVSS,
 		"cve_ms":            len(k.cveMs),
 		"kev":               len(k.kev),
+		"nvd":               k.NVDCount(),
 	}
 }
 
@@ -105,5 +106,52 @@ func (k *KB) Search(q string, limit int) []SearchResult {
 	for _, h := range hits {
 		out = append(out, h.r)
 	}
+	// NVD 旁路检索：主库命中不足 limit 时用 NVD（CVE 前缀/厂商产品子串）补位。
+	if k.nvd != nil && len(out) < limit {
+		seen := map[string]bool{}
+		for _, r := range out {
+			seen[r.CVE] = true
+		}
+		qcve := strings.ToUpper(q)
+		nvdLimit := limit - len(out)
+		if !strings.HasPrefix(qcve, "CVE-") || len(qcve) < 8 {
+			// 非 CVE 词：按产品约束补
+			for _, e := range k.nvd.ByProduct(q, nvdLimit) {
+				if !seen[e.CVE] {
+					seen[e.CVE] = true
+					out = append(out, SearchResult{
+						Src: "nvd", Name: e.Descr, Product: nvdProdsJoined(e),
+						CVE: e.CVE, Severity: e.Sev, CVSS: e.Score,
+					})
+				}
+			}
+		}
+		if strings.HasPrefix(qcve, "CVE-") {
+			for _, e := range k.nvd.list {
+				if len(out) >= limit {
+					break
+				}
+				if strings.HasPrefix(e.CVE, qcve) && !seen[e.CVE] {
+					seen[e.CVE] = true
+					out = append(out, SearchResult{
+						Src: "nvd", Name: e.Descr, Product: nvdProdsJoined(e),
+						CVE: e.CVE, Severity: e.Sev, CVSS: e.Score,
+					})
+				}
+			}
+		}
+	}
 	return out
+}
+
+// nvdProdsJoined 检索结果展示用产品串（最多 3 个 vendor/product）。
+func nvdProdsJoined(e NVDEntry) string {
+	var parts []string
+	for i, p := range e.Prods {
+		if i >= 3 {
+			break
+		}
+		parts = append(parts, p.VP)
+	}
+	return strings.Join(parts, ", ")
 }
