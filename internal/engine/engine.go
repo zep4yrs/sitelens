@@ -245,12 +245,12 @@ func (e *Engine) Scan(rawURL string, opts Options, onProgress progress, cancel f
 			e.cfg.Auth.Username != "" && e.cfg.Auth.Password != "" && !authDone {
 			sigs := make([]authn.FormSig, 0, len(cr.Forms))
 			for _, f := range cr.Forms {
-				if !f.HasPassword {
+				if !f.HasPwd {
 					continue
 				}
 				sg := authn.FormSig{Action: f.Action, HasPassword: true}
-				for _, in := range f.Inputs {
-					sg.Inputs = append(sg.Inputs, authn.InputSig{Name: in.Name, Type: in.Type, Value: in.Value})
+				for _, n := range f.Names {
+					sg.Inputs = append(sg.Inputs, authn.InputSig{Name: n})
 				}
 				sigs = append(sigs, sg)
 			}
