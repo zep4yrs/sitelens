@@ -27,8 +27,7 @@ main:
     - *regression
 
 # 发版构建（tag 推送触发）。日常提交不自动构建。发版流程：
-#   推送 v3.0.0 tag 前先上传两个前置资产到该 Release：intel_dump.json.gz（剥离版）
-#   与 nuclei-templates.tar.gz（全池打包），tag 构建即产出 5 产物并上传。
+#   模板池与情报库均已入仓库（packs/ 与 data/），推送 v3.0.0 tag 即自动构建 5 产物并上传。
 "v*":
   tag_push:
     - name: 构建 Windows lite（zip + NSIS 安装器）
@@ -69,20 +68,14 @@ main:
         - name: build
           script:
             - |
-              # 情报库来自本仓库 v1.0.0 Release 私有资产（intel_dump 不入 git；
-              # 跨仓库 clone sitelens-data 的旧方案因流水线 token 作用域不足已废弃）。
-              # 拉取失败则本阶段明确失败，绝不产出缺情报库的"伪 full"包。
+              # 模板池与情报库均已入仓库（packs/nuclei-templates.tar.gz + data/），
+              # full 构建零外部资产依赖
               apt-get update -qq && apt-get install -y -qq zip nsis jq >/dev/null
               export SITLENS_BODY_FILE="$PWD/tools/release-body-3.0.0.md"
-              mkdir -p SiteLens/data dist
-              # intel_dump.json.gz 为 3.0 剥离版（无商业来源数据）；发版前先手工上传到本 tag 的 Release 资产
-              bash tools/release_fetch_asset.sh "v3.0.0" intel_dump.json.gz SiteLens/data/intel_dump.json.gz
-              # 模板池 tarball 含 http+协议族+社区全源（117,889 可运行）；发版前由本地打包上传（见 todo-3.0 P6）
-              bash tools/release_fetch_asset.sh "v3.0.0" nuclei-templates.tar.gz /tmp/nuclei-templates.tar.gz
-              mkdir -p SiteLens/data/nuclei
-              tar xzf /tmp/nuclei-templates.tar.gz -C SiteLens/data/nuclei --strip-components=2
+              mkdir -p SiteLens/data/nuclei SiteLens/data dist
+              tar xzf packs/nuclei-templates.tar.gz -C SiteLens/data/nuclei
+              cp data/intel_dump.json.gz data/tpl_intel.json.gz data/affected_ranges.json SiteLens/data/ 2>/dev/null || true
               cp -r data/go data/wordlists SiteLens/data/ 2>/dev/null || true
-              cp data/affected_ranges.json SiteLens/data/ 2>/dev/null || true
               GOOS=windows GOARCH=amd64 go build -ldflags "-s -w" -o SiteLens/sitelens.exe ./cmd/sitelens
               cp README.md docs/产品说明.md SiteLens/ 2>/dev/null || true
               (cd SiteLens && zip -qr ../dist/SiteLens-3.0.0-full-win64.zip .)
