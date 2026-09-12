@@ -146,6 +146,7 @@
       </div>
       <input class="tb" id="opt-cookie" style="flex:1;min-width:200px" placeholder="认证会话（可选）Cookie: session=…" autocomplete="off">
       <label><input type="checkbox" id="opt-ua"> 浏览器 UA（应对按 UA 降级的站点）</label>
+      <label title="3.0 利用级无害验证：对已验证发现做影响证明（回显/时延/出带）。需 .sitelens.yml exploit.enabled + 授权白名单，未授权目标自动跳过且零请求"><input type="checkbox" id="opt-exploit"> 利用级验证（需授权白名单）</label>
     </div>
     <p class="hint" id="hint"></p>
 
@@ -437,6 +438,7 @@ function startScan() {
   var ck = document.getElementById("opt-cookie").value.trim();
   if (ck) options.auth_cookie = ck;
   if (document.getElementById("opt-ua").checked) options.browser_ua = true;
+  if (document.getElementById("opt-exploit").checked) options.exploit = true;
 
   document.getElementById("idle-wrap").style.display = "none";
   document.getElementById("pw").style.display = "block";
@@ -636,10 +638,14 @@ function renderResult(r, scanId) {
     ver.forEach(function (v) {
       var pane = evdPane(v);
       var block = pane ? '<details style="margin-top:4px"><summary style="cursor:pointer;font-size:12px">证据链</summary>' + pane + "</details>" : "";
+      var imp = "";
+      if (v.impact === "proven") imp = ' <span class="badge danger">影响已证明</span>';
+      else if (v.impact === "observed") imp = ' <span class="badge warn">可利用面观测</span>';
+      var impEv = v.impact_evidence ? '<div style="font-size:12px;color:var(--muted-fg)">利用级：' + esc(v.impact_evidence) + "</div>" : "";
       html += "<tr><td>" + sevBadge(v.severity) + "</td>" +
-        '<td class="mono">' + esc(v.check) + " " + esc(v.title) + "</td>" +
+        '<td class="mono">' + esc(v.check) + " " + esc(v.title) + imp + "</td>" +
         '<td class="mono" style="font-size:12px;word-break:break-all">' + esc(v.url) +
-        "（" + esc(v.evidence) + "）" + block + "</td><td>" + esc(v.advice) + "</td></tr>";
+        "（" + esc(v.evidence) + "）" + impEv + block + "</td><td>" + esc(v.advice) + "</td></tr>";
     });
     html += "</table></div>";
   } else {
@@ -660,7 +666,10 @@ function renderResult(r, scanId) {
       else if (v.verdict === "excluded") lv = '<span class="badge ok">不受影响</span>';
       html += "<tr><td>" + sevBadge(v.severity, v.severity_zh) + "</td><td>" + lv + "</td>" +
         '<td class="mono">' + esc(v.tech) + "</td>" +
-        "<td>" + (v.cve ? '<span class="mono">' + esc(v.cve) + "</span> " : "") + name + "</td>" +
+        "<td>" + (v.cve ? '<span class="mono">' + esc(v.cve) + "</span> " : "") + name +
+        (v.templates && v.templates.length ? '<div style="font-size:12px;color:var(--muted-fg)">可跑模板：' +
+          esc(v.templates.slice(0, 3).join(" · ")) + (v.templates.length > 3 ? " 等 " + v.templates.length + " 条" : "") + "</div>" : "") +
+        "</td>" +
         "<td>" + esc(v.type || "-") + '</td><td class="mono">' + esc(v.src) + "</td></tr>";
     });
     html += "</table></div>";
@@ -674,11 +683,19 @@ function renderResult(r, scanId) {
   var titles = { active_fp: "主动路径指纹", dir_scan: "目录探测", subdomain: "子域名",
                  service: "端口服务", netsec: "TLS / DNS 安全", weak_audit: "登录爆破结果",
                  webshell: "WebShell 路径探测", jsmap: "JS 攻击面", dast: "DAST 检测",
-                 passive: "被动安全检测", bypass: "403 绕过探测", dir: "目录探测" };
+                 passive: "被动安全检测", bypass: "403 绕过探测", dir: "目录探测",
+                 netproto: "协议模板检测（tcp/dns/ssl）", exploit: "利用级无害验证" };
   Object.keys(ex).forEach(function (key) {
     var items = ex[key] || [];
+    var cnt = Array.isArray(items) ? items.length : null;
     html += '<div class="sec-title">' + esc(titles[key] || key) +
-      ' <span class="count">' + items.length + "</span></div>";
+      (cnt !== null ? ' <span class="count">' + cnt + "</span>" : "") + "</div>";
+    if (key === "exploit") {
+      // 汇总对象：{proven, observed, gate}
+      html += '<div class="extras-box mono">proven ' + esc(String(items.proven || 0)) +
+        " · observed " + esc(String(items.observed || 0)) + " · 闸门 " + esc(String(items.gate || "-")) + "</div>";
+      return;
+    }
     if (!items.length) { html += '<p class="muted" style="font-size:13px">未发现。</p>'; return; }
     html += '<div class="extras-box mono">';
     items.forEach(function (it) { html += extrasLine(key, it) + "<br>"; });
