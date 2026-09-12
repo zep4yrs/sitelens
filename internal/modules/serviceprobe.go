@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"cnb.cool/feng-qiao/sitelens/internal/intel"
+	"cnb.cool/feng-qiao/sitelens/internal/rex"
 )
 
 // DefaultProbePorts 默认探测端口（常见服务，总量可控）。
@@ -35,15 +36,26 @@ type ServiceHit struct {
 	Banner  string `json:"banner"`
 }
 
-// fpMatcher 正则惰性编译缓存（进程级；模式编译失败永久跳过）。
+// fpMatcher 正则惰性编译缓存（进程级；双层编译仍失败的模式才跳过）。
 type fpMatcher struct {
 	once sync.Once
 	regs []*compiledFP
 }
 
+// compiledFP 双层编译：re2 命中快路径；RE2 拒收的环视/反向引用等
+// 模式回退受限回溯引擎 rex（B25：服务指纹零丢弃）。
 type compiledFP struct {
 	re  *regexp.Regexp
+	rx  *rex.Regexp
 	row intel.ServiceFPRow
+}
+
+// findString 按编译层派发，返回匹配文本（无匹配为空串）。
+func (c *compiledFP) findString(banner string) string {
+	if c.re != nil {
+		return c.re.FindString(banner)
+	}
+	return c.rx.FindString(banner)
 }
 
 func (m *fpMatcher) compile(rows []intel.ServiceFPRow) {
@@ -55,7 +67,14 @@ func (m *fpMatcher) compile(rows []intel.ServiceFPRow) {
 			}
 			re, err := regexp.Compile(r.Pattern)
 			if err != nil {
-				continue // RE2 不兼容的模式跳过，不阻塞
+				// RE2 不兼容（环视/反向引用/超界重复）→ 回退 rex；
+				// 双层都失败的模式才跳过
+				rx, rerr := rex.Compile(r.Pattern)
+				if rerr != nil {
+					continue
+				}
+				m.regs = append(m.regs, &compiledFP{rx: rx, row: r})
+				continue
 			}
 			m.regs = append(m.regs, &compiledFP{re: re, row: r})
 		}
@@ -115,7 +134,7 @@ func ServiceProbe(host string, rows []intel.ServiceFPRow, ports []int,
 			mu.Lock()
 			defer mu.Unlock()
 			for _, fp := range globalFP.regs {
-				if m := fp.re.FindString(banner); m != "" {
+				if m := fp.findString(banner); m != "" {
 					hits = append(hits, ServiceHit{
 						Port:    port,
 						Service: fp.row.Service,
