@@ -30,12 +30,12 @@ func BenchmarkMatch(b *testing.B) {
 	}
 	body.WriteString("</body></html>")
 	ev := &Evidence{
-		URL:      "https://bench.example/",
-		Status:   200,
-		Headers:  map[string]string{"Server": "nginx/1.25.3", "X-Powered-By": "PHP/8.2.0"},
-		Body:     body.String(),
-		Title:    "Example Domain",
-		Metas:    map[string]string{"generator": "WordPress 6.4"},
+		URL:         "https://bench.example/",
+		Status:      200,
+		Headers:     map[string]string{"Server": "nginx/1.25.3", "X-Powered-By": "PHP/8.2.0"},
+		Body:        body.String(),
+		Title:       "Example Domain",
+		Metas:       map[string]string{"generator": "WordPress 6.4"},
 		CookieNames: []string{"wordpress_test_cookie"},
 	}
 	b.ResetTimer()

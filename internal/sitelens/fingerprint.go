@@ -236,7 +236,7 @@ func loadFrom(data json.RawMessage) ([]*compiledTech, error) {
 			Conf    int             `json:"conf"`
 			Website string          `json:"website"`
 			Rules   json.RawMessage `json:"rules"`
-		Exact   bool             `json:"exact"`
+			Exact   bool            `json:"exact"`
 		} `json:"technologies"`
 	}
 	if err := json.Unmarshal(data, &box); err != nil {
