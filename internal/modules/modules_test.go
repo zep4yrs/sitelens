@@ -162,3 +162,18 @@ func TestCancelStopsDirScan(t *testing.T) {
 	})
 	_ = hits // 提前取消不 panic 即可
 }
+
+// B18 回归：并发 worker 直接调用不加锁的消费者不得产生数据竞争
+// （CI -race 下此前必报 WARNING: DATA RACE）。串行化由模块内部保证。
+func TestProgressSerialized(t *testing.T) {
+	dir := writeWordlist(t, "subs_default.txt", []string{"a", "b", "c", "d", "e", "f", "g", "h"})
+	cfg := benchCfg(dir)
+	cfg.SubWorkers = 8
+	var seen []string // 故意不加锁的消费者：内部串行化后安全（race 探测点）
+	_ = SubdomainEnumWith("example.com", cfg, func(done, total int, msg string) {
+		seen = append(seen, msg)
+	}, nil, func(host string) ([]string, error) {
+		return nil, fmt.Errorf("no such host")
+	})
+	_ = seen
+}

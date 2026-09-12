@@ -125,6 +125,7 @@ func ServiceProbe(host string, rows []intel.ServiceFPRow, ports []int,
 	if workers <= 0 {
 		workers = 10
 	}
+	progress = serializedProgress(progress) // B18：端口 goroutine 并发调 progress
 	// 本轮扫描固定用这份编译结果：内容不可变，扫描期间无锁遍历；
 	// 热更新发生在扫描中也不影响本轮，下一次扫描自动生效
 	regs := globalFP.compile(rows)

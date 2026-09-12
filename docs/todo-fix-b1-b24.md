@@ -57,6 +57,38 @@ Go RE2 实测拒收 702 条（对 11,966 条逐一编译验证）：Perl 环视�
 - [x] 验收：**702 条全部有效（零丢弃），服务指纹恢复全量 11,966**；
   开发文档口径同步（B21 的 94% 修正作废）
 
+## 复扫收口（第二轮 Mimosa 深度审计，2026-09-12）
+
+复扫结论：门禁全绿，24 项中 18 项确认已修、4 项可复现、2 项残留、
+另发现 1 项由 B4 修复引入的缺陷。逐项处置：
+
+- [x] **B20 复扫判「仍可复现」为过期副本**：真修已在 `aeb8d32` 落地
+  （fpMatcher 签名缓存，随情报库热更新重编），复扫跑的是 b16178a 前代码。
+  复扫报告建议的「按 rows 变化重建」即当前实现（行数+首尾模式签名）
+- [x] **B2 残留复现（修复只做了一半）**：soft404Baseline 口径统一了但
+  探针侧 path 无前导 `/`，catch-all 回显站基线残留 `/<html>…` 与目标侧
+  `<html>…` 失配 → 生产可达误报。收口：stripEcho 单点归一化路径为
+  「前导 /」形态，两侧任一写法都剔净、口径不再漂移；
+  TestStripEchoSameWindow 以复扫同款「404: /path」桩固化
+- [x] **B4 复扫新发现：issued 表无界增长 + Reset 不清预订 + 无 TTL**：
+  Reserve 加 65536 上限（FIFO 淘汰）；Reset 连预订表一并清空
+  （旧 token 不重新预订不能复活）；回连记录 30 分钟 TTL，读取/写入
+  时顺带清理——长驻 serve 不再单调增长，幽灵命中杜绝。beacon_test.go 固化
+- [x] **B18 progress 回调并发无序列化**：包内 serializedProgress 包装
+  （消费者无需自行加锁），接 ServiceProbe 与 SubdomainEnumWith 两个
+  真并发入口；TestProgressSerialized 以不加锁消费者作 race 探测点
+  （CI -race 门禁覆盖）
+- [x] **B19 收窗残留**：轮询改「先查后睡」（快速回连零等待）+ 全部自有
+  token 命中即收窗 + 截止即停；未配置 beacon 零开销返回。异步回连的
+  等待窗语义上必须保留（不等待=漏报），已由注释与测试明确；
+  幽灵命中残留由 beacon TTL 兜底
+- [x] **B11 残留（修了 4/5）**：timeBlind 证据链补 Request 字段
+  （reqText(injURL)），与 boolBlind 同规格；injURL 收敛为单变量。
+  TestTimeBlindEvidenceChainComplete 断言全链字段
+- [x] **B16 维持原状 → 容错收口**：Health 探测不再依赖「以 /ocr 结尾」
+  猜测——依次尝试「剥 /ocr + /health」与「根路径 /health」，
+  带后缀/裸地址/其他路径/尾斜杠均可探测。captcha_test.go 固化
+
 ## 明确不修 / 已确认健康
 
 - 池内 extractor 正则实测 0 触发（B3 为潜在缺陷，防御性修复）

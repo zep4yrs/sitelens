@@ -313,7 +313,8 @@ func (r *Runner) timeBlind(tgt Target, done *int, total int) *Finding {
 	if sleep <= 0 {
 		sleep = 4
 	}
-	if len(setParam(tgt.URL, tgt.Param, sleepPayload(sleep))) > r.opts.MaxURLLen {
+	injURL := setParam(tgt.URL, tgt.Param, sleepPayload(sleep))
+	if len(injURL) > r.opts.MaxURLLen {
 		return nil
 	}
 
@@ -329,7 +330,7 @@ func (r *Runner) timeBlind(tgt Target, done *int, total int) *Finding {
 	}
 
 	start = time.Now()
-	inj := r.fetch.GetSmall(setParam(tgt.URL, tgt.Param, sleepPayload(sleep)))
+	inj := r.fetch.GetSmall(injURL)
 	injMS := time.Since(start).Milliseconds()
 	*done++
 	if r.prog != nil {
@@ -347,7 +348,7 @@ func (r *Runner) timeBlind(tgt Target, done *int, total int) *Finding {
 		return nil
 	}
 	start = time.Now()
-	again := r.fetch.GetSmall(setParam(tgt.URL, tgt.Param, sleepPayload(sleep)))
+	again := r.fetch.GetSmall(injURL)
 	againMS := time.Since(start).Milliseconds()
 	*done++
 	if r.prog != nil {
@@ -363,7 +364,8 @@ func (r *Runner) timeBlind(tgt Target, done *int, total int) *Finding {
 		URL:      tgt.URL,
 		Param:    tgt.Param,
 		Payload:  sleepPayload(sleep),
-		Replay:   curlReplay(setParam(tgt.URL, tgt.Param, sleepPayload(sleep))),
+		Replay:   curlReplay(injURL),
+		Request:  reqText(injURL),
 		Signals: []string{"基线 " + formatMS(baseMS) + " / 注入 " + formatMS(injMS) +
 			" / 复测 " + formatMS(againMS)},
 		Response: &RespSnap{Status: inj.Status, Size: len(inj.Body), Snippet: snippetOf(inj.Body)},
