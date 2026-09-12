@@ -39,13 +39,17 @@ main:
         - name: build
           script:
             - |
+              # 镜像变量前置导出：electron-builder 自取的 electron zip 与
+              # 打包工具链都走 npmmirror（直连 github 在部分网络不稳）
+              export ELECTRON_SKIP_BINARY_DOWNLOAD=1
+              export ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/
+              export ELECTRON_BUILDER_BINARIES_MIRROR=https://npmmirror.com/mirrors/electron-builder-binaries/
               apt-get update -qq && apt-get install -y -qq nodejs npm >/dev/null
               cd desktop
-              # Electron 二进制不需要（打包用 electron-builder 自取的 zip），跳过下载
-              ELECTRON_SKIP_BINARY_DOWNLOAD=1 npm ci --no-audit --no-fund
+              npm ci --no-audit --no-fund
+              # 桌面壳单测（配置合并器等纯函数回归）
+              node --test test/
               npm run engine
-              ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/ \
-              ELECTRON_BUILDER_BINARIES_MIRROR=https://npmmirror.com/mirrors/electron-builder-binaries/ \
               npx electron-builder --win nsis
               cd ..
               export SITLENS_BODY_FILE="$PWD/tools/release-body-3.0.0.md"

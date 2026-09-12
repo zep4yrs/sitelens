@@ -100,6 +100,7 @@ function createWindow() {
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,
+      sandbox: true, // 渲染进程沙箱：纵深防御
       spellcheck: false,
       preload: path.join(__dirname, 'preload.js'), // 设置页经 window.sitelens 检查更新
     },
@@ -115,21 +116,7 @@ function createWindow() {
   Menu.setApplicationMenu(null); // 页面导航/刷新快捷键交给页面自身
   win.on('resize', scheduleSaveBounds);
   win.on('move', scheduleSaveBounds);
-  bootLog('createWindow: loadURL ' + engine.url);
-  win.loadURL(engine.url).then(() => bootLog('loadURL ok')).catch((err) => {
-    bootLog('loadURL failed: ' + err);
-    // 本地引擎偶发首连竞态（监听已就绪但连接被拒）：重试一次
-    setTimeout(() => {
-      bootLog('loadURL retry');
-      win.loadURL(engine.url).catch((e2) => bootLog('loadURL retry failed: ' + e2));
-    }, 1200);
-  });
-  win.webContents.on('did-fail-load', (_e, code, desc, url) => {
-    // 子资源失败也会进这里；只对主框架报警并重试
-    if (!url.startsWith(engine.url)) return;
-    bootLog('did-fail-load: ' + code + ' ' + desc);
-    setTimeout(() => win.loadURL(engine.url).catch(() => {}), 1500);
-  });
+  loadShellPage('正在启动引擎，全量情报与模板索引加载约需数秒…');
   const showNow = () => {
     if (win && !win.isDestroyed()) {
       win.show();
@@ -165,10 +152,53 @@ function createWindow() {
     }
   });
   win.webContents.setWindowOpenHandler(({ url }) => {
-    if (url.startsWith(engine.url)) return { action: 'allow' };
+    if (sameOrigin(url)) return { action: 'allow' };
     shell.openExternal(url); // 外链交给系统浏览器
     return { action: 'deny' };
   });
+}
+
+// loadShellPage 壳内页（启动页 / 错误页）：不依赖引擎的本地内容。
+function loadShellPage(title, detail) {
+  if (!win || win.isDestroyed()) return;
+  var html = '<!DOCTYPE html><html><head><meta charset="utf-8">' +
+    '<style>body{margin:0;height:100vh;display:grid;place-items:center;' +
+    'background:#0f172a;color:#e2e8f0;font-family:system-ui,sans-serif}' +
+    '.b{font-family:ui-monospace,Consolas,monospace;font-size:40px;' +
+    'letter-spacing:.02em}.d{margin-top:16px;opacity:.75;font-size:14px;' +
+    'max-width:560px;line-height:1.8;text-align:center}</style></head><body>' +
+    '<div style="text-align:center"><div class="b">sitelens</div>' +
+    '<div class="d">' + title + '</div>' +
+    (detail ? '<div class="d" style="opacity:.5">' + detail + '</div>' : '') +
+    '</div></body></html>';
+  win.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(html))
+    .catch(function () {});
+}
+
+// loadApp 引擎就绪后切换到工作台（带首连竞态重试与失败自愈）。
+function loadApp() {
+  if (!win || win.isDestroyed()) return;
+  win.loadURL(engine.url).then(() => bootLog('loadApp ok')).catch((err) => {
+    bootLog('loadApp failed: ' + err);
+    setTimeout(() => {
+      win.loadURL(engine.url).catch((e2) => bootLog('loadApp retry failed: ' + e2));
+    }, 1200);
+  });
+  win.webContents.on('did-fail-load', (_e, code, desc, url) => {
+    // 子资源失败也会进这里；只对主框架报警并重试
+    if (!sameOrigin(url)) return;
+    bootLog('did-fail-load: ' + code + ' ' + desc);
+    setTimeout(() => win.loadURL(engine.url).catch(() => {}), 1500);
+  });
+}
+
+// sameOrigin 严格同源判断（前缀匹配会被 127.0.0.1:5087.evil.com 绕过）。
+function sameOrigin(url) {
+  try {
+    return new URL(url).origin === new URL(engine.url).origin;
+  } catch (_) {
+    return false;
+  }
 }
 
 function showWindow() {
@@ -211,9 +241,9 @@ let feedIdx = 0;          // 上次成功的更新源（粘住，减少来回试
 let checking = false;     // 并发检查合并：托盘/设置页/周期检查共用一次
 let checkPromise = null;
 
-// runUpdateCheck 多源轮询执行一次检查：CNB → Gitee → GitHub，
-// 成功的源粘住（下次从它开始）。autoDownload=true，发现新版本即自动
-// 后台差量下载；下载完成经 update-downloaded 事件广播给页面与托盘。
+// runUpdateCheck 全源采样执行一次检查：逐源读 latest.yml（只查不下载），
+// 取 releaseDate 最新的源作为事实源再触发下载。手工同步的镜像可能滞后，
+// 只看「版本号相等」就报已是最新，会把滞后的镜像当真相（静默漏更）。
 // 返回 { state: latest|available|dev|error, current, latest, feed, error }。
 async function runUpdateCheck() {
   var current = app.getVersion();
@@ -221,25 +251,41 @@ async function runUpdateCheck() {
   if (checking) return checkPromise;
   checking = true;
   checkPromise = (async function () {
-    var lastErr = null;
+    var samples = [];
     for (var i = 0; i < FEEDS.length; i++) {
-      var idx = (feedIdx + i) % FEEDS.length;
-      var feed = FEEDS[idx];
+      var feed = FEEDS[i];
       try {
         autoUpdater.setFeedURL({ provider: 'generic', url: feed.url });
-        var result = await autoUpdater.checkForUpdates();
-        feedIdx = idx; // 成功即粘住
-        var latest = result && result.updateInfo ? result.updateInfo.version : '';
-        var state = latest && latest !== current ? 'available' : 'latest';
-        bootLog('update check ok via ' + feed.name + ': latest v' + latest +
-          (state === 'available' ? ' (downloading)' : ''));
-        return { state: state, current: current, latest: latest, feed: feed.name };
+        var r = await autoUpdater.checkForUpdates(); // autoDownload=false：只查
+        var info = r && r.updateInfo ? r.updateInfo : null;
+        if (info && info.version) {
+          samples.push({
+            feed: feed, version: info.version,
+            date: Date.parse(info.releaseDate) || 0
+          });
+          bootLog('update sample via ' + feed.name + ': v' + info.version);
+        }
       } catch (err) {
-        lastErr = err;
         bootLog('update check failed via ' + feed.name + ': ' + (err && err.message || err));
       }
     }
-    return { state: 'error', current: current, error: String(lastErr && lastErr.message || lastErr) };
+    if (!samples.length) {
+      return { state: 'error', current: current, error: '所有更新源均不可达' };
+    }
+    // releaseDate 最新者为事实源；同刻并列时保持 FEEDS 优先级顺序
+    var best = samples[0];
+    for (var j = 1; j < samples.length; j++) {
+      if (samples[j].date > best.date) best = samples[j];
+    }
+    feedIdx = FEEDS.indexOf(best.feed);
+    if (best.version === current) {
+      bootLog('update: up to date (v' + current + ', source ' + best.feed.name + ')');
+      return { state: 'latest', current: current, latest: best.version, feed: best.feed.name };
+    }
+    // 从最新源触发下载；完成走 update-downloaded 事件
+    bootLog('update available: v' + best.version + ' via ' + best.feed.name + ', downloading…');
+    await autoUpdater.downloadUpdate();
+    return { state: 'available', current: current, latest: best.version, feed: best.feed.name };
   }());
   try {
     return await checkPromise;
@@ -268,7 +314,8 @@ function checkUpdates(manual) {
 }
 
 function setupUpdater() {
-  autoUpdater.autoDownload = true;
+  // 下载改为「全源采样选最新」后显式触发（downloadUpdate），不再自动随检查启动
+  autoUpdater.autoDownload = false;
   var notifiedVer = "";   // 已气泡提醒过的版本：同一版本不重复打扰
   var dialogedVer = "";   // 已弹过「立即重启」的版本：用户选「稍后」后只轻提醒
   autoUpdater.on('update-available', (info) => {
@@ -407,7 +454,10 @@ app.on('second-instance', showWindow);
 
 app.whenReady().then(async () => {
   bootLog('app v' + app.getVersion() + ' ready, engine dir: ' + engine.ENGINE_DIR);
+  loadDeskPrefs();
   createTray();
+  // 窗口先行：品牌启动页立即可见，引擎冷启动（全量情报加载）不产生空白期
+  createWindow();
   engine.onCrash = (code) => {
     handleEngineCrash(code);
   };
@@ -416,18 +466,24 @@ app.whenReady().then(async () => {
     bootLog('engine ready at ' + engine.url);
   } catch (err) {
     bootLog('engine failed: ' + err);
-    dialog.showErrorBox('SiteLens 启动失败', String(err.message || err));
-    app.quit();
+    // 启动失败在窗口内呈现（含日志位置），比一闪而过的系统弹窗有用
+    loadShellPage('引擎启动失败', String(err.message || err) +
+      '<br>日志：' + app.getPath('userData') + '\\engine.log');
     return;
   }
-  createWindow();
+  loadApp();
   setupUpdater();
   setupIpc();
   startUpdateLoop(); // 启动静默检查 + 每 6 小时复查
 });
 
-app.on('before-quit', () => {
-  engine.stop();
+// 退出等待引擎真正回收（taskkill 树杀是异步的，直接放行会留孤儿进程）
+let engineStopHandled = false;
+app.on('before-quit', (e) => {
+  if (engineStopHandled) return;
+  engineStopHandled = true;
+  e.preventDefault();
+  engine.stop().then(() => app.exit(0));
 });
 
 app.on('window-all-closed', () => {
