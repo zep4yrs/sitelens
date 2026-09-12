@@ -18,7 +18,7 @@
     - name: 前端转义回归
       script:
         - apt-get update -qq && apt-get install -y -qq nodejs >/dev/null
-        - node --test web/js/esc.test.mjs
+        - node --test web/js/esc.test.mjs web/js/scan-options.test.mjs # 转义回归 + 三维选择器映射单测
 
 main:
   push:
