@@ -553,6 +553,45 @@
         各组件版权归原作者所有，本项目的分发义务依 GPL-3.0 及各组件许可证履行。</p>
     </div>
   </div>
+
+  <!-- ================ 桌面端（仅桌面版壳内显示） ================ -->
+  <div class="tabpanel" data-tab="desktop" hidden>
+    <div class="sec">
+      <div class="sec-title">安装信息</div>
+      <div class="summary">
+        <div class="cell"><span>桌面版版本</span><b id="dkVersion">-</b></div>
+        <div class="cell"><span>更新通道</span><b>desktop-stable</b></div>
+      </div>
+      <div class="row">
+        <label>安装目录</label>
+        <span class="mono" id="dkInstallDir" style="font-size:12px;word-break:break-all">-</span>
+      </div>
+      <div class="row">
+        <label>数据目录</label>
+        <span class="mono" id="dkDataDir" style="font-size:12px;word-break:break-all">-</span>
+        <button class="btn ghost small" id="dkOpenData">打开数据目录</button>
+      </div>
+      <p class="note">扫描历史、模板池与偏好都在数据目录；升级与卸载（勾选保留时）不会动它。</p>
+    </div>
+
+    <div class="sec">
+      <div class="sec-title">启动与关闭</div>
+      <div class="row">
+        <label>开机自启</label>
+        <input type="checkbox" id="dkAutoStart">
+        <span class="hint inline">登录 Windows 后自动在后台启动（引擎随壳启动）</span>
+      </div>
+      <div class="row">
+        <label>点击窗口 × 时</label>
+        <div class="seg" id="segClose">
+          <button data-v="tray">收入托盘继续运行</button>
+          <button data-v="quit">直接退出</button>
+        </div>
+      </div>
+      <p class="note">「收入托盘」下长扫描不会被误关；需要彻底退出用托盘右键菜单的「退出」。
+        窗口大小与位置总是自动记忆，无需设置。</p>
+    </div>
+  </div>
 </main>
 
 <script src="/js/common.js"></script>
@@ -589,6 +628,13 @@
     ["look", "外观与个性化"], ["data", "数据管理"], ["engine", "引擎配置"],
     ["about", "关于与更新"], ["legal", "协议与声明"]
   ];
+  // 桌面端专属页签：仅在壳内（window.sitelens 存在）时出现
+  var isDesktopShell = !!window.sitelens;
+  if (isDesktopShell) {
+    TABS.push(["desktop", "桌面端"]);
+    var dp = document.querySelector('.tabpanel[data-tab="desktop"]');
+    if (dp) dp.removeAttribute("hidden");
+  }
   var tabsEl = $("tabs");
   TABS.forEach(function (t, i) {
     var b = document.createElement("button");
@@ -898,6 +944,38 @@
     });
     show("tos");
   })();
+
+  /* ---- 桌面端页签（壳内才有） ---- */
+  if (isDesktopShell) {
+    bridge.desktopGetInfo().then(function (info) {
+      $("dkVersion").textContent = "v" + info.version;
+      $("dkInstallDir").textContent = info.installDir;
+      $("dkDataDir").textContent = info.dataDir;
+      $("dkAutoStart").checked = !!info.autoStart;
+      $("segClose").querySelectorAll("button").forEach(function (b) {
+        b.classList.toggle("on", b.getAttribute("data-v") === info.closeAction);
+      });
+    }).catch(function () {});
+    $("dkAutoStart").addEventListener("change", function () {
+      bridge.desktopSetAutoStart(this.checked).then(function (on) {
+        $("dkAutoStart").checked = !!on;
+        toast(on ? "已开启开机自启" : "已关闭开机自启", "ok");
+      });
+    });
+    $("segClose").querySelectorAll("button").forEach(function (b) {
+      b.addEventListener("click", function () {
+        bridge.desktopSetCloseAction(b.getAttribute("data-v")).then(function (v) {
+          $("segClose").querySelectorAll("button").forEach(function (x) {
+            x.classList.toggle("on", x.getAttribute("data-v") === v);
+          });
+          toast(v === "quit" ? "点 × 将直接退出" : "点 × 将收入托盘继续运行", "ok");
+        });
+      });
+    });
+    $("dkOpenData").addEventListener("click", function () {
+      bridge.desktopOpenDataDir();
+    });
+  }
 })();
 </script>
 </body>
