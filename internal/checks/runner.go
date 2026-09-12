@@ -546,12 +546,15 @@ func joinURL(base, path string) string {
 }
 
 // soft404Baseline 取一个不存在路径的响应做软 404 基线。
+// 与比对侧同口径（B2）：先剔除本次探针自身的回显（URL/路径）再取前缀，
+// 否则 catch-all 回显站会因探针路径与目标路径不同而漏判软 404。
 func soft404Baseline(client *httpx.Client, targetURL string) (int, string) {
-	resp, err := client.GetFollow(joinURL(targetURL, "__sitelens_probe_none__"))
+	probeURL := joinURL(targetURL, "__sitelens_probe_none__")
+	resp, err := client.GetFollow(probeURL)
 	if err != nil || resp == nil {
 		return 0, ""
 	}
-	prefix := strings.ToLower(resp.Body)
+	prefix := strings.ToLower(stripEcho(resp.Body, probeURL, "__sitelens_probe_none__"))
 	if len(prefix) > 200 {
 		prefix = prefix[:200]
 	}
