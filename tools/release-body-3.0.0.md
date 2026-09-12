@@ -1,49 +1,69 @@
-# SiteLens v3.0.0 — 利用器（Exploit Validation）
+# SiteLens v3.0.0 正式版（利用器）
 
-从证明漏洞真实存在，到证明漏洞能够影响。
+验证型 Web 站点安全评估工具：指纹识别 → 漏洞情报关联（三级判定）→ 无害化
+验证 → **影响证明** → 可回归交付。单二进制零外部依赖，GPL-3.0 开源。
 
-3.0 在 2.0 验证器的证据链之上补齐「影响证明」层，并把检测面从 HTTP 扩展到非 HTTP 协议。全部利用级探针保持无害红线：不落盘、不提权、不持久化；授权闸默认关。
+## 更新对比（相对 v2.0.0）
 
-## 非 HTTP 协议检测
+| 能力 | v2.0.0 验证器 | v3.0.0 利用器 |
+|---|---|---|
+| 模板检测 | HTTP 模板 5,400+ | **全池 117,889 条全量执行**（七来源去重，含靶场校准） |
+| 非 HTTP 协议检测 | 不支持 | **tcp / dns / ssl 模板 214 条**，原始拨号层直连（netx），端口服务探测自动路由 |
+| 利用级无害验证 | 不支持（止步于验证） | **四通道影响证明**：回显唯一标记 / 报错 DBMS 指纹 / 时延差实测 / 出带回连；判定诚实分级 none / observed / proven |
+| 利用级授权 | — | 三重闸：请求开关 × 配置总闸（默认关）× 目标白名单；**未授权目标零请求**（测试固化断言） |
+| 验证回归 | 手动复核 | `sitelens regression <scan_id>` 按原 payload 重放，present / gone / unsupported 三分，退出码表达回归；`GET /api/replay/{id}` 同能力 |
+| 模板情报层 | — | 情报关联直接给出「可跑模板」路径（CVE → 模板反向索引） |
+| 扫描执行 | 扫描阶段 11 段 | 段内协议模板检测独立可见，实时事件流含协议命中与利用级结论 |
 
-- 原始拨号层 `internal/netx`：TCP / TLS / UDP / DNS 收发（读写 deadline、单次读取上限、轮次上限、TLS 基线 1.2）
-- 协议安全闸：`internal/target.ValidateHostPort`——协议白名单、字面 IP 无条件拦截、域名逐 IP 校验
-- 模板漏斗准入 tcp / dns / ssl 三类协议模板（官方库 network/dns/ssl 目录 94 条入池，随 update-nuclei 自动镜像）
-- 引擎编排：serviceprobe 探得的服务端口按模板声明端口路由，dns 模板查目标域名；命中进入实时事件流与结果 Extras
+## 数据源增长
 
-## 利用级无害验证
+| 数据 | v2.0.0 | v3.0.0 | 增长 |
+|---|---|---|---|
+| 可运行模板 | 5,400+ | **117,889** | ×21.8（官方 http+协议族 / afrog / Wordfence / linuxadi 40k / coffinxp / 极致攻防 / 自研精选） |
+| 协议模板（tcp/dns/ssl） | 0 | 214 | 官方 94 + 社区存量 114 + 自研 6 |
+| Web 指纹库 | 370 项精编 | **13,727** | +webappanalyzer 2,377（GPL-3.0）+ EHole 中文产品 10,978 |
+| 漏洞情报 | 11,024（含商业来源 9,039） | 31,539（**全部公开来源**） | 精选 1,985 + 模板情报行 29,554（覆盖 10,289 产品） |
+| NVD CVE 字典 | 无 | **371,755** | update-nvd 全量镜像（评分补全 / CPE 检索） |
+| KEV 在野利用 | 1,695 | 1,709 | 24h 自动更新，随上游增长 |
+| 服务指纹 | 11,966 | 11,966 | 随 nmap 上游跟进 |
 
-- 判定诚实分级：none / observed / proven——拿不出影响证据就报 none
-- 四通道：回显（唯一标记未转义复现）、报错指纹（DBMS+版本提取）、时延差实测、出带回连（内置 beacon）；LFI 泛化读取
-- 授权三重闸：请求开关 × config `exploit.enabled`（默认关）× 目标白名单（`*.domain` 仅匹配子域）
-- 硬断言：未授权目标零请求（测试固化）
-
-## 验证回归
-
-- `sitelens regression <scan_id>`：按原 payload 重放历史发现，present / gone / unsupported 三分（不可复现项不进回归分母），退出码表达回归
-- `GET /api/replay/{id}`：同能力 API
-- 靶场夜间门禁（regression_nightly.sh）加入重放断言步
-
-## 数据规模（随本版发行）
-
-- 全库可运行模板 **117,675 条**：官方 nuclei-templates + afrog + Wordfence CVE 镜像 + linuxadi/40k 聚合 + coffinxp + UltimateSec 极致攻防，统一漏斗准入
-- 指纹库 **2,749 条**：自建精编 372 + enthec/webappanalyzer（GPL-3.0）社区指纹 2,377，附 463 条 name→CPE 映射
-- NVD CVE 字典全量镜像（update-nvd，旁路文件）：CVE 详情 / CVSS 补全 / 检索面
-- 模板情报层：模板池 CVE 元数据进索引，情报关联直接给出「可跑模板」路径
+**数据合规（本版重要变化）**：v2.0.0 的情报库含商业来源数据（TscanPlus
+9,039 条情报 + 2,481 条指纹，仅私有资产分发）。v3.0.0 起**全部剥离**，
+由公开来源（模板情报行 + NVD + afrog/xray）顶替覆盖；
+`intel_dump.json.gz` 与 `tpl_intel.json.gz` **随本仓库开源分发**，
+NVD 字典（37MB）经 `update-nvd` 在线再生。
 
 ## Bug 修复
 
-- dsl PositiveGround 回归：内置 host 变量被误标为抽取变量，`contains(host,"x")` 被误判为正向命中依据——known 现仅标抽取变量
-- 指纹加载器加固：单条 RE2 不兼容模式跳过，不再中断整个扫描进程
+- **判定回归修复**：dsl 解析器把内置 host 变量误标为抽取变量，`contains(host,"x")` 被误判为正向命中依据——纯排除式模板会漏进调度池空转；known 标志现仅标抽取变量
+- **扫描超时修复**：模板情报挂载在索引缓存未就绪时会触发全库漏斗重建（13 万文件），导致单次扫描超时；热路径改为只读缓存（IndexCached），全量重建只发生在 serve 启动与显式 reload
+- **健壮性修复**：指纹加载器由 MustCompile 改为编译失败跳过，社区指纹库单条 RE2 不兼容模式不再中断整个扫描进程
+- **性能修复**：13,727 条指纹规则下单页匹配 413ms → **24.2ms**（字面量前缀桶单遍预筛 + ToLower 提升 + exact 关键词通道），bench 固化
+- **进度修复**：NVD 全量镜像的进度打印按页粒度输出，长任务不再"静默无输出"
 
 ## 质量
 
-- 28 包 54+ 测试文件全绿；CI `-race` 门禁；govulncheck 零发现
-- 模板转换漏斗 / dsl 求值器 / netx 报文解析面 fuzz 覆盖
-- 靶场回归门禁：零误报 + 真实命中 + 重放断言
+- 22 包 62 个测试文件全绿；CI 阻断级 `-race` 竞态门禁；govulncheck 零发现
+- 模板转换漏斗 / dsl 求值器 fuzz 轮次；Mimosa 深度审计 0 发现
+- 靶场实测：六扫描并行（DVWA full/apocalypse + 四靶场 full），全量模板执行，apocalypse 单扫 400s 完成，命中含 nuclei 模板检测 8 + LFI 1 + phpinfo 1
+- 指纹匹配基准固化：24.2ms/页 @13,727 规则（40KB 页面，bench_test.go）
 
-## 合规声明
+## 资产清单
 
-- 授权闸默认关；利用级验证仅对 `exploit.authorized` 白名单内目标发起
-- 全部数据源为公开渠道；情报库本体为私有 Release 资产不随源码分发
-- GPL-3.0 开源
+| 资产 | 说明 |
+|---|---|
+| SiteLens-3.0.0-setup-full.exe | **推荐** Windows 安装器（完整版：情报库 31,539 + 模板池 117,889 内置；向导安装） |
+| SiteLens-3.0.0-setup-lite.exe | Windows 安装器（精简版：无情报库/模板池，可在线补） |
+| SiteLens-3.0.0-full-win64.zip | Windows 完整版便携包（解压即用） |
+| SiteLens-3.0.0-lite-win64.zip | Windows 精简版便携包 |
+| SiteLens-3.0.0-linux-amd64.zip | Linux amd64 二进制 |
+| intel_dump.json.gz | 漏洞情报库（已剥离商业数据，公开来源；流水线用） |
+| nuclei-templates.tar.gz | 模板池全量打包（流水线用） |
+| tpl_intel.json.gz | 模板情报行（流水线用） |
+
+## 合规
+
+仅限对**自有或已获书面授权**的目标使用；全程只读无害验证，不落盘、不提权、
+不持久化。利用级验证默认关闭，仅对 `exploit.authorized` 白名单内目标发起，
+未授权目标零请求。主动模块默认关闭且有请求硬上限。对未授权目标使用属违法
+行为。
