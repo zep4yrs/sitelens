@@ -6,10 +6,20 @@
 <title>设置 — SiteLens</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@300;400;500;600;700&display=swap" rel="stylesheet">
-<script>if(localStorage.getItem("sitelens-theme")==="dark")document.documentElement.classList.add("dark")</script>
+<script>
+(function(){
+  try {
+    var p = JSON.parse(localStorage.getItem("sitelens-prefs") || "{}") || {};
+    if (p.theme === "dark" || (p.theme === "auto" &&
+        window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches)) {
+      document.documentElement.classList.add("dark");
+    }
+  } catch (e) {}
+})();
+</script>
 <style>
   .sec{margin:0 0 26px}
-  .sec-title{display:flex;align-items:center;gap:10px;margin:0 0 14px;font-family:var(--font-mono);
+  .sec-title{display:flex;align-items:center;gap:10px;margin:22px 0 14px;font-family:var(--font-mono);
     font-size:14.5px;font-weight:600}
   .row{display:flex;align-items:center;gap:12px;margin-bottom:12px;flex-wrap:wrap}
   .row label{width:170px;flex:none;font-size:13.5px;color:var(--muted-fg)}
@@ -28,6 +38,34 @@
   #saveMsg,#osvMsg{font-size:13px}
   .ok{color:var(--ok)}.err{color:var(--danger)}
   .note{font-size:12.5px;color:var(--muted-fg);margin:10px 0 0;line-height:1.7}
+
+  /* ---- 外观个性化 ---- */
+  .seg{display:inline-flex;border:1px solid var(--border);border-radius:var(--radius);overflow:hidden}
+  .seg button{padding:8px 16px;font-size:13px;border:none;background:var(--card);color:var(--muted-fg);
+    cursor:pointer;font-family:inherit;border-right:1px solid var(--border)}
+  .seg button:last-child{border-right:none}
+  .seg button.on{background:var(--primary);color:var(--primary-fg)}
+  .swatches{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+  .sw{width:30px;height:30px;border-radius:50%;cursor:pointer;border:2px solid transparent;
+    box-shadow:inset 0 0 0 2px var(--card)}
+  .sw.on{border-color:var(--foreground)}
+  .sw input{position:absolute;opacity:0;width:0;height:0}
+  .sw.custom{display:grid;place-items:center;background:var(--card);border:1px dashed var(--border);
+    border-radius:50%;font-size:11px;color:var(--muted-fg);width:30px;height:30px;cursor:pointer}
+  .skin-box{width:100%;min-height:90px;padding:10px 12px;font-family:var(--font-mono);font-size:12px;
+    color:var(--foreground);background:var(--input);border:1px solid var(--border);
+    border-radius:var(--radius);resize:vertical;line-height:1.7}
+
+  /* ---- 协议/声明 ---- */
+  .legal-links{display:flex;flex-direction:column;gap:10px}
+  .legal-links a{color:var(--info);text-decoration:underline;text-underline-offset:3px}
+  .legal-links a:hover{opacity:.8}
+  table.oss{width:100%;border-collapse:collapse;font-size:12.5px}
+  table.oss th,table.oss td{padding:8px 10px;border-bottom:1px solid color-mix(in srgb,var(--border) 55%,transparent);
+    text-align:left;vertical-align:top;line-height:1.6}
+  table.oss th{font-family:var(--font-mono);font-size:11.5px;color:var(--muted-fg)}
+  table.oss tr:last-child td{border-bottom:none}
+  .ver-big{font-family:var(--font-mono);font-size:26px;font-weight:700}
 </style>
 </head>
 <body>
@@ -35,96 +73,274 @@
 
 <main class="page">
   <h1>设置</h1>
-  <p class="sub">保存后：扫描 / 爬取 / Token 立即生效（对下一次扫描）；监听地址需重启服务。
-    保存采用「读改写」：已有注释与未纳管配置键均保留。</p>
+  <p class="sub">外观与语言即时生效并本机记住；引擎配置保存后：扫描 / 爬取 / Token 立即生效
+    （对下一次扫描），监听地址需重启服务。</p>
 
-  <div class="sec">
-    <div class="sec-title">网络与 Token</div>
-    <div class="row">
-      <label>监听地址</label>
-      <input type="text" id="listen" placeholder="127.0.0.1:5000">
-      <span class="badge reboot">重启生效</span>
-    </div>
-    <div class="row">
-      <label>API Token</label>
-      <input type="text" id="api_token" placeholder="空 = 不启用鉴权">
-      <span class="badge hot">立即生效</span>
-    </div>
-    <p class="note">设置 Token 后，/api/* 需携带 X-Token 请求头（前端自动携带，存储键 sitelens-token）。</p>
-  </div>
+  <div class="tabs" id="tabs"></div>
 
-  <div class="sec">
-    <div class="sec-title">爬取</div>
-    <div class="row">
-      <label>max_pages</label>
-      <input type="number" id="max_pages" min="1">
-      <span class="badge hot">立即生效</span>
+  <!-- ================ 外观与个性化 ================ -->
+  <div class="tabpanel" data-tab="look">
+    <div class="sec">
+      <div class="sec-title">主题模式</div>
+      <div class="seg" id="segTheme">
+        <button data-v="light">浅色</button>
+        <button data-v="dark">深色</button>
+        <button data-v="auto">跟随系统</button>
+      </div>
+      <p class="note">跟随系统：按操作系统的明暗偏好自动切换。</p>
     </div>
-    <div class="row">
-      <label>max_links_per_page</label>
-      <input type="number" id="max_links_per_page" min="1">
-      <span class="badge hot">立即生效</span>
-    </div>
-    <div class="row">
-      <label>爬取总时长（秒）</label>
-      <input type="number" id="crawl_timeout" min="0">
-      <span class="badge hot">立即生效</span>
-      <span class="hint inline">0 = 不限</span>
-    </div>
-    <div class="row">
-      <label>遵循 robots.txt</label>
-      <input type="checkbox" id="respect_robots">
-      <span class="badge hot">立即生效</span>
-      <span class="hint inline">扫描本地 / 授权靶场（robots 全站禁爬）时需关闭</span>
-    </div>
-  </div>
 
-  <div class="sec">
-    <div class="sec-title">扫描</div>
-    <div class="row">
-      <label>rate_interval_ms</label>
-      <input type="number" id="rate_interval_ms" min="0">
-      <span class="badge hot">立即生效</span>
-      <span class="hint inline">请求最小间隔（限速），0 = 不限</span>
+    <div class="sec">
+      <div class="sec-title">主题色（皮肤）</div>
+      <div class="swatches" id="swatches"></div>
+      <p class="note">自定义色请用末尾的调色器；选择即时生效并本机记住。换肤只影响本浏览器，
+        不影响其他访问者，也不改动引擎配置。</p>
     </div>
-    <div class="row">
-      <label>单请求超时（秒）</label>
-      <input type="number" id="scan_timeout" min="1">
-      <span class="badge hot">立即生效</span>
+
+    <div class="sec">
+      <div class="sec-title">字体大小</div>
+      <div class="seg" id="segFont">
+        <button data-v="sm">小</button>
+        <button data-v="md">标准</button>
+        <button data-v="lg">大</button>
+        <button data-v="xl">特大</button>
+      </div>
     </div>
-    <div class="row">
-      <label>nuclei_cap</label>
-      <input type="number" id="nuclei_cap" min="1">
-      <span class="badge hot">立即生效</span>
-      <span class="hint inline">Nuclei 模板子集上限</span>
+
+    <div class="sec">
+      <div class="sec-title">语言 / Language</div>
+      <div class="seg" id="segLang">
+        <button data-v="zh-CN">简体中文</button>
+        <button data-v="en-US">English</button>
+      </div>
+      <p class="note">界面框架（导航 / 设置页）随语言切换；各业务页面正逐步接入，
+        未覆盖文案暂以简体中文显示。</p>
+    </div>
+
+    <div class="sec">
+      <div class="sec-title">皮肤配置导入 / 导出</div>
+      <textarea class="skin-box" id="skinBox" placeholder='{"theme":"dark","accent":"#0f766e","fontScale":"md","lang":"zh-CN"}'></textarea>
+      <div class="actions" style="margin-top:10px">
+        <button class="btn ghost small" id="skinExport">导出当前配置</button>
+        <button class="btn ghost small" id="skinImport">导入</button>
+        <button class="btn ghost small" id="skinReset">恢复默认外观</button>
+        <span id="skinMsg" style="font-size:13px"></span>
+      </div>
+      <p class="note">把配置文本发给同事即可分享同款外观；导入内容仅含主题 / 主题色 / 字号 / 语言四项。</p>
     </div>
   </div>
 
-  <div class="sec">
-    <div class="sec-title">OSV 情报同步</div>
-    <div class="row">
-      <button class="btn ghost" id="osvBtn">从 OSV.dev 同步</button>
-      <span id="osvMsg"></span>
+  <!-- ================ 数据管理 ================ -->
+  <div class="tabpanel" data-tab="data">
+    <div class="sec">
+      <div class="sec-title">历史数据</div>
+      <div class="summary">
+        <div class="cell"><span>历史扫描次数</span><b id="dScans">-</b></div>
+        <div class="cell"><span>涉及站点</span><b id="dHosts">-</b></div>
+        <div class="cell"><span>平均采集技术数</span><b id="dAvg">-</b></div>
+      </div>
+      <div class="row">
+        <button class="btn danger small" id="clearHist">清空全部扫描历史</button>
+        <span id="clearMsg" style="font-size:13px"></span>
+      </div>
+      <p class="note">清空为不可恢复操作（删除前请确认无需留档）；单条删除仍可在「历史」页逐条进行。
+        扫描报告可先在「历史」页逐条导出留档。</p>
     </div>
-    <p class="note">为 vuln_kb 全部 CVE 补全受影响区间与 CVSS 评分（api.osv.dev 公开接口）。
-      结果写入 overrides 文件并即时合并进知识库；同步进行中不可重复触发。</p>
+
+    <div class="sec">
+      <div class="sec-title">偏好配置</div>
+      <div class="row">
+        <button class="btn ghost small" id="prefExport">导出偏好</button>
+        <button class="btn ghost small" id="prefImport">导入偏好</button>
+        <input type="file" id="prefFile" accept="application/json,.json" style="display:none">
+        <span id="prefMsg" style="font-size:13px"></span>
+      </div>
+      <p class="note">偏好 = 外观 / 语言 / 字号 / 主题色（含 API Token 之外的全部本机设置），
+        导出为 JSON 文件，可在多台机器间迁移。</p>
+    </div>
+
+    <div class="sec">
+      <div class="sec-title">数据存放在哪里</div>
+      <p class="note">
+        全部数据保存在本机：桌面版于
+        <span class="mono">%APPDATA%\SiteLens</span>（扫描历史 state、模板池 pools、可变情报 data）；
+        浏览器模式于引擎工作目录的 <span class="mono">data\state</span>。
+        引擎与页面均不联网上报任何扫描数据。</p>
+    </div>
   </div>
 
-  <div class="sec">
-    <div class="sec-title">情报覆盖文件</div>
-    <div class="row">
-      <label>overrides 路径</label>
-      <input type="text" id="overrides_path" style="width:420px">
-      <span class="badge reboot">重启生效</span>
+  <!-- ================ 引擎配置 ================ -->
+  <div class="tabpanel" data-tab="engine">
+    <div class="sec">
+      <div class="sec-title">网络与 Token</div>
+      <div class="row">
+        <label>监听地址</label>
+        <input type="text" id="listen" placeholder="127.0.0.1:5000">
+        <span class="badge reboot">重启生效</span>
+      </div>
+      <div class="row">
+        <label>API Token</label>
+        <input type="text" id="api_token" placeholder="空 = 不启用鉴权">
+        <span class="badge hot">立即生效</span>
+      </div>
+      <p class="note">设置 Token 后，/api/* 需携带 X-Token 请求头（前端自动携带，存储键 sitelens-token）。</p>
+    </div>
+
+    <div class="sec">
+      <div class="sec-title">爬取</div>
+      <div class="row">
+        <label>max_pages</label>
+        <input type="number" id="max_pages" min="1">
+        <span class="badge hot">立即生效</span>
+      </div>
+      <div class="row">
+        <label>max_links_per_page</label>
+        <input type="number" id="max_links_per_page" min="1">
+        <span class="badge hot">立即生效</span>
+      </div>
+      <div class="row">
+        <label>爬取总时长（秒）</label>
+        <input type="number" id="crawl_timeout" min="0">
+        <span class="badge hot">立即生效</span>
+        <span class="hint inline">0 = 不限</span>
+      </div>
+      <div class="row">
+        <label>遵循 robots.txt</label>
+        <input type="checkbox" id="respect_robots">
+        <span class="badge hot">立即生效</span>
+        <span class="hint inline">扫描本地 / 授权靶场（robots 全站禁爬）时需关闭</span>
+      </div>
+    </div>
+
+    <div class="sec">
+      <div class="sec-title">扫描</div>
+      <div class="row">
+        <label>rate_interval_ms</label>
+        <input type="number" id="rate_interval_ms" min="0">
+        <span class="badge hot">立即生效</span>
+        <span class="hint inline">请求最小间隔（限速），0 = 不限</span>
+      </div>
+      <div class="row">
+        <label>单请求超时（秒）</label>
+        <input type="number" id="scan_timeout" min="1">
+        <span class="badge hot">立即生效</span>
+      </div>
+      <div class="row">
+        <label>nuclei_cap</label>
+        <input type="number" id="nuclei_cap" min="1">
+        <span class="badge hot">立即生效</span>
+        <span class="hint inline">Nuclei 模板子集上限</span>
+      </div>
+    </div>
+
+    <div class="sec">
+      <div class="sec-title">OSV 情报同步</div>
+      <div class="row">
+        <button class="btn ghost" id="osvBtn">从 OSV.dev 同步</button>
+        <span id="osvMsg"></span>
+      </div>
+      <p class="note">为 vuln_kb 全部 CVE 补全受影响区间与 CVSS 评分（api.osv.dev 公开接口）。
+        结果写入 overrides 文件并即时合并进知识库；同步进行中不可重复触发。</p>
+    </div>
+
+    <div class="sec">
+      <div class="sec-title">情报覆盖文件</div>
+      <div class="row">
+        <label>overrides 路径</label>
+        <input type="text" id="overrides_path" style="width:420px">
+        <span class="badge reboot">重启生效</span>
+      </div>
+    </div>
+
+    <div class="actions">
+      <button class="btn" id="save">保存设置</button>
+      <span id="saveMsg"></span>
     </div>
   </div>
 
-  <div class="actions">
-    <button class="btn" id="save">保存设置</button>
-    <span id="saveMsg"></span>
+  <!-- ================ 关于与更新 ================ -->
+  <div class="tabpanel" data-tab="about">
+    <div class="sec">
+      <div class="sec-title">版本</div>
+      <div class="row">
+        <span class="ver-big" id="verBig">SiteLens</span>
+        <span class="badge info" id="verKind"></span>
+      </div>
+      <div class="row" style="margin-top:8px">
+        <button class="btn small" id="checkUpd">检查更新</button>
+        <button class="btn ghost small" id="openRel">发布页</button>
+        <span id="updMsg" style="font-size:13px"></span>
+      </div>
+      <p class="note" id="updNote">
+        桌面版：应用内置自动更新，启动时静默检查，下载完成后弹窗提示重启升级；
+        也可在托盘图标右键菜单随时手动检查。<br>
+        浏览器模式：请关注发布页获取新版本，替换二进制即可（配置与历史数据兼容）。
+      </p>
+    </div>
+
+    <div class="sec">
+      <div class="sec-title">运行信息</div>
+      <div class="summary">
+        <div class="cell"><span>引擎</span><b>Go（单二进制）</b></div>
+        <div class="cell"><span>指纹规则</span><b id="stFp">-</b></div>
+        <div class="cell"><span>漏洞情报</span><b id="stIntel">-</b></div>
+        <div class="cell"><span>NVD 字典</span><b id="stNvd">-</b></div>
+      </div>
+      <p class="note">统计为引擎已加载规模；NVD 显示 0 表示尚未同步（update-nvd 可拉取全量 371,755 条）。</p>
+    </div>
+  </div>
+
+  <!-- ================ 协议与声明 ================ -->
+  <div class="tabpanel" data-tab="legal">
+    <div class="sec">
+      <div class="sec-title">帮助与反馈</div>
+      <div class="legal-links">
+        <a href="https://cnb.cool/feng-qiao/sitelens" target="_blank" rel="noopener noreferrer">项目主页（cnb.cool/feng-qiao/sitelens）</a>
+        <a href="https://cnb.cool/feng-qiao/sitelens/-/issues" target="_blank" rel="noopener noreferrer">问题反馈 Issues</a>
+        <a href="/legal.html#help">使用帮助与常见问题</a>
+      </div>
+      <p class="note">反馈请附：引擎版本（关于页）、目标环境特征、脱敏后的请求 / 响应摘要；
+        切勿附带未授权目标的完整数据。</p>
+    </div>
+
+    <div class="sec">
+      <div class="sec-title">服务与协议</div>
+      <div class="legal-links">
+        <a href="/legal.html#tos">用户服务协议</a>
+        <a href="/legal.html#privacy">隐私政策</a>
+        <a href="/legal.html#service">服务协议与免责声明</a>
+      </div>
+      <p class="note">要点：本工具仅限对自有或已获书面授权的目标使用；数据全程本机存储；
+        软件按 GPL-3.0 分发，不提供任何形式的担保。完整条款见上述链接。</p>
+    </div>
+
+    <div class="sec">
+      <div class="sec-title">开源软件声明</div>
+      <div class="tbl-wrap">
+        <table class="oss">
+          <thead><tr><th>组件</th><th>用途</th><th>许可证</th><th>是否修改</th></tr></thead>
+          <tbody>
+            <tr><td>Go 工具链与标准库</td><td>引擎运行时</td><td>BSD-3-Clause</td><td>未修改</td></tr>
+            <tr><td>Electron（桌面版）</td><td>桌面窗口壳</td><td>MIT</td><td>未修改</td></tr>
+            <tr><td>nuclei-templates</td><td>漏洞模板</td><td>MIT</td><td>未修改（镜像子集，准入过滤不改检测语义）</td></tr>
+            <tr><td>afrog POC</td><td>漏洞情报</td><td>MIT</td><td>有修改（精选子集与格式转换）</td></tr>
+            <tr><td>xray POC（社区收录）</td><td>漏洞情报</td><td>随上游</td><td>有修改（格式转换）</td></tr>
+            <tr><td>webappanalyzer（enthec）</td><td>Web 指纹</td><td>GPL-3.0</td><td>有修改（数据格式转换并入）</td></tr>
+            <tr><td>EHole 指纹</td><td>中文产品指纹</td><td>随上游仓库</td><td>有修改（转 exact 字面量通道）</td></tr>
+            <tr><td>nmap service probes</td><td>端口服务识别参照</td><td>GPL-2.0（上游）</td><td>有修改（风格参照，数据为本仓库自维护）</td></tr>
+            <tr><td>NVD / CISA KEV / 微软公告</td><td>漏洞情报</td><td>公开数据</td><td>未修改（镜像）</td></tr>
+            <tr><td>霞鹜文楷 LXGW WenKai</td><td>界面字体</td><td>SIL OFL 1.1</td><td>未修改</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="note">上表为主要组件摘要；完整声明（含社区模板精选来源）见
+        <a href="/legal.html#opensource" style="color:var(--info)">开源软件声明（全文）</a>。
+        各组件版权归原作者所有，本项目的分发义务依 GPL-3.0 及各组件许可证履行。</p>
+    </div>
   </div>
 </main>
 
+<script src="/js/common.js"></script>
 <script>
 (function () {
   function $(id) { return document.getElementById(id); }
@@ -132,58 +348,265 @@
   function getv(id) { return $(id).value.trim(); }
   function num(id) { return parseInt(getv(id), 10) || 0; }
 
-  window.api.get('/api/settings').then(function (c) {
-    setv('listen', c.web.listen);
-    setv('api_token', c.web.api_token || '');
-    setv('max_pages', c.crawler.max_pages);
-    setv('max_links_per_page', c.crawler.max_links_per_page);
-    setv('crawl_timeout', c.crawler.timeout_sec);
-    $('respect_robots').checked = !!c.crawler.respect_robots;
-    setv('rate_interval_ms', c.scan.rate_interval_ms);
-    setv('scan_timeout', c.scan.timeout_sec);
-    setv('nuclei_cap', c.checks.nuclei_cap);
-    setv('overrides_path', c.intel.overrides_path);
-  }).catch(function () {});
+  /* ---- 页签 ---- */
+  var TABS = [
+    ["look", "外观与个性化"], ["data", "数据管理"], ["engine", "引擎配置"],
+    ["about", "关于与更新"], ["legal", "协议与声明"]
+  ];
+  var tabsEl = $("tabs");
+  TABS.forEach(function (t, i) {
+    var b = document.createElement("button");
+    b.className = "tab" + (i === 0 ? " active" : "");
+    b.textContent = t[1];
+    b.addEventListener("click", function () {
+      tabsEl.querySelectorAll(".tab").forEach(function (x) { x.classList.remove("active"); });
+      document.querySelectorAll(".tabpanel").forEach(function (x) { x.classList.remove("active"); });
+      b.classList.add("active");
+      var panel = document.querySelector('.tabpanel[data-tab="' + t[0] + '"]');
+      panel.classList.add("active");
+      location.hash = t[0];
+    });
+    tabsEl.appendChild(b);
+  });
+  (function openHash() {
+    var h = (location.hash || "").replace("#", "");
+    var hit = TABS.some(function (t) { return t[0] === h; });
+    if (hit) tabsEl.children[TABS.map(function (t) { return t[0]; }).indexOf(h)].click();
+  })();
 
-  $('save').addEventListener('click', function () {
-    var b = $('save'), m = $('saveMsg');
-    b.disabled = true; m.textContent = '保存中…'; m.className = '';
-    window.api.put('/api/settings', {
-      web: { listen: getv('listen'), api_token: getv('api_token') },
-      crawler: {
-        max_pages: num('max_pages'),
-        respect_robots: $('respect_robots').checked,
-        max_links_per_page: num('max_links_per_page'),
-        timeout_sec: num('crawl_timeout')
-      },
-      scan: { rate_interval_ms: num('rate_interval_ms'), timeout_sec: num('scan_timeout') },
-      checks: { nuclei_cap: num('nuclei_cap') },
-      intel: { overrides_path: getv('overrides_path') }
-    }).then(function () {
-      b.disabled = false;
-      m.className = 'ok'; m.textContent = '已保存 ✓';
+  /* ---- 分段选择器 ---- */
+  function seg(el, get, set) {
+    function paint() {
+      el.querySelectorAll("button").forEach(function (b) {
+        b.classList.toggle("on", b.getAttribute("data-v") === get());
+      });
+    }
+    el.querySelectorAll("button").forEach(function (b) {
+      b.addEventListener("click", function () { set(b.getAttribute("data-v")); paint(); });
+    });
+    paint();
+  }
+
+  /* ---- 外观与个性化 ---- */
+  seg($("segTheme"), function () { return window.slPrefs.get().theme; },
+    function (v) { window.slPrefs.set({ theme: v }); });
+  seg($("segFont"), function () { return window.slPrefs.get().fontScale; },
+    function (v) { window.slPrefs.set({ fontScale: v }); });
+  seg($("segLang"), function () { return window.slPrefs.get().lang; },
+    function (v) {
+      if (v === window.slPrefs.get().lang) return;
+      window.slPrefs.set({ lang: v });
+      location.reload(); // 语言切换重载页面以重绘导航与文案
+    });
+
+  var PRESETS = [
+    ["默认", ""], ["墨青", "#0f766e"], ["黛蓝", "#2563eb"], ["松绿", "#16a34a"],
+    ["绛紫", "#7c3aed"], ["橘橙", "#ea580c"], ["玫红", "#db2777"], ["石墨", "#3e3f3f"]
+  ];
+  var swEl = $("swatches");
+  function paintSwatches() {
+    var cur = window.slPrefs.get().accent;
+    swEl.innerHTML = "";
+    PRESETS.forEach(function (p) {
+      var d = document.createElement("div");
+      d.className = "sw" + (cur === p[1] ? " on" : "");
+      if (p[1]) d.style.background = p[1];
+      else {
+        d.style.background = "var(--primary)";
+        d.title = "默认（跟随明暗主题）";
+      }
+      d.title = d.title || p[0];
+      d.addEventListener("click", function () { window.slPrefs.set({ accent: p[1] }); paintSwatches(); });
+      swEl.appendChild(d);
+    });
+    var custom = document.createElement("label");
+    custom.className = "sw custom";
+    custom.title = "自定义颜色";
+    custom.textContent = "+";
+    var inp = document.createElement("input");
+    inp.type = "color";
+    inp.value = /^#[0-9a-fA-F]{6}$/.test(cur) ? cur : "#0f766e";
+    inp.addEventListener("input", function () {
+      window.slPrefs.set({ accent: inp.value });
+      custom.style.background = inp.value;
+    });
+    custom.appendChild(inp);
+    swEl.appendChild(custom);
+  }
+  paintSwatches();
+
+  /* ---- 皮肤导入导出 ---- */
+  $("skinExport").addEventListener("click", function () {
+    var p = window.slPrefs.get();
+    $("skinBox").value = JSON.stringify(
+      { theme: p.theme, accent: p.accent, fontScale: p.fontScale, lang: p.lang }, null, 2);
+    toast("已导出到文本框，复制即可分享", "ok");
+  });
+  $("skinImport").addEventListener("click", function () {
+    try {
+      var j = JSON.parse($("skinBox").value || "{}");
+      var patch = {};
+      if (["light", "dark", "auto"].indexOf(j.theme) >= 0) patch.theme = j.theme;
+      if (j.accent === "" || /^#[0-9a-fA-F]{6}$/.test(j.accent)) patch.accent = j.accent;
+      if (["sm", "md", "lg", "xl"].indexOf(j.fontScale) >= 0) patch.fontScale = j.fontScale;
+      if (["zh-CN", "en-US"].indexOf(j.lang) >= 0) patch.lang = j.lang;
+      window.slPrefs.set(patch);
+      paintSwatches();
+      segPaintAll();
+      toast("皮肤已应用", "ok");
+    } catch (e) { toast("导入失败：不是合法的皮肤配置", "err"); }
+  });
+  $("skinReset").addEventListener("click", function () {
+    window.slPrefs.reset();
+    paintSwatches();
+    segPaintAll();
+    toast("已恢复默认外观", "ok");
+  });
+  // 分段器重绘（皮肤导入 / 重置后）
+  function segPaintAll() {
+    [$("segTheme"), $("segFont"), $("segLang")].forEach(function (el) {
+      var key = el.id === "segTheme" ? "theme" : el.id === "segFont" ? "fontScale" : "lang";
+      var cur = window.slPrefs.get()[key];
+      el.querySelectorAll("button").forEach(function (b) {
+        b.classList.toggle("on", b.getAttribute("data-v") === cur);
+      });
+    });
+  }
+
+  /* ---- 数据管理 ---- */
+  function loadStats() {
+    window.api.get("/api/stats").then(function (s) {
+      var h = s.history || {};
+      $("dScans").textContent = h.scans != null ? h.scans : "-";
+      $("dHosts").textContent = h.hosts != null ? h.hosts : "-";
+      $("dAvg").textContent = h.avg_techs != null ? h.avg_techs : "-";
+    }).catch(function () {});
+  }
+  loadStats();
+  $("clearHist").addEventListener("click", function () {
+    if (!confirm("确定清空全部扫描历史？该操作不可恢复。")) return;
+    if (!confirm("再次确认：清空后无法从界面找回，导出留档请先去「历史」页。继续吗？")) return;
+    window.api.post("/api/history/clear", {}).then(function (r) {
+      $("clearMsg").className = "ok";
+      $("clearMsg").textContent = "已清空 " + r.cleared + " 条";
+      loadStats();
     }).catch(function (e) {
-      b.disabled = false;
-      m.className = 'err'; m.textContent = e.message;
+      $("clearMsg").className = "err";
+      $("clearMsg").textContent = e.message;
     });
   });
 
-  $('osvBtn').addEventListener('click', function () {
-    var b = $('osvBtn'), m = $('osvMsg');
-    b.disabled = true; m.textContent = '同步中…';
-    window.api.post('/api/osv-sync', {}).then(function () {
+  $("prefExport").addEventListener("click", function () {
+    var blob = new Blob([JSON.stringify(window.slPrefs.get(), null, 2)],
+      { type: "application/json" });
+    var a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = "sitelens-prefs.json";
+    a.click();
+    URL.revokeObjectURL(a.href);
+  });
+  $("prefImport").addEventListener("click", function () { $("prefFile").click(); });
+  $("prefFile").addEventListener("change", function () {
+    var f = this.files[0];
+    if (!f) return;
+    var rd = new FileReader();
+    rd.onload = function () {
+      try {
+        var j = JSON.parse(rd.result);
+        window.slPrefs.set(j);
+        paintSwatches();
+        segPaintAll();
+        $("prefMsg").className = "ok";
+        $("prefMsg").textContent = "已导入";
+      } catch (e) {
+        $("prefMsg").className = "err";
+        $("prefMsg").textContent = "导入失败：JSON 非法";
+      }
+    };
+    rd.readAsText(f);
+    this.value = "";
+  });
+
+  /* ---- 引擎配置 ---- */
+  window.api.get("/api/settings").then(function (c) {
+    setv("listen", c.web.listen);
+    setv("api_token", c.web.api_token || "");
+    setv("max_pages", c.crawler.max_pages);
+    setv("max_links_per_page", c.crawler.max_links_per_page);
+    setv("crawl_timeout", c.crawler.timeout_sec);
+    $("respect_robots").checked = !!c.crawler.respect_robots;
+    setv("rate_interval_ms", c.scan.rate_interval_ms);
+    setv("scan_timeout", c.scan.timeout_sec);
+    setv("nuclei_cap", c.checks.nuclei_cap);
+    setv("overrides_path", c.intel.overrides_path);
+  }).catch(function () {});
+
+  $("save").addEventListener("click", function () {
+    var b = $("save"), m = $("saveMsg");
+    b.disabled = true; m.textContent = "保存中…"; m.className = "";
+    window.api.put("/api/settings", {
+      web: { listen: getv("listen"), api_token: getv("api_token") },
+      crawler: {
+        max_pages: num("max_pages"),
+        respect_robots: $("respect_robots").checked,
+        max_links_per_page: num("max_links_per_page"),
+        timeout_sec: num("crawl_timeout")
+      },
+      scan: { rate_interval_ms: num("rate_interval_ms"), timeout_sec: num("scan_timeout") },
+      checks: { nuclei_cap: num("nuclei_cap") },
+      intel: { overrides_path: getv("overrides_path") }
+    }).then(function () {
+      b.disabled = false;
+      m.className = "ok"; m.textContent = "已保存";
+    }).catch(function (e) {
+      b.disabled = false;
+      m.className = "err"; m.textContent = e.message;
+    });
+  });
+
+  $("osvBtn").addEventListener("click", function () {
+    var b = $("osvBtn"), m = $("osvMsg");
+    b.disabled = true; m.textContent = "同步中…";
+    window.api.post("/api/osv-sync", {}).then(function () {
       var timer = setInterval(function () {
-        window.api.get('/api/osv-sync').then(function (st) {
+        window.api.get("/api/osv-sync").then(function (st) {
           if (!st.running) {
             clearInterval(timer); b.disabled = false;
-            m.className = st.last_msg === '同步完成' ? 'ok' : 'err';
-            m.textContent = (st.last_msg || '') + ' ' + (st.last_n || 0) + ' 条 @ ' + (st.last_at || '');
+            m.className = st.last_msg === "同步完成" ? "ok" : "err";
+            m.textContent = (st.last_msg || "") + " " + (st.last_n || 0) + " 条 @ " + (st.last_at || "");
           }
         });
       }, 1500);
     }).catch(function (e) {
-      b.disabled = false; m.className = 'err'; m.textContent = e.message;
+      b.disabled = false; m.className = "err"; m.textContent = e.message;
     });
+  });
+
+  /* ---- 关于与更新 ---- */
+  var isDesktop = /Electron/i.test(navigator.userAgent);
+  $("verKind").textContent = isDesktop ? "桌面版" : "浏览器模式";
+  $("updNote").style.display = "";
+  window.api.get("/api/version").then(function (v) {
+    if (v && v.version) $("verBig").textContent = "SiteLens v" + v.version;
+  }).catch(function () {});
+  window.api.get("/api/stats").then(function (s) {
+    var intel = 0;
+    for (var k in (s.intel_sources || {})) intel += s.intel_sources[k];
+    $("stFp").textContent = s.technologies != null ? s.technologies : "-";
+    $("stIntel").textContent = (s.vulns != null ? s.vulns : intel) || "-";
+    $("stNvd").textContent = s.nvd != null ? s.nvd : "-";
+  }).catch(function () {});
+
+  $("checkUpd").addEventListener("click", function () {
+    if (isDesktop) {
+      $("updMsg").textContent = "桌面版已启用自动更新；托盘图标右键菜单可立即检查。";
+      return;
+    }
+    $("updMsg").innerHTML = "正在打开发布页，请比对最新版本号。";
+    window.open("https://cnb.cool/feng-qiao/sitelens/releases", "_blank", "noopener");
+  });
+  $("openRel").addEventListener("click", function () {
+    window.open("https://cnb.cool/feng-qiao/sitelens/releases", "_blank", "noopener");
   });
 })();
 </script>

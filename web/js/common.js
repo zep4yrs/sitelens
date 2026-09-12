@@ -1,4 +1,4 @@
-/* SiteLens 共用外壳：左侧栏注入 + 设计令牌 + 公共函数
+/* SiteLens 共用外壳：左侧栏注入 + 设计令牌 + 公共函数 + 偏好引擎
    每页在 <body> 起始处同步引入本文件，页面自身只写内容区 HTML 与页内脚本。 */
 (function () {
   "use strict";
@@ -8,6 +8,26 @@
   fontLink.rel = "stylesheet";
   fontLink.href = "https://cdn.jsdelivr.net/npm/lxgw-wenkai-webfont@1.7.0/style.css";
   document.head.appendChild(fontLink);
+
+  /* ---------------- 偏好存取（localStorage 单键 JSON，向后兼容旧 sitelens-theme） ---------------- */
+  var FS_PX = { sm: "13.5px", md: "15px", lg: "16.5px", xl: "18px" };
+
+  function loadPrefs() {
+    var p = {};
+    try { p = JSON.parse(localStorage.getItem("sitelens-prefs") || "{}") || {}; } catch (e) { p = {}; }
+    if (!p.theme) {
+      try { p.theme = localStorage.getItem("sitelens-theme") || "light"; } catch (e) { p.theme = "light"; }
+    }
+    if (!p.accent) p.accent = "";
+    if (!p.fontScale) p.fontScale = "md";
+    if (!p.lang) p.lang = "zh-CN";
+    return p;
+  }
+  function savePrefs(p) {
+    try { localStorage.setItem("sitelens-prefs", JSON.stringify(p)); } catch (e) {}
+  }
+
+  var PREFS = loadPrefs();
 
   /* ---------------- 设计令牌与公共组件样式（text-well 实测值） ---------------- */
   var CSS = [
@@ -29,6 +49,10 @@
     "html{scroll-behavior:smooth;}",
     "body{margin:0;margin-left:var(--side-w);background:var(--background);color:var(--foreground);",
     "font-family:var(--font-sans);font-size:15px;line-height:1.6;-webkit-font-smoothing:antialiased;}",
+    /* 字体大小偏好（设置页·外观）：挂 html 属性，避免逐页覆盖 */
+    'html[data-fs="sm"] body{font-size:13.5px}',
+    'html[data-fs="lg"] body{font-size:16.5px}',
+    'html[data-fs="xl"] body{font-size:18px}',
     "a{color:inherit;text-decoration:none;}",
     "::selection{background:var(--ring);color:#fff;}",
     ".mono{font-family:var(--font-mono);}",
@@ -177,6 +201,76 @@
   style.textContent = CSS;
   document.head.appendChild(style);
 
+  /* ---------------- i18n：zh-CN 为缺省（键值即中文），其余语言按需补字典 ---------------- */
+  var I18N = {
+    "en-US": {
+      nav_scan: "Scan", nav_netsec: "Net Scan", nav_audit: "Code Audit",
+      nav_brute: "Login Brute", nav_batch: "Batch", nav_history: "History",
+      nav_intel: "Intel", nav_verified: "Verified", nav_settings: "Settings",
+      foot_auth: "Authorized targets only", theme_toggle: "Toggle light/dark theme"
+    }
+  };
+  function t(key) {
+    if (PREFS.lang && I18N[PREFS.lang] && I18N[PREFS.lang][key]) return I18N[PREFS.lang][key];
+    return null;
+  }
+  window.slT = t;
+  window.slI18N = I18N;
+
+  /* ---------------- 偏好应用：主题（light/dark/auto）+ 主题色 + 字号 ---------------- */
+  function applyTheme() {
+    var dark = PREFS.theme === "dark" ||
+      (PREFS.theme === "auto" &&
+        window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches);
+    document.documentElement.classList.toggle("dark", dark);
+  }
+  function applyAccent() {
+    var rootStyle = document.documentElement.style;
+    if (PREFS.accent && /^#[0-9a-fA-F]{6}$/.test(PREFS.accent)) {
+      rootStyle.setProperty("--primary", PREFS.accent);
+      rootStyle.setProperty("--ring", PREFS.accent);
+    } else {
+      rootStyle.removeProperty("--primary");
+      rootStyle.removeProperty("--ring");
+    }
+  }
+  function applyFontScale() {
+    if (FS_PX[PREFS.fontScale] && PREFS.fontScale !== "md") {
+      document.documentElement.setAttribute("data-fs", PREFS.fontScale);
+    } else {
+      document.documentElement.removeAttribute("data-fs");
+    }
+  }
+  applyTheme();
+  applyAccent();
+  applyFontScale();
+  // 跟随系统：系统明暗变化实时反映（仅 auto 模式）
+  if (window.matchMedia) {
+    try {
+      window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", applyTheme);
+    } catch (_) { /* 旧浏览器无 addEventListener */ }
+  }
+
+  window.slPrefs = {
+    get: function () { return JSON.parse(JSON.stringify(PREFS)); },
+    set: function (patch) {
+      for (var k in patch) {
+        if (Object.prototype.hasOwnProperty.call(patch, k)) PREFS[k] = patch[k];
+      }
+      savePrefs(PREFS);
+      applyTheme();
+      applyAccent();
+      applyFontScale();
+    },
+    reset: function () {
+      PREFS = { theme: "light", accent: "", fontScale: "md", lang: "zh-CN" };
+      savePrefs(PREFS);
+      applyTheme();
+      applyAccent();
+      applyFontScale();
+    }
+  };
+
   /* ---------------- 左侧栏 HTML ---------------- */
   var ICONS = {
     scan: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="3"/><path d="M12 1v4M12 19v4M1 12h4M19 12h4"/></svg>',
@@ -186,18 +280,19 @@
     batch: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m12 2 8 5-8 5-8-5z"/><path d="m4 12 8 5 8-5"/><path d="m4 17 8 5 8-5"/></svg>',
     history: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 3"/></svg>',
     intel: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v14c0 1.7 3.6 3 8 3s8-1.3 8-3V5"/><path d="M4 12c0 1.7 3.6 3 8 3s8-1.3 8-3"/></svg>',
-    verified: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 12l2 2 4-4"/><circle cx="12" cy="12" r="9"/></svg>'
+    verified: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 12l2 2 4-4"/><circle cx="12" cy="12" r="9"/></svg>',
+    settings: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33h.09a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82v.09a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>'
   };
   var NAV = [
-    ["scan", "/app", "扫描"],
-    ["netsec", "/app#netsec", "网络检测"],
-    ["audit", "/audit", "源码审计"],
-    ["brute", "/app#loginbrute", "登录爆破"],
-    ["batch", "/batch", "批量"],
-    ["history", "/history", "历史"],
-    ["intel", "/intel", "情报库"],
-    ["verified", "/history#verified", "已验证"],
-    ["settings", "/settings", "设置"]
+    ["scan", "/app", "扫描", "nav_scan"],
+    ["netsec", "/app#netsec", "网络检测", "nav_netsec"],
+    ["audit", "/audit", "源码审计", "nav_audit"],
+    ["brute", "/app#loginbrute", "登录爆破", "nav_brute"],
+    ["batch", "/batch", "批量", "nav_batch"],
+    ["history", "/history", "历史", "nav_history"],
+    ["intel", "/intel", "情报库", "nav_intel"],
+    ["verified", "/history#verified", "已验证", "nav_verified"],
+    ["settings", "/settings", "设置", "nav_settings"]
   ];
   function navKey() {
     var p = location.pathname, h = location.hash || "";
@@ -221,24 +316,28 @@
   }
   window.slUpdateNav = slUpdateNav;
   var nav = NAV.map(function (n) {
-    return '<a href="' + n[1] + '" data-key="' + n[0] + '">' + ICONS[n[0]] + "<span>" + n[2] + "</span></a>";
+    var label = t(n[3]) || n[2];
+    return '<a href="' + n[1] + '" data-key="' + n[0] + '" title="' + label + '">' +
+      ICONS[n[0]] + "<span>" + label + "</span></a>";
   }).join("");
   var aside = document.createElement("aside");
   aside.className = "wb-side";
   aside.innerHTML =
     '<div class="side-head">' +
     '<a class="brand" href="/"><span class="txt">sitelens</span><span class="dot"></span></a>' +
-    '<button class="theme-btn" onclick="toggleTheme()" title="切换明暗主题">◐</button></div>' +
+    '<button class="theme-btn" onclick="toggleTheme()" title="' + (t("theme_toggle") || "切换明暗主题") + '">◐</button></div>' +
     '<nav class="side-nav">' + nav + "</nav>" +
-    '<div class="side-foot">仅限授权目标<br><span id="sl-ver">SiteLens</span></div>';
+    '<div class="side-foot">' + (t("foot_auth") || "仅限授权目标") +
+    '<br><span id="sl-ver">SiteLens</span></div>';
   document.body.insertBefore(aside, document.body.firstChild);
   slUpdateNav();
   window.addEventListener("hashchange", slUpdateNav);
 
   /* ---------------- 主题 ---------------- */
+  // 侧栏快捷按钮：在浅/深之间显式切换（auto 模式下点按即固定）
   window.toggleTheme = function () {
-    var dark = document.documentElement.classList.toggle("dark");
-    try { localStorage.setItem("sitelens-theme", dark ? "dark" : "light"); } catch (e) {}
+    var dark = document.documentElement.classList.contains("dark");
+    window.slPrefs.set({ theme: dark ? "light" : "dark" });
   };
 
   /* ---------------- 公共函数 ---------------- */
@@ -259,15 +358,18 @@
       return j;
     });
   }
+  function request(method, u, d) {
+    return fetch(u, {
+      method: method,
+      headers: Object.assign({ "Content-Type": "application/json" }, tok()),
+      body: d === undefined ? undefined : JSON.stringify(d)
+    }).then(asJson);
+  }
   window.api = {
     get: function (u) { return fetch(u, { headers: tok() }).then(asJson); },
-    post: function (u, d) {
-      return fetch(u, {
-        method: "POST",
-        headers: Object.assign({ "Content-Type": "application/json" }, tok()),
-        body: JSON.stringify(d || {})
-      }).then(asJson);
-    }
+    post: function (u, d) { return request("POST", u, d || {}); },
+    put: function (u, d) { return request("PUT", u, d || {}); },
+    del: function (u, d) { return request("DELETE", u, d); }
   };
 
   var toastTimer = null;
