@@ -25,7 +25,7 @@
 - [x] **B7 缓存无界**（方案 C）：`regexCache` / `dslVarsCache` 加计数上限（对齐 dsl.go 策略）
 - [ ] **B11 timeBlind 证据链缺失**：Finding 补 Replay / Signals / Response / Payload，对齐 boolBlind 规格
 - [ ] **B12 RunForms 未接证据链**：补 chainEvidence + Payload/Replay——同时修正 replay 分母被静默排除的问题（回归门禁自证式通过的隐患）
-- [ ] **B13 HistoryStats 均值截断**：改四舍五入
+- [x] **B13 HistoryStats 均值截断**：改四舍五入
 - [x] **B14 done 计数重复累加**：命中分支与组尾分支只计一次
 - [x] **B15 knownTopKeys 缺段**：补 `auth` / `ssrf` / `exploit`（合法段被误报"将被忽略"）
 - [ ] **B16 captcha health 路径猜测**：sidecar 地址不以 /ocr 结尾时探测打错路径，需显式 health 地址或容错
