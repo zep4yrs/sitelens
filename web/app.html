@@ -60,6 +60,7 @@
     display:flex;align-items:center;gap:10px}
   .lv-head .btn{margin-left:auto}
   .cdd-opt.disabled{opacity:.45;cursor:not-allowed}
+  .opt-group.disabled .seg,.opt-group.disabled .chip-row{opacity:.4;pointer-events:none}
   .stage{display:flex;gap:10px;align-items:center;font-size:13.5px;color:var(--muted-fg);padding:4px 0}
   .stage .s-ico{font-family:var(--font-mono);width:16px;text-align:center}
   .stage.done{color:var(--foreground)}
@@ -102,10 +103,11 @@
 </head>
 <body>
 <script src="/js/common.js"></script>
+<script src="/js/scan-options.js"></script>
 
 <main class="page">
   <h1>扫描工作台</h1>
-  <p class="sub">输入授权目标，递进式等级选择。主动模块默认关闭，仅限自有或已书面授权的目标。</p>
+  <p class="sub">输入授权目标，按「范围 × 验证 × 强度」组合扫描。主动模块默认关闭，仅限自有或已书面授权的目标。</p>
 
   <div class="tabs">
     <button class="tab active" data-tab="scan" onclick="switchTab('scan')">综合扫描</button>
@@ -122,31 +124,37 @@
     <div class="opt-row">
       <div class="opt-group">
         <span class="g-label">范围</span>
-        <div class="chip-row" id="tg-row">
-          <span class="chip on" data-tg="web" title="Web 站点为恒选目标">Web 站点</span>
-          <span class="chip" data-tg="sub">子域资产</span>
-          <span class="chip" data-tg="srv">端口服务</span>
+        <div class="chip-row" id="scope-row">
+          <span class="chip on" data-scope="web" title="爬取工作台：页面 / 表单 / JS 攻击面（默认开，可取消）">Web 站点</span>
+          <span class="chip" data-scope="sub" title="子域名枚举 + 潜在接管探测">子域资产</span>
+          <span class="chip" data-scope="srv" title="常见端口 banner 识别（服务 / 产品 / 版本）">端口服务</span>
+          <span class="chip" data-scope="np" title="tcp/dns/ssl 协议模板检测（可独立于端口识别，仅 dns 类）">协议模板</span>
+          <span class="chip" data-scope="js" title="bundle API 端点枚举 + SourceMap 泄露检测（只读）">JS 端点</span>
+          <span class="chip" data-scope="weak" title="敏感路径与敏感信息泄露探测">敏感信息</span>
         </div>
       </div>
       <div class="opt-group">
         <span class="g-label">验证</span>
-        <div class="seg" id="vf-row">
-          <span class="seg-opt" data-vf="passive" title="零额外请求：响应头评分 + 被动特征">被动</span>
-          <span class="seg-opt on" data-vf="active" title="参数级注入 / 目录 / WebShell / 主动路径指纹">主动</span>
-          <span class="seg-opt" data-vf="deepv" title="主动 + 403 绕过变体表 + 时间/布尔盲注双确认">深度盲态</span>
+        <div class="chip-row" id="verify-row">
+          <span class="chip" data-verify="passive" title="零额外请求：响应头评分 + 被动特征。与其余验证互斥，勾选后其余验证置灰">被动</span>
+          <span class="chip on" data-verify="afp" title="主动路径指纹（FingerDir 精编库）">主动指纹</span>
+          <span class="chip on" data-verify="dir" title="目录与敏感路径探测（软 404 基线，尺寸偏离才报）">目录探测</span>
+          <span class="chip on" data-verify="ws" title="常见 WebShell 后门路径探测">WebShell</span>
+          <span class="chip on" data-verify="dast" title="参数级无害注入：XSS / SQLi / 盲注双确认 / 重定向 / 遍历">参数注入</span>
+          <span class="chip" data-verify="by" title="403 绕过变体表（路径变异 / 信任头 / 只读方法），需与目录探测同开">403 绕过</span>
+          <span class="chip" data-verify="ex" title="利用级无害验证：对已确认发现做影响证明。需 .sitelens.yml exploit.enabled + 授权白名单，未授权目标零请求">利用级</span>
         </div>
       </div>
-      <div class="opt-group">
+      <div class="opt-group" id="st-group">
         <span class="g-label">强度</span>
         <div class="seg" id="st-row">
-          <span class="seg-opt" data-st="fast" title="核心验证集">快速</span>
-          <span class="seg-opt on" data-st="std" title="扩展验证集">标准</span>
-          <span class="seg-opt" data-st="full" title="全量模板子集 + 无头渲染">完整</span>
+          <span class="seg-opt" data-st="fast" title="不跑验证引擎；字典与端口集收窄">快速</span>
+          <span class="seg-opt on" data-st="std" title="core 验证集 + nuclei 上限 1500 + 标准字典">标准</span>
+          <span class="seg-opt" data-st="full" title="all 全量模板 + nuclei 上限 6000 + 全字典 + 全端口集">完整</span>
         </div>
       </div>
       <input class="tb" id="opt-cookie" style="flex:1;min-width:200px" placeholder="认证会话（可选）Cookie: session=…" autocomplete="off">
       <label><input type="checkbox" id="opt-ua"> 浏览器 UA（应对按 UA 降级的站点）</label>
-      <label title="3.0 利用级无害验证：对已验证发现做影响证明（回显/时延/出带）。需 .sitelens.yml exploit.enabled + 授权白名单，未授权目标自动跳过且零请求"><input type="checkbox" id="opt-exploit"> 利用级验证（需授权白名单）</label>
     </div>
     <p class="hint" id="hint"></p>
 
@@ -243,10 +251,8 @@ if (["scan", "netsec", "loginbrute"].indexOf(initialTab) >= 0) switchTab(initial
 var currentScanId = null;
 var currentJobId = null;
 /* 预设等级（quick/standard/deep/full）已由「范围 × 验证 × 强度」三维选择器
-   合成取代；引擎 API 仍接受 level 参数与任意布尔组合（兼容脚本调用）。 */
-var EST = { base: 5, deep: 8, active_fp: 12, dir_scan: 180, dir_bypass: 40,
-            subdomain: 50, service_probe: 15, webshell: 120, takeover: 40,
-            weak_audit: 60, checks_all: 420, checks_core: 40 };
+   合成取代；引擎 API 仍接受 level 参数与任意布尔组合（兼容脚本调用）。
+   耗时预估与映射合成统一走 web/js/scan-options.js（含字典/端口旋钮）。 */
 var STAGES = [
   [3, "校验目标（SSRF 防护）"], [12, "采集首页"], [30, "解析证据 / 同域爬取"],
   [50, "运行 7 个检测器"], [72, "验证引擎 + 安全响应头评分"], [78, "关联漏洞情报（三级判定）"],
@@ -254,18 +260,7 @@ var STAGES = [
   [87, "目录探测"], [88, "WebShell 探测"]
 ];
 
-function estimateSeconds(options) {
-  var t = EST.base;
-  Object.keys(options).forEach(function (k) {
-    if (!options[k]) return;
-    if (k === "checks") { // 验证引擎按档位估时（core 41 条 / all 全量模板）
-      t += options[k] === "all" ? (EST.checks_all || 420) : (EST.checks_core || 0);
-      return;
-    }
-    if (EST[k]) t += EST[k];
-  });
-  return t;
-}
+var estimateSeconds = scanOpts.estimateSeconds;
 function fmtT(sec) {
   sec = Math.max(0, Math.round(sec));
   return sec >= 60 ? Math.floor(sec / 60) + " 分 " + (sec % 60) + " 秒" : sec + " 秒";
@@ -301,61 +296,112 @@ document.addEventListener("click", function () {
 });
 var capDD = initCDD("lb-cap");
 
-/* ---- 三维选择器：范围（多选）× 验证（单选）× 强度（单选）→ 合成引擎开关 ---- */
-var tgSet = { web: true };
-var vfValue = "active";
+/* ---- 三维选择器：范围（多选）× 验证（多选，被动互斥）× 强度（单选）
+   → 经 web/js/scan-options.js 纯函数合成引擎 payload（映射有单测固化）。
+   语义：验证按动作拆分、勾谁跑谁；被动与其余互斥（零额外请求）；
+   强度为真三档（验证引擎档位 + nuclei 上限 + 字典缩放 + 端口集）。 ---- */
+var scopeSet = { web: true };
+var verifySet = { afp: true, dir: true, ws: true, dast: true };
 var stValue = "std";
-function wireRow(rowId, multi, onPick) {
-  var row = document.getElementById(rowId);
-  row.addEventListener("click", function (e) {
-    var el = e.target.closest(".chip,.seg-opt");
-    if (!el) return;
-    if (multi) {
-      if (el.getAttribute("data-tg") === "web") return; // Web 站点恒选
-      el.classList.toggle("on");
-      tgSet[el.getAttribute("data-tg")] = el.classList.contains("on");
-    } else {
-      row.querySelectorAll(".on").forEach(function (x) { x.classList.remove("on"); });
-      el.classList.add("on");
-      onPick(el.getAttribute(el.hasAttribute("data-vf") ? "data-vf" : "data-st"));
-    }
-  });
+
+function setVerify(key, on) {
+  verifySet[key] = on;
+  var chip = document.querySelector('#verify-row [data-verify="' + key + '"]');
+  if (chip) chip.classList.toggle("on", on);
 }
-wireRow("tg-row", true);
-wireRow("vf-row", false, function (v) {
-  vfValue = v;
+function setPassive(on) {
+  verifySet.passive = on;
+  var chip = document.querySelector('#verify-row [data-verify="passive"]');
+  if (chip) chip.classList.toggle("on", on);
+  // 互斥联动：被动开启时清空并禁用其余验证；关闭时恢复可选
+  var row = document.getElementById("verify-row");
+  if (on) {
+    ["afp", "dir", "ws", "dast", "by", "ex"].forEach(function (k) {
+      verifySet[k] = false;
+      var c = document.querySelector('#verify-row [data-verify="' + k + '"]');
+      if (c) c.classList.remove("on");
+    });
+  }
+  var stGroup = document.getElementById("st-group");
+  if (stGroup) stGroup.classList.toggle("disabled", on);
+  setHint();
+}
+function setHint() {
   var h = document.getElementById("hint");
   if (!h) return;
-  if (v === "deepv") {
-    h.textContent = "深度盲态会发送受控注入探针与 403 绕过变体，仅限自有或已书面授权的目标。";
+  if (verifySet.passive) {
+    h.textContent = "被动模式：零额外请求，仅响应头评分与被动特征；范围探测（子域 / 端口 / 协议）仍可运行。强度档位在此模式下不生效。";
+    h.className = "hint warn";
+  } else if (verifySet.ex) {
+    h.textContent = "利用级验证会发送受控影响证明探针，需 .sitelens.yml 开启 exploit.enabled 并配置授权白名单；白名单外目标零请求。";
+    h.className = "hint warn";
+  } else if (verifySet.by) {
+    h.textContent = "403 绕过会发送变体重试请求，仅限自有或已书面授权的目标。";
     h.className = "hint warn";
   } else {
     h.textContent = "";
     h.className = "hint";
   }
-});
-wireRow("st-row", false, function (v) { stValue = v; });
+}
+
+(function wireSelector() {
+  var scopeRow = document.getElementById("scope-row");
+  scopeRow.addEventListener("click", function (e) {
+    var el = e.target.closest(".chip");
+    if (!el) return;
+    el.classList.toggle("on");
+    scopeSet[el.getAttribute("data-scope")] = el.classList.contains("on");
+  });
+
+  var verifyRow = document.getElementById("verify-row");
+  verifyRow.addEventListener("click", function (e) {
+    var el = e.target.closest(".chip");
+    if (!el) return;
+    var key = el.getAttribute("data-verify");
+    if (key === "passive") {
+      var turningOn = !verifySet.passive;
+      setPassive(turningOn);
+      return;
+    }
+    if (verifySet.passive) {
+      // 主动验证在被动模式下点击：自动切回主动语义
+      setPassive(false);
+      toast("已切换到主动验证（被动已关闭）");
+    }
+    var on = !verifySet[key];
+    setVerify(key, on);
+    if (key === "ex" && on) setHint();
+    else if ((key === "by" || key === "dir") && (verifySet.by || verifySet.dir)) setHint();
+    else if (!verifySet.afp && !verifySet.dir && !verifySet.ws && !verifySet.dast && !verifySet.by && !verifySet.ex) {
+      setHint();
+    }
+  });
+
+  var stRow = document.getElementById("st-row");
+  stRow.addEventListener("click", function (e) {
+    var el = e.target.closest(".seg-opt");
+    if (!el || verifySet.passive) return;
+    stRow.querySelectorAll(".on").forEach(function (x) { x.classList.remove("on"); });
+    el.classList.add("on");
+    stValue = el.getAttribute("data-st");
+  });
+})();
 
 function buildOptions() {
-  var o = {};
-  if (tgSet.sub) { o.subdomain = true; o.takeover = true; }
-  if (tgSet.srv) { o.service_probe = true; }
-  if (vfValue === "passive") {
-    // 被动：零额外请求，不做任何注入类验证；范围探测（子域/端口）仍可运行
-    o.netsec = true;
-    o.passive = true;
-    return o;
+  var r = scanOpts.build({ scope: scopeSet, verify: verifySet, strength: stValue });
+  if (!r.ok) {
+    var h = document.getElementById("hint");
+    if (h) { h.textContent = r.error; h.className = "hint warn"; }
+    toast(r.error, "err");
+    return null;
   }
-  o.deep = true;
-  o.dast = true;
-  o.dir_scan = true;
-  o.webshell = true;
-  o.active_fp = true;
-  o.netsec = true;
-  o.passive = true; // 被动检测零成本，主动扫描时同样开启（对齐原 full 预设）
-  if (vfValue === "deepv") { o.dir_bypass = true; } // + 403 绕过变体表 + 盲注双确认
-  o.checks = stValue === "full" ? "all" : "core";
-  return o;
+  if (r.warnings && r.warnings.length) {
+    var h2 = document.getElementById("hint");
+    if (h2) { h2.textContent = r.warnings.join(" "); h2.className = "hint warn"; }
+  } else {
+    setHint();
+  }
+  return r.options;
 }
 
 /* 本机未装 ddddocr 时禁用需要 OCR 的验证码模式 */
@@ -435,10 +481,10 @@ function startScan() {
   var url = document.getElementById("url").value.trim();
   if (!url) { document.getElementById("url").focus(); return; }
   var options = buildOptions();
+  if (!options) return; // 范围校验失败（如全不选），buildOptions 已给出提示
   var ck = document.getElementById("opt-cookie").value.trim();
   if (ck) options.auth_cookie = ck;
   if (document.getElementById("opt-ua").checked) options.browser_ua = true;
-  if (document.getElementById("opt-exploit").checked) options.exploit = true;
 
   document.getElementById("idle-wrap").style.display = "none";
   document.getElementById("pw").style.display = "block";

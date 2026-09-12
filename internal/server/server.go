@@ -32,6 +32,7 @@ import (
 	"cnb.cool/feng-qiao/sitelens/internal/headless"
 	"cnb.cool/feng-qiao/sitelens/internal/intel"
 	"cnb.cool/feng-qiao/sitelens/internal/loginbrute"
+	"cnb.cool/feng-qiao/sitelens/internal/modules"
 	"cnb.cool/feng-qiao/sitelens/internal/netsec"
 	"cnb.cool/feng-qiao/sitelens/internal/replay"
 	"cnb.cool/feng-qiao/sitelens/internal/sitelens"
@@ -495,6 +496,21 @@ func scanOptions(body map[string]any) engine.Options {
 	o.DAST = boolOf(body["dast"], false)
 	o.Exploit = boolOf(body["exploit"], false) // config exploit.enabled 为总闸
 	o.Passive = boolOf(body["passive"], false)
+	o.JSMap = boolOf(body["js_map"], false)      // JS 攻击面提取（可独立于 DAST）
+	o.NetProto = boolOf(body["netproto"], false) // 协议模板（可独立于端口识别）
+	// 强度档位的字典缩放与端口集（每扫描覆盖配置；0/缺省 = 沿用配置）
+	if v, ok := body["dir_max_paths"].(float64); ok && v > 0 {
+		o.DirMaxPaths = int(v)
+	}
+	if v, ok := body["shell_max_paths"].(float64); ok && v > 0 {
+		o.ShellMaxPaths = int(v)
+	}
+	if v, ok := body["sub_max_words"].(float64); ok && v > 0 {
+		o.SubMaxWords = int(v)
+	}
+	if v, ok := body["probe_ports"].(string); ok && v == "full" {
+		o.ProbePorts = modules.FullProbePorts
+	}
 	if v, ok := body["checks"].(string); ok && v != "" {
 		o.Checks = v
 	}

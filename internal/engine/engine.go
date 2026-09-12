@@ -33,24 +33,30 @@ import (
 
 // Options 每次扫描可单独指定的开关（对齐 /api/scan 平铺 payload）。
 type Options struct {
-	Deep         bool                    // 同域浅爬取
-	ActiveFP     bool                    // FingerDir 主动路径指纹
-	DirScan      bool                    // 目录探测
-	DirBypass    bool                    // 403 绕过重试
-	Subdomain    bool                    // 子域名枚举
-	ServiceProbe bool                    // 端口服务识别
-	BrowserUA    bool                    // 浏览器 UA
-	WeakAudit    bool                    // 敏感信息审计
-	Webshell     bool                    // WebShell 探测
-	Takeover     bool                    // 子域名接管探测（需先开 Subdomain 产出候选）
-	Netsec       bool                    // TLS/DNS 安全检测
-	DAST         bool                    // 参数级注入探测
-	Exploit      bool                    // 利用级无害验证（config exploit.enabled 为总闸）
-	Passive      bool                    // 被动安全检测
-	Checks       string                  // none | core | all
-	NucleiCap    int                     // Nuclei 单次模板上限（0 = 用配置默认 nuclei_cap）
-	AuthCookie   string                  // 授权扫描 Cookie
-	OnEvent      func(kind, text string) // 实时事件回调（阶段/命中/认证，nil = 不回调）
+	Deep          bool                    // 同域浅爬取
+	ActiveFP      bool                    // FingerDir 主动路径指纹
+	DirScan       bool                    // 目录探测
+	DirBypass     bool                    // 403 绕过重试
+	Subdomain     bool                    // 子域名枚举
+	ServiceProbe  bool                    // 端口服务识别
+	BrowserUA     bool                    // 浏览器 UA
+	WeakAudit     bool                    // 敏感信息审计
+	Webshell      bool                    // WebShell 探测
+	Takeover      bool                    // 子域名接管探测（需先开 Subdomain 产出候选）
+	Netsec        bool                    // TLS/DNS 安全检测
+	DAST          bool                    // 参数级注入探测
+	Exploit       bool                    // 利用级无害验证（config exploit.enabled 为总闸）
+	Passive       bool                    // 被动安全检测
+	JSMap         bool                    // JS 攻击面提取（独立于 DAST 可开：bundle 端点/SourceMap，只读）
+	NetProto      bool                    // 协议模板检测（不开端口服务识别时仅跑 dns 类模板）
+	Checks        string                  // none | core | all
+	NucleiCap     int                     // Nuclei 单次模板上限（0 = 用配置默认 nuclei_cap）
+	DirMaxPaths   int                     // 目录探测字典上限（0 = 用配置默认）
+	ShellMaxPaths int                     // WebShell 字典上限（0 = 用配置默认）
+	SubMaxWords   int                     // 子域名字典词数上限（0 = 用配置默认）
+	ProbePorts    []int                   // 端口探测端口集（nil = 用配置/默认常见端口集）
+	AuthCookie    string                  // 授权扫描 Cookie
+	OnEvent       func(kind, text string) // 实时事件回调（阶段/命中/认证，nil = 不回调）
 }
 
 // DefaultOptions 对齐 Python 默认：deep 开、checks 关、其余关。
@@ -201,9 +207,9 @@ func (e *Engine) Scan(rawURL string, opts Options, onProgress progress, cancel f
 	var dastFormTargets []dast.FormTarget // 爬取阶段收集的表单（DAST 表单探测点）
 	pages := []crawlPage{{resp: home, doc: doc}}
 
-	// 3) 同域浅爬取（DAST 开启时 jsmap 前置：API 端点回灌爬虫种子）
+	// 3) 同域浅爬取（DAST 或 JS 端点开启时 jsmap 前置：API 端点回灌爬虫种子）
 	var jsEndpoints []jsmap.Endpoint
-	if opts.DAST {
+	if opts.DAST || opts.JSMap {
 		onProgress(38, "JS 攻击面提取…")
 		var jsFind []jsmap.Finding
 		jsFind, jsEndpoints = jsmap.Run(jsmap.NewFetcher(client), baseURL, doc, 4)
@@ -445,10 +451,20 @@ func (e *Engine) Scan(rawURL string, opts Options, onProgress progress, cancel f
 
 	// 9) 主动模块（默认关，仅限授权目标）
 	var dirHits []modules.PageHit
-	if opts.DirScan || opts.Subdomain || opts.Webshell || opts.WeakAudit || opts.ActiveFP || opts.ServiceProbe {
+	if opts.DirScan || opts.Subdomain || opts.Webshell || opts.WeakAudit || opts.ActiveFP || opts.ServiceProbe || opts.NetProto {
 		ac := e.cfg.Active
 		if opts.DirBypass {
 			ac.DirBypass403 = true // 每次扫描可覆盖配置（对齐 Python options.dir_bypass）
+		}
+		// 强度档位的字典缩放（每扫描覆盖配置；0 = 沿用配置默认）
+		if opts.DirMaxPaths > 0 {
+			ac.DirMaxPaths = opts.DirMaxPaths
+		}
+		if opts.ShellMaxPaths > 0 {
+			ac.ShellMaxPaths = opts.ShellMaxPaths
+		}
+		if opts.SubMaxWords > 0 {
+			ac.SubMaxWords = opts.SubMaxWords
 		}
 		if opts.Subdomain {
 			onProgress(86, "子域名枚举…")
@@ -484,14 +500,22 @@ func (e *Engine) Scan(rawURL string, opts Options, onProgress progress, cancel f
 			res.Extras["active_fp"] = modules.ActiveFP(client, baseURL,
 				kb.FingerDir(), nil, cancelled, e.cfg.Active.FPMaxRequests)
 		}
+		var services []modules.ServiceHit
 		if opts.ServiceProbe && kb != nil && len(kb.ServiceFP()) > 0 {
 			onProgress(89, "端口服务识别…")
-			services := modules.ServiceProbe(host, kb.ServiceFP(),
-				e.cfg.Active.ProbePorts, e.cfg.Active.ProbeTimeoutMS,
+			ports := e.cfg.Active.ProbePorts
+			if len(opts.ProbePorts) > 0 {
+				ports = opts.ProbePorts // 强度档位的端口集覆盖（每扫描）
+			}
+			services = modules.ServiceProbe(host, kb.ServiceFP(),
+				ports, e.cfg.Active.ProbeTimeoutMS,
 				e.cfg.Active.ProbeWorkers, nil, cancelled)
 			res.Extras["service"] = services
-			// 3.0 协议模板检测（非 HTTP）：tcp 模板跑探测到的服务端口，
-			// dns 模板查目标域名；同闸授权语义
+		}
+		// 3.0 协议模板检测（非 HTTP）：与端口服务识别解耦——独立选择时
+		// 仅跑 dns 类模板（查询目标域名自身）；开端口识别则 tcp 模板
+		// 跑探测到的服务端口；同闸授权语义
+		if opts.ServiceProbe || opts.NetProto {
 			onProgress(90, "协议模板检测（tcp/dns/ssl）…")
 			if hits := e.netprotoScan(host, services, emit, cancelled); len(hits) > 0 {
 				res.Extras["netproto"] = hits
