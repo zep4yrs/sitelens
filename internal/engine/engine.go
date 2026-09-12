@@ -416,6 +416,7 @@ func (e *Engine) Scan(rawURL string, opts Options, onProgress progress, cancel f
 				"check": f.Check, "title": f.Title, "severity": f.Severity,
 				"url": f.URL, "evidence": f.Evidence, "advice": f.Advice,
 				"src": "dast", "param": f.Param,
+				"payload": f.Payload, "replay": f.Replay, // 重放与证据链输入
 			})
 			res.Verified = append(res.Verified, m)
 			dastMaps = append(dastMaps, m)
@@ -426,6 +427,7 @@ func (e *Engine) Scan(rawURL string, opts Options, onProgress progress, cancel f
 				"check": f.Check, "title": f.Title, "severity": f.Severity,
 				"url": f.URL, "evidence": f.Evidence, "advice": f.Advice,
 				"src": "dast", "param": f.Param,
+				"payload": f.Payload, "replay": f.Replay,
 			})
 			res.Verified = append(res.Verified, m)
 			dastMaps = append(dastMaps, m)

@@ -33,6 +33,7 @@ import (
 	"cnb.cool/feng-qiao/sitelens/internal/intel"
 	"cnb.cool/feng-qiao/sitelens/internal/loginbrute"
 	"cnb.cool/feng-qiao/sitelens/internal/netsec"
+	"cnb.cool/feng-qiao/sitelens/internal/replay"
 	"cnb.cool/feng-qiao/sitelens/internal/sitelens"
 	"cnb.cool/feng-qiao/sitelens/internal/store"
 	"cnb.cool/feng-qiao/sitelens/internal/target"
@@ -206,6 +207,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/diff", s.hDiff)
 	mux.HandleFunc("GET /api/vuln-search", s.hVulnSearch)
 	mux.HandleFunc("GET /api/verified", s.hVerified)
+	mux.HandleFunc("GET /api/replay/{id}", s.hReplay)
 	mux.HandleFunc("POST /api/netsec", s.hNetsec)
 	mux.HandleFunc("POST /api/loginbrute", s.hLoginBrute)
 	mux.HandleFunc("GET /api/captcha/capability", s.hCaptchaCapability)
@@ -674,8 +676,24 @@ func (s *Server) hHistoryDetail(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, rec)
 }
 
-func (s *Server) hHistoryDelete(w http.ResponseWriter, r *http.Request) {
+// hReplay 验证回归（3.0）：重放一次历史扫描的全部 dast 类发现。
+func (s *Server) hReplay(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		writeJSON(w, 400, map[string]any{"error": "id 非法"})
+		return
+	}
+	rec := s.st.Get(id)
+	if rec == nil || rec.Result == nil {
+		writeJSON(w, 404, map[string]any{"error": "记录不存在"})
+		return
+	}
+	timeoutMS := s.cfg.Active.ProbeTimeoutMS
+	stats, details := replay.Batch(replay.NewFetcher(timeoutMS), rec.Result.Verified)
+	writeJSON(w, 200, map[string]any{"scan_id": id, "stats": stats, "details": details})
+}
+
+func (s *Server) hHistoryDelete(w http.ResponseWriter, r *http.Request) {	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
 	if err != nil {
 		writeJSON(w, 400, map[string]any{"error": "id 非法"})
 		return
