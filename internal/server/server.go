@@ -173,7 +173,7 @@ func (s *Server) Handler() http.Handler {
 		"/app": "app.html", "/batch": "batch.html",
 		"/history": "history.html", "/api-docs": "api-docs.html",
 		"/intel": "intel.html", "/audit": "audit.html",
-		"/settings": "settings.html", "/legal": "legal.html",
+		"/settings": "settings.html",
 	}
 	for route, file := range pages {
 		mux.HandleFunc(route, func(w http.ResponseWriter, r *http.Request) {
@@ -354,7 +354,7 @@ func (s *Server) hRoot(w http.ResponseWriter, r *http.Request) {
 	if strings.HasSuffix(p, ".html") {
 		name := strings.TrimPrefix(p, "/")
 		for _, known := range []string{"app.html", "batch.html", "history.html",
-			"api-docs.html", "intel.html", "audit.html", "settings.html", "legal.html", "404.html"} {
+			"api-docs.html", "intel.html", "audit.html", "settings.html", "404.html"} {
 			if name == known {
 				s.serveAsset(w, name)
 				return
