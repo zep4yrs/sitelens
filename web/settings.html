@@ -78,8 +78,8 @@
 
   <div class="tabs" id="tabs"></div>
 
-  <!-- ================ 外观与个性化 ================ -->
-  <div class="tabpanel" data-tab="look">
+  <!-- ================ 外观与个性化（首屏默认可见：即使 JS 异常也不白屏） ================ -->
+  <div class="tabpanel active" data-tab="look">
     <div class="sec">
       <div class="sec-title">主题模式</div>
       <div class="seg" id="segTheme">
@@ -347,6 +347,27 @@
   function setv(id, v) { $(id).value = v; }
   function getv(id) { return $(id).value.trim(); }
   function num(id) { return parseInt(getv(id), 10) || 0; }
+
+  // 旧缓存兜底：浏览器还拿着旧 common.js（无 slPrefs）时用最小 shim，
+  // 保证设置中心自身可渲染可操作；其余功能随缓存刷新自动恢复。
+  if (!window.slPrefs) {
+    window.slPrefs = {
+      get: function () {
+        try { return JSON.parse(localStorage.getItem("sitelens-prefs") || "{}") || {}; }
+        catch (e) { return {}; }
+      },
+      set: function (patch) {
+        try {
+          var cur = this.get();
+          for (var k in patch) cur[k] = patch[k];
+          localStorage.setItem("sitelens-prefs", JSON.stringify(cur));
+        } catch (e) {}
+      },
+      reset: function () {
+        try { localStorage.removeItem("sitelens-prefs"); } catch (e) {}
+      }
+    };
+  }
 
   /* ---- 页签 ---- */
   var TABS = [

@@ -9,6 +9,15 @@
   fontLink.href = "https://cdn.jsdelivr.net/npm/lxgw-wenkai-webfont@1.7.0/style.css";
   document.head.appendChild(fontLink);
 
+  /* ---------------- 页签图标（内联 SVG，免去 favicon 404 噪音） ---------------- */
+  var iconLink = document.createElement("link");
+  iconLink.rel = "icon";
+  iconLink.href = "data:image/svg+xml," + encodeURIComponent(
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">' +
+    '<circle cx="16" cy="16" r="12" fill="none" stroke="#0f766e" stroke-width="4"/>' +
+    '<circle cx="16" cy="16" r="4" fill="#0f766e"/></svg>');
+  document.head.appendChild(iconLink);
+
   /* ---------------- 偏好存取（localStorage 单键 JSON，向后兼容旧 sitelens-theme） ---------------- */
   var FS_PX = { sm: "13.5px", md: "15px", lg: "16.5px", xl: "18px" };
 
