@@ -288,12 +288,14 @@
       </div>
       <div class="row" style="margin-top:8px">
         <button class="btn small" id="checkUpd">检查更新</button>
+        <button class="btn small" id="restartUpd" style="display:none">重启完成更新</button>
         <button class="btn ghost small" id="openRel">发布页</button>
         <span id="updMsg" style="font-size:13px"></span>
       </div>
       <p class="note" id="updNote">
         桌面版：应用内置自动更新——启动时静默检查，运行期每 6 小时复查，
-        下载完成后弹窗提示重启升级；
+        更新源按 <span class="mono">CNB → Gitee → GitHub</span> 自动轮询切换
+        （哪个通用哪个）。发现新版本即后台差量下载，完成后弹窗提示重启升级；
         也可在托盘图标右键菜单随时手动检查。<br>
         浏览器模式：请关注发布页获取新版本，替换二进制即可（配置与历史数据兼容）。
       </p>
@@ -831,16 +833,52 @@
     $("stNvd").textContent = s.nvd != null ? s.nvd : "-";
   }).catch(function () {});
 
+  /* ---- 检查更新：桌面版经 preload 桥直连主进程更新器（真实检查），
+          浏览器模式跳发布页 ---- */
+  var bridge = window.sitelens || null;
+  var RELEASES = "https://cnb.cool/feng-qiao/sitelens/releases";
+
   $("checkUpd").addEventListener("click", function () {
-    if (isDesktop) {
-      $("updMsg").textContent = "桌面版已启用自动更新；托盘图标右键菜单可立即检查。";
+    var m = $("updMsg");
+    if (!bridge) {
+      m.innerHTML = '浏览器模式请在 <a href="' + RELEASES +
+        '" target="_blank" rel="noopener" style="color:var(--info)">发布页</a>比对最新版本号。';
+      window.open(RELEASES, "_blank", "noopener");
       return;
     }
-    $("updMsg").innerHTML = "正在打开发布页，请比对最新版本号。";
-    window.open("https://cnb.cool/feng-qiao/sitelens/releases", "_blank", "noopener");
+    var b = $("checkUpd");
+    b.disabled = true;
+    m.textContent = "正在检查更新（更新源轮询：CNB → Gitee → GitHub）…";
+    bridge.checkUpdate().then(function (r) {
+      b.disabled = false;
+      if (!r) return;
+      if (r.state === "latest") {
+        m.textContent = "已是最新版本 v" + r.current + "。";
+      } else if (r.state === "available") {
+        m.textContent = "发现新版本 v" + r.latest + "，正在后台下载（更新源：" +
+          r.feed + "），完成后可在此重启升级。";
+      } else if (r.state === "dev") {
+        m.textContent = "开发模式下不检查更新。";
+      } else {
+        m.textContent = "检查失败：所有更新源均不可达（CNB / Gitee / GitHub）。";
+      }
+    }).catch(function (e) {
+      b.disabled = false;
+      m.textContent = "检查异常：" + e;
+    });
   });
+  $("restartUpd").addEventListener("click", function () {
+    if (bridge) bridge.installUpdate();
+  });
+  if (bridge) {
+    // 下载完成：显示重启按钮（与主进程弹窗殊途同归）
+    bridge.onDownloaded(function (ver) {
+      $("updMsg").textContent = "新版本 v" + ver + " 已下载完成，点「重启完成更新」即升级。";
+      $("restartUpd").style.display = "";
+    });
+  }
   $("openRel").addEventListener("click", function () {
-    window.open("https://cnb.cool/feng-qiao/sitelens/releases", "_blank", "noopener");
+    window.open(RELEASES, "_blank", "noopener");
   });
 
   /* ---- 法务文档内嵌切换（不跳离设置页） ---- */

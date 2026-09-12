@@ -42,11 +42,14 @@
 
 ## 自动更新
 
-electron-updater generic 源（`package.json` → `build.publish.url`，
-当前 = CNB release `desktop-stable` 标签的附件区）。启动静默检查 +
-运行期每 6 小时复查 → 后台差量下载（blockmap）→ 弹窗「立即重启 /
-稍后」→ 静默安装升级（含引擎）；同一版本不重复弹窗。
-发布新版时 CI 自动把三件套覆盖到 desktop-stable。
+electron-updater generic 多源轮询（客户端内置，顺序 = CNB 主源 →
+Gitee → GitHub，均为 `…/releases/download/desktop-stable/` 的
+desktop-stable 标签附件区）：启动静默检查 + 运行期每 6 小时复查，
+失败的源自动切换下一个，成功的源粘住；后台差量下载（blockmap）→
+弹窗「立即重启 / 稍后」→ 静默安装升级（含引擎）；同一版本不重复弹窗。
+发布新版时 CI 自动把三件套覆盖到 desktop-stable（Gitee / GitHub 镜像
+需各自 token，当前为手工同步）；设置页「检查更新」经 IPC 直连更新器，
+真实检查并显示命中的源。
 
 ## 本地构建
 
