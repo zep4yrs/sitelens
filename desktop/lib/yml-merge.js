@@ -89,13 +89,6 @@ function quoteIfNeeded(v) {
   return '"' + v.replace(/\\/g, "/") + '"';
 }
 
-// readListenPort 从配置文本读 web.listen 端口；兼容带引号/不带引号两种
-// 形态（与 mergeManaged 的写出格式互为逆操作）。读不出返回 null。
-function readListenPort(text) {
-  const m = String(text || "").match(/^\s*listen:\s*"?127\.0\.0\.1:(\d+)"?\s*$/m);
-  return m ? Number(m[1]) : null;
-}
-
 // readListenValue 从配置文本提取 web.listen 的完整绑定值 { host, port }；
 // 兼容带引号/不带引号。找不到 listen 行返回 null。
 function readListenValue(text) {
@@ -105,4 +98,4 @@ function readListenValue(text) {
   return { host: m[1], port: Number(m[2]) };
 }
 
-module.exports = { mergeManaged: mergeManaged, quoteIfNeeded: quoteIfNeeded, readListenPort: readListenPort, readListenValue: readListenValue };
+module.exports = { mergeManaged: mergeManaged, quoteIfNeeded: quoteIfNeeded, readListenValue: readListenValue };
