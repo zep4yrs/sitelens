@@ -3,6 +3,7 @@ package sitelens
 // Matcher 指纹匹配器：加载精编指纹并预编译，供引擎跨页复用。
 type Matcher struct {
 	techs []*compiledTech
+	litPS *litPrescreen
 }
 
 // LoadMatcher 从 JSON 文件加载指纹规则（data/go/technologies.json）。
@@ -11,7 +12,7 @@ func LoadMatcher(path string) (*Matcher, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Matcher{techs: techs}, nil
+	return &Matcher{techs: techs, litPS: buildLitPrescreen(techs)}, nil
 }
 
 // Count 已加载的指纹条数。
@@ -29,7 +30,7 @@ type MatchHit struct {
 
 // Match 对一份证据应用全部指纹。
 func (m *Matcher) Match(ev *Evidence) []MatchHit {
-	raw := Match(m.techs, ev)
+	raw := MatchPrescreen(m.techs, ev, m.litPS)
 	out := make([]MatchHit, 0, len(raw))
 	for _, h := range raw {
 		mh := MatchHit{Name: h.Name, Cats: h.Cats, Conf: h.Conf, Evidence: h.Evidence, Version: h.Version}

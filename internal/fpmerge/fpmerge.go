@@ -37,6 +37,7 @@ type entry struct {
 	Cats    []string        `json:"cats"`
 	Conf    int             `json:"conf"`
 	Website string          `json:"website"`
+	Exact   bool            `json:"exact,omitempty"` // 关键词型：全部模式按字面量包含
 	Rules   json.RawMessage `json:"rules"`
 }
 
