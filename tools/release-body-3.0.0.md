@@ -72,7 +72,7 @@
 - 先试用 / 磁盘紧张 → `setup-lite.exe`（之后用 `update-*` 在线补数据）
 - 免安装 → `full-win64.zip`
 - Linux amd64 → `linux-amd64.zip`
-- 流水线 / 二次分发 → `intel_dump.json.gz`、`nuclei-templates.tar.gz`、`tpl_intel.json.gz`
+- 做流水线集成 / 二次开发 → 直接克隆本仓库，模板池与情报库数据已全部入仓库
 
 内存建议 8GB 起；full 版磁盘约 800MB（模板池 719MB 为大头，14.5 万小文件的簇开销占了一半）。SHA256 校验和由 CI 构建后发布于本页评论。
 
