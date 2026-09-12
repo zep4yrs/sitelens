@@ -28,14 +28,14 @@
 - [x] **B13 HistoryStats 均值截断**：改四舍五入
 - [x] **B14 done 计数重复累加**：命中分支与组尾分支只计一次
 - [x] **B15 knownTopKeys 缺段**：补 `auth` / `ssrf` / `exploit`（合法段被误报"将被忽略"）
-- [ ] **B16 captcha health 路径猜测**：sidecar 地址不以 /ocr 结尾时探测打错路径，需显式 health 地址或容错
+- [x] **B16 captcha health 路径猜测**：sidecar 地址不以 /ocr 结尾时探测打错路径，需显式 health 地址或容错
 - [x] **B19 ssrf 轮询空转**：无 token 时缩短轮询；有 token 时避免早退漏报
-- [ ] **B20 serviceprobe 指纹缓存定死**：`globalFP sync.Once` 随热更新失效
+- [x] **B20 serviceprobe 指纹缓存定死**：`globalFP sync.Once` 随热更新失效
 - [x] **B24 netproto 与 HTTP 模板 cap 耦合**：协议模板调度上限独立配置
 
 ## 口径修正（非代码）
 
-- [ ] **B21 文档宣称与实测不符**：「11,966 条服务指纹」实测 700+ 条因 RE2 不兼容被拒（685 lookaround + 16 backref），有效约 94%——开发文档与 CHANGELOG 改实测有效口径
+- [x] **B21 文档宣称与实测不符**：「11,966 条服务指纹」实测 700+ 条因 RE2 不兼容被拒（685 lookaround + 16 backref），有效约 94%——开发文档与 CHANGELOG 改实测有效口径
 
 ## 明确不修 / 已确认健康
 
