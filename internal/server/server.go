@@ -444,6 +444,7 @@ func scanOptions(body map[string]any) engine.Options {
 	o.Webshell = boolOf(body["webshell"], false)
 	o.Netsec = boolOf(body["netsec"], false)
 	o.DAST = boolOf(body["dast"], false)
+	o.Exploit = boolOf(body["exploit"], false) // config exploit.enabled 为总闸
 	o.Passive = boolOf(body["passive"], false)
 	if v, ok := body["checks"].(string); ok && v != "" {
 		o.Checks = v

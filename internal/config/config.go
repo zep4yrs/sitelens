@@ -30,6 +30,7 @@ type Config struct {
 	Modules    ModulesConfig    `yaml:"modules"`
 	Auth       AuthConfig       `yaml:"auth"`
 	Ssrf       SsrfConfig       `yaml:"ssrf"`
+	Exploit    ExploitConfig    `yaml:"exploit"`
 }
 
 // AuthConfig 登录流认证：扫描前以配置凭证登录，会话 Cookie 全扫描复用。
@@ -131,6 +132,13 @@ type NetsecConfig struct {
 	MailCheck     bool `yaml:"mail_check"`      // SPF/DMARC/MX 检查开关
 }
 
+// ExploitConfig 3.0 利用级无害验证（授权闸默认关）。
+type ExploitConfig struct {
+	Enabled          bool     `yaml:"enabled"`            // 总闸：false 时利用级探针一层请求都不发
+	Authorized       []string `yaml:"authorized"`         // 授权目标白名单（精确 host 或 *.domain 后缀）
+	DelayThresholdMS int      `yaml:"delay_threshold_ms"` // 时延通道判定阈值
+}
+
 // LoginBruteConfig 登录爆破（仅限授权目标）。
 type LoginBruteConfig struct {
 	MaxTries      int    `yaml:"max_tries"`       // 总尝试次数上限
@@ -212,6 +220,11 @@ func Default() *Config {
 			BlindThresholdMS: 3500,
 			SleepSeconds:     4,
 			MaxURLLen:        2048,
+		},
+		Exploit: ExploitConfig{
+			Enabled:          false, // 授权闸默认关：利用级探针需显式开启 + 白名单
+			Authorized:       []string{},
+			DelayThresholdMS: 3000,
 		},
 		Intel: IntelConfig{
 			DumpPath:         "data/intel_dump.json.gz",

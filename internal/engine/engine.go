@@ -46,6 +46,7 @@ type Options struct {
 	Takeover     bool                    // 子域名接管探测（需先开 Subdomain 产出候选）
 	Netsec       bool                    // TLS/DNS 安全检测
 	DAST         bool                    // 参数级注入探测
+	Exploit      bool                    // 利用级无害验证（config exploit.enabled 为总闸）
 	Passive      bool                    // 被动安全检测
 	Checks       string                  // none | core | all
 	NucleiCap    int                     // Nuclei 单次模板上限（0 = 用配置默认 nuclei_cap）
@@ -388,6 +389,8 @@ func (e *Engine) Scan(rawURL string, opts Options, onProgress progress, cancel f
 	// 8) DAST：参数级探测（JS 攻击面已在爬取前提取，端点回灌了爬虫种子）
 	if opts.DAST {
 		onProgress(85, "参数级 DAST 探测…")
+		var dastAll []dast.Finding
+		var dastMaps []map[string]any
 		// SSRF 出带：配置启用且扫描器 beacon 可被目标触达时才生效
 		beaconBase := ""
 		if e.cfg.Ssrf.BeaconEnabled && e.cfg.Ssrf.BeaconBase != "" {
@@ -408,18 +411,33 @@ func (e *Engine) Scan(rawURL string, opts Options, onProgress progress, cancel f
 			},
 		})
 		for _, f := range r.RunForms(dastFormTargets) {
-			res.Verified = append(res.Verified, verifiedMap(map[string]any{
+			dastAll = append(dastAll, f)
+			m := verifiedMap(map[string]any{
 				"check": f.Check, "title": f.Title, "severity": f.Severity,
 				"url": f.URL, "evidence": f.Evidence, "advice": f.Advice,
 				"src": "dast", "param": f.Param,
-			}))
+			})
+			res.Verified = append(res.Verified, m)
+			dastMaps = append(dastMaps, m)
 		}
 		for _, f := range r.Run(dastLinks) {
-			res.Verified = append(res.Verified, verifiedMap(map[string]any{
+			dastAll = append(dastAll, f)
+			m := verifiedMap(map[string]any{
 				"check": f.Check, "title": f.Title, "severity": f.Severity,
 				"url": f.URL, "evidence": f.Evidence, "advice": f.Advice,
 				"src": "dast", "param": f.Param,
-			}))
+			})
+			res.Verified = append(res.Verified, m)
+			dastMaps = append(dastMaps, m)
+		}
+		// 3.0 利用级无害验证：双闸（请求开关 × config exploit.enabled）+
+		// 授权白名单；未授权目标零请求
+		if opts.Exploit && e.cfg.Exploit.Enabled && len(dastAll) > 0 {
+			onProgress(86, "利用级无害验证…")
+			proven, observed := e.runExploit(host, dastAll, dastMaps, dastFetcher{client}, emit)
+			res.Extras["exploit"] = map[string]any{
+				"proven": proven, "observed": observed, "gate": "authorized_only",
+			}
 		}
 	}
 

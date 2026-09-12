@@ -130,6 +130,7 @@ func runScan(cfg *config.Config, rawURL string) {
 		Checks:  cfg.Checks.Level,
 		Netsec:  cfg.Modules.Netsec,
 		Passive: true,
+		Exploit: cfg.Exploit.Enabled, // 利用级验证：配置总闸
 	}
 	res := eng.Scan(rawURL, opts, nil, nil)
 	out, _ := json.MarshalIndent(res, "", "  ")

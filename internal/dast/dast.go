@@ -410,6 +410,12 @@ type Finding struct {
 	Impact     string    `json:"impact,omitempty"`     // 影响面说明（2.0 证据链扩展位）
 }
 
+// SetParam 导出的参数替换（3.0 exploit 层构造利用级探针 URL 用）。
+func SetParam(rawURL, param, value string) string { return setParam(rawURL, param, value) }
+
+// RandToken 导出的 128 位随机令牌（exploit 出带通道生成 beacon 注入串用）。
+func RandToken() string { return randToken() }
+
 // curlReplay DAST 探针的复现命令（GET 语义，与探测行为一致）。
 func curlReplay(u string) string {
 	return "curl -sk --path-as-is '" + strings.ReplaceAll(u, "'", `'\''`) + "'"
