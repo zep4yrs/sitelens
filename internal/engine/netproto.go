@@ -31,9 +31,8 @@ func (e *Engine) netprotoScan(host string, services []modules.ServiceHit,
 	if e.cfg.Checks.NucleiDir == "" {
 		return nil
 	}
-	entries, err := nuclei.Index(e.cfg.Checks.NucleiDir,
-		filepath.Join(e.cfg.Store.DataDir, "nuclei_index.json"))
-	if err != nil {
+	entries := nuclei.IndexCached(filepath.Join(e.cfg.Store.DataDir, "nuclei_index.json"))
+	if len(entries) == 0 {
 		return nil
 	}
 	var protos []nuclei.Entry

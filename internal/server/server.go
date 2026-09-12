@@ -41,7 +41,7 @@ import (
 )
 
 // Version 服务版本。
-const Version = "2.0.0"
+const Version = "3.0.0"
 
 // categoryNames 常见技术类别中文名（对齐 Wappalyzer 类别 id）。
 var categoryNames = map[string]string{
@@ -123,6 +123,9 @@ func New(cfg *config.Config, cfgPath string) (*Server, error) {
 		if nvd, nerr := intel.LoadNVD(cfg.Intel.NVDPath); nerr == nil && nvd != nil {
 			kb.AttachNVD(nvd)
 			log.Printf("NVD 字典挂载：%d 条", nvd.Len())
+		}
+		if tc, terr := intel.LoadTechCPE("data/go/tech_cpe.json"); terr == nil && tc != nil {
+			kb.AttachTechCPE(tc)
 		}
 		s.kb.Store(kb)
 	} else {
@@ -693,7 +696,8 @@ func (s *Server) hReplay(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, map[string]any{"scan_id": id, "stats": stats, "details": details})
 }
 
-func (s *Server) hHistoryDelete(w http.ResponseWriter, r *http.Request) {	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+func (s *Server) hHistoryDelete(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
 	if err != nil {
 		writeJSON(w, 400, map[string]any{"error": "id 非法"})
 		return

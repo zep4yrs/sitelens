@@ -627,14 +627,14 @@ func (a chromeRenderer) Render(rawURL string) (string, bool) {
 var nucleiLRUMu sync.Mutex
 
 // attachTemplates 模板情报层：CVE → 可运行模板路径。
-// 索引走缓存（首次已建，秒级命中），单 CVE 最多挂 6 条避免报告膨胀。
+// 只读缓存（IndexCached），缓存未就绪时静默跳过——绝不 mid-scan 重建。
+// 单 CVE 最多挂 6 条避免报告膨胀。
 func attachTemplates(e *Engine, findings []intel.Finding) {
 	if len(findings) == 0 || e.cfg.Checks.NucleiDir == "" {
 		return
 	}
-	entries, err := nuclei.Index(e.cfg.Checks.NucleiDir,
-		filepath.Join(e.cfg.Store.DataDir, "nuclei_index.json"))
-	if err != nil || len(entries) == 0 {
+	entries := nuclei.IndexCached(filepath.Join(e.cfg.Store.DataDir, "nuclei_index.json"))
+	if len(entries) == 0 {
 		return
 	}
 	byCVE := map[string][]string{}

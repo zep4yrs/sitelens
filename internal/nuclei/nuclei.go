@@ -29,16 +29,16 @@ import (
 
 // Entry 索引条目（建索引时一次全量 Convert 验证）。
 type Entry struct {
-	Path        string   `json:"path"`           // 相对 dir
-	Name        string   `json:"name"`           // 模板名（相关度排序用）
-	Tags        []string `json:"tags"`           // 精确 tags（来自完整 Convert）
-	Sev         string   `json:"sev"`            // 精确严重度
-	CVEs        []string `json:"cves,omitempty"` // 模板声明的 CVE（模板情报层）
+	Path        string   `json:"path"`            // 相对 dir
+	Name        string   `json:"name"`            // 模板名（相关度排序用）
+	Tags        []string `json:"tags"`            // 精确 tags（来自完整 Convert）
+	Sev         string   `json:"sev"`             // 精确严重度
+	CVEs        []string `json:"cves,omitempty"`  // 模板声明的 CVE（模板情报层）
 	Proto       string   `json:"proto,omitempty"` // tcp|dns|ssl = 协议模板（空 = HTTP）
-	MTime       int64    `json:"mtime"`          // 文件修改时间
-	Size        int64    `json:"size"`           // 文件大小
-	Convertible bool     `json:"convertible"`    // 能通过漏斗转换为可执行 check
-	LastRun     int64    `json:"lastrun"`        // 最近一次运行时间（unix nano；0=从未）
+	MTime       int64    `json:"mtime"`           // 文件修改时间
+	Size        int64    `json:"size"`            // 文件大小
+	Convertible bool     `json:"convertible"`     // 能通过漏斗转换为可执行 check
+	LastRun     int64    `json:"lastrun"`         // 最近一次运行时间（unix nano；0=从未）
 }
 
 // cacheSchema 索引缓存格式版本——格式变更时递增以强制重建
@@ -151,6 +151,22 @@ func Index(dir, cachePath string) ([]Entry, error) {
 		}
 	}
 	return entries, nil
+}
+
+// IndexCached 只读缓存版 Index：缓存存在且 schema 匹配则返回条目，
+// 否则返回 nil（不触发全库重建）。供扫描热路径（模板情报层挂载 /
+// 协议扫描）使用——热路径里一次 13 万文件的漏斗重建就是一次扫描超时；
+// 全量重建只属于 serve 启动（nucleiSubset 走完整 Index）与显式 reload。
+func IndexCached(cachePath string) []Entry {
+	data, err := os.ReadFile(cachePath)
+	if err != nil {
+		return nil
+	}
+	var cached cacheFile
+	if json.Unmarshal(data, &cached) != nil || cached.Schema != cacheSchema {
+		return nil
+	}
+	return cached.Entries
 }
 
 var (
