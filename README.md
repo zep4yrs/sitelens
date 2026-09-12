@@ -5,7 +5,7 @@
 <br>
 
 <div align="center">
-  <img src="assets/banner.png" width="100%" alt="SiteLens 站点透视 — 看见站点，更看清风险。">
+  <img src="assets/banner-3.0-exploit.png" width="100%" alt="SiteLens 3.0 利用器 — 从验证漏洞，到证明影响。Exploit Validation">
 </div>
 
 <div align="center">
@@ -94,7 +94,7 @@ SiteLens 不是只报"可能有问题"的扫描器——每条发现都做**二�
 
 ## 五分钟上手
 
-**方式一：图形安装（推荐）** —— 从 [Releases](../../releases) 下载 `SiteLens-2.0.0-setup-full.exe`，向导安装，完成即启动。
+**方式一：图形安装（推荐）** —— 从 [Releases](../../releases) 下载 `SiteLens-3.0.0-setup-full.exe`，向导安装，完成即启动。
 
 **方式二：便携包** —— 下载 `full-win64.zip` 解压，双击 `sitelens.exe`。
 
@@ -168,10 +168,12 @@ go build -o sitelens.exe ./cmd/sitelens
 
 ## 工程质量
 
-- **18 个包的单元测试**（52 个测试文件）+ CI 阻断级 `-race` 竞态门禁
+- **22 个包的单元测试**（62 个测试文件）+ CI 阻断级 `-race` 竞态门禁
 - **govulncheck** 依赖漏洞扫描，当前零发现
 - **百万次级 fuzz** 锤炼模板转换漏斗与 DSL 安全子集求值器
 - **靶场回归门禁**：`tools/regression_nightly.sh`（农场→矩阵→**内置回归靶场零误报断言**→拆场；这是固定靶场的门禁口径，不代表真实互联网环境的误报率承诺）
+- **3.0 利用器**：非 HTTP 协议检测（214 协议模板，netx 拨号层）· 利用级无害验证（四通道，授权闸默认关）· 验证回归（replay + regression CLI）
+- **情报规模**：NVD 字典 371,755 + 模板情报行 29,556，关联情报合计 31,541 条；指纹库 13,727 条
 - **模板规模**：全库可运行模板 **117,889 条**（官方 nuclei-templates http+协议族 / afrog-pocs / Wordfence CVE 镜像 / linuxadi/40k 合集 / coffinxp / UltimateSec 极致攻防，统一漏斗准入 + 靶场实弹校准）
 - **情报与指纹**：NVD CVE 字典全量镜像 **371,755 条**（update-nvd）+ 模板情报行 **29,556 条**（update-tplintel，覆盖 10,289 产品），漏洞情报合计 **40,580 条**；指纹库 **13,727 条**（精编 372 + webappanalyzer 2,377 + EHole 中文产品 10,978）
 
@@ -186,8 +188,8 @@ go build -o sitelens.exe ./cmd/sitelens
 | 版本 | 定位 | 核心问题 | 关键能力 |
 |---|---|---|---|
 | **1.0 发现器**（已发布） | DISCOVERY | 看见攻击面 | 指纹识别 · 资产发现 · 情报关联 · DAST · 扫描模式 |
-| **2.0 验证器** ✅ 当前版本 | VERIFICATION | 证明漏洞真实存在 | 证据链（请求/响应/命中）· 盲注/出带验证 · 认证态复用 · 可复现报告 |
-| **3.0 利用器** | EXPLOIT VALIDATION | 证明漏洞能够影响 | 漏洞利用验证 · 影响证明 · 利用级无害验证 · 验证回归 · 非 HTTP 协议检测（network/dns/ssl） |
+| **2.0 验证器**（已发布） | VERIFICATION | 证明漏洞真实存在 | 证据链（请求/响应/命中）· 盲注/出带验证 · 认证态复用 · 可复现报告 |
+| **3.0 利用器** ✅ 当前版本（待发布） | EXPLOIT VALIDATION | 证明漏洞能够影响 | 非 HTTP 协议检测（214 协议模板）· 利用级无害验证四通道 · 验证回归 replay |
 | **4.0 攻击链·黑白盒验证** | ATTACK CHAIN | 还原完整攻击路径 | 黑盒行为分析 · 白盒代码分析 · AST/Data Flow · CWE 关联 · 攻击链推导 |
 | **5.0 安全推理器·ML** | ML REASONING | 让机器理解安全关系 | 风险评分 · 漏洞关联预测 · 攻击路径评分 · 验证目标排序 · 异常行为识别 |
 | **6.0 红蓝对抗验证** | RED-BLUE VALIDATION | 验证攻击，也验证防御 | 攻击验证 · 检测结果 · 防御结果 · 攻防效果对比 · 重新验证 |
