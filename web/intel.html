@@ -32,6 +32,7 @@
 
   <div class="stats-row" id="kb-stats" style="display:none">
     <div><b id="kb-vulns">—</b><span>漏洞情报</span></div>
+    <div><b id="kb-nvd">—</b><span>NVD 字典</span></div>
     <div><b id="kb-high">—</b><span>高危及以上</span></div>
     <div><b id="kb-ranges">—</b><span>带版本区间</span></div>
     <div><b id="kb-cvss">—</b><span>带 CVSS 评分</span></div>
@@ -48,6 +49,7 @@
 api.get("/api/stats").then(function (s) {
   document.getElementById("kb-stats").style.display = "flex";
   document.getElementById("kb-vulns").textContent = (s.vulns || 0).toLocaleString();
+  document.getElementById("kb-nvd").textContent = (s.nvd || 0).toLocaleString();
   var bySev = s.vuln_by_severity || {};
   var high = 0;
   Object.keys(bySev).forEach(function (k) {
