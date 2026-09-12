@@ -121,12 +121,38 @@ function renderRows(scans) {
       '<td><span class="badge ' + gcls + '">' + esc(grade) + "</span></td>" +
       '<td style="white-space:nowrap">' +
       '<button class="btn ghost small" onclick="openDetail(' + s.id + ')">详情</button> ' +
+      '<button class="btn ghost small" onclick="regression(' + s.id + ', this)">回归</button> ' +
       '<button class="btn ghost small" onclick="exportAs(' + s.id + ',\'wide\')">宽表</button> ' +
       '<button class="btn ghost small" onclick="exportAs(' + s.id + ',\'csv\')">CSV</button> ' +
       '<button class="btn ghost small" onclick="exportAs(' + s.id + ',\'md\')">MD</button> ' +
       '<button class="btn ghost small" onclick="delScan(' + s.id + ')">删</button></td>' +
       "</tr>";
   }).join("");
+}
+
+/* ---------------- 回归验证（重放历史发现，3.0） ---------------- */
+function regression(id, btn) {
+  var old = btn ? btn.textContent : "";
+  if (btn) { btn.disabled = true; btn.textContent = "重放中…"; }
+  api.get("/api/replay/" + id).then(function (r) {
+    if (btn) { btn.disabled = false; btn.textContent = old; }
+    var st = r.stats || {};
+    var lines = (r.details || []).map(function (x) {
+      return "#" + x.idx + " " + esc(x.check) + " — " +
+        '<span class="badge ' + (x.status === "present" ? "danger" : (x.status === "gone" ? "ok" : "warn")) + '">' +
+        esc(x.status) + "</span> " + esc(x.note || "");
+    });
+    document.getElementById("detail").style.display = "block";
+    document.getElementById("detail").innerHTML =
+      '<div class="sec-title">回归验证 · 扫描 #' + id +
+      ' <span class="count">可重放 ' + (st.total || 0) + "：仍在 " + (st.present || 0) +
+      " / 已修复 " + (st.gone || 0) + " / 不可复现 " + (st.unsupported || 0) + "</span></div>" +
+      (lines.length ? lines.join("<br>") : '<p class="muted">无可重放的发现。</p>');
+    document.getElementById("detail").scrollIntoView();
+  }).catch(function (e) {
+    if (btn) { btn.disabled = false; btn.textContent = old; }
+    toast("回归验证失败：" + e, "warn");
+  });
 }
 
 /* ---------------- 详情（原地内嵌展开，不跳页） ---------------- */

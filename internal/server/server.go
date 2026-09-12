@@ -167,11 +167,11 @@ func (s *Server) KB() *intel.KB { return s.kb.Load() }
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 
-	// 页面
+	// 页面（产品形态：无宣传首页与关于页，根路径即工作台）
 	pages := map[string]string{
-		"/": "index.html", "/app": "app.html", "/batch": "batch.html",
+		"/": "app.html", "/app": "app.html", "/batch": "batch.html",
 		"/history": "history.html", "/api-docs": "api-docs.html",
-		"/intel": "intel.html", "/audit": "audit.html", "/about": "about.html",
+		"/intel": "intel.html", "/audit": "audit.html",
 		"/settings": "settings.html",
 	}
 	for route, file := range pages {
