@@ -8,7 +8,7 @@
 
 - [x] **B1 gofmt 门禁红**（阻断，方案 A）：`gofmt -w` 三个文件（fpmerge/ehole.go、sitelens/fingerprint.go、sitelens/bench_test.go，字段对齐差异），独立提交。验证：`gofmt -l internal/ cmd/` 为空，CI 后续 vet/test/race/govulncheck 恢复执行
 - [x] **B8 情报误报 confirmed**（方案 C = A + 数据侧）：`versioncmp.Parse` 前置校验版本号形态——段内含字母且非纯数字前缀（如 `14c49408…`）判不可比，`VersionIn` 返回 false；数据侧 intel_dump 生成期剥离 hash 段。验证：`VersionIn("8.2.5","<=14c49408…")==false` 断言；`>=8.2.0,<8.2.7` 仍 true；grafana 复扫 CVE-2021-43798 不出 confirmed
-- [ ] **B2 软 404 基线口径**（方案 A）：`soft404Baseline` 与比对侧统一走同一 stripEcho 函数，长度比较两侧同源。验证：定长回显 404 桩从漏拦变拦截；干净站回归零误报
+- [x] **B2 软 404 基线口径**（方案 A）：`soft404Baseline` 与比对侧统一走同一 stripEcho 函数，长度比较两侧同源。验证：定长回显 404 桩从漏拦变拦截；干净站回归零误报
 - [ ] **B3 extractor 正则崩溃**（方案 C）：`extractSpecs` 加与 matcher 相同的 RE2 准入（失败丢弃该 extractor），`extractVars` 改 `Compile`+错误忽略；`FuzzConvert` 纳入 extractor 种子；用户插件 `exs` 字段同闸。验证：`(?=foo)bar` 合成模板不再 panic
 
 ## 第二批（安全 + 并发）
