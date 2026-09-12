@@ -139,14 +139,6 @@ async function waitReady(timeoutMs) {
   return { ready: false, exited: engine === null };
 }
 
-// listenPortOf 从配置文本读监听端口；读不出返回 null。
-// 兼容带引号形态：merge 写出的值统一是双引号字符串（引号读不出 = 端口
-// 粘性失效，每次启动都可能漂移——曾为二轮审计 P0）。
-function listenPortOf(text) {
-  const m = String(text || '').match(/^\s*listen:\s*"?127\.0\.0\.1:(\d+)"?\s*$/m);
-  return m ? Number(m[1]) : null;
-}
-
 // readDesktopConfig 读壳管理的配置文本；不存在返回 null。
 function readDesktopConfig() {
   const cfgPath = path.join(ENGINE_DIR, CONFIG_NAME);
@@ -167,9 +159,17 @@ async function ensureConfig() {
   const cfgPath = path.join(ENGINE_DIR, CONFIG_NAME);
   const cur = readDesktopConfig();
 
-  let usePort = cur ? listenPortOf(cur.text) : null;
+  // 端口回读走 lib 单一实现（与写出格式互为逆操作，防双源漂移）。
+  // 回读失败降级必须有日志：静默换端口就是上一个 P0 的成因。
+  let usePort = cur ? merge.readListenPort(cur.text) : null;
+  if (cur !== null && usePort === null) {
+    log('listen 端口回读失败（配置存在但格式不可解析），回退默认端口 ' + DEFAULT_PORT);
+  }
   if (usePort === null) usePort = DEFAULT_PORT;
-  if (!(await portFree(usePort))) usePort = await freePort();
+  if (!(await portFree(usePort))) {
+    log('端口 ' + usePort + ' 被占用，改用随机空闲端口并写回配置');
+    usePort = await freePort();
+  }
 
   const managed = {
     web: { listen: '127.0.0.1:' + usePort },

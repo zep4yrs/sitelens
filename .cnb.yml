@@ -19,7 +19,7 @@
       script:
         - apt-get update -qq && apt-get install -y -qq nodejs >/dev/null
         - node --test web/js/esc.test.mjs web/js/scan-options.test.mjs # 转义回归 + 三维选择器映射单测
-        - node --test desktop/test/yml-merge.test.js # 桌面壳配置合并器单测（逻辑最密层）
+        - cd desktop && node --test # 桌面壳配置合并器单测（逻辑最密层；无参自动发现）
 
 main:
   push:
@@ -49,7 +49,8 @@ main:
               cd desktop
               npm ci --no-audit --no-fund
               # 桌面壳单测（配置合并器等纯函数回归）
-              node --test test/
+              # 无参 --test 自动发现 test/*.test.js（Node 22+ 目录参数会被当模块路径）
+              node --test
               npm run engine
               npx electron-builder --win nsis
               cd ..

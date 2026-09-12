@@ -29,9 +29,11 @@
 | `%APPDATA%\SiteLens\plugins` | 用户插件 | 永久 |
 | `%APPDATA%\SiteLens\data` | 可变情报（update-nvd / update-fp / update-ehole 写入） | 永久 |
 
-首启把安装包内置种子（NVD 37MB + 情报行 + 指纹规则）按缺失补拷到
-用户数据区——首开即完整体验，后续 update-\* 成果不会被任何更新覆盖。
-控制台地址固定 `http://127.0.0.1:5087`（被占用才换随机端口并持久化）。
+首启把安装包内置种子（NVD 37MB + 情报行 + 指纹规则，位于安装目录
+`resources\engine\data`）按缺失补拷到用户数据区——首开即完整体验，
+后续 update-\* 成果不会被任何更新覆盖。控制台地址固定
+`http://127.0.0.1:5087`（被占用才换随机端口并持久化；
+端口回读失败时同样回退 5087，记入 engine.log）。
 
 ### 排障
 
@@ -112,5 +114,6 @@ set SITLENS_E2E_UPDATE=1 && release\app300\SiteLens.exe
   有签名证书后在 `build.win.certificateSubjectName` 配置即可
 - 模板池 719MB 不随安装包，首次使用协议/全量模板检测前跑一次
   `update-nuclei`（控制台设置页或 CLI）
-- 桌面版内置 NVD 全量字典，无 PG 依赖；`migrate-pg` 等服务器能力
+- 桌面版随包内置 NVD 全量字典快照（离线可用；上游更新由 update-nvd
+  在线补齐），无 PG 依赖；`migrate-pg` 等服务器能力
   不在桌面版叙事内
