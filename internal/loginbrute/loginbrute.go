@@ -296,6 +296,7 @@ type Options struct {
 	MaxTries        int                                 // 总尝试硬上限
 	IntervalMS      int                                 // 相邻尝试间隔（毫秒，0 = 不间隔）
 	CaptchaType     string                              // 验证码类型（none/digits/calc；digits|calc 需配 OCRURL）
+	CaptchaField    string                              // 验证码字段名（空 = 表单自动识别；非空覆盖解析结果）
 	OCRURL          string                              // ddddocr sidecar 地址（空 = 无 OCR 能力）
 	CaptchaImgs     []string                            // 登录页中的验证码图片地址（相对/绝对均可）
 	FetchImage      func(rawURL string) ([]byte, error) // 验证码图片字节拉取
@@ -345,6 +346,11 @@ func Brute(p Poster, opts Options, onProgress func(done, total int, msg string))
 	if form.CaptchaField != "" && opts.OCRURL == "" {
 		return nil, fmt.Errorf("登录表单含验证码字段（%s）但未配置识别服务；"+
 			"请在配置 loginbrute.captcha_ocr_url 指向 ddddocr sidecar 后重试", form.CaptchaField)
+	}
+	// 用户显式指定的验证码字段名覆盖自动识别（自动解析可能选错输入框）
+	if opts.CaptchaField != "" {
+		form.CaptchaField = opts.CaptchaField
+		form.HasCaptcha = true
 	}
 
 	combos := []struct{ u, pw string }{}

@@ -22,13 +22,13 @@
 
 <main class="page">
   <h1>批量扫描</h1>
-  <p class="sub">每行一个 URL，最多 50 个。3 线程并发逐个扫描并入库，完成后可在历史页导出宽表 CSV。</p>
+  <p class="sub">每行一个 URL，上限随 batch.max_urls 配置（默认 50）。3 线程并发逐个扫描并入库，完成后可在历史页导出宽表 CSV。</p>
 
   <textarea class="batch-box" id="urls" placeholder="https://example.com&#10;https://www.python.org&#10;https://books.toscrape.com"></textarea>
   <div class="count-row">
     <button class="btn" id="go" onclick="startBatch()">▶ 开始批量扫描</button>
     <button class="btn ghost" id="cancel" onclick="cancelBatch()" style="display:none">取消</button>
-    <span class="n" id="n">0 / 50</span>
+    <span class="n" id="n">-</span>
     <span class="hint" style="margin:0" id="hint"></span>
   </div>
 
@@ -41,11 +41,11 @@ var box = document.getElementById("urls");
 box.addEventListener("input", updateCount);
 function updateCount() {
   var urls = box.value.split("\n").map(function (s) { return s.trim(); }).filter(Boolean);
-  document.getElementById("n").textContent = urls.length + " / 50" + (urls.length > 50 ? "（超出部分将被忽略）" : "");
+  document.getElementById("n").textContent = urls.length + " / " + LIMIT + (urls.length > LIMIT ? "（超出部分将被忽略）" : "");
 }
 
 function startBatch() {
-  var urls = box.value.split("\n").map(function (s) { return s.trim(); }).filter(Boolean).slice(0, 50);
+  var urls = box.value.split("\n").map(function (s) { return s.trim(); }).filter(Boolean).slice(0, LIMIT);
   if (!urls.length) return;
   document.getElementById("go").disabled = true;
   document.getElementById("cancel").style.display = "";
@@ -72,6 +72,14 @@ function startBatch() {
     window.__batchJobId = jobId;
     return new Promise(function (resolve, reject) {
       var timer = setInterval(function () {
+  var LIMIT = 50;
+  try {
+    api.get("/api/settings").then(function (c) {
+      var m = c && c.batch && c.batch.max_urls;
+      if (m > 0) LIMIT = m;
+    });
+  } catch (e) {}
+
         api.get("/api/job/" + jobId + "/results").then(function (job) {
           document.getElementById("bar").style.width = (job.progress || 0) + "%";
           addLog(job.message);

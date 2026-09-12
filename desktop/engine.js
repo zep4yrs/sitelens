@@ -140,8 +140,10 @@ async function waitReady(timeoutMs) {
 }
 
 // listenPortOf 从配置文本读监听端口；读不出返回 null。
+// 兼容带引号形态：merge 写出的值统一是双引号字符串（引号读不出 = 端口
+// 粘性失效，每次启动都可能漂移——曾为二轮审计 P0）。
 function listenPortOf(text) {
-  const m = String(text || '').match(/^\s*listen:\s*127\.0\.0\.1:(\d+)\s*$/m);
+  const m = String(text || '').match(/^\s*listen:\s*"?127\.0\.0\.1:(\d+)"?\s*$/m);
   return m ? Number(m[1]) : null;
 }
 

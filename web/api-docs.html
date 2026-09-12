@@ -53,16 +53,24 @@
   "netsec": false,        // 扫描内嵌 TLS / DNS 安全检测
   "dast": false,          // DAST + JS 攻击面提取（含爬虫采集的表单字段探测）
   "passive": false,       // 被动安全检测（Cookie 属性 / CSRF token，零额外请求）
-  "weak_audit": false,    // 基础认证弱口令审计（需 dir_scan 发现 401 路径）
+  "weak_audit": false,    // 敏感信息审计（401 路径基础认证弱口令 + 泄露探测）
+  "netproto": false,      // 协议模板检测 tcp/dns/ssl（独立可选；不开 service_probe 时仅 dns 类）
+  "js_map": false,        // JS 攻击面提取（bundle API 端点 / SourceMap 泄露，只读；DAST 开时自动前置）
   "checks": "none",       // 验证引擎 none | core | all（all 追加 Nuclei 模板）
-  "nuclei_cap": 300,      // Nuclei 单次模板上限（0 = 用配置默认；调大覆盖全部 5412 可运行模板；apocalypse 预设=6000）
+  "nuclei_cap": 300,      // Nuclei 单次模板上限（0 = 用配置默认）
+  "dir_max_paths": 0,     // 目录探测字典上限（0 = 用配置默认 batch/dir 设置）
+  "shell_max_paths": 0,   // WebShell 字典上限（0 = 用配置默认）
+  "sub_max_words": 0,     // 子域名字典词数上限（0 = 用配置默认）
+  "probe_ports": "",      // "full" = 完整端口集（缺省 = 常见端口集）
   "auth_cookie": ""       // 认证会话 Cookie
-  "login_mode": "form",   // 登录模式 form（表单）| json（JSON API）
-  "json_endpoint": "",    // json 模式登录接口（空 = 登录页地址）
-  "json_template": "",    // json 模式 JSON 模板（含 {user}/{pass} 占位符）
-  "success_contains": ""  // json 模式可选成功响应特征
 }
 → { "job_id": "a1b2c3d4e5f6" }</pre>
+
+  <div class="sec">
+    <p>说明：login_mode / json_endpoint / json_template / success_contains /
+      captcha_field / captcha_type 属于 <span class="method post">POST</span>
+      /api/loginbrute（见下），/api/scan 不解析这些键。</p>
+  </div>
   </div>
 
   <div class="sec">
@@ -81,7 +89,10 @@
 
   <div class="sec">
     <div class="sec-title"><span class="method get">GET</span>/api/captcha/capability</div>
-    <p>登录爆破验证码识别能力探测：{ "ocr": bool, "click": bool, "slider": bool }。</p>
+    <p>登录爆破验证码识别能力探测：
+      { "available": bool, "ocr": bool, "click": bool, "slider": bool, "reason": string }。
+      ocr = 数字 / 算术验证码（需本机 ddddocr sidecar）；click / slider 为预留位，恒 false；
+      available = ocr（历史字段，保留兼容）。reason 为人话说明。</p>
   </div>
 
   <div class="sec">
@@ -125,7 +136,7 @@
   </div>
 
   <div class="sec">
-    <div class="sec-title"><span class="method get">GET</span>/api/export/&lt;scan_id&gt;?fmt=json|csv|wide|html</div>
+    <div class="sec-title"><span class="method get">GET</span>/api/export/&lt;scan_id&gt;?fmt=json|csv|wide|html|md</div>
     <p>导出。csv 为明细、wide 为 Wappalyzer 风格宽表（每类别一列）、html 为单文件离线报告。</p>
   </div>
 
@@ -166,7 +177,12 @@
     <div class="sec-title"><span class="method post">POST</span>/api/loginbrute</div>
     <p>登录爆破（异步，授权专属，必须 authorized=true）：</p>
     <pre class="code">{ "url": "https://target.com/login", "authorized": true,
-  "captcha_type": "none | digits | calc | click", "captcha_field": "captcha" }
+  "captcha_type": "none | digits | calc", "captcha_field": "",   // 字段名空 = 表单自动识别
+  "login_mode": "form",      // form（表单）| json（JSON API 登录）
+  "json_endpoint": "",       // json 模式登录接口（空 = 登录页地址）
+  "json_template": "",       // json 模式 JSON 模板（含 {user}/{pass} 占位符）
+  "success_contains": ""     // json 模式可选成功响应特征
+}
 → 轮询 /api/job/&lt;id&gt;，完成后 result.hits = [{"user": "…", "password": "…", "url": "…"}]</pre>
   </div>
 

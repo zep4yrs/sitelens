@@ -19,6 +19,7 @@
       script:
         - apt-get update -qq && apt-get install -y -qq nodejs >/dev/null
         - node --test web/js/esc.test.mjs web/js/scan-options.test.mjs # 转义回归 + 三维选择器映射单测
+        - node --test desktop/test/yml-merge.test.js # 桌面壳配置合并器单测（逻辑最密层）
 
 main:
   push:

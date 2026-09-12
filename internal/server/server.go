@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"mime/multipart"
 	"net/http"
 	"os"
 	"os/signal"
@@ -890,7 +891,12 @@ func (s *Server) hCaptchaCapability(w http.ResponseWriter, r *http.Request) {
 	if !available {
 		reason = "未配置 loginbrute.captcha_ocr_url；启动 python tools/ocr_server.py 并配置后即可识别验证码"
 	}
-	writeJSON(w, 200, map[string]any{"available": available, "reason": reason})
+	// 契约与 api-docs / 前端对齐：ocr=数字与算术（ddddocr 已支持），
+	// click/slider 为预留位（sidecar 尚未实现，恒 false）
+	writeJSON(w, 200, map[string]any{
+		"available": available, "ocr": available,
+		"click": false, "slider": false, "reason": reason,
+	})
 }
 
 func (s *Server) hLoginBrute(w http.ResponseWriter, r *http.Request) {
@@ -903,6 +909,7 @@ func (s *Server) hLoginBrute(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	captchaType, _ := body["captcha_type"].(string)
+	captchaField, _ := body["captcha_field"].(string)
 	loginMode, _ := body["login_mode"].(string)
 	jsonEndpoint, _ := body["json_endpoint"].(string)
 	jsonTemplate, _ := body["json_template"].(string)
@@ -949,16 +956,18 @@ func (s *Server) hLoginBrute(w http.ResponseWriter, r *http.Request) {
 				MaxTries:        s.cfg.LoginBrute.MaxTries,
 				IntervalMS:      s.cfg.LoginBrute.IntervalMS,
 				SuccessContains: successContains,
+				CaptchaField:    captchaField, // 用户显式指定优先于自动识别
 			}, progress)
 		} else {
 			hits, err = loginbrute.Brute(f, loginbrute.Options{
-				PageURL:     urlStr,
-				Users:       users,
-				Passwords:   pwds,
-				MaxTries:    s.cfg.LoginBrute.MaxTries,
-				IntervalMS:  s.cfg.LoginBrute.IntervalMS,
-				CaptchaType: captchaType,
-				OCRURL:      s.cfg.LoginBrute.CaptchaOCRURL,
+				PageURL:      urlStr,
+				Users:        users,
+				Passwords:    pwds,
+				MaxTries:     s.cfg.LoginBrute.MaxTries,
+				IntervalMS:   s.cfg.LoginBrute.IntervalMS,
+				CaptchaType:  captchaType,
+				CaptchaField: captchaField, // 用户显式指定优先（空 = 自动识别）
+				OCRURL:       s.cfg.LoginBrute.CaptchaOCRURL,
 				FetchImage: func(rawURL string) ([]byte, error) {
 					rr, rerr := s.eng.ClientFor(scanOptions(body)).GetDirect(rawURL)
 					if rerr != nil || rr == nil {
@@ -990,12 +999,24 @@ func (s *Server) hAudit(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 400, map[string]any{"error": "上传解析失败：" + err.Error()})
 		return
 	}
-	file, hdr, err := r.FormFile("file")
-	if err != nil {
-		writeJSON(w, 400, map[string]any{"error": "缺少 file 字段"})
+	// F1：兼容 files（多选）与 file（旧版单数）两种字段名，混用也收；
+	// 单文件上限 MaxFileKB，文件个数上限 MaxFiles
+	var headers []*multipart.FileHeader
+	if r.MultipartForm != nil {
+		headers = append(headers, r.MultipartForm.File["files"]...)
+		headers = append(headers, r.MultipartForm.File["file"]...)
+	}
+	if len(headers) == 0 {
+		writeJSON(w, 400, map[string]any{"error": "缺少 file/files 上传字段"})
 		return
 	}
-	defer file.Close()
+	maxFiles := s.cfg.Audit.MaxFiles
+	if maxFiles <= 0 {
+		maxFiles = 1
+	}
+	if len(headers) > maxFiles {
+		headers = headers[:maxFiles]
+	}
 	dir, err := os.MkdirTemp("", "sitelens_audit_")
 	if err != nil {
 		writeJSON(w, 500, map[string]any{"error": "创建临时目录失败"})
@@ -1003,25 +1024,41 @@ func (s *Server) hAudit(w http.ResponseWriter, r *http.Request) {
 	}
 	defer os.RemoveAll(dir)
 
-	name := hdr.Filename
-	switch {
-	case strings.HasSuffix(strings.ToLower(name), ".zip"):
-		if err = extractZip(file, hdr.Size, dir, int64(s.cfg.Audit.MaxFileKB)*1024); err != nil {
-			writeJSON(w, 400, map[string]any{"error": err.Error()})
-			return
+	var skipped []string
+	for _, hdr := range headers {
+		fh, err := hdr.Open()
+		if err != nil {
+			continue
 		}
-	case strings.HasSuffix(strings.ToLower(name), ".py") ||
-		strings.HasSuffix(strings.ToLower(name), ".js") ||
-		strings.HasSuffix(strings.ToLower(name), ".php"):
-		dst, cerr := os.Create(filepath.Join(dir, filepath.Base(name)))
-		if cerr != nil {
-			writeJSON(w, 500, map[string]any{"error": "写文件失败"})
-			return
+		name := hdr.Filename
+		lower := strings.ToLower(name)
+		switch {
+		case strings.HasSuffix(lower, ".zip"):
+			if err = extractZip(fh, hdr.Size, dir, int64(s.cfg.Audit.MaxFileKB)*1024); err != nil {
+				fh.Close()
+				writeJSON(w, 400, map[string]any{"error": name + "：" + err.Error()})
+				return
+			}
+		case strings.HasSuffix(lower, ".py") ||
+			strings.HasSuffix(lower, ".js") ||
+			strings.HasSuffix(lower, ".php"):
+			dst, cerr := os.Create(filepath.Join(dir, filepath.Base(name)))
+			if cerr != nil {
+				fh.Close()
+				writeJSON(w, 500, map[string]any{"error": "写文件失败"})
+				return
+			}
+			_, _ = io.Copy(dst, io.LimitReader(fh, int64(s.cfg.Audit.MaxFileKB)*1024))
+			dst.Close()
+		default:
+			skipped = append(skipped, name) // 不支持的格式：跳过不算失败
 		}
-		_, _ = io.Copy(dst, io.LimitReader(file, int64(s.cfg.Audit.MaxFileKB)*1024))
-		dst.Close()
-	default:
-		writeJSON(w, 400, map[string]any{"error": "仅支持 .zip 压缩包或单个 .py/.js/.php 文件"})
+		fh.Close()
+	}
+	if len(skipped) > 0 {
+		writeJSON(w, 400, map[string]any{
+			"error": "以下文件不是受支持格式（仅 .zip 压缩包或 .py/.js/.php 源码）：" +
+				strings.Join(skipped, ", ")})
 		return
 	}
 
