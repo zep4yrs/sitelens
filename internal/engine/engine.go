@@ -321,6 +321,9 @@ func (e *Engine) Scan(rawURL string, opts Options, onProgress progress, cancel f
 		if len(cmsIDs) > 0 {
 			onProgress(75, "CMS 联动专项 check…")
 		}
+		// 组级并行度：配置 MaxConcurrent（服务任务并发）×8 ≈ 硬件 2/3 口径；
+		// 16 并发任务配置下 checks 池为 12（默认），本机 24 核实测安全
+		checks.Workers = e.cfg.Checks.Workers
 		hits := checks.RunChecks(client, baseURL, opts.Checks, cmsIDs, cancelled,
 			func(done, total int, msg string) {
 				if total > 0 {

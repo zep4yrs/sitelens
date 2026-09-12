@@ -90,6 +90,7 @@ type ChecksConfig struct {
 	DisabledIDs []string `yaml:"disabled_ids"` // 禁用的 check id 列表
 	PluginDir   string   `yaml:"plugin_dir"`   // 用户自定义 check 插件目录
 	NucleiCap   int      `yaml:"nuclei_cap"`   // Nuclei 模板子集数量上限
+	Workers     int      `yaml:"workers"`      // check 组级并行 worker 数（0 = 默认 12）
 	NucleiDir   string   `yaml:"nuclei_dir"`   // Nuclei 模板库目录（空 = 不装载）
 }
 
