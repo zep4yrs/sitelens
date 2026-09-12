@@ -180,7 +180,7 @@ go build -o sitelens.exe ./cmd/sitelens
 ## 路线图 —— 产品远景
 
 <div align="center">
-  <img src="assets/roadmap.png" width="100%" alt="SiteLens 产品远景路线：Red Team × Machine Learning × Autonomous Security，从发现到自进化">
+  <img src="assets/roadmap-banner.png" width="100%" alt="SiteLens 产品远景路线图：从发现到智能，构建面向未来的红队验证与安全智能系统">
 </div>
 
 **不是工具的堆叠，而是红队能力与机器学习的深度融合。** 从发现到自进化，让安全验证更智能、更高效、更有价值。
@@ -204,7 +204,7 @@ go build -o sitelens.exe ./cmd/sitelens
 **已定型的版本宣发图**（3.0 利用器 / 4.0 攻击链）：
 
 <div align="center">
-  <img src="assets/banner-3.0-exploit.png" width="100%" alt="SiteLens 3.0 利用器 — 从验证漏洞，到证明影响。Exploit Validation">
+<img src="assets/release-3.0.0.png" width="100%" alt="SiteLens 3.0.0 利用器 — 让漏洞从可能到可利用。更大规模的检测覆盖、更深入的影响证明、更全面的情报数据。">
 </div>
 
 <div align="center">
