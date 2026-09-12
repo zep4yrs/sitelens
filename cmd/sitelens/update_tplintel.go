@@ -14,7 +14,6 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
-	"time"
 
 	"cnb.cool/feng-qiao/sitelens/internal/config"
 	"cnb.cool/feng-qiao/sitelens/internal/intel"
@@ -116,7 +115,7 @@ func updateTplIntelCommand(cfg *config.Config) int {
 }
 
 func writeGzJSON(path string, v any) error {
-	f, err := os.Create(path+".tmp")
+	f, err := os.Create(path + ".tmp")
 	if err != nil {
 		return err
 	}
