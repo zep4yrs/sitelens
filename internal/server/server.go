@@ -168,8 +168,9 @@ func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 
 	// 页面（产品形态：无宣传首页与关于页，根路径即工作台）
+	// "/" 不进表：由 hRoot 统一处理根路径、.html 直达与样式化 404
 	pages := map[string]string{
-		"/": "app.html", "/app": "app.html", "/batch": "batch.html",
+		"/app": "app.html", "/batch": "batch.html",
 		"/history": "history.html", "/api-docs": "api-docs.html",
 		"/intel": "intel.html", "/audit": "audit.html",
 		"/settings": "settings.html", "/legal": "legal.html",
@@ -183,6 +184,7 @@ func (s *Server) Handler() http.Handler {
 			s.serveAsset(w, file)
 		})
 	}
+	mux.HandleFunc("/", s.hRoot)
 	// 兼容旧路由：独立页已并入工作台标签
 	mux.HandleFunc("/netsec", redirect("/app#netsec"))
 	mux.HandleFunc("/loginbrute", redirect("/app#loginbrute"))
@@ -322,6 +324,9 @@ func (s *Server) serveAsset(w http.ResponseWriter, name string) {
 		http.NotFound(w, nil)
 		return
 	}
+	// 嵌入资源随二进制走：禁止启发式缓存，避免升级后浏览器拿旧页面/旧 JS
+	//（旧 common.js + 新页面是白屏的经典组合）
+	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	_, _ = w.Write(data)
 }
@@ -333,8 +338,42 @@ func (s *Server) serveAssetPrefix(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
+	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Content-Type", "application/javascript; charset=utf-8")
 	_, _ = w.Write(data)
+}
+
+// hRoot 根路径与兜底路由："/" 出工作台；"/<page>.html" 直达对应页面
+// （旧书签 / 历史链接兼容）；其余一律出样式化 404（带返回入口）。
+func (s *Server) hRoot(w http.ResponseWriter, r *http.Request) {
+	p := r.URL.Path
+	if p == "/" {
+		s.serveAsset(w, "app.html")
+		return
+	}
+	if strings.HasSuffix(p, ".html") {
+		name := strings.TrimPrefix(p, "/")
+		for _, known := range []string{"app.html", "batch.html", "history.html",
+			"api-docs.html", "intel.html", "audit.html", "settings.html", "legal.html", "404.html"} {
+			if name == known {
+				s.serveAsset(w, name)
+				return
+			}
+		}
+	}
+	s.serve404(w)
+}
+
+// serve404 样式化 404：与全站同壳同令牌，带返回工作台入口。
+func (s *Server) serve404(w http.ResponseWriter) {
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.WriteHeader(404)
+	if data, err := web.FS.ReadFile("404.html"); err == nil {
+		_, _ = w.Write(data)
+		return
+	}
+	_, _ = w.Write([]byte("404 page not found"))
 }
 
 func redirect(to string) http.HandlerFunc {

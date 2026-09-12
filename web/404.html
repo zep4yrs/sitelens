@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>页面不存在 — SiteLens</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<script>
+(function(){
+  try {
+    var p = JSON.parse(localStorage.getItem("sitelens-prefs") || "{}") || {};
+    if (p.theme === "dark" || (p.theme === "auto" &&
+        window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches)) {
+      document.documentElement.classList.add("dark");
+    }
+  } catch (e) {}
+})();
+</script>
+</head>
+<body>
+<script src="/js/common.js"></script>
+
+<main class="page">
+  <div class="empty">
+    <div class="big mono">404</div>
+    <div>页面不存在，或已被移动 / 归档。</div>
+    <div style="display:flex;gap:12px;margin-top:8px">
+      <a class="btn" href="/app">返回工作台</a>
+      <a class="btn ghost" href="/history">查看历史</a>
+      <a class="btn ghost" href="/settings">前往设置</a>
+    </div>
+    <p class="hint">地址栏路径：<span class="mono" id="p404"></span></p>
+  </div>
+</main>
+
+<script>
+document.getElementById("p404").textContent =
+  location.pathname + (location.hash || "");
+</script>
+</body>
+</html>
