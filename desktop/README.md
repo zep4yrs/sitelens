@@ -43,9 +43,10 @@
 ## 自动更新
 
 electron-updater generic 源（`package.json` → `build.publish.url`，
-当前 = CNB release `desktop-stable` 标签的附件区）。启动静默检查 →
-后台差量下载（blockmap）→ 弹窗「立即重启 / 稍后」→ 静默安装升级
-（含引擎）。发布新版时 CI 自动把三件套覆盖到 desktop-stable。
+当前 = CNB release `desktop-stable` 标签的附件区）。启动静默检查 +
+运行期每 6 小时复查 → 后台差量下载（blockmap）→ 弹窗「立即重启 /
+稍后」→ 静默安装升级（含引擎）；同一版本不重复弹窗。
+发布新版时 CI 自动把三件套覆盖到 desktop-stable。
 
 ## 本地构建
 

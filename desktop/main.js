@@ -163,8 +163,12 @@ function checkUpdates(manual) {
 
 function setupUpdater() {
   autoUpdater.autoDownload = true;
-  autoUpdater.on('update-available', () => {
-    bootLog('update available, downloading…');
+  var notifiedVer = "";   // 已气泡提醒过的版本：同一版本不重复打扰
+  var dialogedVer = "";   // 已弹过「立即重启」的版本：用户选「稍后」后只轻提醒
+  autoUpdater.on('update-available', (info) => {
+    if (info && info.version === notifiedVer) return;
+    notifiedVer = info && info.version;
+    bootLog('update available: v' + notifiedVer + ', downloading…');
     tray.displayBalloon({
       iconType: 'info',
       title: '发现新版本',
@@ -180,11 +184,22 @@ function setupUpdater() {
       setTimeout(() => autoUpdater.quitAndInstall(), 3000);
       return;
     }
+    var ver = info && info.version ? 'v' + info.version : '';
+    if (ver && ver === dialogedVer) {
+      // 选过「稍后」的同一版本：托盘轻提醒即可
+      tray.displayBalloon({
+        iconType: 'info',
+        title: 'SiteLens ' + ver + ' 已就绪',
+        content: '重启应用即完成更新。',
+      });
+      return;
+    }
+    dialogedVer = ver;
     dialog.showMessageBox({
       type: 'info',
       buttons: ['立即重启', '稍后'],
       defaultId: 0,
-      message: 'SiteLens ' + (info && info.version ? 'v' + info.version : '') + ' 已就绪',
+      message: 'SiteLens ' + ver + ' 已就绪',
       detail: '重启应用即完成更新（后台引擎一并升级）。',
     }).then(({ response }) => {
       if (response === 0) {
@@ -196,6 +211,13 @@ function setupUpdater() {
   autoUpdater.on('error', (err) => {
     bootLog('updater error: ' + (err && err.message || err));
   });
+}
+
+// 启动静默检查一次；此后每 6 小时复查（长驻进程也能收到新版本）。
+// 周期性检查失败/无更新完全静默。
+function startUpdateLoop() {
+  checkUpdates(false);
+  setInterval(function () { checkUpdates(false); }, 6 * 60 * 60 * 1000);
 }
 
 // ---- 生命周期 ----
@@ -252,7 +274,7 @@ app.whenReady().then(async () => {
   }
   createWindow();
   setupUpdater();
-  checkUpdates(false); // 启动后静默检查
+  startUpdateLoop(); // 启动静默检查 + 每 6 小时复查
 });
 
 app.on('before-quit', () => {
