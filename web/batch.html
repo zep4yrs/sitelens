@@ -37,8 +37,18 @@
 </main>
 
 <script>
+var LIMIT = 50;
 var box = document.getElementById("urls");
 box.addEventListener("input", updateCount);
+
+// 上限随 batch.max_urls 配置（页面加载时拉取一次）
+try {
+  api.get("/api/settings").then(function (c) {
+    var m = c && c.batch && c.batch.max_urls;
+    if (m > 0) { LIMIT = m; updateCount(); }
+  });
+} catch (e) {}
+
 function updateCount() {
   var urls = box.value.split("\n").map(function (s) { return s.trim(); }).filter(Boolean);
   document.getElementById("n").textContent = urls.length + " / " + LIMIT + (urls.length > LIMIT ? "（超出部分将被忽略）" : "");
@@ -72,14 +82,6 @@ function startBatch() {
     window.__batchJobId = jobId;
     return new Promise(function (resolve, reject) {
       var timer = setInterval(function () {
-var LIMIT = 50;
-try {
-  api.get("/api/settings").then(function (c) {
-    var m = c && c.batch && c.batch.max_urls;
-    if (m > 0) { LIMIT = m; updateCount(); }
-  });
-} catch (e) {}
-
         api.get("/api/job/" + jobId + "/results").then(function (job) {
           document.getElementById("bar").style.width = (job.progress || 0) + "%";
           addLog(job.message);
