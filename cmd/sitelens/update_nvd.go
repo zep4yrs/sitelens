@@ -23,7 +23,7 @@ func updateNVDCommand(cfg *config.Config) int {
 	t0 := time.Now()
 	err := intel.SyncNVD(out, "", func(n, total, skipped int) {
 		done = n
-		if n%20000 == 0 || n == total {
+		if n%2000 == 0 || n == total { // 每页一次（页大小 2000）
 			fmt.Fprintf(os.Stderr, "\r进度：%d/%d（跳过 Rejected %d）", n, total, skipped)
 		}
 	})
