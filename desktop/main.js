@@ -56,8 +56,8 @@ if (!app.requestSingleInstanceLock()) {
 
 // ---- 窗口与托盘 ----
 
-// ---- 桌面端偏好（userData/desktop-prefs.json）：窗口边界 + 关闭按钮行为 ----
-let deskPrefs = { closeAction: 'tray', bounds: null };
+// ---- 桌面端偏好（userData/desktop-prefs.json）：窗口边界 + 关闭按钮行为 + 端口 ----
+let deskPrefs = { closeAction: 'tray', bounds: null, port: 5087 };
 
 function loadDeskPrefs() {
   try {
@@ -65,6 +65,7 @@ function loadDeskPrefs() {
     var p = JSON.parse(raw) || {};
     if (p.closeAction === 'quit' || p.closeAction === 'tray') deskPrefs.closeAction = p.closeAction;
     if (p.bounds && p.bounds.width >= 900 && p.bounds.height >= 600) deskPrefs.bounds = p.bounds;
+    if (p.port > 0 && p.port <= 65535) deskPrefs.port = p.port;
   } catch (_) { /* 首次无偏好文件 */ }
 }
 
@@ -462,7 +463,9 @@ app.whenReady().then(async () => {
     handleEngineCrash(code);
   };
   try {
-    await engine.start();
+    var r = await engine.start(deskPrefs.port);
+    deskPrefs.port = r.port;
+    saveDeskPrefs();
     bootLog('engine ready at ' + engine.url);
   } catch (err) {
     bootLog('engine failed: ' + err);
