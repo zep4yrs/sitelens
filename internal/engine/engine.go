@@ -12,7 +12,6 @@ import (
 	"time"
 
 	"cnb.cool/feng-qiao/sitelens/internal/authn"
-	"cnb.cool/feng-qiao/sitelens/internal/beacon"
 	"cnb.cool/feng-qiao/sitelens/internal/checks"
 	"cnb.cool/feng-qiao/sitelens/internal/config"
 	"cnb.cool/feng-qiao/sitelens/internal/crawler"
@@ -391,10 +390,11 @@ func (e *Engine) Scan(rawURL string, opts Options, onProgress progress, cancel f
 		onProgress(85, "参数级 DAST 探测…")
 		var dastAll []dast.Finding
 		var dastMaps []map[string]any
-		// SSRF 出带：配置启用且扫描器 beacon 可被目标触达时才生效
+		// SSRF 出带：配置启用且扫描器 beacon 可被目标触达时才生效。
+		// B4：不再 Reset 全局表——token 自 scoped（各自只认自己发出的），
+		// 并发扫描互不干扰；过期条目由 maxEntries LRU 自然淘汰
 		beaconBase := ""
 		if e.cfg.Ssrf.BeaconEnabled && e.cfg.Ssrf.BeaconBase != "" {
-			beacon.Reset()
 			beaconBase = strings.TrimRight(e.cfg.Ssrf.BeaconBase, "/")
 		}
 		r := dast.New(dastFetcher{client}, dast.Options{

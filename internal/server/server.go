@@ -749,7 +749,13 @@ func (s *Server) hExport(w http.ResponseWriter, r *http.Request) {
 // hBeacon SSRF 出带回调接收端：记录路径随机令牌（/b/<token>）。
 // 无状态、无敏感数据；token 128 位随机不可预测，仅供 dast 出带判定。
 func (s *Server) hBeacon(w http.ResponseWriter, r *http.Request) {
-	beacon.Hit(strings.TrimPrefix(r.URL.Path, "/b/"))
+	token := strings.TrimPrefix(r.URL.Path, "/b/")
+	if token == "" {
+		http.NotFound(w, r)
+		return
+	}
+	// B5：只登记已预订 token，未预订回连忽略（Hit 内部校验）
+	beacon.Hit(token)
 	w.Header().Set("Cache-Control", "no-store")
 	_, _ = w.Write([]byte("ok"))
 }
