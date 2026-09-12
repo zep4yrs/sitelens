@@ -47,6 +47,16 @@
 - 自研协议模板精选包六件：memcached / ftp / ssh / vnc / smtp / mysql
   （banner 级只读，官方零重复）
 
+### 桌面版（新增）
+
+- Electron 壳（desktop/）：独立窗口 + 托盘常驻 + 单实例 + 自动更新
+  （electron-updater generic 源，blockmap 差量下载，引擎二进制随包整体升级）
+- 引擎零改动：壳以「默认值 + yml 部分覆盖」语义写入随机空闲端口，
+  引擎子进程管理独立成 engine.js（spawn 首参纯字面量，安全门槛达标）；
+  NSIS 单用户安装到 %LOCALAPPDATA%，data/state 直接可用
+- 排障面：壳与引擎输出分别落 desktop.log / engine.log（1MB 滚动）；
+  关窗收托盘继续扫描，退出走托盘菜单
+
 ### Bug 修复
 
 - dsl PositiveGround 回归：解析器把内置 host 变量误标为抽取变量，
