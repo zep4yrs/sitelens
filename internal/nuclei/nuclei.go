@@ -504,6 +504,19 @@ func extractSpecs(exs []tplExtractor) []checks.ExtractSpec {
 		if ex.Type != "regex" || ex.Name == "" || len(ex.Regex) == 0 || ex.Internal {
 			continue
 		}
+		// B3：extractor 正则与 matcher 同走 RE2 准入——不可编译的正则
+		// 会在扫描期 extractVars 的 Compile 中报错，这里直接丢弃该条，
+		// 防 MustCompile 在 worker 协程内 panic（整进程挂）
+		bad := false
+		for _, pat := range ex.Regex {
+			if _, err := regexp.Compile("(?i)" + pat); err != nil {
+				bad = true
+				break
+			}
+		}
+		if bad {
+			continue
+		}
 		out = append(out, checks.ExtractSpec{Name: ex.Name, Part: ex.Part, Regex: ex.Regex})
 	}
 	return out
