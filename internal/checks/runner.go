@@ -354,7 +354,10 @@ func extractVars(list []Check, headers map[string]string, body string) map[strin
 				hay = joinHeaders(headers)
 			}
 			for _, pat := range ex.Regex {
-				re := regexp.MustCompile(pat)
+				re, cerr := regexp.Compile(pat) // B3：Compile 兜底（插件路径无预准入），坏正则跳过不 panic
+				if cerr != nil {
+					continue
+				}
 				mm := re.FindStringSubmatch(hay)
 				if len(mm) > 1 {
 					vars[ex.Name] = mm[1]
