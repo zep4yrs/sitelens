@@ -96,4 +96,13 @@ function readListenPort(text) {
   return m ? Number(m[1]) : null;
 }
 
-module.exports = { mergeManaged: mergeManaged, quoteIfNeeded: quoteIfNeeded, readListenPort: readListenPort };
+// readListenValue 从配置文本提取 web.listen 的完整绑定值 { host, port }；
+// 兼容带引号/不带引号。找不到 listen 行返回 null。
+function readListenValue(text) {
+  if (!text) return null;
+  const m = String(text).match(/^\s*listen:\s*"?([^:\s"]+):(\d+)"?\s*$/m);
+  if (!m) return null;
+  return { host: m[1], port: Number(m[2]) };
+}
+
+module.exports = { mergeManaged: mergeManaged, quoteIfNeeded: quoteIfNeeded, readListenPort: readListenPort, readListenValue: readListenValue };
