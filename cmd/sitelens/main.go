@@ -43,6 +43,8 @@ func main() {
   sitelens [flags] update-nvd    全量镜像 NVD CVE 字典（NVD_API_KEY 可选）
   sitelens [flags] update-tplintel
                                  模板 CVE × NVD 关联生成模板情报行
+  sitelens [flags] update-ehole [url]
+                                 合并 EHole 中文产品指纹（exact 字面量通道）
   sitelens [flags] regression <scan_id>
                                  重放历史扫描的已验证发现（退出码表达回归）
 
