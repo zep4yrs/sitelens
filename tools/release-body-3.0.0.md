@@ -74,7 +74,7 @@
 - Linux amd64 → `linux-amd64.zip`
 - 流水线 / 二次分发 → `intel_dump.json.gz`、`nuclei-templates.tar.gz`、`tpl_intel.json.gz`
 
-内存建议 8GB 起；full 版磁盘约 1GB。SHA256 校验和由 CI 构建后发布于本页评论。
+内存建议 8GB 起；full 版磁盘约 800MB（模板池 719MB 为大头，14.5 万小文件的簇开销占了一半）。SHA256 校验和由 CI 构建后发布于本页评论。
 
 **升级与回滚**：`.sitelens.yml` 与 `data/state/` 完全兼容，覆盖安装即可；回滚换回 v2.0.0 二进制，数据无需迁移。详细步骤见 [升级指南](docs/upgrade-3.0.md)。
 
