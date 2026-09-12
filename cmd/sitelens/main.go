@@ -41,6 +41,8 @@ func main() {
                                  镜像 enthec/webappanalyzer 社区指纹并合并精编库
   sitelens [flags] update-osv    从 OSV.dev 同步受影响区间与 CVSS 评分
   sitelens [flags] update-nvd    全量镜像 NVD CVE 字典（NVD_API_KEY 可选）
+  sitelens [flags] regression <scan_id>
+                                 重放历史扫描的已验证发现（退出码表达回归）
 
 配置：%s（缺省用内置最佳实践默认值）
 `, *cfgPath)
@@ -78,6 +80,12 @@ func main() {
 		os.Exit(updateOSVCommand(cfg, 8))
 	case "update-nvd":
 		os.Exit(updateNVDCommand(cfg))
+	case "regression":
+		if len(args) < 2 {
+			flag.Usage()
+			os.Exit(2)
+		}
+		os.Exit(regressionCommand(cfg, args[1]))
 	case "update-nuclei":
 		os.Exit(updateNucleiCommand(cfg, flag.Arg(1)))
 	case "update-afrog":
