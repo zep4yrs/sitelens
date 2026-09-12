@@ -159,20 +159,28 @@ async function ensureConfig() {
   const cfgPath = path.join(ENGINE_DIR, CONFIG_NAME);
   const cur = readDesktopConfig();
 
-  // 端口回读走 lib 单一实现（与写出格式互为逆操作，防双源漂移）。
-  // 回读失败降级必须有日志：静默换端口就是上一个 P0 的成因。
-  let usePort = cur ? merge.readListenPort(cur.text) : null;
-  if (cur !== null && usePort === null) {
-    log('listen 端口回读失败（配置存在但格式不可解析），回退默认端口 ' + DEFAULT_PORT);
+  // 端口粘性 + 主机语义保留（桌面端审计修正）：
+  // - 端口由壳偏好持久化（desktop-prefs.json），跨重启稳定
+  // - 主机沿用配置原文（用户改绑 0.0.0.0 等予以保留，不悄悄回退）
+  // - 回读失败降级必须有日志
+  let usePort = 5087;
+  let listenHost = '127.0.0.1';
+  if (cur) {
+    const prev = merge.readListenValue(cur.text);
+    if (prev) {
+      usePort = prev.port;
+      listenHost = prev.host;
+    } else {
+      log('listen 端口回读失败（配置存在但格式不可解析），回退默认端口 ' + DEFAULT_PORT);
+    }
   }
-  if (usePort === null) usePort = DEFAULT_PORT;
   if (!(await portFree(usePort))) {
     log('端口 ' + usePort + ' 被占用，改用随机空闲端口并写回配置');
     usePort = await freePort();
   }
 
   const managed = {
-    web: { listen: '127.0.0.1:' + usePort },
+    web: { listen: listenHost + ':' + usePort },
     store: { data_dir: underRoot(USER_DIR(), 'state') },
     checks: {
       nuclei_dir: underRoot(USER_DIR(), 'pools', 'nuclei'),
