@@ -36,10 +36,58 @@ type ServiceHit struct {
 	Banner  string `json:"banner"`
 }
 
-// fpMatcher 正则惰性编译缓存（进程级；双层编译仍失败的模式才跳过）。
+// fpMatcher 正则惰性编译缓存（双层编译仍失败的模式才跳过）。
+// 以 rows 特征签名判缓存新旧：情报库热更新后签名变化即重编，
+// 下一次扫描自动用上新指纹（B20），无需重启进程。
 type fpMatcher struct {
-	once sync.Once
+	mu   sync.Mutex
+	sig  string
 	regs []*compiledFP
+}
+
+// compiled 返回与 rows 对应的编译结果；签名不变直接复用，
+// 变化则重编并原子换入（返回的切片内容不可变，扫描期间可无锁遍历）。
+func (m *fpMatcher) compiled(rows []intel.ServiceFPRow) []*compiledFP {
+	sig := fpSig(rows)
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.regs != nil && m.sig == sig {
+		return m.regs
+	}
+	regs := make([]*compiledFP, 0, len(rows))
+	for _, r := range rows {
+		if r.Pattern == "" {
+			continue
+		}
+		re, err := regexp.Compile(r.Pattern)
+		if err != nil {
+			// RE2 不兼容（环视/反向引用/超界重复）→ 回退 rex；
+			// 双层都失败的模式才跳过
+			rx, rerr := rex.Compile(r.Pattern)
+			if rerr != nil {
+				continue
+			}
+			regs = append(regs, &compiledFP{rx: rx, row: r})
+			continue
+		}
+		regs = append(regs, &compiledFP{re: re, row: r})
+	}
+	m.sig, m.regs = sig, regs
+	return regs
+}
+
+// fpSig 缓存签名：行数 + 首尾模式。全量重载出的新切片内容一旦变化
+// 即失配，成本 O(1)（签名碰撞需要行数与首尾模式三者同时巧合，可忽略）。
+func fpSig(rows []intel.ServiceFPRow) string {
+	var sb strings.Builder
+	sb.WriteString(strconv.Itoa(len(rows)))
+	if len(rows) > 0 {
+		sb.WriteByte('|')
+		sb.WriteString(rows[0].Pattern)
+		sb.WriteByte('|')
+		sb.WriteString(rows[len(rows)-1].Pattern)
+	}
+	return sb.String()
 }
 
 // compiledFP 双层编译：re2 命中快路径；RE2 拒收的环视/反向引用等
@@ -58,27 +106,8 @@ func (c *compiledFP) findString(banner string) string {
 	return c.rx.FindString(banner)
 }
 
-func (m *fpMatcher) compile(rows []intel.ServiceFPRow) {
-	m.once.Do(func() {
-		m.regs = make([]*compiledFP, 0, len(rows))
-		for _, r := range rows {
-			if r.Pattern == "" {
-				continue
-			}
-			re, err := regexp.Compile(r.Pattern)
-			if err != nil {
-				// RE2 不兼容（环视/反向引用/超界重复）→ 回退 rex；
-				// 双层都失败的模式才跳过
-				rx, rerr := rex.Compile(r.Pattern)
-				if rerr != nil {
-					continue
-				}
-				m.regs = append(m.regs, &compiledFP{rx: rx, row: r})
-				continue
-			}
-			m.regs = append(m.regs, &compiledFP{re: re, row: r})
-		}
-	})
+func (m *fpMatcher) compile(rows []intel.ServiceFPRow) []*compiledFP {
+	return m.compiled(rows)
 }
 
 var globalFP fpMatcher
@@ -96,7 +125,9 @@ func ServiceProbe(host string, rows []intel.ServiceFPRow, ports []int,
 	if workers <= 0 {
 		workers = 10
 	}
-	globalFP.compile(rows)
+	// 本轮扫描固定用这份编译结果：内容不可变，扫描期间无锁遍历；
+	// 热更新发生在扫描中也不影响本轮，下一次扫描自动生效
+	regs := globalFP.compile(rows)
 
 	var mu sync.Mutex
 	hits := []ServiceHit{}
@@ -133,7 +164,7 @@ func ServiceProbe(host string, rows []intel.ServiceFPRow, ports []int,
 			}
 			mu.Lock()
 			defer mu.Unlock()
-			for _, fp := range globalFP.regs {
+			for _, fp := range regs {
 				if m := fp.findString(banner); m != "" {
 					hits = append(hits, ServiceHit{
 						Port:    port,
