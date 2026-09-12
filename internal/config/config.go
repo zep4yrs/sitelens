@@ -120,6 +120,7 @@ type IntelConfig struct {
 	DumpPath         string `yaml:"dump_path"`         // 知识库数据包路径
 	RangesPath       string `yaml:"ranges_path"`       // 精选区间文件路径
 	NVDPath          string `yaml:"nvd_path"`          // NVD 全量 CVE 字典（update-nvd 生成，缺失则跳过）
+	TplIntelPath     string `yaml:"tpl_intel_path"`    // 模板情报行（update-tplintel 生成，缺失则跳过）
 	TechnologiesPath string `yaml:"technologies_path"` // 指纹规则文件路径
 	SearchLimit      int    `yaml:"search_limit"`      // /api/vuln-search 返回上限
 	UpdateHours      int    `yaml:"update_hours"`      // KEV 自动更新间隔（小时，0=关闭）
@@ -230,6 +231,7 @@ func Default() *Config {
 			DumpPath:         "data/intel_dump.json.gz",
 			RangesPath:       "data/affected_ranges.json",
 			NVDPath:          "data/nvd_cves.json.gz",
+			TplIntelPath:     "data/tpl_intel.json.gz",
 			TechnologiesPath: "data/go/technologies.json",
 			SearchLimit:      40,
 			UpdateHours:      24,
@@ -365,6 +367,9 @@ func (c *Config) fillDefaults() {
 	}
 	if c.Intel.NVDPath == "" {
 		c.Intel.NVDPath = d.Intel.NVDPath
+	}
+	if c.Intel.TplIntelPath == "" {
+		c.Intel.TplIntelPath = d.Intel.TplIntelPath
 	}
 	if c.Intel.TechnologiesPath == "" {
 		c.Intel.TechnologiesPath = d.Intel.TechnologiesPath

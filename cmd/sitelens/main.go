@@ -41,6 +41,8 @@ func main() {
                                  镜像 enthec/webappanalyzer 社区指纹并合并精编库
   sitelens [flags] update-osv    从 OSV.dev 同步受影响区间与 CVSS 评分
   sitelens [flags] update-nvd    全量镜像 NVD CVE 字典（NVD_API_KEY 可选）
+  sitelens [flags] update-tplintel
+                                 模板 CVE × NVD 关联生成模板情报行
   sitelens [flags] regression <scan_id>
                                  重放历史扫描的已验证发现（退出码表达回归）
 
@@ -80,6 +82,8 @@ func main() {
 		os.Exit(updateOSVCommand(cfg, 8))
 	case "update-nvd":
 		os.Exit(updateNVDCommand(cfg))
+	case "update-tplintel":
+		os.Exit(updateTplIntelCommand(cfg))
 	case "regression":
 		if len(args) < 2 {
 			flag.Usage()
@@ -135,6 +139,9 @@ func runScan(cfg *config.Config, rawURL string) {
 		}
 		if tc, terr := intel.LoadTechCPE("data/go/tech_cpe.json"); terr == nil && tc != nil {
 			kb.AttachTechCPE(tc)
+		}
+		if tr, terr := intel.LoadTplIntel(cfg.Intel.TplIntelPath); terr == nil && tr != nil {
+			kb.AttachTplIntel(tr)
 		}
 	}
 	eng := engine.New(cfg, matcher, kb)

@@ -127,6 +127,10 @@ func New(cfg *config.Config, cfgPath string) (*Server, error) {
 		if tc, terr := intel.LoadTechCPE("data/go/tech_cpe.json"); terr == nil && tc != nil {
 			kb.AttachTechCPE(tc)
 		}
+		if tr, rerr := intel.LoadTplIntel(cfg.Intel.TplIntelPath); rerr == nil && tr != nil {
+			kb.AttachTplIntel(tr)
+			log.Printf("模板情报行合并：%d 条", len(tr))
+		}
 		s.kb.Store(kb)
 	} else {
 		log.Printf("知识库加载失败（情报关联降级）：%v", err)

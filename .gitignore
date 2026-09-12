@@ -63,3 +63,4 @@ __pycache__/
 # 工具本地缓存目录
 .mimosa/
 bin/
+data/tpl_intel.json.gz
