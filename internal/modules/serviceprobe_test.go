@@ -76,3 +76,26 @@ func TestServiceProbeCancel(t *testing.T) {
 	})
 	_ = hits // 取消路径不 panic 即可
 }
+
+// B20 回归：指纹库热更新后，下一次扫描必须用上新规则（签名失配即重编）。
+func TestFPMatcherHotReload(t *testing.T) {
+	old := []intel.ServiceFPRow{{Service: "ssh", Pattern: `^SSH-2\.0-OldSSH`, Product: "OldSSH"}}
+	new := []intel.ServiceFPRow{{Service: "ssh", Pattern: `^SSH-2\.0-NewSSH`, Product: "NewSSH"}}
+
+	var m fpMatcher
+	if got := m.compile(old); len(got) != 1 || got[0].row.Product != "OldSSH" {
+		t.Fatalf("初次编译: %+v", got)
+	}
+	if got := m.compile(old); len(got) != 1 || got[0].row.Product != "OldSSH" {
+		t.Fatalf("同签名应复用缓存: %+v", got)
+	}
+	if got := m.compile(new); len(got) != 1 || got[0].row.Product != "NewSSH" {
+		t.Fatalf("热更新后未重编: %+v", got)
+	}
+	if s := m.compile(new)[0].findString("SSH-2.0-NewSSH-1"); s == "" {
+		t.Fatal("新规则应命中新 banner")
+	}
+	if s := m.compile(new)[0].findString("SSH-2.0-OldSSH-1"); s != "" {
+		t.Fatal("旧规则不应残留")
+	}
+}
