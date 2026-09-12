@@ -310,6 +310,7 @@ var knownTopKeys = map[string]bool{
 	"scan": true, "checks": true, "crawler": true, "dast": true,
 	"intel": true, "netsec": true, "loginbrute": true, "audit": true,
 	"batch": true, "web": true, "store": true, "active": true, "modules": true,
+	"auth": true, "ssrf": true, "exploit": true,
 }
 
 // LoadOrDefault 加载配置；出错时 stderr 告警并使用默认值

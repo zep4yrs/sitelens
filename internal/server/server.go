@@ -917,6 +917,8 @@ func (s *Server) hLoginBrute(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) hAudit(w http.ResponseWriter, r *http.Request) {
+	// B23：上传体先加硬上限（multipart 解析会落盘 TempDir，无上限可耗尽磁盘）
+	r.Body = http.MaxBytesReader(w, r.Body, int64(s.cfg.Audit.MaxArchiveMB+8)<<20)
 	if err := r.ParseMultipartForm(int64(s.cfg.Audit.MaxArchiveMB) << 20); err != nil {
 		writeJSON(w, 400, map[string]any{"error": "上传解析失败：" + err.Error()})
 		return

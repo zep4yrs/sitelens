@@ -16,9 +16,10 @@ func TestCorruptHistoryIsolatedNotOverwritten(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// 损坏文件应被隔离而非覆盖
-	if _, err := os.Stat(p + ".corrupt"); err != nil {
-		t.Fatal("应保留 .corrupt 副本供人工抢救")
+	// 损坏文件应被隔离且唯一命名（B6：多次损坏不互相覆盖）
+	matches, _ := filepath.Glob(p + ".*.corrupt")
+	if len(matches) == 0 {
+		t.Fatal("应保留 .corrupt 唯一命名副本供人工抢救")
 	}
 	// 从空库继续工作
 	s.Save(sampleResult("a.com", "A", 1), nil)
