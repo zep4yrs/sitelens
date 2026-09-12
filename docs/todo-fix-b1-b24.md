@@ -13,8 +13,8 @@
 
 ## 第二批（安全 + 并发）
 
-- [ ] **B4 beacon 跨扫描串扰**（方案 A）：注册表改扫描级实例，token 绑扫描 ID，去掉全局 `Reset`。验证：并发双扫互不干扰
-- [ ] **B5 /b/ 端点无鉴权**（方案 C 最终形态）：beacon 来源限制 + 频率限制 + token 服务端签名。设计约束：**不能挡掉目标真实回连**（回连来自目标出网 IP，需可配置放行段）
+- [x] **B4 beacon 跨扫描串扰**（方案 A）：注册表改扫描级实例，token 绑扫描 ID，去掉全局 `Reset`。验证：并发双扫互不干扰
+- [x] **B5 /b/ 端点无鉴权**（方案 C 最终形态）：beacon 来源限制 + 频率限制 + token 服务端签名。设计约束：**不能挡掉目标真实回连**（回连来自目标出网 IP，需可配置放行段）
 - [x] **B9 checks.Workers 竞态**（方案 A）：去包级可变全局，改 `RunList` 参数 / `Options` 字段由引擎按扫描注入。验证：并发 `-race` 干净
 - [x] **B10 LRU 落盘**（方案 A）：`nucleiLRU` 收归 Engine 实例 + `saveNucleiLRU` 改 tmp+rename
 - [x] **B23 hAudit 上传无上限**：`r.Body` 加 `MaxBytesReader` 后再 `ParseMultipartForm`
@@ -23,15 +23,15 @@
 
 - [x] **B6 .corrupt 覆盖**（方案 A）：隔离命名加时间戳/序号，保留每次损坏副本
 - [x] **B7 缓存无界**（方案 C）：`regexCache` / `dslVarsCache` 加计数上限（对齐 dsl.go 策略）
-- [ ] **B11 timeBlind 证据链缺失**：Finding 补 Replay / Signals / Response / Payload，对齐 boolBlind 规格
-- [ ] **B12 RunForms 未接证据链**：补 chainEvidence + Payload/Replay——同时修正 replay 分母被静默排除的问题（回归门禁自证式通过的隐患）
+- [x] **B11 timeBlind 证据链缺失**：Finding 补 Replay / Signals / Response / Payload，对齐 boolBlind 规格
+- [x] **B12 RunForms 未接证据链**：补 chainEvidence + Payload/Replay——同时修正 replay 分母被静默排除的问题（回归门禁自证式通过的隐患）
 - [x] **B13 HistoryStats 均值截断**：改四舍五入
 - [x] **B14 done 计数重复累加**：命中分支与组尾分支只计一次
 - [x] **B15 knownTopKeys 缺段**：补 `auth` / `ssrf` / `exploit`（合法段被误报"将被忽略"）
 - [ ] **B16 captcha health 路径猜测**：sidecar 地址不以 /ocr 结尾时探测打错路径，需显式 health 地址或容错
-- [ ] **B19 ssrf 轮询空转**：无 token 时缩短轮询；有 token 时避免早退漏报
+- [x] **B19 ssrf 轮询空转**：无 token 时缩短轮询；有 token 时避免早退漏报
 - [ ] **B20 serviceprobe 指纹缓存定死**：`globalFP sync.Once` 随热更新失效
-- [ ] **B24 netproto 与 HTTP 模板 cap 耦合**：协议模板调度上限独立配置
+- [x] **B24 netproto 与 HTTP 模板 cap 耦合**：协议模板调度上限独立配置
 
 ## 口径修正（非代码）
 
