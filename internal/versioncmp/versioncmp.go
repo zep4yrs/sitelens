@@ -60,6 +60,27 @@ func Cmp(a, b string) int {
 }
 
 // VersionIn version 是否命中 affected 区间串；空区间 = 不判定（false）。
+// versionLike 判断区间值是否为可比较的版本号形态：每个点分段必须是
+// 纯数字。commit hash（如 14c49408…）会被 parseSeg 取前导数字误判成
+// 小版本号，造成虚假 confirmed——这类值直接判不可比（宁少报）。
+func versionLike(val string) bool {
+	if val == "" {
+		return false
+	}
+	for _, seg := range strings.Split(val, ".") {
+		if seg == "" {
+			return false
+		}
+		for i := 0; i < len(seg); i++ {
+			c := seg[i]
+			if c < '0' || c > '9' {
+				return false
+			}
+		}
+	}
+	return true
+}
+
 func VersionIn(version, affected string) bool {
 	if version == "" || affected == "" {
 		return false
@@ -79,6 +100,9 @@ func VersionIn(version, affected string) bool {
 				op, val = cand, strings.TrimPrefix(cond, cand)
 				break
 			}
+		}
+		if !versionLike(val) {
+			return false // hash/非版本段：不可比即不命中（宁少报）
 		}
 		c := Cmp(version, val)
 		ok := map[string]bool{
