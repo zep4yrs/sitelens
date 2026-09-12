@@ -66,6 +66,26 @@
   table.oss th{font-family:var(--font-mono);font-size:11.5px;color:var(--muted-fg)}
   table.oss tr:last-child td{border-bottom:none}
   .ver-big{font-family:var(--font-mono);font-size:26px;font-weight:700}
+
+  /* ---- 法务文档内嵌 ---- */
+  .warnbox{border:1px solid color-mix(in srgb,var(--warn) 45%,transparent);
+    background:color-mix(in srgb,var(--warn) 9%,transparent);border-radius:10px;
+    padding:16px 20px;margin:0 0 18px;line-height:1.9;font-size:13.5px}
+  .warnbox b{color:var(--warn)}
+  .doc-wrap{background:var(--card);border:1px solid var(--border);border-radius:10px;
+    padding:22px 26px;margin-top:12px}
+  .doc-wrap article{scroll-margin-top:20px}
+  .doc-wrap article[hidden]{display:none}
+  .doc-wrap h3{font-size:14px;margin:20px 0 8px}
+  .doc-wrap h4{font-size:13.5px;margin:16px 0 6px}
+  .doc-wrap p,.doc-wrap li{font-size:13.5px;line-height:1.9}
+  .doc-wrap ul,.doc-wrap ol{padding-left:22px;margin:8px 0}
+  .doc-wrap li{margin-bottom:4px}
+  .doc-wrap .eff{font-size:12px;color:var(--muted-fg);margin:0 0 14px}
+  .doc-wrap .soft{color:var(--muted-fg);font-size:12.5px}
+  .faq{padding-left:20px;margin:10px 0}
+  .faq li{font-size:13px;line-height:1.9;margin-bottom:6px}
+  .doc-wrap table.oss{margin:12px 0}
 </style>
 </head>
 <body>
@@ -290,34 +310,225 @@
     </div>
   </div>
 
-  <!-- ================ 协议与声明 ================ -->
+  <!-- ================ 协议与声明（文档内嵌本页，不跳离设置） ================ -->
   <div class="tabpanel" data-tab="legal">
+    <div class="warnbox">
+      <b>特别法律提示（请务必阅读）：</b><br>
+      1. SiteLens 是具备主动探测、漏洞验证与利用级验证能力的<b>网络安全评估工具</b>，
+         对未授权目标使用即可能构成<b>违法犯罪行为</b>（中华人民共和国《刑法》第 285 条
+         非法侵入计算机信息系统罪 / 第 286 条破坏计算机信息系统罪、《治安管理处罚法》
+         第 29 条，及其他司法辖区的对应法律）。<br>
+      2. 本软件<b>仅限</b>对您自有或已取得<b>书面授权</b>的目标使用；
+         授权的取得与留存义务、以及越权使用的全部法律后果，均由您<b>自行</b>承担。<br>
+      3. 因您使用、误用、被冒用本软件产生的一切主张、索赔、行政处罚、刑事调查与诉讼，
+         由您自行处理并承担责任；由此使开发者及关联方遭受的任何损失（含合理的
+         调查、鉴定、律师费用），您应全额赔偿并使其免受损害。<br>
+      4. 本软件不收集、不上传您的任何数据；全部数据保存在您的计算机上，
+         亦因此<b>开发者无法也不会</b>为您监控、制止或回溯任何具体使用行为。
+    </div>
+
     <div class="sec">
       <div class="sec-title">帮助与反馈</div>
       <div class="legal-links">
         <a href="https://cnb.cool/feng-qiao/sitelens" target="_blank" rel="noopener noreferrer">项目主页（cnb.cool/feng-qiao/sitelens）</a>
         <a href="https://cnb.cool/feng-qiao/sitelens/-/issues" target="_blank" rel="noopener noreferrer">问题反馈 Issues</a>
-        <a href="/legal.html#help" target="_blank" rel="noopener">使用帮助与常见问题</a>
       </div>
+      <ul class="faq">
+        <li><b>首次使用没有模板？</b>模板池不随安装包：执行 update-nuclei 在线拉取（约 700MB）。</li>
+        <li><b>目标 robots 全站禁爬？</b>引擎配置页关闭「遵循 robots.txt」（仅限授权目标）。</li>
+        <li><b>桌面版怎么手动检查更新？</b>托盘图标右键 → 检查更新。</li>
+        <li><b>换电脑迁移？</b>导出偏好；扫描历史整目录拷贝 %APPDATA%\SiteLens\state。</li>
+      </ul>
       <p class="note">反馈请附：引擎版本（关于页）、目标环境特征、脱敏后的请求 / 响应摘要；
-        切勿附带未授权目标的完整数据。</p>
+        切勿附带未授权目标的完整数据。反馈前可先阅读下方《用户服务协议》第四条——
+        未授权目标的扫描数据不属于可提交的反馈内容。</p>
     </div>
 
     <div class="sec">
-      <div class="sec-title">服务与协议</div>
-      <div class="legal-links">
-        <a href="/legal.html#tos" target="_blank" rel="noopener">用户服务协议</a>
-        <a href="/legal.html#privacy" target="_blank" rel="noopener">隐私政策</a>
-        <a href="/legal.html#service" target="_blank" rel="noopener">服务协议与免责声明</a>
+      <div class="sec-title">服务与协议（点选阅读全文）</div>
+      <div class="seg" id="docSeg">
+        <button data-v="tos">用户服务协议</button>
+        <button data-v="privacy">隐私政策</button>
+        <button data-v="sla">服务协议与免责声明</button>
+        <button data-v="oss">开源软件声明</button>
       </div>
-      <p class="note">要点：本工具<b>仅限对自有或已获书面授权的目标使用，授权文件留存与
-        举证责任在用户</b>；越权使用的全部行政、民事、刑事责任由用户自行承担，并应赔偿
-        开发者及关联方因此遭受的一切损失与费用（含律师费、鉴定费）；软件按"现状"提供、
-        累计责任上限为零；数据全程本机存储，开发者不收集任何信息。完整条款见上述链接。</p>
+      <div class="doc-wrap" id="docWrap">
+        <article data-doc="tos" hidden>
+          <h3>用户服务协议</h3>
+          <p class="eff">生效日期：2026-09-12 ｜ 适用版本：v3.0.0 及其后的全部版本</p>
+          <h4>第一条 定义</h4>
+          <ul>
+            <li><b>本软件</b>：指 SiteLens 网络安全评估工具的整体及其全部组成部分，包括引擎程序、内置页面、模板池、指纹与情报数据、文档，及桌面版壳程序。</li>
+            <li><b>开发者</b>：指本软件的开发者及全部贡献者，以及其关联方与权利继受人。</li>
+            <li><b>您 / 用户</b>：指下载、安装、运行、复制、分发或以任何方式使用本软件的自然人、法人或非法人组织。</li>
+            <li><b>目标 / 授权目标</b>：指本软件发出的任何网络请求所指向的信息系统、设备、域名、IP 地址或服务。<b>授权目标</b>指您自有，或您已取得目标所有者 / 合法管理人<b>书面授权</b>（含电子形式）进行安全测试的目标。</li>
+            <li><b>授权文件</b>：证明目标授权关系真实存在的书面文件，包括但不限于测试授权书、合同条款、系统所有者出具的许可函。</li>
+          </ul>
+          <h4>第二条 协议的成立与接受</h4>
+          <p>本协议是您与开发者之间关于使用本软件的法律约定。您实施下载、安装、复制、运行、分发或其他使用行为之一，即视为您已完整阅读、充分理解并无条件接受本协议全部条款。若您不同意任何条款，您没有使用本软件的权利，应立即停止使用并彻底删除本软件及其数据。</p>
+          <h4>第三条 授权使用前提与举证责任</h4>
+          <ol>
+            <li>本软件仅可用于授权目标。<b>授权必须先于任何测试行为取得</b>；口头同意不构成充分授权。</li>
+            <li><b>授权文件留存与举证责任在您</b>：您应在开始测试前取得并妥善保存授权文件，保存期限不短于测试行为完成后的三年。任何第三方或有权机关就您使用本软件的合法性提出质疑时，由您负责举证。</li>
+            <li>利用级验证能力受三重闸控制（功能请求开关 + 配置总闸 + 目标白名单）。开启利用级验证属于<b>加重注意义务</b>的行为，您应对白名单的准确性与授权覆盖范围承担全部审查责任。白名单外目标零请求是该功能的设计行为并有单元测试固化，但这不减轻您的授权核验义务。</li>
+            <li>使用涉及个人信息的，您还应遵守《中华人民共和国个人信息保护法》及目标所在司法辖区的对应法律，确保检测行为具有合法性基础。</li>
+          </ol>
+          <h4>第四条 用户承诺与禁止行为</h4>
+          <p>您承诺不利用本软件实施下列任一行为；<b>本清单为列举而非穷尽</b>，一切违反法律、法规、监管规定或公序良俗的使用均在禁止之列：</p>
+          <ol>
+            <li>对未授权目标实施扫描、探测、验证、利用或任何形式的访问；</li>
+            <li>侵入、破坏、干扰目标系统的正常功能，或非法获取、篡改、删除、存储、传输目标系统中的数据；</li>
+            <li>利用本软件从事窃取、买卖个人信息，网络诈骗，敲诈勒索，传播恶意程序，拒绝服务攻击或其他违法活动；</li>
+            <li>对关键信息基础设施、国家机关、国防、金融、公用事业等受特别保护的系统实施任何未依法批准的测试；</li>
+            <li>规避、破除、禁用本软件的任何安全闸（授权闸、白名单、默认关闭策略）、技术保护措施或日志机制，或分发去除了上述限制的修改版本；</li>
+            <li>将本软件用于培训、演示以外的任何<b>面向第三方的收费服务</b>而未向服务对象充分披露本软件的性质与本协议条款；</li>
+            <li>删除、遮蔽本软件或其数据中的版权声明、许可证文本与本页声明链接；</li>
+            <li>以本软件或其衍生工具的名义发布虚假、夸大的检测结果，或用于出具您不具备资质出具的检测报告；</li>
+            <li>教唆、帮助、放任他人实施上述行为。</li>
+          </ol>
+          <p>您同时承诺：您不是法律禁止使用网络安全工具的人员；您具备使用本软件所需的专业技术能力；您将自行获取并维持目标所在地法律要求的一切前置批准。</p>
+          <h4>第五条 数据与日志</h4>
+          <p>本软件产生的全部数据（扫描结果、历史、配置、日志）仅保存在您的计算机上，开发者不接收。您应自行妥善保管与处置；数据中可能包含目标的敏感信息，您对该数据的保存、传输、披露承担数据保护义务。</p>
+          <h4>第六条 知识产权</h4>
+          <p>本软件依据 <b>GPL-3.0</b> 许可证开源分发。需特别区分：</p>
+          <ul>
+            <li><b>版权许可 ≠ 使用行为授权</b>：GPL-3.0 仅约束代码的复制、修改与分发的版权事项，<b>不授予任何使用本软件对抗第三方或未授权目标的权利</b>；使用行为的合法性由本协议与法律决定。</li>
+            <li>您可以依 GPL-3.0 修改与再分发，但再分发时必须完整保留本页全部条款与《开源软件声明》，且不得以任何方式宣称开发者对修改版本的行为后果负责。</li>
+            <li>"SiteLens" 名称与品牌标识不属于 GPL-3.0 授权范围，未经开发者书面同意不得用于衍生产品的命名或宣传。</li>
+          </ul>
+          <h4>第七条 赔偿与使免责（Indemnification）</h4>
+          <p>因您使用、误用本软件，或违反本协议任何条款，导致任何第三方对开发者、其贡献者及关联方提出主张、索赔、调查、行政处罚或诉讼，或导致有权机关对开发者采取任何措施的，您应当：</p>
+          <ol>
+            <li>以自己的名义与费用处理该等主张并承担全部责任；</li>
+            <li>全额赔偿开发者及关联方因此遭受或支付的一切损失与费用，<b>包括但不限于合理的律师费、鉴定费、公证费、差旅费、和解金、赔偿金、罚款</b>，并使开发者及关联方免受任何损害。</li>
+          </ol>
+          <h4>第八条 协议变更</h4>
+          <p>开发者可随软件版本更新修订本协议，修订版随版本分发并在本页标注生效日期。您在修订版生效后继续使用本软件，即视为接受修订；不接受则应停止使用并删除。</p>
+          <h4>第九条 协议的终止与后果</h4>
+          <p>您可随时通过删除本软件及其全部数据终止本协议。终止后，第四条（禁止行为）、第七条（赔偿与使免责）、第八条（变更）及《服务协议与免责声明》全部条款继续有效。您违反本协议的，开发者有权要求您立即停止使用、删除本软件，并保留依法追究的权利。</p>
+          <h4>第十条 法律适用与争议解决</h4>
+          <p>本协议适用中华人民共和国法律。因本协议或本软件使用引起的争议，双方应先友好协商；协商不成的，提交<b>开发者住所地有管辖权的人民法院</b>诉讼解决，法律另有强制性规定的除外。境外用户还应遵守其所在司法辖区的强制性法律。</p>
+          <h4>第十一条 其他</h4>
+          <ul>
+            <li><b>可分割性</b>：本协议任一条款被认定无效或不可执行的，不影响其余条款的效力。</li>
+            <li><b>完整协议</b>：本协议与本页其他文档（隐私政策、服务协议与免责声明、开源软件声明）共同构成您与开发者关于本软件使用的完整约定。</li>
+            <li><b>语言</b>：本协议以简体中文书就并以中文版为准；译本仅为方便之用。</li>
+            <li><b>未行使权利不等于放弃</b>：开发者未追究您对任一条款的违约，不构成对该条款或后续违约的权利放弃。</li>
+          </ul>
+        </article>
+
+        <article data-doc="privacy" hidden>
+          <h3>隐私政策</h3>
+          <p class="eff">生效日期：2026-09-12 ｜ 一句话版本：数据只在本机，开发者收不到，也永远不会要。</p>
+          <h4>一、开发者收集什么：无</h4>
+          <p>本软件无账号体系、无埋点、无遥测、无崩溃上报、无广告组件。开发者的服务器不接收您的任何扫描数据、目标信息、机器信息、网络拓扑、使用行为或崩溃信息。开发者因此在技术上<b>不具备</b>收集或回溯您任何使用行为的能力，也无法为您监控或干预具体扫描。</p>
+          <h4>二、本软件产生的数据与存放位置</h4>
+          <ul>
+            <li><b>桌面版</b>：全部数据保存在 <span class="kbd">%APPDATA%\SiteLens</span>——扫描历史（state）、模板池（pools）、插件（plugins）、可变情报（data）；安装目录仅含只读资产。</li>
+            <li><b>浏览器模式</b>：数据保存在引擎工作目录的 <span class="kbd">data\state</span>；外观偏好与 API Token 保存在浏览器 localStorage（存储键以 <span class="kbd">sitelens-</span> 为前缀）。</li>
+            <li>扫描历史与报告可能包含目标的敏感信息（技术栈、漏洞、请求响应摘要），<b>您</b>是该数据的控制者，对它的保存、访问、传输与删除承担数据保护义务。</li>
+          </ul>
+          <h4>三、本软件发起的网络请求清单（仅在此列时发生）</h4>
+          <ol>
+            <li><b>对扫描目标</b>：探测、验证、利用级请求（仅限授权目标，这是软件功能本身）；</li>
+            <li><b>模板与情报更新（您主动触发或配置的定时任务）</b>：nuclei / afrog / 40k 等模板源的公开仓库与镜像、NVD（nvd.nist.gov）、CISA KEV（cisa.gov）、OSV.dev（api.osv.dev）、微软安全公告（api.msrc.microsoft.com）；</li>
+            <li><b>检查更新（桌面版，启动时静默 + 托盘手动）</b>：更新源服务器（当前配置为 cnb.cool 的 release 附件区，请求内容仅含版本号协商所需的最小信息）；</li>
+            <li><b>界面字体（CDN）</b>：页面加载时向 jsDelivr（cdn.jsdelivr.net）与 Google Fonts 请求霞鹜文楷 / Noto Sans SC 字体文件，该请求会使 CDN 获知您的 IP 与访问时间——离线时自动回退系统字体栈，对隐私有更高要求的用户可在防火墙中拦截上述域名。</li>
+          </ol>
+          <p>除上列外，引擎与页面不发起任何其他网络请求。您可以防火墙或抓包工具验证本清单。</p>
+          <h4>四、第三方接收方的说明</h4>
+          <p>上述第三条所列公开源与 CDN 是<b>您发起的请求</b>的接收方，而非开发者的数据处理者；开发者与它们之间不存在任何数据共享协议，也不因此获得您的数据。</p>
+          <h4>五、数据的删除</h4>
+          <ul>
+            <li>扫描历史：设置 · 数据管理 → 「清空全部扫描历史」（设计为彻底删除，不经归档留底）；单条删除在「历史」页进行。</li>
+            <li>整体清除：卸载桌面版时按卸载向导提示删除用户数据目录，或手动删除 <span class="kbd">%APPDATA%\SiteLens</span>。</li>
+            <li>浏览器侧偏好：清除浏览器本站 localStorage 即彻底删除。</li>
+          </ul>
+          <h4>六、未成年人</h4>
+          <p>本软件为专业安全评估工具，面向具备合法授权场景与专业技术能力的使用者，不面向未成年人提供；若您为未成年人，请立即停止使用。</p>
+          <h4>七、政策变更</h4>
+          <p>本政策随软件版本更新而修订，修订版随版本分发并在本页标注生效日期。若未来版本引入任何新的网络请求，将在此清单中明示并重新标注生效日期。</p>
+        </article>
+
+        <article data-doc="sla" hidden>
+          <h3>服务协议与免责声明</h3>
+          <p class="eff">生效日期：2026-09-12 ｜ 本文件与《用户服务协议》共同适用，条款间互为补充。</p>
+          <h4>一、按现状提供（AS IS）</h4>
+          <p>本软件在 GPL-3.0 许可证第 15、16 条下<b>按"现状"分发，不附带任何形式的担保</b>。在法律允许的最大范围内，开发者明确否认对适销性、特定用途适用性、不侵权、准确性、完整性、时效性与安全性的任何明示或默示担保。您确认：使用本软件的全部风险由您自行承担。</p>
+          <h4>二、检测结果的性质与使用限制</h4>
+          <ul>
+            <li>扫描结果（含"已验证 / 利用级 proven"分级结论）均为<b>技术评估参考</b>，不构成对目标安全状态的任何承诺、认证、鉴定意见或合规结论；</li>
+            <li>自动检测固有地存在误报（false positive）与漏报（false negative），任何与目标相关的重大决策（上线放行、整改验收、法律主张）<b>不得</b>仅依据本软件的输出作出，应经人工复核与必要的专业鉴定；</li>
+            <li>结论分级、证据链与判定的技术语义以随版本分发的《开发文档》为准；文档未明示的场景下，结果不具备任何推定效力。</li>
+          </ul>
+          <h4>三、损害类型与责任上限</h4>
+          <ol>
+            <li>在任何情形下，开发者均不对下列损害承担责任：利润损失、业务中断、数据丢失或损坏、商誉损失、替代设备或服务的采购成本，以及其他任何<b>间接、附带、特殊、惩罚性或后果性损害</b>；</li>
+            <li>开发者对您的<b>全部累计责任上限为零</b>——因本软件为无偿开源软件，您未支付任何对价；即使法律规定责任上限条款部分无效，责任上限亦不超过您为获得本软件而实际支付的金额（即零）；</li>
+            <li>对目标的任何探测、验证或利用行为对目标系统造成的可用性影响、性能影响或数据影响，属于目标所有者授权范围内的商业风险，是否发生、如何控制由您与目标所有者之间的授权文件约定，与开发者无关。</li>
+          </ol>
+          <h4>四、越权与违法使用的责任</h4>
+          <p>对未授权目标使用本软件或以其他违法方式使用本软件，可能触犯《中华人民共和国刑法》第 285 条（非法侵入计算机信息系统罪；非法获取计算机信息系统数据、非法控制计算机信息系统罪）、第 286 条（破坏计算机信息系统罪）、第 285 条之一（非法获取公民个人信息）、《治安管理处罚法》第 29 条、《网络安全法》《数据安全法》《个人信息保护法》以及您所在司法辖区的对应法律。<b>由此产生的全部行政、民事、刑事责任由使用者自行承担</b>；依据《用户服务协议》第七条，您并应赔偿开发者及关联方的一切相关损失。</p>
+          <h4>五、无害化边界的实现性质</h4>
+          <p>本软件在工程上默认遵守以下红线：利用级能力默认关 + 白名单外零请求；POC 载荷不落盘；探测请求限速可配；协议探测为 banner 级只读。您确认理解：<b>这些是技术实现而非行为担保</b>——技术闸的存在不减免您的授权核验义务，技术闸的规避或失效所导致的后果亦由行为人自行承担。</p>
+          <h4>六、第三方数据与依赖</h4>
+          <p>本软件分发的模板、指纹与情报数据来自第三方公开来源（见《开源软件声明》），开发者不对其准确性、时效性、合法性作任何担保；因数据错误导致的误判、漏判或任何后果，由使用者自行评估与承担。</p>
+          <h4>七、不可抗力</h4>
+          <p>因不可抗力（自然灾害、网络瘫痪、法律政策变化、上游数据源失效等）导致本软件无法使用或结果异常的，开发者不承担责任。</p>
+          <h4>八、法律适用与争议解决</h4>
+          <p>本文件适用中华人民共和国法律。争议应先友好协商；协商不成的，提交开发者住所地有管辖权的人民法院诉讼解决，法律另有强制性规定的除外。</p>
+        </article>
+
+        <article data-doc="oss" hidden>
+          <h3>开源软件声明</h3>
+          <p class="eff">SiteLens 依据 GPL-3.0 分发。下表列出主要第三方组件：用途、许可证、以及本项目是否对其进行了修改。各组件版权归原作者所有。</p>
+          <h4>运行时与界面</h4>
+          <table class="oss">
+            <thead><tr><th>组件</th><th>用途</th><th>许可证</th><th>是否修改</th></tr></thead>
+            <tbody>
+              <tr><td>Go 工具链与标准库</td><td>引擎运行时</td><td>BSD-3-Clause</td><td>未修改</td></tr>
+              <tr><td>Electron（桌面版壳）</td><td>窗口 / 托盘 / 自动更新</td><td>MIT</td><td>未修改（壳代码为本仓库自研）</td></tr>
+              <tr><td>electron-updater / electron-builder</td><td>桌面版自动更新与打包</td><td>MIT</td><td>未修改</td></tr>
+              <tr><td>霞鹜文楷 LXGW WenKai（webfont）</td><td>界面字体</td><td>SIL OFL 1.1</td><td>未修改</td></tr>
+            </tbody>
+          </table>
+          <h4>检测数据与模板</h4>
+          <table class="oss">
+            <thead><tr><th>来源</th><th>用途</th><th>许可证</th><th>是否修改</th></tr></thead>
+            <tbody>
+              <tr><td>nuclei-templates（projectdiscovery 及社区）</td><td>漏洞模板主体</td><td>MIT</td><td>未修改（镜像子集 + 转换准入过滤，不改检测语义）</td></tr>
+              <tr><td>linuxadi/40k、coffinxp、极致攻防等社区精选</td><td>模板扩充</td><td>随上游仓库（nuclei 生态）</td><td>有修改（精选子集，去重后并入）</td></tr>
+              <tr><td>自研协议模板六件（memcached/ftp/ssh/vnc/smtp/mysql）</td><td>协议检测</td><td>随本仓库 GPL-3.0</td><td>自研</td></tr>
+            </tbody>
+          </table>
+          <h4>指纹与情报</h4>
+          <table class="oss">
+            <thead><tr><th>来源</th><th>用途</th><th>许可证</th><th>是否修改</th></tr></thead>
+            <tbody>
+              <tr><td>enthec/webappanalyzer</td><td>Web 指纹 2,377 条</td><td>GPL-3.0</td><td>有修改（数据格式转换后并入）</td></tr>
+              <tr><td>EHole（EdgeSecurity）</td><td>中文产品指纹 10,978 条</td><td>随上游仓库</td><td>有修改（转 exact 字面量通道）</td></tr>
+              <tr><td>自建精编指纹</td><td>Web 指纹 372 条 / 路径指纹 38 条</td><td>随本仓库 GPL-3.0</td><td>自研</td></tr>
+              <tr><td>afrog（zan8in）</td><td>精选漏洞情报 1,497 条</td><td>MIT</td><td>有修改（精选子集与格式转换）</td></tr>
+              <tr><td>xray 社区收录 POC</td><td>精选漏洞情报 488 条</td><td>随上游收录源</td><td>有修改（格式转换）</td></tr>
+              <tr><td>NVD（NIST）</td><td>CVE 字典 371,755 条</td><td>美国政府公开发布</td><td>未修改（镜像）</td></tr>
+              <tr><td>CISA KEV</td><td>在野利用目录 1,709 条</td><td>美国政府公开发布</td><td>未修改（镜像，24h 自动更新）</td></tr>
+              <tr><td>微软安全公告</td><td>微软系 CVE 详情 34,931 条</td><td>公开资料（引用）</td><td>未修改（镜像）</td></tr>
+              <tr><td>nmap service probes</td><td>端口服务识别参照</td><td>GPL-2.0（上游）</td><td>有修改：本仓库指纹为 nmap 风格自维护数据集，未拷贝上游数据文件</td></tr>
+            </tbody>
+          </table>
+          <h4>再分发的许可证义务</h4>
+          <ul>
+            <li>依 GPL-3.0 分发本软件或其修改版，须随附完整对应源码（Complete Corresponding Source）并同样以 GPL-3.0 授权，保留全部版权与免责声明；</li>
+            <li>对 GPL-3.0 组件（webappanalyzer 数据）的并入方式为数据格式转换而非代码拷贝，许可证义务依数据著作权属性履行；MIT / BSD 组件的分发须保留其版权与许可声明；</li>
+            <li>SIL OFL 1.1 字体以 webfont 形式引用，未做修改，不存在 Reserved Font Name 约束下的重命名问题；</li>
+            <li>若您认为本表存在遗漏、错误或许可证争议，请通过仓库 Issues 反馈，核实后将在下一版本修正并公告。</li>
+          </ul>
+        </article>
+      </div>
     </div>
 
     <div class="sec">
-      <div class="sec-title">开源软件声明</div>
+      <div class="sec-title">开源软件声明（摘要）</div>
       <div class="tbl-wrap">
         <table class="oss">
           <thead><tr><th>组件</th><th>用途</th><th>许可证</th><th>是否修改</th></tr></thead>
@@ -335,8 +546,7 @@
           </tbody>
         </table>
       </div>
-      <p class="note">上表为主要组件摘要；完整声明（含社区模板精选来源）见
-        <a href="/legal.html#opensource" target="_blank" rel="noopener" style="color:var(--info)">开源软件声明（全文）</a>。
+      <p class="note">上表为主要组件摘要，全文声明可在上方「服务与协议」选《开源软件声明》阅读。
         各组件版权归原作者所有，本项目的分发义务依 GPL-3.0 及各组件许可证履行。</p>
     </div>
   </div>
@@ -631,6 +841,24 @@
   $("openRel").addEventListener("click", function () {
     window.open("https://cnb.cool/feng-qiao/sitelens/releases", "_blank", "noopener");
   });
+
+  /* ---- 法务文档内嵌切换（不跳离设置页） ---- */
+  (function () {
+    var wrap = $("docWrap"), segEl = $("docSeg");
+    if (!wrap || !segEl) return;
+    function show(v) {
+      wrap.querySelectorAll("article").forEach(function (a) {
+        a.hidden = a.getAttribute("data-doc") !== v;
+      });
+      segEl.querySelectorAll("button").forEach(function (b) {
+        b.classList.toggle("on", b.getAttribute("data-v") === v);
+      });
+    }
+    segEl.querySelectorAll("button").forEach(function (b) {
+      b.addEventListener("click", function () { show(b.getAttribute("data-v")); });
+    });
+    show("tos");
+  })();
 })();
 </script>
 </body>
