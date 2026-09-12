@@ -59,8 +59,10 @@
 | sqli-labs | full | 1,704s | 21 |
 | xsslabs | full | 1,037s | 16 |
 | DVWA | apocalypse | 401s | 10 |
+| pikachu | full | 2,363s | 67 |
+| upload-labs | full | 1,995s | 13 |
 
-pikachu 与 upload-labs 超出轮询窗口，结果单独补测后更新到本页。
+六扫合计 **156 条已验证发现**，全部带证据链与复现命令，扫描期间无人工干预。pikachu 以 67 条命中居首（SQLi 注入点 + 技术指纹长尾），upload-labs 的 13 条以模板探测为主。
 
 ## 下载哪个
 
