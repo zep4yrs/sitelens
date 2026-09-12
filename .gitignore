@@ -64,3 +64,4 @@ __pycache__/
 .mimosa/
 bin/
 data/tpl_intel.json.gz
+data/intel_dump.json.gz.orig
