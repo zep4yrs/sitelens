@@ -1,5 +1,5 @@
 {
-  "name": "sitelens-desktop",
+  "name": "sitelens",
   "productName": "SiteLens",
   "version": "3.0.0",
   "description": "SiteLens 站点透视 桌面版（Electron 壳 + Go 引擎单二进制）",
@@ -54,7 +54,8 @@
         "provider": "generic",
         "url": "https://cnb.cool/feng-qiao/sitelens/releases/download/desktop-stable/"
       }
-    ]
+    ],
+    "artifactName": "SiteLens-Setup-${version}.${ext}"
   },
   "devDependencies": {
     "electron": "^44.3.0",

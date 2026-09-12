@@ -27,9 +27,34 @@ main:
     - *regression
 
 # 发版构建（tag 推送触发）。日常提交不自动构建。发版流程：
-#   模板池与情报库均已入仓库（packs/ 与 data/），推送 v3.0.0 tag 即自动构建 5 产物并上传。
+#   模板池与情报库均已入仓库（packs/ 与 data/），推送 v3.0.0 tag 即自动构建
+#   5 产物 + 桌面版三件套并上传；桌面包同步发布到 desktop-stable 标签，
+#   作为已装客户端的自动更新源（electron-updater generic）。
 "v*":
   tag_push:
+    - name: 构建桌面版（Electron 壳，双发布到版本 release 与 desktop-stable 更新源）
+      docker:
+        image: golang:1.26.8
+      stages:
+        - name: build
+          script:
+            - |
+              apt-get update -qq && apt-get install -y -qq nodejs npm >/dev/null
+              cd desktop
+              # Electron 二进制不需要（打包用 electron-builder 自取的 zip），跳过下载
+              ELECTRON_SKIP_BINARY_DOWNLOAD=1 npm ci --no-audit --no-fund
+              npm run engine
+              ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/ \
+              ELECTRON_BUILDER_BINARIES_MIRROR=https://npmmirror.com/mirrors/electron-builder-binaries/ \
+              npx electron-builder --win nsis
+              cd ..
+              export SITLENS_BODY_FILE="$PWD/tools/release-body-3.0.0.md"
+              # ① 版本 release：安装包随 tag 发布
+              bash tools/release_upload.sh desktop/release/SiteLens-Setup-3.0.0.exe
+              # ② desktop-stable 更新源：三件套覆盖发布（客户端自动更新拉这里）
+              SITLENS_TAG=desktop-stable bash tools/release_upload.sh desktop/release/SiteLens-Setup-3.0.0.exe
+              SITLENS_TAG=desktop-stable bash tools/release_upload.sh desktop/release/SiteLens-Setup-3.0.0.exe.blockmap
+              SITLENS_TAG=desktop-stable bash tools/release_upload.sh desktop/release/latest.yml
     - name: 构建 Windows lite（zip + NSIS 安装器）
       docker:
         image: golang:1.26.8

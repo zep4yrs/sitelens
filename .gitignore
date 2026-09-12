@@ -70,3 +70,4 @@ desktop/node_modules/
 desktop/release/
 desktop/engine/
 desktop/*.yml
+desktop/feed/
