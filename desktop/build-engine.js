@@ -22,7 +22,8 @@ execFileSync('go', ['build', '-ldflags', LDFLAGS, '-o', path.join(OUT, 'sitelens
   stdio: 'inherit',
 });
 
-// 2) lite 数据清单（与 .cnb.yml lite 阶段一致；模板池不随包，update-nuclei 在线补）
+// 2) 数据载荷：只读资产全量内置（含 NVD/情报库种子，首开即完整体验）；
+//    模板池（719MB）不随包，update-nuclei 在线拉取到用户数据区
 function cp(src, dest) {
   const d = path.join(OUT, dest);
   fs.mkdirSync(path.dirname(d), { recursive: true });
@@ -31,6 +32,9 @@ function cp(src, dest) {
 cp('data/go', 'data/go');
 cp('data/wordlists', 'data/wordlists');
 cp('data/affected_ranges.json', 'data/affected_ranges.json');
+cp('data/intel_dump.json.gz', 'data/intel_dump.json.gz');
+cp('data/tpl_intel.json.gz', 'data/tpl_intel.json.gz');
+cp('data/nvd_cves.json.gz', 'data/nvd_cves.json.gz');
 cp('README.md', 'README.md');
 
 // 3) 体量报告

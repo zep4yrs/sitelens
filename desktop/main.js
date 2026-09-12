@@ -124,9 +124,18 @@ function createTray() {
   tray = new Tray(nativeImage.createFromPath(ICON_PATH));
   tray.setToolTip('SiteLens 站点透视');
   tray.setContextMenu(Menu.buildFromTemplate([
+    { label: 'SiteLens v' + app.getVersion(), enabled: false },
+    { type: 'separator' },
     { label: '显示主界面', click: showWindow },
     { label: '检查更新', click: () => checkUpdates(true) },
+    { label: '打开数据目录', click: () => shell.openPath(app.getPath('userData')) },
     { type: 'separator' },
+    {
+      label: '开机自启',
+      type: 'checkbox',
+      checked: app.getLoginItemSettings().openAtLogin,
+      click: (item) => app.setLoginItemSettings({ openAtLogin: item.checked }),
+    },
     {
       label: '退出 SiteLens',
       click: () => {
@@ -155,6 +164,7 @@ function checkUpdates(manual) {
 function setupUpdater() {
   autoUpdater.autoDownload = true;
   autoUpdater.on('update-available', () => {
+    bootLog('update available, downloading…');
     tray.displayBalloon({
       iconType: 'info',
       title: '发现新版本',
@@ -162,6 +172,14 @@ function setupUpdater() {
     });
   });
   autoUpdater.on('update-downloaded', (info) => {
+    bootLog('update downloaded: v' + (info && info.version));
+    // E2E 测试钩子：设置 SITLENS_E2E_UPDATE 时自动安装（真机全链路验证用）
+    if (process.env.SITLENS_E2E_UPDATE) {
+      bootLog('e2e: auto quitAndInstall');
+      quittingByUser = true;
+      setTimeout(() => autoUpdater.quitAndInstall(), 3000);
+      return;
+    }
     dialog.showMessageBox({
       type: 'info',
       buttons: ['立即重启', '稍后'],
@@ -175,20 +193,53 @@ function setupUpdater() {
       }
     });
   });
-  autoUpdater.on('error', () => { /* 离线/网络抖动静默，手动检查时另行提示 */ });
+  autoUpdater.on('error', (err) => {
+    bootLog('updater error: ' + (err && err.message || err));
+  });
 }
 
 // ---- 生命周期 ----
 
+// 引擎崩溃自愈：5 分钟窗口内最多自动重启 3 次（指数退避 1s/2s/4s），
+// 超限弹窗示警不再硬重试（真故障反复拉起只会掩盖问题）。
+let restartTimes = [];
+
+async function handleEngineCrash(code) {
+  bootLog('engine exited (code ' + code + ')');
+  if (quittingByUser) return;
+  const now = Date.now();
+  restartTimes = restartTimes.filter((t) => now - t < 5 * 60 * 1000);
+  if (restartTimes.length >= 3) {
+    bootLog('engine restart limit reached');
+    dialog.showErrorBox('SiteLens 引擎反复退出',
+      '引擎 5 分钟内已崩溃 3 次，已停止自动重启。\n日志：' +
+      path.join(app.getPath('userData'), 'engine.log'));
+    return;
+  }
+  restartTimes.push(now);
+  const ok = await engine.restart();
+  bootLog('engine auto-restart ' + (ok ? 'ok' : 'failed') +
+    ' at ' + engine.url);
+  if (ok) {
+    if (win && !win.isDestroyed()) win.loadURL(engine.url).catch(() => {});
+    tray.displayBalloon({
+      iconType: 'info',
+      title: 'SiteLens 引擎已自动恢复',
+      content: '后台引擎重启完成，扫描可继续。',
+    });
+  } else {
+    dialog.showErrorBox('SiteLens 引擎已退出',
+      '自动重启失败。\n日志：' + path.join(app.getPath('userData'), 'engine.log'));
+  }
+}
+
 app.on('second-instance', showWindow);
 
 app.whenReady().then(async () => {
-  bootLog('app ready, engine dir: ' + engine.ENGINE_DIR);
+  bootLog('app v' + app.getVersion() + ' ready, engine dir: ' + engine.ENGINE_DIR);
   createTray();
   engine.onCrash = (code) => {
-    dialog.showErrorBox('SiteLens 引擎已退出',
-      '后台引擎进程意外退出（退出码 ' + code + '）。\n日志：' +
-      path.join(app.getPath('userData'), 'engine.log'));
+    handleEngineCrash(code);
   };
   try {
     await engine.start();
