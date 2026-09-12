@@ -84,6 +84,8 @@ func main() {
 		os.Exit(updateNVDCommand(cfg))
 	case "update-tplintel":
 		os.Exit(updateTplIntelCommand(cfg))
+	case "update-ehole":
+		os.Exit(updateEHoleCommand(cfg, flag.Arg(1)))
 	case "regression":
 		if len(args) < 2 {
 			flag.Usage()

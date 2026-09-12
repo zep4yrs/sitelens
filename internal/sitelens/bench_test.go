@@ -7,9 +7,9 @@ import (
 	"testing"
 )
 
-// BenchmarkMatch2749 全库指纹匹配基准：2,749 条规则 × 模拟真实页面证据
-// （40KB HTML + 常见响应头/meta/脚本）。恢复文档性能口径的实测来源。
-func BenchmarkMatch2749(b *testing.B) {
+// BenchmarkMatch 全库指纹匹配基准：13,727 条规则 × 模拟真实页面证据
+// （40KB HTML + 常见响应头/meta/脚本）。文档性能口径的实测来源。
+func BenchmarkMatch(b *testing.B) {
 	path := "../../data/go/technologies.json"
 	if _, err := os.Stat(path); err != nil {
 		b.Skip("指纹库不在本地")

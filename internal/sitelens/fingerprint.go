@@ -99,6 +99,29 @@ type pattern struct {
 // 编译失败的模式跳过不 panic——社区指纹库（千级条目）里个别
 // RE2 不支持的形态（反向引用/环视）不该炸掉整个扫描进程。
 func compilePats(patterns []string) []pattern {
+	return compilePatsMode(patterns, false)
+}
+
+// compilePatsMode exact=true 时全部按字面量精确包含处理（EHole 等
+// 关键词型社区指纹：关键词含正则元字符也不该按正则解释）。
+func compilePatsMode(patterns []string, exact bool) []pattern {
+	out := make([]pattern, 0, len(patterns))
+	for _, p := range patterns {
+		if p == "" {
+			continue
+		}
+		if exact || isSimpleLiteral(p) {
+			out = append(out, pattern{lit: strings.ToLower(p), raw: p, isLit: true})
+			continue
+		}
+		if re, err := regexp.Compile("(?i)" + p); err == nil {
+			out = append(out, pattern{re: re, raw: p, gate: literalGate(p)})
+		}
+	}
+	return out
+}
+
+func compilePatsLegacy(patterns []string) []pattern {
 	out := make([]pattern, 0, len(patterns))
 	for _, p := range patterns {
 		if p == "" {
@@ -213,6 +236,7 @@ func loadFrom(data json.RawMessage) ([]*compiledTech, error) {
 			Conf    int             `json:"conf"`
 			Website string          `json:"website"`
 			Rules   json.RawMessage `json:"rules"`
+		Exact   bool             `json:"exact"`
 		} `json:"technologies"`
 	}
 	if err := json.Unmarshal(data, &box); err != nil {
@@ -229,14 +253,14 @@ func loadFrom(data json.RawMessage) ([]*compiledTech, error) {
 		}
 		ct := &compiledTech{tech: &Technology{Name: t.Name, Cats: t.Cats, Conf: t.Conf}}
 		for name, pats := range rules.Headers {
-			if ps := compilePats(pats); len(ps) > 0 {
+			if ps := compilePatsMode(pats, t.Exact); len(ps) > 0 {
 				if ct.headers == nil {
 					ct.headers = make(map[string][]pattern)
 				}
 				ct.headers[strings.ToLower(unescapeName(name))] = ps
 			}
 		}
-		ct.cookies = compilePats(rules.Cookies)
+		ct.cookies = compilePatsMode(rules.Cookies, t.Exact)
 		for name, p := range rules.Meta {
 			if p == "" {
 				continue
@@ -247,7 +271,7 @@ func loadFrom(data json.RawMessage) ([]*compiledTech, error) {
 			// 键名是 meta 名而非正则：反转义历史导出中的 \. \- 序列
 			ct.meta[strings.ToLower(unescapeName(name))] = regexp.MustCompile("(?i)" + p)
 		}
-		ct.html = compilePats(rules.HTML)
+		ct.html = compilePatsMode(rules.HTML, t.Exact)
 		ct.src = compilePats(rules.Scripts.Src)
 		ct.inline = compilePats(rules.Scripts.Content)
 		ct.iconHashes = rules.IconHash
@@ -274,8 +298,30 @@ func versionFromMatch(m []string) string {
 // 单条指纹声明多个通道时，全部通道命中才算命中（AND）。
 func Match(techs []*compiledTech, ev *Evidence) []Hit {
 	hits := make([]Hit, 0, 8)
+	bodyLow := strings.ToLower(ev.Body)
 	for _, ct := range techs {
-		if evName, evVer, ok := ct.match(ev); ok {
+		if evName, evVer, ok := ct.match(ev, bodyLow, nil); ok {
+			hits = append(hits, Hit{
+				Name: ct.tech.Name, Cats: ct.tech.Cats, Conf: ct.tech.Conf,
+				Evidence: evName, Version: evVer,
+			})
+		}
+	}
+	return hits
+}
+
+// MatchPrescreen 带字面量预筛的匹配：对全部 html 字面量模式做一次
+// 前缀桶单遍扫描（O(正文长度)），逐技术改为查表——万级指纹库下把
+// 「模式数 × 正文长度」的 Contains 总量压成一次正文扫描。
+func MatchPrescreen(techs []*compiledTech, ev *Evidence, ps *litPrescreen) []Hit {
+	hits := make([]Hit, 0, 8)
+	bodyLow := strings.ToLower(ev.Body)
+	var litHits map[string]bool
+	if ps != nil && len(ps.buckets) > 0 {
+		litHits = ps.scan(bodyLow)
+	}
+	for _, ct := range techs {
+		if evName, evVer, ok := ct.match(ev, bodyLow, litHits); ok {
 			hits = append(hits, Hit{
 				Name: ct.tech.Name, Cats: ct.tech.Cats, Conf: ct.tech.Conf,
 				Evidence: evName, Version: evVer,
@@ -286,9 +332,27 @@ func Match(techs []*compiledTech, ev *Evidence) []Hit {
 }
 
 // match 按通道顺序应用证据；返回 (证据描述, 版本, 是否命中)。
-func (ct *compiledTech) match(ev *Evidence) (string, string, bool) {
+// bodyLow 为正文小写形态（调用方提升一次），litHits 为全局字面量预筛
+// 结果（nil = 无预筛，逐模式 Contains）。
+func (ct *compiledTech) match(ev *Evidence, bodyLow string, litHits map[string]bool) (string, string, bool) {
 	if len(ct.headers) > 0 {
 		for name, pats := range ct.headers {
+			if name == "*" {
+				// 通配任意头：EHole 等社区指纹的 header 规则不带头名，
+				// 关键词对全部头值做包含判定（只支持字面量语义）
+				for hn, hv := range ev.Headers {
+					if hv == "" {
+						continue
+					}
+					hvLow := strings.ToLower(hv)
+					for _, p := range pats {
+						if p.isLit && strings.Contains(hvLow, p.lit) {
+							return fmt.Sprintf("%s=%s", hn, truncate(hv, 80)), "", true
+						}
+					}
+				}
+				continue
+			}
 			val := ev.Header(name)
 			if val == "" {
 				continue
@@ -322,13 +386,17 @@ func (ct *compiledTech) match(ev *Evidence) (string, string, bool) {
 		}
 	}
 	if len(ct.html) > 0 || len(ct.inline) > 0 {
-		bodyLow := strings.ToLower(ev.Body)
-		if len(ct.html) > 0 {
-			for _, p := range ct.html {
-				if text, subs := p.findIn(ev.Body, bodyLow); text != "" {
-					return fmt.Sprintf("正则 %s", truncate(p.raw, 40)),
-						versionFromMatch(subs), true
+		for _, p := range ct.html {
+			if p.isLit && litHits != nil {
+				// 预筛已含该字面量才可能命中，省掉逐技术 Contains
+				if !litHits[p.lit] {
+					continue
 				}
+				return fmt.Sprintf("关键词 %s", truncate(p.raw, 40)), "", true
+			}
+			if text, subs := p.findIn(ev.Body, bodyLow); text != "" {
+				return fmt.Sprintf("正则 %s", truncate(p.raw, 40)),
+					versionFromMatch(subs), true
 			}
 		}
 		if len(ct.src) > 0 {
