@@ -21,6 +21,7 @@
       "main.js",
       "engine.js",
       "preload.js",
+      "lib/*.js",
       "package.json"
     ],
     "extraResources": [

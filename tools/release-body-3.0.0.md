@@ -94,7 +94,7 @@
 
 ## 下载哪个
 
-- Windows 常规使用 → `setup-full.exe`（推荐，开箱即用）
+> 安装包未做代码签名：Windows 首次运行若弹出 SmartScreen 提示，点「更多信息」→「仍要运行」即可。安装包体积较大（含全量情报数据），下载后建议比对发布页附带的 SHA256。- Windows 常规使用 → `setup-full.exe`（推荐，开箱即用）
 - 先试用 / 磁盘紧张 → `setup-lite.exe`（之后用 `update-*` 在线补数据）
 - 免安装 → `full-win64.zip`
 - Linux amd64 → `linux-amd64.zip`

@@ -37,6 +37,9 @@ type settingsConfig struct {
 	Checks struct {
 		NucleiCap int `json:"nuclei_cap"`
 	} `json:"checks"`
+	Intel struct {
+		OverridesPath string `json:"overrides_path"`
+	} `json:"intel"`
 }
 
 func (s *Server) settingsCfg() settingsConfig {
@@ -52,6 +55,7 @@ func (s *Server) settingsCfg() settingsConfig {
 	v.Scan.RateIntervalMS = s.cfg.Scan.RateIntervalMS
 	v.Scan.TimeoutSec = s.cfg.Scan.TimeoutSec
 	v.Checks.NucleiCap = s.cfg.Checks.NucleiCap
+	v.Intel.OverridesPath = s.cfg.Intel.OverridesPath
 	return v
 }
 
@@ -80,6 +84,7 @@ func (s *Server) applySettings(v settingsConfig) {
 	if v.Checks.NucleiCap > 0 {
 		s.cfg.Checks.NucleiCap = v.Checks.NucleiCap
 	}
+	s.cfg.Intel.OverridesPath = v.Intel.OverridesPath
 }
 
 // persistSettings 把设置写回用户 yml（Node 读改写：保留注释与未纳管键）。
@@ -104,6 +109,7 @@ func (s *Server) persistSettings(v settingsConfig) error {
 			"timeout_sec":      v.Scan.TimeoutSec,
 		},
 		"checks": {"nuclei_cap": v.Checks.NucleiCap},
+		"intel":  {"overrides_path": v.Intel.OverridesPath},
 	}
 	if v.Web.APIToken != "" {
 		updates["web"]["api_token"] = v.Web.APIToken

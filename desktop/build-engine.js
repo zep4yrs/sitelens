@@ -23,18 +23,27 @@ execFileSync('go', ['build', '-ldflags', LDFLAGS, '-o', path.join(OUT, 'sitelens
 });
 
 // 2) 数据载荷：只读资产全量内置（含 NVD/情报库种子，首开即完整体验）；
-//    模板池（719MB）不随包，update-nuclei 在线拉取到用户数据区
+//    模板池（719MB）不随包，update-nuclei 在线拉取到用户数据区。
+//    可选种子缺失只警告不中断（例如新 clone 未拉 NVD 大文件时仍可出包，
+//    只是首开无 NVD 通道）。
 function cp(src, dest) {
   const d = path.join(OUT, dest);
   fs.mkdirSync(path.dirname(d), { recursive: true });
   fs.cpSync(path.join(ROOT, src), d, { recursive: true });
+}
+function cpOptional(src, dest) {
+  if (!fs.existsSync(path.join(ROOT, src))) {
+    console.warn(`[engine] 可选种子缺失，跳过：${src}（update-nvd 可在线补）`);
+    return;
+  }
+  cp(src, dest);
 }
 cp('data/go', 'data/go');
 cp('data/wordlists', 'data/wordlists');
 cp('data/affected_ranges.json', 'data/affected_ranges.json');
 cp('data/intel_dump.json.gz', 'data/intel_dump.json.gz');
 cp('data/tpl_intel.json.gz', 'data/tpl_intel.json.gz');
-cp('data/nvd_cves.json.gz', 'data/nvd_cves.json.gz');
+cpOptional('data/nvd_cves.json.gz', 'data/nvd_cves.json.gz');
 cp('README.md', 'README.md');
 
 // 3) 体量报告
