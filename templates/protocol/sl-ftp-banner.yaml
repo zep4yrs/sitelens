@@ -1,0 +1,11 @@
+id: sl-ftp-banner
+info:
+  name: FTP Service Banner
+  severity: info
+  tags: network,ftp,sl-curated
+tcp:
+  - port: 21
+    matchers:
+      - type: regex
+        regex:
+          - "^220[ -][^\\r\\n]*FTP"

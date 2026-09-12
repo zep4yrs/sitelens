@@ -1,0 +1,12 @@
+id: sl-ssh-banner
+info:
+  name: SSH Service Banner
+  severity: info
+  tags: network,ssh,sl-curated
+tcp:
+  - port: 22
+    matchers:
+      - type: regex
+        regex:
+          - "^SSH-[0-9]"
+
