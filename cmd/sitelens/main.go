@@ -129,8 +129,13 @@ func runScan(cfg *config.Config, rawURL string) {
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "警告：知识库加载失败（%v），跳过情报关联\n", err)
 		kb = nil
-	} else if nvd, nerr := intel.LoadNVD(cfg.Intel.NVDPath); nerr == nil && nvd != nil {
-		kb.AttachNVD(nvd)
+	} else {
+		if nvd, nerr := intel.LoadNVD(cfg.Intel.NVDPath); nerr == nil && nvd != nil {
+			kb.AttachNVD(nvd)
+		}
+		if tc, terr := intel.LoadTechCPE("data/go/tech_cpe.json"); terr == nil && tc != nil {
+			kb.AttachTechCPE(tc)
+		}
 	}
 	eng := engine.New(cfg, matcher, kb)
 	opts := engine.Options{

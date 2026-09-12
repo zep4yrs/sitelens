@@ -1,5 +1,57 @@
 # 更新日志
 
+## v3.0.0（2026-09-12，利用器）
+
+### 非 HTTP 协议检测（3.0 主项一）
+
+- 新增 `internal/netx` 原始拨号层：TCP/TLS/UDP/DNS 收发，读写 deadline +
+  单次读取上限 + send/recv 轮次上限；TLS 客户端基线最低 1.2
+- `internal/target` 新增 ValidateHostPort 非 HTTP 协议闸：协议白名单
+  （tcp/tls/udp/dns）+ 字面 IP 无条件拦截 + 域名受 resolve 开关逐 IP 校验
+- 模板漏斗准入协议族：tcp（payloads/data+hex/banner 读取）、dns（name/type）、
+  ssl（证书摘要串）三类形态转 NetCheck；匹配器支持 word/regex/binary/dsl
+  （`response` 变量经 CompileWithVars 注入，零改 dsl 包）；索引缓存 v6 → v7
+- `update-nuclei` 镜像范围扩 network/dns/ssl 顶层类别（官方库 94 条入池）
+- 引擎 stage9 接协议扫描段：serviceprobe 探得端口按「模板声明端口 = 探测
+  端口」路由，dns 模板查目标域名；命中落 Extras["netproto"] 并入实时事件流
+
+### 利用级无害验证（3.0 主项二）
+
+- 新增 `internal/exploit`：对 DAST 已验证发现做「影响证明」，判定诚实分级
+  none / observed / proven
+- 四通道：回显（唯一标记未转义复现）、报错指纹（DBMS+版本提取）、时延差
+  实测、出带回连（beacon）；LFI 泛化读取（/etc/hostname）
+- 授权三重闸：请求开关 × config `exploit.enabled`（默认关）× 目标白名单
+  （`*.domain` 只匹配子域不含父域，从严）；验收断言：未授权目标零请求
+- 命中回填 verified 条目 impact / impact_evidence，汇总落 Extras["exploit"]
+
+### 验证回归（3.0 主项三）
+
+- 新增 `internal/replay`：按原 payload 单请求重放历史发现，present / gone /
+  unsupported 诚实三分，unsupported 不进回归分母
+- `sitelens regression <scan_id>` 子命令：批量重放，退出码表达回归
+  （0=无回归，1=存在回归）；`GET /api/replay/{id}` 端点同能力
+- `tools/regression_nightly.sh` 加 3.5 步重放门禁，退出码并入总断言
+- DAST verified 条目补 payload / replay 键（证据链完整化，重放输入就位）
+
+### 数据规模扩容（2.0.x 同期落地，随 3.0 发行）
+
+- 模板池四源扩容：linuxadi/40k 聚合（44,675 → 去重净增 28,768）+ coffinxp
+  （23）+ UltimateSec 极致攻防（18），统一漏斗准入
+- 开源指纹并入：update-fp 子命令镜像 enthec/webappanalyzer（GPL-3.0）
+  2,377 条并入精编库（372 → 2,749），附 463 条 name→CPE 映射；
+  指纹加载器加固（坏正则跳过不 panic）
+- update-nvd 子命令：NVD CVE 字典全量镜像（旁路文件，缺分 CVSS 补全 +
+  检索面），情报统计与检索接入
+
+### Bug 修复
+
+- dsl PositiveGround 回归：解析器把内置 host 变量误标为抽取变量，
+  `contains(host,"x")` 被误判为正向命中依据（纯排除式模板漏进调度池空转）；
+  known 现仅标抽取变量
+- 指纹加载器 MustCompile → Compile+跳过：社区指纹库单条 RE2 不兼容模式
+  不再炸掉整个扫描进程
+
 ## v2.0.0（2026-09-11，验证器 正式版）
 
 ### 前端扫描执行细节升级（正式版主项）

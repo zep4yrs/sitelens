@@ -112,7 +112,8 @@ type KB struct {
 	tscanCount int
 	fingerDir  []FingerDirRow
 	serviceFP  []ServiceFPRow
-	nvd        *NVDStore // 旁路挂载，可 nil
+	nvd        *NVDStore         // 旁路挂载，可 nil
+	techCPE    map[string]string // 技术名 → CPE（NVD 通道），可 nil
 }
 
 // ServiceFPRow 端口服务 banner 指纹行。
@@ -330,6 +331,8 @@ func (k *KB) Match(techs []TechHit) []Finding {
 			})
 			k.nvdFill(&out[len(out)-1])
 		}
+		// NVD 字典 CPE 通道：possible 级（区间判定 3.1 接入）
+		k.nvdPossible(tech.Name, seen, &out)
 	}
 	sort.Slice(out, func(i, j int) bool {
 		return severityOrder[out[i].Severity] < severityOrder[out[j].Severity]

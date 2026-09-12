@@ -79,6 +79,9 @@ func (s *Server) reloadData() (techN, vulnN int) {
 		if nvd, nerr := intel.LoadNVD(s.cfg.Intel.NVDPath); nerr == nil && nvd != nil {
 			kb.AttachNVD(nvd)
 		}
+		if tc, terr := intel.LoadTechCPE("data/go/tech_cpe.json"); terr == nil && tc != nil {
+			kb.AttachTechCPE(tc)
+		}
 		s.kb.Store(kb)
 		s.eng.SetKB(kb)
 		if n, ok := kb.Stats()["vulns"].(int); ok {
