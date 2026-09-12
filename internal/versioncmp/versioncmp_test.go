@@ -60,3 +60,22 @@ func TestExtractVersion(t *testing.T) {
 		}
 	}
 }
+
+// B8 回归断言：commit hash 段不可比，不得产生虚假 confirmed。
+func TestVersionInHashSegmentNotComparable(t *testing.T) {
+	cases := []struct {
+		version, affected string
+		want              bool
+	}{
+		{"8.2.5", "<=14c494085e9259d7f186814cc04b28f5d2487359", false},
+		{"8.2.5", ">=8.2.0,<8.2.7", true},
+		{"8.2.5", "<=8.2.7", true},
+		{"8.2.5", "<=8.2.5.RELEASE", false}, // 含字母段：宁少报
+		{"8.2.5", ">=c798c0e", false},
+	}
+	for _, c := range cases {
+		if got := VersionIn(c.version, c.affected); got != c.want {
+			t.Errorf("VersionIn(%q, %q) = %v; want %v", c.version, c.affected, got, c.want)
+		}
+	}
+}
