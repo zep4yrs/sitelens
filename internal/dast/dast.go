@@ -295,6 +295,10 @@ func (r *Runner) RunForms(targets []FormTarget) []Finding {
 				continue
 			}
 			if hit := judge(probe.kind, resp, baseBody, Target{URL: p.ft.Action, Param: p.field}); hit != nil {
+				probeURL := p.ft.Action + "?" + p.field + "=" + probe.value
+				hit.Payload = probe.value
+				hit.Replay = "curl -sk --path-as-is -d '" + p.field + "=" + strings.ReplaceAll(probe.value, "'", `'\''`) + "' '" + p.ft.Action + "'"
+				chainEvidence(hit, probeURL, resp)
 				hits = append(hits, *hit)
 			}
 		}
@@ -358,6 +362,11 @@ func (r *Runner) timeBlind(tgt Target, done *int, total int) *Finding {
 		Severity: "high",
 		URL:      tgt.URL,
 		Param:    tgt.Param,
+		Payload:  sleepPayload(sleep),
+		Replay:   curlReplay(setParam(tgt.URL, tgt.Param, sleepPayload(sleep))),
+		Signals: []string{"基线 " + formatMS(baseMS) + " / 注入 " + formatMS(injMS) +
+			" / 复测 " + formatMS(againMS)},
+		Response: &RespSnap{Status: inj.Status, Size: len(inj.Body), Snippet: snippetOf(inj.Body)},
 		Evidence: "注入 SLEEP 后响应耗时两次为 " +
 			formatMS(injMS) + " / " + formatMS(againMS) +
 			"，基线 " + formatMS(baseMS),

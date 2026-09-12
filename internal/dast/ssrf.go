@@ -38,6 +38,7 @@ func (r *Runner) ssrfProbe(targets []Target) []Finding {
 	for i := 0; i < cap && !r.stopped(); i++ {
 		tgt := targets[i]
 		token := randToken()
+		beacon.Reserve(token)
 		u := setParam(tgt.URL, tgt.Param, r.opts.BeaconBase+"/b/"+token)
 		if len(u) > r.opts.MaxURLLen {
 			continue
@@ -49,15 +50,25 @@ func (r *Runner) ssrfProbe(targets []Target) []Finding {
 		return nil
 	}
 
-	// 轮询 beacon 注册表（目标回连是异步的，给 4s 窗口）
+	// 轮询 beacon 注册表（目标回连是异步的，固定 4s 窗口）。
+	// B19：仅当本次全部自有 token 都回连才提前收窗——按"任意命中"早退
+	// 会让后到的 token 漏报。
 	var hits map[string]bool
-	for i := 0; i < 20; i++ {
+	deadline := time.Now().Add(4 * time.Second)
+	for time.Now().Before(deadline) {
 		if r.stopped() {
 			break
 		}
 		time.Sleep(200 * time.Millisecond)
 		hits = indexBeaconHits()
-		if len(hits) > 0 {
+		all := true
+		for _, tk := range tokens {
+			if !hits[tk.token] {
+				all = false
+				break
+			}
+		}
+		if all && len(tokens) > 0 {
 			break
 		}
 	}

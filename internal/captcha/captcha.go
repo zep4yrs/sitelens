@@ -28,10 +28,14 @@ func NewClient(url string, timeout time.Duration) *Client {
 	return &Client{URL: url, Timeout: timeout}
 }
 
-// Health 检查 sidecar 是否可用。
+// Health 检查 sidecar 是否可用（B16：先归一化尾部再拼 health，兼容
+// 配置带不带 /ocr 后缀与结尾斜杠的写法）。
 func (c *Client) Health() bool {
 	cli := &http.Client{Timeout: 3 * time.Second}
-	resp, err := cli.Get(strings.TrimSuffix(c.URL, "/ocr") + "/health")
+	base := strings.TrimRight(c.URL, "/")
+	base = strings.TrimSuffix(base, "/ocr")
+	health := strings.TrimRight(base, "/") + "/health"
+	resp, err := cli.Get(health)
 	if err != nil {
 		return false
 	}

@@ -44,13 +44,9 @@ func (e *Engine) netprotoScan(host string, services []modules.ServiceHit,
 	if len(protos) == 0 {
 		return nil
 	}
-	// 严重度优先；协议模板量级 ~百，直接全量调度（无需 LRU 轮转）
+	// 严重度优先；协议模板量级 ~两百，独立于 HTTP 模板上限全量调度
+	// （B24 解耦：不再复用 NucleiCap，避免 HTTP 子集调参误伤协议覆盖）
 	sort.Slice(protos, func(i, j int) bool { return protos[i].Sev < protos[j].Sev })
-	cap := e.cfg.Checks.NucleiCap
-	if cap <= 0 || cap > len(protos) {
-		cap = len(protos)
-	}
-	protos = protos[:cap]
 
 	cfg := netx.Config{TimeoutMS: e.cfg.Active.ProbeTimeoutMS, MaxRounds: 4}
 	if cfg.TimeoutMS <= 0 {
