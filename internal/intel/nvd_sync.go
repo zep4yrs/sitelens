@@ -189,10 +189,9 @@ func writeNVDFile(outPath string, cves []NVDEntry) error {
 	gz := gzip.NewWriter(f)
 	enc := json.NewEncoder(gz)
 	if err := enc.Encode(map[string]any{
-		"kind": "sitelens-nvd", "version": 1,
-		"exported_at": time.Now().UTC().Format(time.RFC3339),
-		"count":       len(cves),
-		"cves":        cves,
+		"version": 1,
+		"count":   len(cves),
+		"cves":    cves,
 	}); err != nil {
 		f.Close()
 		os.Remove(tmp)

@@ -99,9 +99,8 @@ func updateTplIntelCommand(cfg *config.Config) int {
 		out = "data/tpl_intel.json.gz"
 	}
 	if err := writeGzJSON(out, map[string]any{
-		"kind": "sitelens-tpl-intel", "version": 1,
-		"exported_at": time.Now().UTC().Format(time.RFC3339),
-		"count":       len(rows), "rows": rows,
+		"version": 1,
+		"count":   len(rows), "rows": rows,
 	}); err != nil {
 		fmt.Fprintln(os.Stderr, "写盘失败：", err)
 		return 1
