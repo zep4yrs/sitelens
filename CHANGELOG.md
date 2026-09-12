@@ -11,7 +11,7 @@
 - 模板漏斗准入协议族：tcp（payloads/data+hex/banner 读取）、dns（name/type）、
   ssl（证书摘要串）三类形态转 NetCheck；匹配器支持 word/regex/binary/dsl
   （`response` 变量经 CompileWithVars 注入，零改 dsl 包）；索引缓存 v6 → v7
-- `update-nuclei` 镜像范围扩 network/dns/ssl 顶层类别（官方库 94 条入池）
+- `update-nuclei` 镜像范围扩 network/dns/ssl 顶层类别
 - 引擎 stage9 接协议扫描段：serviceprobe 探得端口按「模板声明端口 = 探测
   端口」路由，dns 模板查目标域名；命中落 Extras["netproto"] 并入实时事件流
 
@@ -20,7 +20,7 @@
 - 新增 `internal/exploit`：对 DAST 已验证发现做「影响证明」，判定诚实分级
   none / observed / proven
 - 四通道：回显（唯一标记未转义复现）、报错指纹（DBMS+版本提取）、时延差
-  实测、出带回连（beacon）；LFI 泛化读取（/etc/hostname）
+  实测、出带回连（进程内 beacon）；LFI 泛化读取（/etc/hostname）
 - 授权三重闸：请求开关 × config `exploit.enabled`（默认关）× 目标白名单
   （`*.domain` 只匹配子域不含父域，从严）；验收断言：未授权目标零请求
 - 命中回填 verified 条目 impact / impact_evidence，汇总落 Extras["exploit"]
@@ -28,29 +28,36 @@
 ### 验证回归（3.0 主项三）
 
 - 新增 `internal/replay`：按原 payload 单请求重放历史发现，present / gone /
-  unsupported 诚实三分，unsupported 不进回归分母
+  unsupported 三分，unsupported 不进回归分母
 - `sitelens regression <scan_id>` 子命令：批量重放，退出码表达回归
   （0=无回归，1=存在回归）；`GET /api/replay/{id}` 端点同能力
-- `tools/regression_nightly.sh` 加 3.5 步重放门禁，退出码并入总断言
+- `tools/regression_nightly.sh` 加重放门禁，退出码并入总断言
 - DAST verified 条目补 payload / replay 键（证据链完整化，重放输入就位）
 
-### 数据规模扩容（2.0.x 同期落地，随 3.0 发行）
+### 数据规模全面扩容
 
-- 模板池四源扩容：linuxadi/40k 聚合（44,675 → 去重净增 28,768）+ coffinxp
-  （23）+ UltimateSec 极致攻防（18），统一漏斗准入
-- 开源指纹并入：update-fp 子命令镜像 enthec/webappanalyzer（GPL-3.0）
-  2,377 条并入精编库（372 → 2,749），附 463 条 name→CPE 映射；
-  指纹加载器加固（坏正则跳过不 panic）
-- update-nvd 子命令：NVD CVE 字典全量镜像（旁路文件，缺分 CVSS 补全 +
-  检索面），情报统计与检索接入
+- 模板池七来源：官方 http+协议族 / afrog / Wordfence / linuxadi 40k /
+  coffinxp / 极致攻防 / 自研协议精选，全库可运行 **117,889 条**（cap 全量）
+- 指纹库 372 → **13,727**：update-fp 并入 webappanalyzer（GPL-3.0）2,377 条
+  + update-ehole 并入 EHole 中文产品 10,978 条（exact 字面量通道 +
+  headers 通配 + 字面量前缀桶预筛，指纹匹配 413ms → 24.2ms/页）
+- update-nvd：NVD CVE 字典 **371,755 条**全量镜像（评分补全 / CPE 检索）
+- update-tplintel：模板情报行 **29,554 条**（覆盖 10,289 产品）并入三级判定
+  主索引，漏洞情报合计 **31,539 条**，全部公开来源
+- 自研协议模板精选包六件：memcached / ftp / ssh / vnc / smtp / mysql
+  （banner 级只读，官方零重复）
 
 ### Bug 修复
 
 - dsl PositiveGround 回归：解析器把内置 host 变量误标为抽取变量，
   `contains(host,"x")` 被误判为正向命中依据（纯排除式模板漏进调度池空转）；
   known 现仅标抽取变量
-- 指纹加载器 MustCompile → Compile+跳过：社区指纹库单条 RE2 不兼容模式
-  不再炸掉整个扫描进程
+- 指纹加载器加固：单条 RE2 不兼容模式跳过，不再中断整个扫描进程
+- 扫描热路径索引只读化（IndexCached）：模板情报挂载不再于扫描中触发全库
+  漏斗重建（单次扫描超时修复）
+- 指纹匹配性能：13,727 规则下 413ms/页 → 24.2ms/页（前缀桶单遍预筛 +
+  ToLower 提升 + exact 关键词通道），bench 固化
+- NVD 全量镜像进度按页粒度输出（长任务不再静默无输出）
 
 ## v2.0.0（2026-09-11，验证器 正式版）
 

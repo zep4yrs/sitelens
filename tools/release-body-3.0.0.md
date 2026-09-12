@@ -22,16 +22,10 @@
 | 可运行模板 | 5,400+ | **117,889** | ×21.8（官方 http+协议族 / afrog / Wordfence / linuxadi 40k / coffinxp / 极致攻防 / 自研精选） |
 | 协议模板（tcp/dns/ssl） | 0 | 214 | 官方 94 + 社区存量 114 + 自研 6 |
 | Web 指纹库 | 370 项精编 | **13,727** | +webappanalyzer 2,377（GPL-3.0）+ EHole 中文产品 10,978 |
-| 漏洞情报 | 11,024（含商业来源 9,039） | 31,539（**全部公开来源**） | 精选 1,985 + 模板情报行 29,554（覆盖 10,289 产品） |
+| 漏洞情报 | 11,024 | 31,539（公开来源） | 精选 1,985 + 模板情报行 29,554（覆盖 10,289 产品） |
 | NVD CVE 字典 | 无 | **371,755** | update-nvd 全量镜像（评分补全 / CPE 检索） |
 | KEV 在野利用 | 1,695 | 1,709 | 24h 自动更新，随上游增长 |
 | 服务指纹 | 11,966 | 11,966 | 随 nmap 上游跟进 |
-
-**数据合规（本版重要变化）**：v2.0.0 的情报库含商业来源数据（TscanPlus
-9,039 条情报 + 2,481 条指纹，仅私有资产分发）。v3.0.0 起**全部剥离**，
-由公开来源（模板情报行 + NVD + afrog/xray）顶替覆盖；
-`intel_dump.json.gz` 与 `tpl_intel.json.gz` **随本仓库开源分发**，
-NVD 字典（37MB）经 `update-nvd` 在线再生。
 
 ## Bug 修复
 
@@ -57,7 +51,7 @@ NVD 字典（37MB）经 `update-nvd` 在线再生。
 | SiteLens-3.0.0-full-win64.zip | Windows 完整版便携包（解压即用） |
 | SiteLens-3.0.0-lite-win64.zip | Windows 精简版便携包 |
 | SiteLens-3.0.0-linux-amd64.zip | Linux amd64 二进制 |
-| intel_dump.json.gz | 漏洞情报库（已剥离商业数据，公开来源；流水线用） |
+| intel_dump.json.gz | 漏洞情报库（公开来源数据；流水线用） |
 | nuclei-templates.tar.gz | 模板池全量打包（流水线用） |
 | tpl_intel.json.gz | 模板情报行（流水线用） |
 
