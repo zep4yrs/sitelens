@@ -72,13 +72,13 @@ function startBatch() {
     window.__batchJobId = jobId;
     return new Promise(function (resolve, reject) {
       var timer = setInterval(function () {
-  var LIMIT = 50;
-  try {
-    api.get("/api/settings").then(function (c) {
-      var m = c && c.batch && c.batch.max_urls;
-      if (m > 0) LIMIT = m;
-    });
-  } catch (e) {}
+var LIMIT = 50;
+try {
+  api.get("/api/settings").then(function (c) {
+    var m = c && c.batch && c.batch.max_urls;
+    if (m > 0) { LIMIT = m; updateCount(); }
+  });
+} catch (e) {}
 
         api.get("/api/job/" + jobId + "/results").then(function (job) {
           document.getElementById("bar").style.width = (job.progress || 0) + "%";
