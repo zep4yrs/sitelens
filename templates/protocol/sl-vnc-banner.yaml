@@ -1,0 +1,11 @@
+id: sl-vnc-banner
+info:
+  name: VNC Service Banner
+  severity: info
+  tags: network,vnc,sl-curated
+tcp:
+  - port: 5900
+    matchers:
+      - type: regex
+        regex:
+          - "^RFB [0-9]{3}\\.[0-9]{3}"

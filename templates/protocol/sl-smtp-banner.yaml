@@ -1,0 +1,11 @@
+id: sl-smtp-banner
+info:
+  name: SMTP Service Banner
+  severity: info
+  tags: network,smtp,sl-curated
+tcp:
+  - port: 25
+    matchers:
+      - type: regex
+        regex:
+          - "^220[ -][^\\r\\n]*(ESMTP|SMTP|mail)"

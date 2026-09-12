@@ -1,0 +1,13 @@
+id: sl-memcached-banner
+info:
+  name: Memcached Service Banner
+  severity: low
+  tags: network,memcached,sl-curated
+tcp:
+  - inputs:
+      - data: "version\r\n"
+    port: 11211
+    matchers:
+      - type: word
+        words:
+          - "VERSION "
