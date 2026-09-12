@@ -6,8 +6,8 @@
 set -u
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-FARM="$ROOT/../ranges/farm_up.sh"          # 靶场农场脚本（ranges/ 不入 git 的先自行放置）
-MATRIX="$ROOT/../ranges/matrix_v3.sh"      # 矩阵跑批脚本
+FARM="/d/fengqiao/ranges-lab/farm_up.sh"          # 靶场资产位于 D:/fengqiao/ranges-lab（不在工作区内）
+MATRIX="/d/fengqiao/ranges-lab/matrix_v3.sh"      # 矩阵跑批脚本
 FAIL=0
 
 log() { printf '\n[regression] %s\n' "$*"; }
