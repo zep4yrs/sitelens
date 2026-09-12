@@ -321,10 +321,7 @@ func (e *Engine) Scan(rawURL string, opts Options, onProgress progress, cancel f
 		if len(cmsIDs) > 0 {
 			onProgress(75, "CMS 联动专项 check…")
 		}
-		// 组级并行度：配置 MaxConcurrent（服务任务并发）×8 ≈ 硬件 2/3 口径；
-		// 16 并发任务配置下 checks 池为 12（默认），本机 24 核实测安全
-		checks.Workers = e.cfg.Checks.Workers
-		hits := checks.RunChecks(client, baseURL, opts.Checks, cmsIDs, cancelled,
+		hits := checks.RunChecks(client, baseURL, opts.Checks, cmsIDs, e.cfg.Checks.Workers, cancelled,
 			func(done, total int, msg string) {
 				if total > 0 {
 					onProgress(75+done*10/total, "check："+msg)
@@ -355,7 +352,7 @@ func (e *Engine) Scan(rawURL string, opts Options, onProgress progress, cancel f
 	if opts.Checks == "all" && !cancelled() && e.cfg.Checks.NucleiCap > 0 && e.cfg.Checks.NucleiDir != "" {
 		onProgress(84, "运行 Nuclei 社区模板子集…")
 		if nl := e.nucleiSubset(res.Technologies, res.Title, opts.NucleiCap); len(nl) > 0 {
-			for _, h := range checks.RunList(client, baseURL, nl, cancelled,
+			for _, h := range checks.RunList(client, baseURL, nl, e.cfg.Checks.Workers, cancelled,
 				func(done, total int, msg string) {
 					if total > 0 {
 						onProgress(84, fmt.Sprintf("nuclei %d/%d", done, total))
@@ -710,13 +707,18 @@ func (e *Engine) loadNucleiLRU() {
 	}
 }
 
-// saveNucleiLRU 调度表落盘。
+// saveNucleiLRU 调度表落盘（tmp+rename 原子写，防中途崩溃损坏调度表）。
 func (e *Engine) saveNucleiLRU() {
+	dst := filepath.Join(e.cfg.Store.DataDir, "nuclei_schedule.json")
 	data, err := json.Marshal(e.nucleiLRU)
 	if err != nil {
 		return
 	}
-	_ = os.WriteFile(filepath.Join(e.cfg.Store.DataDir, "nuclei_schedule.json"), data, 0o644)
+	tmp := dst + ".tmp"
+	if err := os.WriteFile(tmp, data, 0o644); err != nil {
+		return
+	}
+	_ = os.Rename(tmp, dst)
 }
 
 // dastFetcher 把 httpx 客户端适配为 dast.Fetcher。

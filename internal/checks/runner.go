@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 
 	"cnb.cool/feng-qiao/sitelens/internal/dsl"
 	"cnb.cool/feng-qiao/sitelens/internal/httpx"
@@ -62,13 +63,10 @@ func sortHits(hits []Hit) {
 	})
 }
 
-// Workers check 组级并行度（0/负 = 默认 12）。engine 从配置注入。
-var Workers = 0
-
 // RunChecks 执行 check 集（core = 核心集，all = 核心+扩展+联动）。
 // onHit 在每条命中产生时即时回调（nil = 不回调），供上层实时事件流使用。
 func RunChecks(client *httpx.Client, targetURL string, level string,
-	includeIDs []string, cancelCheck func() bool,
+	includeIDs []string, workers int, cancelCheck func() bool,
 	onProgress func(done, total int, msg string), onHit func(Hit)) []Hit {
 	if onProgress == nil {
 		onProgress = func(int, int, string) {}
@@ -83,13 +81,13 @@ func RunChecks(client *httpx.Client, targetURL string, level string,
 			selected = append(selected, c)
 		}
 	}
-	return RunList(client, targetURL, selected, cancelCheck, onProgress, onHit)
+	return RunList(client, targetURL, selected, workers, cancelCheck, onProgress, onHit)
 }
 
 // RunList 执行给定 check 集（Nuclei 子集等外部规则装载入口）。
 // onHit 在每条命中产生时即时回调（nil = 不回调）。
 func RunList(client *httpx.Client, targetURL string, list []Check,
-	cancelCheck func() bool, onProgress func(done, total int, msg string),
+	workers int, cancelCheck func() bool, onProgress func(done, total int, msg string),
 	onHit func(Hit)) []Hit {
 	if onProgress == nil {
 		onProgress = func(int, int, string) {}
@@ -133,7 +131,6 @@ func RunList(client *httpx.Client, targetURL string, list []Check,
 	total := len(selected)
 	// 组级并行：路径组之间相互独立，worker 池并发执行（默认 12）。
 	// 共享面仅 hits/done/onHit/进度，全部持锁；组内判定为纯函数。
-	workers := Workers
 	if workers <= 0 {
 		workers = 12
 	}
@@ -206,8 +203,6 @@ func RunList(client *httpx.Client, targetURL string, list []Check,
 						onHit(h)
 					}
 					hits = append(hits, h)
-					done += len(g.idx)
-					onProgress(done, total, chk0.Path)
 					mu.Unlock()
 				}
 			}
@@ -384,6 +379,8 @@ func extractVarNames(exs []ExtractSpec) []string {
 // 已知集合，不同表不可复用 AST）。
 var dslVarsCache sync.Map
 
+var dslVarsCacheN atomic.Int64 // B7：编译缓存计数上限，防长驻无界增长
+
 // compileDSLVars 带抽取变量名表的 dsl 编译缓存。
 func compileDSLVars(expr string, names []string) (*dsl.Program, error) {
 	key := expr + "\x00" + strings.Join(names, "\x00")
@@ -394,7 +391,10 @@ func compileDSLVars(expr string, names []string) (*dsl.Program, error) {
 	if err != nil {
 		return nil, err
 	}
-	dslVarsCache.Store(key, prog)
+	if dslVarsCacheN.Load() < 4096 { // B7：上限防长驻无界增长
+		dslVarsCacheN.Add(1)
+		dslVarsCache.Store(key, prog)
+	}
 	return prog, nil
 }
 

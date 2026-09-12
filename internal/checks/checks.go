@@ -12,6 +12,7 @@ import (
 	"regexp"
 	"strings"
 	"sync"
+	"sync/atomic"
 )
 
 // Match 单条 check 的匹配条件。
@@ -52,7 +53,12 @@ type Check struct {
 }
 
 // regexCache 正则编译缓存（pattern → 编译结果或 nil 表示不可编译）。
-var regexCache sync.Map
+// B7：计数上限防长驻无界增长（超限后不缓存，仅当场编译）。
+var (
+	regexCache    sync.Map
+	regexCacheN   atomic.Int64
+	regexCacheMax = int64(8192)
+)
 
 // compileCached 编译正则并缓存；非法模式返回 nil。
 func compileCached(pattern string) *regexp.Regexp {
@@ -64,7 +70,9 @@ func compileCached(pattern string) *regexp.Regexp {
 	if err != nil {
 		re = nil
 	}
-	regexCache.Store(pattern, re)
+	if regexCacheN.Add(1) <= regexCacheMax {
+		regexCache.Store(pattern, re)
+	}
 	return re
 }
 

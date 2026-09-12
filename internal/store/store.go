@@ -9,6 +9,8 @@ package store
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 	"sort"
@@ -72,7 +74,7 @@ func New(dataDir string, maxRecords int) (*Store, error) {
 		if uerr := json.Unmarshal(data, &s.h); uerr != nil {
 			// 历史文件损坏：隔离为 .corrupt 后从空库继续（ID 从头计，
 			// 不覆盖原始损坏文件以便人工抢救）
-			_ = os.Rename(s.path, s.path+".corrupt")
+			_ = os.Rename(s.path, fmt.Sprintf("%s.%d.corrupt", s.path, time.Now().UnixNano()))
 			s.h = history{NextID: 1}
 		}
 	}
@@ -206,7 +208,7 @@ func (s *Store) HistoryStats() map[string]any {
 	}
 	avg := 0.0
 	if len(s.h.Scans) > 0 {
-		avg = float64(int(float64(total)/float64(len(s.h.Scans))*10)) / 10
+		avg = math.Round(float64(total)/float64(len(s.h.Scans))*10) / 10
 	}
 	return map[string]any{
 		"scans": len(s.h.Scans), "hosts": len(hosts), "avg_techs": avg,
