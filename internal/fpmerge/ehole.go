@@ -50,10 +50,10 @@ func MergeEHole(data []byte, technologiesPath string) (Stats, error) {
 
 	// 按 cms 分组聚合关键词
 	type agg struct {
-		name    string
-		html    []string
-		header  []string
-		iconH   []int64
+		name      string
+		html      []string
+		header    []string
+		iconH     []int64
 		important bool
 	}
 	groups := map[string]*agg{}
