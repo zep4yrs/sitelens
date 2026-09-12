@@ -71,8 +71,16 @@ function loadDeskPrefs() {
 
 function saveDeskPrefs() {
   try {
+    // 端口缺省值兜底：JSON.stringify 会丢弃 undefined，导致 port 字段
+    // 静默消失、下次启动回退 5087（端口粘性断裂）。此处显式补齐。
+    const out = {
+      closeAction: deskPrefs.closeAction,
+      bounds: deskPrefs.bounds || null,
+      port: (typeof deskPrefs.port === 'number' && deskPrefs.port > 0)
+        ? deskPrefs.port : 5087
+    };
     fs.writeFileSync(path.join(app.getPath('userData'), 'desktop-prefs.json'),
-      JSON.stringify(deskPrefs, null, 2));
+      JSON.stringify(out, null, 2));
   } catch (_) { /* 写失败不影响主流程 */ }
 }
 
@@ -435,7 +443,17 @@ async function handleEngineCrash(code) {
     return;
   }
   restartTimes.push(now);
-  const ok = await engine.restart();
+  let ok = false;
+  try {
+    const rr = await engine.restart(deskPrefs.port);
+    ok = !!(rr && rr.port);
+    if (ok && rr.port !== deskPrefs.port) {
+      deskPrefs.port = rr.port;
+      saveDeskPrefs();
+    }
+  } catch (err) {
+    bootLog('engine auto-restart failed: ' + err);
+  }
   bootLog('engine auto-restart ' + (ok ? 'ok' : 'failed') +
     ' at ' + engine.url);
   if (ok) {
@@ -464,8 +482,12 @@ app.whenReady().then(async () => {
   };
   try {
     var r = await engine.start(deskPrefs.port);
-    deskPrefs.port = r.port;
-    saveDeskPrefs();
+    // 端口协商结果回写壳偏好：认领成功即持久化，下次启动不再漂移。
+    // r.port 为实际监听端口（引擎侧协商后的权威值）。
+    if (r && typeof r.port === 'number' && r.port > 0) {
+      deskPrefs.port = r.port;
+      saveDeskPrefs();
+    }
     bootLog('engine ready at ' + engine.url);
   } catch (err) {
     bootLog('engine failed: ' + err);

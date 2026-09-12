@@ -21,6 +21,7 @@ const http = require('http');
 const net = require('net');
 const path = require('path');
 const merge = require('../lib/yml-merge.js');
+const portPolicy = require('../lib/port-policy.js');
 
 const isDev = !app.isPackaged;
 const ENGINE_DIR = isDev
@@ -33,6 +34,7 @@ const CONFIG_NAME = '.sitelens.yml';
 
 let engine = null;
 let engineURL = '';
+let currentPort = 0; // 当前引擎监听端口（壳偏好回写用）
 let started = false; // 就绪后为 true：崩溃回调只对「启动成功后的退出」触发
 let onCrash = null;
 
@@ -154,7 +156,11 @@ function readDesktopConfig() {
 // 与旧实现的本质区别：受管键经 merge 原位更新，用户经设置页保存的
 // 引擎配置（headless、爬取、api_token…）与注释、未知键全部保留。
 // 未标记的存量配置（开发仓库的用户配置）完全不动，沿用其端口。
-async function ensureConfig() {
+//
+// 端口优先级（P0 修正）：壳偏好 prefPort > 配置原文 > DEFAULT_PORT。
+// 壳偏好是权威源——上次协商出的随机端口必须能被认领回来，否则
+// 「随机端口漂回 5087」的老问题会在重启后复现。
+async function ensureConfig(prefPort) {
   seedOnce();
   const cfgPath = path.join(ENGINE_DIR, CONFIG_NAME);
   const cur = readDesktopConfig();
@@ -163,19 +169,24 @@ async function ensureConfig() {
   // - 端口由壳偏好持久化（desktop-prefs.json），跨重启稳定
   // - 主机沿用配置原文（用户改绑 0.0.0.0 等予以保留，不悄悄回退）
   // - 回读失败降级必须有日志
-  let usePort = 5087;
   let listenHost = '127.0.0.1';
+  let confPort = null;
   if (cur) {
     const prev = merge.readListenValue(cur.text);
     if (prev) {
-      usePort = prev.port;
       listenHost = prev.host;
-    } else {
+      confPort = prev.port;
+    } else if (!portPolicy.validPort(prefPort)) {
       log('listen 端口回读失败（配置存在但格式不可解析），回退默认端口 ' + DEFAULT_PORT);
     }
   }
+  const pick = portPolicy.resolvePreferredPort({
+    prefPort: prefPort, confPort: confPort, defaultPort: DEFAULT_PORT
+  });
+  let usePort = pick.port;
   if (!(await portFree(usePort))) {
-    log('端口 ' + usePort + ' 被占用，改用随机空闲端口并写回配置');
+    log('端口 ' + usePort + '（来源：' + portPolicy.describePortSource(pick.source) +
+      '）被占用，改用随机空闲端口并写回配置');
     usePort = await freePort();
   }
 
@@ -224,23 +235,25 @@ function spawnEngine() {
   });
 }
 
-// start 初始化布局、拉起引擎并等就绪；resolve 引擎根 URL。
-// 端口被抢注（TOCTOU）时引擎绑定失败即退，这里最多重试 3 次
-//（每次重选空闲端口重写配置）。
-async function start() {
+// start 初始化布局、拉起引擎并等就绪；resolve { url, port }。
+// prefPort 为壳偏好里的期望端口（可选）：优先认领上次协商结果，
+// 避免「随机端口重启后漂回 5087」。端口被抢注（TOCTOU）时引擎
+// 绑定失败即退，这里最多重试 3 次（每次重选空闲端口重写配置）。
+async function start(prefPort) {
   const exeName = process.platform === 'win32' ? 'sitelens.exe' : 'sitelens';
   if (!fs.existsSync(path.join(ENGINE_DIR, exeName))) {
     throw new Error('引擎程序缺失：' + ENGINE_DIR);
   }
   let lastErr = new Error('引擎启动失败');
   for (let attempt = 1; attempt <= 3; attempt++) {
-    const port = await ensureConfig();
+    const port = await ensureConfig(prefPort);
     engineURL = 'http://127.0.0.1:' + port;
     spawnEngine();
     const rr = await waitReady(READY_TIMEOUT_MS);
     if (rr.ready) {
       started = true;
-      return engineURL;
+      currentPort = port;
+      return { url: engineURL, port: port };
     }
     lastErr = rr.exited
       ? new Error('引擎启动即退出（退出码 ' + rr.code + '，常见原因：端口被占用）')
@@ -251,9 +264,9 @@ async function start() {
 }
 
 // restart 崩溃自愈入口：与 start 同路径（配置已就位，直接拉起）。
-async function restart() {
-  if (engine) return engineURL;
-  return start();
+async function restart(prefPort) {
+  if (engine) return { url: engineURL, port: currentPort };
+  return start(prefPort);
 }
 
 // stop 尽可能干净的停止：Windows 用 taskkill 树杀（/T 覆盖引擎拉起的
