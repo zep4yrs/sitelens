@@ -196,6 +196,21 @@ func (s *Store) Delete(id int64) bool {
 	return false
 }
 
+// ClearAll 清空全部历史（设置页·数据管理）。返回清除条数。
+// 刻意不走归档：清空是隐私操作，用户预期是记录彻底消失
+// （归档文件会保留正文，与预期相悖）。
+func (s *Store) ClearAll() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	n := len(s.h.Scans)
+	if n == 0 {
+		return 0
+	}
+	s.h.Scans = nil
+	s.flush()
+	return n
+}
+
 // HistoryStats 历史统计（次数/站点数/平均技术数）。
 func (s *Store) HistoryStats() map[string]any {
 	s.mu.RLock()

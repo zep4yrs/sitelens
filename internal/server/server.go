@@ -172,7 +172,7 @@ func (s *Server) Handler() http.Handler {
 		"/": "app.html", "/app": "app.html", "/batch": "batch.html",
 		"/history": "history.html", "/api-docs": "api-docs.html",
 		"/intel": "intel.html", "/audit": "audit.html",
-		"/settings": "settings.html",
+		"/settings": "settings.html", "/legal": "legal.html",
 	}
 	for route, file := range pages {
 		mux.HandleFunc(route, func(w http.ResponseWriter, r *http.Request) {
@@ -210,6 +210,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/history", s.hHistory)
 	mux.HandleFunc("GET /api/history/{id}", s.hHistoryDetail)
 	mux.HandleFunc("DELETE /api/history/{id}", s.hHistoryDelete)
+	mux.HandleFunc("POST /api/history/clear", s.hHistoryClear)
 	mux.HandleFunc("GET /api/export/{id}", s.hExport)
 	mux.HandleFunc("GET /api/diff", s.hDiff)
 	mux.HandleFunc("GET /api/vuln-search", s.hVulnSearch)
@@ -707,6 +708,11 @@ func (s *Server) hHistoryDelete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, 200, map[string]any{"deleted": s.st.Delete(id)})
+}
+
+// hHistoryClear 清空全部扫描历史（设置页·数据管理；前端二次确认后调用）。
+func (s *Server) hHistoryClear(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, 200, map[string]any{"cleared": s.st.ClearAll()})
 }
 
 func (s *Server) hExport(w http.ResponseWriter, r *http.Request) {

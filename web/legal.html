@@ -1,0 +1,242 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>协议与声明 — SiteLens</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<script>
+(function(){
+  try {
+    var p = JSON.parse(localStorage.getItem("sitelens-prefs") || "{}") || {};
+    if (p.theme === "dark" || (p.theme === "auto" &&
+        window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches)) {
+      document.documentElement.classList.add("dark");
+    }
+  } catch (e) {}
+})();
+</script>
+<style>
+  .toc{display:flex;flex-wrap:wrap;gap:10px;margin:0 0 26px}
+  .toc a{padding:8px 16px;font-size:13px;border:1px solid var(--border);border-radius:999px;
+    background:var(--card);color:var(--muted-fg)}
+  .toc a:hover{color:var(--foreground);background:var(--accent)}
+  article.doc{background:var(--card);border:1px solid var(--border);border-radius:10px;
+    padding:26px 30px;margin:0 0 26px;scroll-margin-top:20px}
+  article.doc h2{font-family:var(--font-mono);font-size:18px;margin:0 0 4px}
+  article.doc .eff{font-size:12px;color:var(--muted-fg);margin:0 0 18px}
+  article.doc h3{font-size:14px;margin:20px 0 8px}
+  article.doc p,article.doc li{font-size:13.5px;line-height:1.9;color:var(--foreground)}
+  article.doc ul,article.doc ol{padding-left:22px;margin:8px 0}
+  article.doc .soft{color:var(--muted-fg);font-size:12.5px}
+  table.oss{width:100%;border-collapse:collapse;font-size:12.5px;margin:12px 0}
+  table.oss th,table.oss td{padding:8px 10px;border-bottom:1px solid
+    color-mix(in srgb,var(--border) 55%,transparent);text-align:left;vertical-align:top;line-height:1.6}
+  table.oss th{font-family:var(--font-mono);font-size:11.5px;color:var(--muted-fg)}
+  table.oss tr:last-child td{border-bottom:none}
+</style>
+</head>
+<body>
+<script src="/js/common.js"></script>
+
+<main class="page">
+  <h1>协议与声明</h1>
+  <p class="sub">本页汇集 SiteLens 的用户协议、隐私政策、服务条款与开源软件声明。
+    安装或使用即表示已阅读并同意下列条款。</p>
+
+  <nav class="toc">
+    <a href="#tos">用户服务协议</a>
+    <a href="#privacy">隐私政策</a>
+    <a href="#service">服务协议与免责声明</a>
+    <a href="#opensource">开源软件声明</a>
+    <a href="#help">帮助与反馈</a>
+  </nav>
+
+  <!-- ================= 用户服务协议 ================= -->
+  <article class="doc" id="tos">
+    <h2>用户服务协议</h2>
+    <p class="eff">生效日期：2026-09-12 ｜ 适用版本：v3.0.0 及以后</p>
+
+    <h3>一、协议的接受</h3>
+    <p>本协议是您与本软件开发者之间关于 SiteLens（下称"本软件"）的安装与使用的约定。
+      您下载、安装、复制或使用本软件，即视为已阅读并同意本协议全部内容；
+      不同意任一条款，请立即停止使用并删除本软件。</p>
+
+    <h3>二、使用范围与授权前提</h3>
+    <ol>
+      <li>本软件为网络安全评估工具，具备端口探测、漏洞验证、利用级验证（默认关闭）等
+        主动检测能力，仅限用于：<b>您自有的资产</b>，或<b>已获得目标所有者书面授权</b>的资产。</li>
+      <li>利用级验证受三重闸控制（请求开关 + 配置总闸 + 目标白名单），白名单外目标
+        零请求，该行为有单元测试固化。</li>
+      <li>您应自行确认对目标资产拥有合法的测试授权，并自行承担因越权使用产生的
+        全部法律责任。开发者不提供、也不默许任何"默认可测"的授权假设。</li>
+    </ol>
+
+    <h3>三、知识产权</h3>
+    <p>本软件依据 <b>GPL-3.0</b> 许可证开源分发。任何分发（含修改后的版本）
+      须同样以 GPL-3.0 提供 complete corresponding source。各第三方组件的权利义务
+      见本页《开源软件声明》。</p>
+
+    <h3>四、服务的提供</h3>
+    <p>本软件为本地部署的离线工具：引擎与全部页面运行于您自己的机器，
+      不存在开发者运营的云端服务。开发者不就"可用性、连续性"作出服务等级承诺；
+      本协议所称"服务"指软件自身功能。</p>
+
+    <h3>五、协议的变更与终止</h3>
+    <p>软件版本更新可能伴随本协议修订，修订随版本分发并在本页标注生效日期。
+      您随时可以通过删除本软件终止本协议；第 2、3、6 条在终止后继续有效。</p>
+
+    <h3>六、责任限制</h3>
+    <p>本软件按"现状"提供，不附带任何明示或默示的担保。完整免责条款见
+      本页《服务协议与免责声明》。</p>
+  </article>
+
+  <!-- ================= 隐私政策 ================= -->
+  <article class="doc" id="privacy">
+    <h2>隐私政策</h2>
+    <p class="eff">生效日期：2026-09-12 ｜ 一句话版本：数据只在本机，开发者收不到，也永远不会要。</p>
+
+    <h3>一、我们收集什么</h3>
+    <p><b>什么都不收集。</b>本软件无账号体系、无埋点、无遥测、无崩溃上报。
+      开发者的服务器不接收您的任何扫描数据、目标信息、机器信息或使用记录。</p>
+
+    <h3>二、数据存在哪里</h3>
+    <ul>
+      <li>桌面版：全部数据保存在 <span class="mono">%APPDATA%\SiteLens</span>
+        （扫描历史 state、模板池 pools、插件 plugins、可变情报 data），
+        安装目录仅含只读资产。</li>
+      <li>浏览器模式：数据保存在引擎工作目录的 <span class="mono">data\state</span>，
+        外观偏好保存在浏览器 localStorage。</li>
+      <li>API Token 仅存储在本机（浏览器 localStorage / 配置文件），用于本机
+        前后端鉴权，不经任何第三方传输。</li>
+    </ul>
+
+    <h3>三、数据会发到哪里</h3>
+    <p>仅在您主动触发时发生对外请求：</p>
+    <ul>
+      <li><b>对扫描目标</b>：探测 / 验证请求（这是软件功能本身，仅限授权目标）；</li>
+      <li><b>您主动点按的更新 / 同步</b>：模板与情报更新（nuclei / afrog / NVD / OSV 等公开源）、
+        检查更新（桌面版拉取更新源清单）。</li>
+    </ul>
+    <p>除上述外，引擎与页面不发起任何网络请求，不存在"后台上报"。</p>
+
+    <h3>四、如何删除数据</h3>
+    <p>设置页 · 数据管理 → 「清空全部扫描历史」可即时清空扫描记录
+      （设计为彻底删除，不经归档留底）；卸载桌面版时按提示选择是否一并删除
+      用户数据目录即可实现整体清除。</p>
+
+    <h3>五、第三方组件</h3>
+    <p>软件内置的开源组件及其许可证见本页《开源软件声明》；
+      这些组件在本地运行，不改变本政策的数据流承诺。</p>
+
+    <h3>六、未成年人</h3>
+    <p>本软件为专业安全评估工具，面向具备合法授权场景的从业者，不面向未成年人提供。</p>
+  </article>
+
+  <!-- ================= 服务协议与免责声明 ================= -->
+  <article class="doc" id="service">
+    <h2>服务协议与免责声明</h2>
+    <p class="eff">生效日期：2026-09-12</p>
+
+    <h3>一、按现状提供</h3>
+    <p>本软件在 GPL-3.0 第 15、16 条下按"现状"分发，<b>不提供任何明示或默示的担保</b>，
+      包括但不限于适销性、特定用途适用性与不侵权。您需自行承担使用本软件的
+      全部风险与后果。</p>
+
+    <h3>二、检测结果的性质</h3>
+    <ul>
+      <li>扫描结果（含"已验证 / 利用级"结论）均为<b>评估参考</b>，不构成对目标
+        安全状态的任何承诺或认证；</li>
+      <li>自动检测存在误报与漏报，重大决策（上线、整改、验收）前应人工复核；</li>
+      <li>结论分级与证据链的语义以《开发文档》相关章节为准。</li>
+    </ul>
+
+    <h3>三、越权使用的责任</h3>
+    <p>对未获授权目标使用本软件可能违反《网络安全法》《刑法》（含非法侵入计算机
+      信息系统罪、破坏计算机信息系统罪等）及您所在司法辖区的对应法律。
+      因此产生的一切行政、民事、刑事责任由使用者自行承担，与开发者无关。</p>
+
+    <h3>四、无害化边界</h3>
+    <p>本软件在工程上默认遵守以下红线（这是实现，不是承诺替代）：
+      利用级能力默认关 + 白名单外零请求；POC 载荷不落盘；探测请求限速可配；
+      协议探测为 banner 级只读。任何试图去除这些限制的二次分发行为
+      本身违反本协议与 GPL-3.0 下开发者注明的附加许可条件。</p>
+
+    <h3>五、法律适用</h3>
+    <p>本条款依据中华人民共和国法律解释。因使用本软件引起的争议，
+      在法律允许的最大范围内，双方协商解决。</p>
+  </article>
+
+  <!-- ================= 开源软件声明 ================= -->
+  <article class="doc" id="opensource">
+    <h2>开源软件声明</h2>
+    <p class="eff">SiteLens 依据 GPL-3.0 分发。下表列出主要第三方组件：用途、许可证、
+      以及本项目是否对其进行了修改。各组件版权归原作者所有。</p>
+
+    <h3>运行时与界面</h3>
+    <table class="oss">
+      <thead><tr><th>组件</th><th>用途</th><th>许可证</th><th>是否修改</th></tr></thead>
+      <tbody>
+        <tr><td>Go 工具链与标准库</td><td>引擎运行时</td><td>BSD-3-Clause</td><td>未修改</td></tr>
+        <tr><td>Electron（桌面版壳）</td><td>窗口 / 托盘 / 自动更新</td><td>MIT</td><td>未修改（壳代码为本仓库自研）</td></tr>
+        <tr><td>electron-updater / electron-builder</td><td>桌面版自动更新与打包</td><td>MIT</td><td>未修改</td></tr>
+        <tr><td>霞鹜文楷 LXGW WenKai（webfont）</td><td>界面字体</td><td>SIL OFL 1.1</td><td>未修改</td></tr>
+      </tbody>
+    </table>
+
+    <h3>检测数据与模板</h3>
+    <table class="oss">
+      <thead><tr><th>来源</th><th>用途</th><th>许可证</th><th>是否修改</th></tr></thead>
+      <tbody>
+        <tr><td>nuclei-templates（projectdiscovery 及社区）</td><td>漏洞模板主体</td><td>MIT</td><td>未修改（镜像子集 + 转换准入过滤，不改检测语义）</td></tr>
+        <tr><td>linuxadi/40k、coffinxp、极致攻防等社区精选</td><td>模板扩充</td><td>随上游仓库（nuclei 生态）</td><td>有修改（精选子集，去重后并入）</td></tr>
+        <tr><td>自研协议模板六件（memcached/ftp/ssh/vnc/smtp/mysql）</td><td>协议检测</td><td>随本仓库 GPL-3.0</td><td>自研</td></tr>
+      </tbody>
+    </table>
+
+    <h3>指纹与情报</h3>
+    <table class="oss">
+      <thead><tr><th>来源</th><th>用途</th><th>许可证</th><th>是否修改</th></tr></thead>
+      <tbody>
+        <tr><td>enthec/webappanalyzer</td><td>Web 指纹 2,377 条</td><td>GPL-3.0</td><td>有修改（数据格式转换后并入）</td></tr>
+        <tr><td>EHole（EdgeSecurity）</td><td>中文产品指纹 10,978 条</td><td>随上游仓库</td><td>有修改（转 exact 字面量通道）</td></tr>
+        <tr><td>自建精编指纹</td><td>Web 指纹 372 条 / 路径指纹 38 条</td><td>随本仓库 GPL-3.0</td><td>自研</td></tr>
+        <tr><td>afrog（zan8in）</td><td>精选漏洞情报 1,497 条</td><td>MIT</td><td>有修改（精选子集与格式转换）</td></tr>
+        <tr><td>xray 社区收录 POC</td><td>精选漏洞情报 488 条</td><td>随上游收录源</td><td>有修改（格式转换）</td></tr>
+        <tr><td>NVD（NIST）</td><td>CVE 字典 371,755 条</td><td>美国政府公开发布</td><td>未修改（镜像）</td></tr>
+        <tr><td>CISA KEV</td><td>在野利用目录 1,709 条</td><td>美国政府公开发布</td><td>未修改（镜像，24h 自动更新）</td></tr>
+        <tr><td>微软安全公告</td><td>微软系 CVE 详情 34,931 条</td><td>公开资料（引用）</td><td>未修改（镜像）</td></tr>
+        <tr><td>nmap service probes</td><td>端口服务识别参照</td><td>GPL-2.0（上游）</td><td>有修改：本仓库指纹为 nmap 风格自维护数据集，未拷贝上游数据文件</td></tr>
+      </tbody>
+    </table>
+
+    <h3>许可证义务</h3>
+    <p class="soft">GPL-3.0 下分发本软件或其修改版，须随附完整对应源码并同样以 GPL-3.0 授权；
+      对 GPL-3.0 组件（webappanalyzer 数据）的并入方式为数据格式转换而非代码拷贝，
+      许可证义务依数据著作权属性履行。若您认为本表存在遗漏或错误，请通过
+      Issues 反馈，核实后将在下一版本修正。</p>
+  </article>
+
+  <!-- ================= 帮助与反馈 ================= -->
+  <article class="doc" id="help">
+    <h2>帮助与反馈</h2>
+    <h3>常见问题</h3>
+    <ul>
+      <li><b>首次使用没有模板？</b>桌面版模板池不随安装包：设置 · 引擎配置 → 执行
+        update-nuclei 在线拉取（约 700MB）。</li>
+      <li><b>目标 robots 全站禁爬？</b>引擎配置页关闭「遵循 robots.txt」（仅限授权目标）。</li>
+      <li><b>桌面版怎么手动检查更新？</b>托盘图标右键 → 检查更新。</li>
+      <li><b>换电脑迁移？</b>设置 · 数据管理 → 导出偏好；扫描历史整目录拷贝
+        %APPDATA%\SiteLens\state。</li>
+    </ul>
+    <h3>反馈渠道</h3>
+    <ul>
+      <li>问题反馈：<a href="https://cnb.cool/feng-qiao/sitelens/-/issues" target="_blank" rel="noopener noreferrer" style="color:var(--info)">仓库 Issues</a></li>
+      <li>反馈请附：引擎版本（设置 · 关于）、目标环境特征、脱敏后的请求 / 响应摘要；
+        切勿附带未授权目标的完整数据。</li>
+    </ul>
+  </article>
+</main>
+</body>
+</html>
