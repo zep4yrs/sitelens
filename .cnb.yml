@@ -45,19 +45,15 @@ main:
               export ELECTRON_SKIP_BINARY_DOWNLOAD=1
               export ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/
               export ELECTRON_BUILDER_BINARIES_MIRROR=https://npmmirror.com/mirrors/electron-builder-binaries/
-              apt-get update -qq && apt-get install -y -qq nodejs npm >/dev/null
+              export CSC_IDENTITY_AUTO_DISCOVERY=false
+              apt-get update -qq && apt-get install -y -qq nodejs npm zip >/dev/null
               cd desktop
               npm ci --no-audit --no-fund
-              # 桌面壳单测（配置合并器等纯函数回归）
-              # 无参 --test 自动发现 test/*.test.js（Node 22+ 目录参数会被当模块路径）
               node --test
               npm run engine
-              npx electron-builder --win nsis
+              npx electron-builder --win nsis --config.win.signAndEditExecutable=false
               cd ..
-              export SITLENS_BODY_FILE="$PWD/tools/release-body-3.0.0.md"
-              # ① 版本 release：安装包随 tag 发布
               bash tools/release_upload.sh desktop/release/SiteLens-Setup-3.0.0.exe
-              # ② desktop-stable 更新源：三件套覆盖发布（客户端自动更新拉这里）
               SITLENS_TAG=desktop-stable bash tools/release_upload.sh desktop/release/SiteLens-Setup-3.0.0.exe
               SITLENS_TAG=desktop-stable bash tools/release_upload.sh desktop/release/SiteLens-Setup-3.0.0.exe.blockmap
               SITLENS_TAG=desktop-stable bash tools/release_upload.sh desktop/release/latest.yml
