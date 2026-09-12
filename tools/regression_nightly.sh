@@ -35,6 +35,32 @@ done
 log "3/4 矩阵跑批（认证态 + 零误报断言）"
 bash "$MATRIX" || FAIL=1
 
+log "3.5/4 验证回归：重放最近一次扫描的已验证发现（3.0 P3 门禁）"
+# sitelens regression 退出码语义：0=无回归（gone=0）；1=存在回归（发现失效）。
+# 最新 scan id 从 history.json 读取；无历史或无二进制则跳过（不阻塞原门禁）。
+BIN="$ROOT/bin/sitelens"
+if [ ! -x "$BIN" ]; then
+  mkdir -p "$ROOT/bin"
+  (cd "$ROOT" && go build -o "$BIN" ./cmd/sitelens) || log "二进制构建失败，跳过重放门禁"
+fi
+if [ -x "$BIN" ] && [ -f "$ROOT/data/state/history.json" ]; then
+  LAST_ID=$(python - << 'PYEOF'
+import json
+try:
+    h = json.load(open('data/state/history.json', encoding='utf-8'))
+    scans = h.get('scans', [])
+    print(int(scans[-1]['id']) if scans else 0)
+except Exception:
+    print(0)
+PYEOF
+)
+  if [ "${LAST_ID:-0}" != "0" ]; then
+    "$BIN" regression "$LAST_ID" || { log "重放存在回归（发现失效）"; FAIL=1; }
+  else
+    log "无历史扫描可重放，跳过"
+  fi
+fi
+
 log "4/4 断言汇总"
 # 断言由 matrix_v3.sh 输出 JSON 汇总承载：
 #   干净站 verified 计数必须为 0（零误报底线）
