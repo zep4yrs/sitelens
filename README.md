@@ -96,9 +96,11 @@ SiteLens 不是只报"可能有问题"的扫描器——每条发现都做**二�
 
 **方式一：图形安装（推荐）** —— 从 [Releases](../../releases) 下载 `SiteLens-3.0.0-setup-full.exe`，向导安装，完成即启动。
 
-**方式二：便携包** —— 下载 `full-win64.zip` 解压，双击 `sitelens.exe`。
+**方式二：桌面版（独立窗口 + 自动更新）** —— 下载 `SiteLens Setup 3.0.0.exe` 双击安装；常驻托盘，新版本自动下载、重启即升级。详见 [desktop/README.md](desktop/README.md)。
 
-**方式三：源码**
+**方式三：便携包** —— 下载 `full-win64.zip` 解压，双击 `sitelens.exe`。
+
+**方式四：源码**
 
 ```bash
 go build -o sitelens.exe ./cmd/sitelens

@@ -1,0 +1,69 @@
+{
+  "name": "sitelens-desktop",
+  "productName": "SiteLens",
+  "version": "3.0.0",
+  "description": "SiteLens 站点透视 桌面版（Electron 壳 + Go 引擎单二进制）",
+  "main": "main.js",
+  "author": "feng-qiao",
+  "license": "GPL-3.0",
+  "scripts": {
+    "engine": "node build-engine.js",
+    "start": "electron .",
+    "dist": "electron-builder --win nsis"
+  },
+  "build": {
+    "appId": "cool.cnb.feng-qiao.sitelens",
+    "productName": "SiteLens",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "main.js",
+      "engine.js",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "engine",
+        "to": "engine"
+      },
+      {
+        "from": "build/icon.png",
+        "to": "icon.png"
+      }
+    ],
+    "win": {
+      "icon": "build/icon.ico",
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
+    },
+    "nsis": {
+      "oneClick": true,
+      "perMachine": false,
+      "deleteAppDataOnUninstall": false,
+      "differentialPackage": true
+    },
+    "publish": [
+      {
+        "provider": "generic",
+        "url": "https://cnb.cool/feng-qiao/sitelens/releases/download/desktop-stable/"
+      }
+    ]
+  },
+  "devDependencies": {
+    "electron": "^44.3.0",
+    "electron-builder": "^26.15.3"
+  },
+  "dependencies": {
+    "electron-updater": "^6.8.9"
+  },
+  "allowScripts": {
+    "electron@44.3.0": true
+  }
+}

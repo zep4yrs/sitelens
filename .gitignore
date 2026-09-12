@@ -64,3 +64,9 @@ __pycache__/
 .mimosa/
 bin/
 data/intel_dump.json.gz.orig
+
+# 桌面版（Electron 壳）本地产物
+desktop/node_modules/
+desktop/release/
+desktop/engine/
+desktop/*.yml
