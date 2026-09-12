@@ -14,5 +14,11 @@ contextBridge.exposeInMainWorld('sitelens', {
   // 订阅「更新包已下载」事件（参数为版本号字符串）
   onDownloaded: function (cb) {
     ipcRenderer.on('update:downloaded', function (_e, ver) { cb(ver); });
-  }
+  },
+
+  // ---- 桌面端信息与偏好（设置 · 桌面端） ----
+  desktopGetInfo: function () { return ipcRenderer.invoke('desktop:getInfo'); },
+  desktopSetAutoStart: function (on) { return ipcRenderer.invoke('desktop:setAutoStart', on); },
+  desktopSetCloseAction: function (v) { return ipcRenderer.invoke('desktop:setCloseAction', v); },
+  desktopOpenDataDir: function () { return ipcRenderer.invoke('desktop:openDataDir'); }
 });

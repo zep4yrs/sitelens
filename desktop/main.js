@@ -56,8 +56,39 @@ if (!app.requestSingleInstanceLock()) {
 
 // ---- 窗口与托盘 ----
 
+// ---- 桌面端偏好（userData/desktop-prefs.json）：窗口边界 + 关闭按钮行为 ----
+let deskPrefs = { closeAction: 'tray', bounds: null };
+
+function loadDeskPrefs() {
+  try {
+    var raw = fs.readFileSync(path.join(app.getPath('userData'), 'desktop-prefs.json'), 'utf8');
+    var p = JSON.parse(raw) || {};
+    if (p.closeAction === 'quit' || p.closeAction === 'tray') deskPrefs.closeAction = p.closeAction;
+    if (p.bounds && p.bounds.width >= 900 && p.bounds.height >= 600) deskPrefs.bounds = p.bounds;
+  } catch (_) { /* 首次无偏好文件 */ }
+}
+
+function saveDeskPrefs() {
+  try {
+    fs.writeFileSync(path.join(app.getPath('userData'), 'desktop-prefs.json'),
+      JSON.stringify(deskPrefs, null, 2));
+  } catch (_) { /* 写失败不影响主流程 */ }
+}
+
+var boundsTimer = null;
+function scheduleSaveBounds() {
+  clearTimeout(boundsTimer);
+  boundsTimer = setTimeout(function () {
+    if (win && !win.isDestroyed() && !win.isMinimized() && win.isVisible()) {
+      deskPrefs.bounds = win.getBounds();
+      saveDeskPrefs();
+    }
+  }, 800);
+}
+
 function createWindow() {
-  win = new BrowserWindow({
+  loadDeskPrefs();
+  var opts = {
     width: 1380,
     height: 920,
     minWidth: 1080,
@@ -72,8 +103,18 @@ function createWindow() {
       spellcheck: false,
       preload: path.join(__dirname, 'preload.js'), // 设置页经 window.sitelens 检查更新
     },
-  });
+  };
+  // 窗口大小与位置记忆：有有效存档则原样恢复
+  if (deskPrefs.bounds) {
+    opts.x = deskPrefs.bounds.x;
+    opts.y = deskPrefs.bounds.y;
+    opts.width = deskPrefs.bounds.width;
+    opts.height = deskPrefs.bounds.height;
+  }
+  win = new BrowserWindow(opts);
   Menu.setApplicationMenu(null); // 页面导航/刷新快捷键交给页面自身
+  win.on('resize', scheduleSaveBounds);
+  win.on('move', scheduleSaveBounds);
   bootLog('createWindow: loadURL ' + engine.url);
   win.loadURL(engine.url).then(() => bootLog('loadURL ok')).catch((err) => {
     bootLog('loadURL failed: ' + err);
@@ -103,9 +144,15 @@ function createWindow() {
       showNow();
     }
   }, 8000);
-  // 关闭 = 收进托盘（后台引擎继续跑扫描），退出走托盘菜单
+  // 关闭按钮行为可配（设置 · 桌面端）：默认收进托盘（后台引擎继续跑扫描），
+  // 也可选「直接退出」
   win.on('close', (e) => {
     if (quittingByUser) return;
+    if (deskPrefs.closeAction === 'quit') {
+      quittingByUser = true;
+      app.quit();
+      return;
+    }
     e.preventDefault();
     win.hide();
     if (!hideHintShown) {
@@ -113,7 +160,7 @@ function createWindow() {
       tray.displayBalloon({
         iconType: 'info',
         title: 'SiteLens 仍在运行',
-        content: '扫描在后台继续。退出请用托盘图标右键菜单。',
+        content: '扫描在后台继续。退出请用托盘图标右键菜单，或在设置 · 桌面端修改关闭行为。',
       });
     }
   });
@@ -286,6 +333,31 @@ function setupIpc() {
   });
   ipcMain.handle('update:openReleases', function () {
     shell.openExternal(RELEASES_URL);
+  });
+  // 桌面端信息与偏好（设置 · 桌面端页签）
+  ipcMain.handle('desktop:getInfo', function () {
+    return {
+      version: app.getVersion(),
+      installDir: path.dirname(app.getPath('exe')),
+      dataDir: app.getPath('userData'),
+      autoStart: app.getLoginItemSettings().openAtLogin,
+      closeAction: deskPrefs.closeAction,
+      isDev: isDev
+    };
+  });
+  ipcMain.handle('desktop:setAutoStart', function (_e, on) {
+    app.setLoginItemSettings({ openAtLogin: !!on });
+    return app.getLoginItemSettings().openAtLogin;
+  });
+  ipcMain.handle('desktop:setCloseAction', function (_e, v) {
+    if (v === 'quit' || v === 'tray') {
+      deskPrefs.closeAction = v;
+      saveDeskPrefs();
+    }
+    return deskPrefs.closeAction;
+  });
+  ipcMain.handle('desktop:openDataDir', function () {
+    shell.openPath(app.getPath('userData'));
   });
 }
 
