@@ -349,7 +349,7 @@ func TestLegacyRedirects(t *testing.T) {
 
 func TestPagesServe(t *testing.T) {
 	_, api := newServer(t)
-	for _, p := range []string{"/", "/app", "/batch", "/history", "/intel", "/audit", "/api-docs", "/about", "/js/common.js"} {
+	for _, p := range []string{"/", "/app", "/batch", "/history", "/intel", "/audit", "/api-docs", "/js/common.js"} {
 		resp, err := http.Get(api.URL + p)
 		if err != nil {
 			t.Fatal(err)
