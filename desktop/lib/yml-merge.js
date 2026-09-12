@@ -89,4 +89,11 @@ function quoteIfNeeded(v) {
   return '"' + v.replace(/\\/g, "/") + '"';
 }
 
-module.exports = { mergeManaged: mergeManaged, quoteIfNeeded: quoteIfNeeded };
+// readListenPort 从配置文本读 web.listen 端口；兼容带引号/不带引号两种
+// 形态（与 mergeManaged 的写出格式互为逆操作）。读不出返回 null。
+function readListenPort(text) {
+  const m = String(text || "").match(/^\s*listen:\s*"?127\.0\.0\.1:(\d+)"?\s*$/m);
+  return m ? Number(m[1]) : null;
+}
+
+module.exports = { mergeManaged: mergeManaged, quoteIfNeeded: quoteIfNeeded, readListenPort: readListenPort };

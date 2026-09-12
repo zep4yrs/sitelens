@@ -94,7 +94,7 @@ func RunList(client *httpx.Client, targetURL string, list []Check,
 	}
 	selected := list
 
-	baseSize, basePrefix := soft404Baseline(client, targetURL)
+	baseRaw, baseStripped, basePrefix := soft404Baseline(client, targetURL)
 
 	// 同路径聚类：Method+Path+Body+ContentType 相同的 check 共享一次
 	// 请求——Nuclei 子集大量模板探测同一路径（如 /），聚类后请求数从
@@ -153,7 +153,11 @@ func RunList(client *httpx.Client, targetURL string, list []Check,
 			return
 		}
 		body := stripEcho(resp.Body, u, chk0.Path)
-		soft404 := baseSize > 0 && len(resp.Body) == baseSize &&
+		// B14 复扫修正：长度门以「剔除回显后」口径比较——原始长度含回显
+		// 文本，目标路径与探针路径不等长时必失配，catch-all 回显站漏判。
+		// 原始长度相等（静态站）作为快速路径保留。
+		soft404 := baseStripped > 0 &&
+			(len(body) == baseStripped || len(resp.Body) == baseRaw) &&
 			strings.HasPrefix(strings.ToLower(body[:min(200, len(body))]),
 				strings.ToLower(basePrefix[:min(200, len(basePrefix))]))
 
@@ -560,17 +564,19 @@ func joinURL(base, path string) string {
 }
 
 // soft404Baseline 取一个不存在路径的响应做软 404 基线。
+// 返回：原始长度、剔除回显后长度、剔除回显后的正文前缀（小写）。
 // 与比对侧同口径（B2）：先剔除本次探针自身的回显（URL/路径）再取前缀，
 // 否则 catch-all 回显站会因探针路径与目标路径不同而漏判软 404。
-func soft404Baseline(client *httpx.Client, targetURL string) (int, string) {
+func soft404Baseline(client *httpx.Client, targetURL string) (int, int, string) {
 	probeURL := joinURL(targetURL, "__sitelens_probe_none__")
 	resp, err := client.GetFollow(probeURL)
 	if err != nil || resp == nil {
-		return 0, ""
+		return 0, 0, ""
 	}
-	prefix := strings.ToLower(stripEcho(resp.Body, probeURL, "__sitelens_probe_none__"))
+	stripped := stripEcho(resp.Body, probeURL, "__sitelens_probe_none__")
+	prefix := strings.ToLower(stripped)
 	if len(prefix) > 200 {
 		prefix = prefix[:200]
 	}
-	return len(resp.Body), prefix
+	return len(resp.Body), len(stripped), prefix
 }

@@ -40,6 +40,9 @@ type settingsConfig struct {
 	Intel struct {
 		OverridesPath string `json:"overrides_path"`
 	} `json:"intel"`
+	Batch struct {
+		MaxURLs int `json:"max_urls"`
+	} `json:"batch"`
 }
 
 func (s *Server) settingsCfg() settingsConfig {
@@ -56,6 +59,7 @@ func (s *Server) settingsCfg() settingsConfig {
 	v.Scan.TimeoutSec = s.cfg.Scan.TimeoutSec
 	v.Checks.NucleiCap = s.cfg.Checks.NucleiCap
 	v.Intel.OverridesPath = s.cfg.Intel.OverridesPath
+	v.Batch.MaxURLs = s.cfg.Batch.MaxURLs
 	return v
 }
 
@@ -85,6 +89,9 @@ func (s *Server) applySettings(v settingsConfig) {
 		s.cfg.Checks.NucleiCap = v.Checks.NucleiCap
 	}
 	s.cfg.Intel.OverridesPath = v.Intel.OverridesPath
+	if v.Batch.MaxURLs > 0 {
+		s.cfg.Batch.MaxURLs = v.Batch.MaxURLs
+	}
 }
 
 // persistSettings 把设置写回用户 yml（Node 读改写：保留注释与未纳管键）。
@@ -110,6 +117,7 @@ func (s *Server) persistSettings(v settingsConfig) error {
 		},
 		"checks": {"nuclei_cap": v.Checks.NucleiCap},
 		"intel":  {"overrides_path": v.Intel.OverridesPath},
+		"batch":  {"max_urls": v.Batch.MaxURLs},
 	}
 	if v.Web.APIToken != "" {
 		updates["web"]["api_token"] = v.Web.APIToken
