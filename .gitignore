@@ -18,8 +18,8 @@ docs/build/
 # 本地临时文件
 _issue_*.md
 _review_*.md
-data/intel_dump.json.gz
 data/nvd_cves.json.gz
+data/intel_dump.json.gz.orig
 
 # Go 运行时产物
 /data/state/
@@ -63,5 +63,4 @@ __pycache__/
 # 工具本地缓存目录
 .mimosa/
 bin/
-data/tpl_intel.json.gz
 data/intel_dump.json.gz.orig
