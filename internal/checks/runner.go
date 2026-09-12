@@ -62,6 +62,9 @@ func sortHits(hits []Hit) {
 	})
 }
 
+// Workers check 组级并行度（0/负 = 默认 12）。engine 从配置注入。
+var Workers = 0
+
 // RunChecks 执行 check 集（core = 核心集，all = 核心+扩展+联动）。
 // onHit 在每条命中产生时即时回调（nil = 不回调），供上层实时事件流使用。
 func RunChecks(client *httpx.Client, targetURL string, level string,
@@ -128,9 +131,16 @@ func RunList(client *httpx.Client, targetURL string, list []Check,
 	hits := []Hit{}
 	done := 0
 	total := len(selected)
-	for _, k := range order {
+	// 组级并行：路径组之间相互独立，worker 池并发执行（默认 12）。
+	// 共享面仅 hits/done/onHit/进度，全部持锁；组内判定为纯函数。
+	workers := Workers
+	if workers <= 0 {
+		workers = 12
+	}
+	var mu sync.Mutex
+	processGroup := func(k string) {
 		if cancelCheck != nil && cancelCheck() {
-			break
+			return
 		}
 		g := groups[k]
 		chk0 := selected[g.idx[0]]
@@ -139,9 +149,11 @@ func RunList(client *httpx.Client, targetURL string, list []Check,
 
 		resp, gerr := fetch(u, chk0.Match)
 		if gerr != nil || resp == nil {
+			mu.Lock()
 			done += len(g.idx)
 			onProgress(done, total, chk0.Path)
-			continue
+			mu.Unlock()
+			return
 		}
 		body := stripEcho(resp.Body, u, chk0.Path)
 		soft404 := baseSize > 0 && len(resp.Body) == baseSize &&
@@ -189,16 +201,39 @@ func RunList(client *httpx.Client, targetURL string, list []Check,
 						Replay:    curlReplay(u, chk.Match),
 						Confirmed: true,
 					}
+					mu.Lock()
 					if onHit != nil {
 						onHit(h)
 					}
 					hits = append(hits, h)
+					done += len(g.idx)
+					onProgress(done, total, chk0.Path)
+					mu.Unlock()
 				}
 			}
 		}
+		mu.Lock()
 		done += len(g.idx)
 		onProgress(done, total, chk0.Path)
+		mu.Unlock()
 	}
+	// worker 池
+	var wg sync.WaitGroup
+	taskCh := make(chan string, len(order))
+	for w := 0; w < workers; w++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for k := range taskCh {
+				processGroup(k)
+			}
+		}()
+	}
+	for _, k := range order {
+		taskCh <- k
+	}
+	close(taskCh)
+	wg.Wait()
 	sortHits(hits)
 	return hits
 }
