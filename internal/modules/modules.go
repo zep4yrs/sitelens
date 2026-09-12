@@ -164,6 +164,21 @@ func tryBypass403(client *httpx.Client, u, path, baseURL string, rootSize int,
 	return nil, ""
 }
 
+// serializedProgress 把并发进度回调串行化（B18）：本包内部持锁后再调
+// 消费者，消费者无需自行保证线程安全——消除「谁调谁负责」的隐式契约。
+// nil 进度返回 nil，保持调用侧 `if progress != nil` 的判空习惯。
+func serializedProgress(f func(done, total int, msg string)) func(done, total int, msg string) {
+	if f == nil {
+		return nil
+	}
+	var mu sync.Mutex
+	return func(done, total int, msg string) {
+		mu.Lock()
+		defer mu.Unlock()
+		f(done, total, msg)
+	}
+}
+
 // DirScan 目录探测：命中 = 200/401/403 且尺寸不在软404基线；
 // 403 且 bypass 开启时按变体表做只读绕过尝试（路径变异/信任头/HEAD·OPTIONS），
 // 命中的技术记入 PageHit.Bypass。
@@ -272,6 +287,7 @@ func SubdomainEnumWith(domain string, cfg config.ActiveConfig,
 	if len(words) == 0 || domain == "" {
 		return nil
 	}
+	progress = serializedProgress(progress) // B18：多 worker 并发调 progress
 	workers := cfg.SubWorkers
 	if workers <= 0 {
 		workers = 20

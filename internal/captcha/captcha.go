@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 )
@@ -28,19 +29,33 @@ func NewClient(url string, timeout time.Duration) *Client {
 	return &Client{URL: url, Timeout: timeout}
 }
 
-// Health 检查 sidecar 是否可用（B16：先归一化尾部再拼 health，兼容
-// 配置带不带 /ocr 后缀与结尾斜杠的写法）。
+// Health 检查 sidecar 是否可用（B16 容错：配置地址带不带 /ocr 后缀、
+// 带其他路径或结尾斜杠均可探测——依次尝试「剥 /ocr + /health」与
+// 「根路径 /health」，任一返回 200 即可用）。
 func (c *Client) Health() bool {
 	cli := &http.Client{Timeout: 3 * time.Second}
 	base := strings.TrimRight(c.URL, "/")
-	base = strings.TrimSuffix(base, "/ocr")
-	health := strings.TrimRight(base, "/") + "/health"
-	resp, err := cli.Get(health)
-	if err != nil {
-		return false
+	candidates := []string{strings.TrimRight(strings.TrimSuffix(base, "/ocr"), "/") + "/health"}
+	if u, err := url.Parse(c.URL); err == nil && u.Host != "" {
+		scheme := u.Scheme
+		if scheme == "" {
+			scheme = "http"
+		}
+		if root := scheme + "://" + u.Host + "/health"; root != candidates[0] {
+			candidates = append(candidates, root)
+		}
 	}
-	defer resp.Body.Close()
-	return resp.StatusCode == 200
+	for _, health := range candidates {
+		resp, err := cli.Get(health)
+		if err != nil {
+			continue
+		}
+		_ = resp.Body.Close()
+		if resp.StatusCode == 200 {
+			return true
+		}
+	}
+	return false
 }
 
 // SolveImage 识别验证码图片字节，返回文本（已去空白）。

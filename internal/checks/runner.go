@@ -532,10 +532,21 @@ func joinHeaders(headers map[string]string) string {
 // stripEcho 剔除响应中回显的请求 URL 与路径（防自指误报）。
 // Apache 类 404 页回显的是去 query 的路径，故两种形态都剔——
 // 否则路径中的关键词（如 /wprm_recipe）会留在正文里喂给词匹配。
+// stripEcho 剔除响应正文中本次请求自身的回显（完整 URL 与路径形态）。
+// B2 收口：路径统一为「前导 /」形态再剔除——探针侧传的路径无前导斜杠、
+// 主循环侧有，此前口径不一会让 catch-all 回显站的软 404 基线残留一个
+// '/'（如 "/<html>…" vs "<html>…"），前缀比对失配 → 生产可达误报。
+// 两侧共用本函数，任一形态都剔净，口径不再漂移。
 func stripEcho(body string, reqURL string, path string) string {
 	body = strings.ReplaceAll(body, reqURL, "")
-	body = strings.ReplaceAll(body, path, "")
-	if u, err := url.Parse(path); err == nil && u.Path != "" && u.Path != "/" {
+	p := path
+	if p != "" && !strings.HasPrefix(p, "/") {
+		p = "/" + p
+	}
+	if p != "" {
+		body = strings.ReplaceAll(body, p, "")
+	}
+	if u, err := url.Parse(p); err == nil && u.Path != "" && u.Path != "/" {
 		body = strings.ReplaceAll(body, u.Path, "")
 	}
 	return body

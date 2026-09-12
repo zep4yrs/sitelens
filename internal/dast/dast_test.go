@@ -282,3 +282,63 @@ func TestRunFormsBaselineError(t *testing.T) {
 		}
 	}
 }
+
+// B11 复扫收口：时间盲注证据链必须与 boolBlind 同规格——
+// Request（重放请求文本）此前缺失，命中时一并断言其余链字段。
+func TestTimeBlindEvidenceChainComplete(t *testing.T) {
+	f := &fakeFetch{rules: []func(u string) *Resp{
+		func(u string) *Resp {
+			if strings.Contains(u, "SLEEP") {
+				time.Sleep(25 * time.Millisecond) // 仅 SLEEP 请求慢
+				return &Resp{Status: 200, Body: "ok"}
+			}
+			return nil
+		},
+	}}
+	opts := DefaultOptions()
+	opts.BlindThresholdMS = 10
+	hits := New(f, opts).Run([]string{"https://a.com/list?id=1"})
+	var found *Finding
+	for i := range hits {
+		if hits[i].Check == "sqli-blind-time" {
+			found = &hits[i]
+		}
+	}
+	if found == nil {
+		t.Fatalf("SLEEP 慢响应应命中时间盲注: %+v", hits)
+	}
+	if found.Request == "" || !strings.HasPrefix(found.Request, "GET ") {
+		t.Fatalf("证据链缺 Request: %+v", found)
+	}
+	if found.Payload == "" || found.Replay == "" || found.Response == nil || len(found.Signals) == 0 {
+		t.Fatalf("证据链不完整: %+v", found)
+	}
+}
+
+// B19 收窗回归：取消后立即收窗，不再吃满 4s 轮询窗。
+func TestSSRFProbeCancelQuick(t *testing.T) {
+	r := newRunner(&fakeFetch{})
+	r.opts.BeaconBase = "http://127.0.0.1:1" // 不可达 beacon，必然无回连
+	r.SetCancel(func() bool { return true })
+	start := time.Now()
+	got := r.ssrfProbe([]Target{{URL: "https://a.com/a?x=1", Param: "x"}})
+	if el := time.Since(start); el > time.Second {
+		t.Fatalf("取消后应立即收窗，实际耗时 %v", el)
+	}
+	if len(got) != 0 {
+		t.Fatalf("无回连不应出发现: %+v", got)
+	}
+}
+
+// B19：未配置 beacon 时零开销直接返回，不进入轮询。
+func TestSSRFProbeNoBeaconNoWait(t *testing.T) {
+	r := newRunner(&fakeFetch{})
+	start := time.Now()
+	got := r.ssrfProbe([]Target{{URL: "https://a.com/a?x=1", Param: "x"}})
+	if got != nil {
+		t.Fatalf("未配置 beacon 应无发现: %+v", got)
+	}
+	if el := time.Since(start); el > 100*time.Millisecond {
+		t.Fatalf("未配置 beacon 不应等待，实际 %v", el)
+	}
+}

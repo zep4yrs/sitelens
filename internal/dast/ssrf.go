@@ -50,16 +50,17 @@ func (r *Runner) ssrfProbe(targets []Target) []Finding {
 		return nil
 	}
 
-	// 轮询 beacon 注册表（目标回连是异步的，固定 4s 窗口）。
-	// B19：仅当本次全部自有 token 都回连才提前收窗——按"任意命中"早退
-	// 会让后到的 token 漏报。
+	// 轮询 beacon 注册表（目标回连是异步的，最长 4s 窗口）。
+	// B19 收窗语义：先查一次再睡（快速回连零等待）；本次全部自有 token
+	// 都回连即提前收窗——按"任意命中"早退会让后到的 token 漏报；
+	// 无 token 已在上方直接返回，不进入轮询。残留幽灵命中由 beacon
+	// 侧 TTL/Reset 清理兜底（复扫 B4 收口）。
 	var hits map[string]bool
 	deadline := time.Now().Add(4 * time.Second)
-	for time.Now().Before(deadline) {
+	for {
 		if r.stopped() {
 			break
 		}
-		time.Sleep(200 * time.Millisecond)
 		hits = indexBeaconHits()
 		all := true
 		for _, tk := range tokens {
@@ -68,9 +69,13 @@ func (r *Runner) ssrfProbe(targets []Target) []Finding {
 				break
 			}
 		}
-		if all && len(tokens) > 0 {
+		if all {
 			break
 		}
+		if !time.Now().Before(deadline) {
+			break
+		}
+		time.Sleep(200 * time.Millisecond)
 	}
 
 	var out []Finding
