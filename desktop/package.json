@@ -20,6 +20,7 @@
     "files": [
       "main.js",
       "engine.js",
+      "preload.js",
       "package.json"
     ],
     "extraResources": [

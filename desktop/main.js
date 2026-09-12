@@ -6,16 +6,26 @@
 // engine.js。引擎工作目录指向自带 data 载荷，数据写入依赖 NSIS
 // 按用户安装（%LOCALAPPDATA%\Programs\SiteLens，用户可写）。
 //
-// 自动更新：electron-updater generic 源（feed 目录见 package.json
-// build.publish），引擎二进制随安装包整体更新；数据与模板更新仍走
-// 引擎既有 update-* 渠道，不在此重复实现。
-const { app, BrowserWindow, Tray, Menu, dialog, nativeImage, shell } = require('electron');
+// 自动更新：electron-updater generic 多源轮询（CNB 主源 → Gitee → GitHub
+// 镜像，哪个通就用哪个并粘住），引擎二进制随安装包整体更新；数据与模板
+// 更新仍走引擎既有 update-* 渠道，不在此重复实现。
+// 设置页「检查更新」按钮经 IPC（preload.js 暴露 window.sitelens）直连
+// 本文件的更新器，真实检查、实时反馈、可直接重启升级。
+const { app, BrowserWindow, Tray, Menu, dialog, nativeImage, shell, ipcMain } = require('electron');
 const { autoUpdater } = require('electron-updater');
 const fs = require('fs');
 const path = require('path');
 const engine = require('./engine');
 
 const isDev = !app.isPackaged;
+const RELEASES_URL = 'https://cnb.cool/feng-qiao/sitelens/releases';
+// 更新源轮询顺序：CNB 主源（国内直连）→ Gitee 镜像 → GitHub 镜像。
+// 三个源的 desktop-stable release 须放同一套三件套（exe/blockmap/latest.yml）。
+const FEEDS = [
+  { name: 'CNB', url: 'https://cnb.cool/feng-qiao/sitelens/-/releases/download/desktop-stable/' },
+  { name: 'Gitee', url: 'https://gitee.com/map1ebridge/sitelens/releases/download/desktop-stable/' },
+  { name: 'GitHub', url: 'https://github.com/zep4yrs/sitelens/releases/download/desktop-stable/' }
+];
 const ICON_PATH = isDev ? path.join(__dirname, 'build', 'icon.png')
   : path.join(process.resourcesPath, 'icon.png');
 
@@ -60,6 +70,7 @@ function createWindow() {
       nodeIntegration: false,
       contextIsolation: true,
       spellcheck: false,
+      preload: path.join(__dirname, 'preload.js'), // 设置页经 window.sitelens 检查更新
     },
   });
   Menu.setApplicationMenu(null); // 页面导航/刷新快捷键交给页面自身
@@ -149,14 +160,62 @@ function createTray() {
 
 // ---- 自动更新 ----
 
-function checkUpdates(manual) {
-  if (isDev) {
-    if (manual) dialog.showMessageBox({ type: 'info', message: '开发模式下不检查更新。' });
-    return;
+let feedIdx = 0;          // 上次成功的更新源（粘住，减少来回试）
+let checking = false;     // 并发检查合并：托盘/设置页/周期检查共用一次
+let checkPromise = null;
+
+// runUpdateCheck 多源轮询执行一次检查：CNB → Gitee → GitHub，
+// 成功的源粘住（下次从它开始）。autoDownload=true，发现新版本即自动
+// 后台差量下载；下载完成经 update-downloaded 事件广播给页面与托盘。
+// 返回 { state: latest|available|dev|error, current, latest, feed, error }。
+async function runUpdateCheck() {
+  var current = app.getVersion();
+  if (isDev) return { state: 'dev', current };
+  if (checking) return checkPromise;
+  checking = true;
+  checkPromise = (async function () {
+    var lastErr = null;
+    for (var i = 0; i < FEEDS.length; i++) {
+      var idx = (feedIdx + i) % FEEDS.length;
+      var feed = FEEDS[idx];
+      try {
+        autoUpdater.setFeedURL({ provider: 'generic', url: feed.url });
+        var result = await autoUpdater.checkForUpdates();
+        feedIdx = idx; // 成功即粘住
+        var latest = result && result.updateInfo ? result.updateInfo.version : '';
+        var state = latest && latest !== current ? 'available' : 'latest';
+        bootLog('update check ok via ' + feed.name + ': latest v' + latest +
+          (state === 'available' ? ' (downloading)' : ''));
+        return { state: state, current: current, latest: latest, feed: feed.name };
+      } catch (err) {
+        lastErr = err;
+        bootLog('update check failed via ' + feed.name + ': ' + (err && err.message || err));
+      }
+    }
+    return { state: 'error', current: current, error: String(lastErr && lastErr.message || lastErr) };
+  }());
+  try {
+    return await checkPromise;
+  } finally {
+    checking = false;
+    checkPromise = null;
   }
-  autoUpdater.checkForUpdates().catch(() => {
-    if (manual) {
-      dialog.showMessageBox({ type: 'info', message: '检查更新失败：无法连接更新源。' });
+}
+
+// checkUpdates 托盘/周期入口：静默执行，manual 时以弹窗汇报结论。
+function checkUpdates(manual) {
+  runUpdateCheck().then(function (r) {
+    if (!manual || r.state === 'dev') return;
+    if (r.state === 'latest') {
+      dialog.showMessageBox({ type: 'info', message: '已是最新版本 v' + r.current + '。' });
+    } else if (r.state === 'available') {
+      dialog.showMessageBox({
+        type: 'info',
+        message: '发现新版本 v' + r.latest + '',
+        detail: '正在后台下载（更新源：' + r.feed + '），完成后会提示你重启升级。'
+      });
+    } else {
+      dialog.showMessageBox({ type: 'info', message: '检查更新失败：所有更新源均不可达。' });
     }
   });
 }
@@ -176,7 +235,12 @@ function setupUpdater() {
     });
   });
   autoUpdater.on('update-downloaded', (info) => {
-    bootLog('update downloaded: v' + (info && info.version));
+    var ver = info && info.version ? info.version : '';
+    bootLog('update downloaded: v' + ver);
+    // 广播给全部窗口：设置页「关于与更新」实时更新状态并提供重启按钮
+    BrowserWindow.getAllWindows().forEach(function (w) {
+      if (!w.isDestroyed()) w.webContents.send('update:downloaded', ver);
+    });
     // E2E 测试钩子：设置 SITLENS_E2E_UPDATE 时自动安装（真机全链路验证用）
     if (process.env.SITLENS_E2E_UPDATE) {
       bootLog('e2e: auto quitAndInstall');
@@ -184,12 +248,12 @@ function setupUpdater() {
       setTimeout(() => autoUpdater.quitAndInstall(), 3000);
       return;
     }
-    var ver = info && info.version ? 'v' + info.version : '';
+    var label = ver ? 'v' + ver : '';
     if (ver && ver === dialogedVer) {
       // 选过「稍后」的同一版本：托盘轻提醒即可
       tray.displayBalloon({
         iconType: 'info',
-        title: 'SiteLens ' + ver + ' 已就绪',
+        title: 'SiteLens ' + label + ' 已就绪',
         content: '重启应用即完成更新。',
       });
       return;
@@ -199,7 +263,7 @@ function setupUpdater() {
       type: 'info',
       buttons: ['立即重启', '稍后'],
       defaultId: 0,
-      message: 'SiteLens ' + ver + ' 已就绪',
+      message: 'SiteLens ' + label + ' 已就绪',
       detail: '重启应用即完成更新（后台引擎一并升级）。',
     }).then(({ response }) => {
       if (response === 0) {
@@ -210,6 +274,18 @@ function setupUpdater() {
   });
   autoUpdater.on('error', (err) => {
     bootLog('updater error: ' + (err && err.message || err));
+  });
+}
+
+// IPC：设置页（渲染进程）经 preload 暴露的 window.sitelens 调用
+function setupIpc() {
+  ipcMain.handle('update:check', function () { return runUpdateCheck(); });
+  ipcMain.handle('update:install', function () {
+    quittingByUser = true;
+    autoUpdater.quitAndInstall();
+  });
+  ipcMain.handle('update:openReleases', function () {
+    shell.openExternal(RELEASES_URL);
   });
 }
 
@@ -274,6 +350,7 @@ app.whenReady().then(async () => {
   }
   createWindow();
   setupUpdater();
+  setupIpc();
   startUpdateLoop(); // 启动静默检查 + 每 6 小时复查
 });
 
