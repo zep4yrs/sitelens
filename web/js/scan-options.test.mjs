@@ -80,14 +80,16 @@ test("依赖与覆盖面警告：403 绕过需目录探测；未选 Web 提示�
   assert.strictEqual(r.options.dast, true, "验证勾选仍按用户意愿下发");
 });
 
-test("利用级验证映射并附白名单警示", () => {
+test("利用级验证映射并附总闸/禁扫警示", () => {
   const r = scanOpts.build({
     scope: { web: true },
     verify: { ex: true },
     strength: "std"
   });
   assert.strictEqual(r.options.exploit, true);
-  assert.ok(r.warnings.some((w) => w.includes("白名单")));
+  assert.ok(r.warnings.some((w) => w.includes("利用级验证") && w.includes("总闸")),
+    "警示应提示设置页总闸");
+  assert.ok(r.warnings.some((w) => w.includes("gov.cn")), "警示应包含 gov.cn 禁扫说明");
 });
 
 test("字典旋钮只随已选模块下发", () => {
