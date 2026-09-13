@@ -1,0 +1,19 @@
+# SiteLens 5.0 ML 预训练分支（ml-5.0-docs）
+# 本分支只承载 ML 流水线代码（ml/）与文档（docs/）；
+# 真实数据与运行产物一律不入仓（docs/审计报告 §16 红线）。
+
+# 真实数据与 ML 运行产物（含主仓的 data/ 与本分支产出的 data/ml/）
+data/
+
+# Python 运行时
+.venv/
+venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.coverage
+
+# 主仓运行时产物残留在工作树时一律忽略
+server.log
+*.exe
+*.tmp
