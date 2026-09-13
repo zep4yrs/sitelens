@@ -19,6 +19,7 @@
       script:
         - apt-get update -qq && apt-get install -y -qq nodejs >/dev/null
         - node --test web/js/esc.test.mjs web/js/scan-options.test.mjs # 转义回归 + 三维选择器映射单测
+        - node --test tools/ci_pipeline_guard.test.mjs # CI 配置门禁：wine 调用必须套 xvfb-run（tag 构建曾在此红）
         - cd desktop && node --test # 桌面壳单测：配置合并器 + 端口决策（逻辑最密层；无参自动发现）
 
 main:
@@ -47,24 +48,31 @@ main:
               export ELECTRON_BUILDER_BINARIES_MIRROR=https://npmmirror.com/mirrors/electron-builder-binaries/
               export CSC_IDENTITY_AUTO_DISCOVERY=false
               # Wine：Linux 上打 Windows NSIS 安装包必需（electron-builder 会用
-              # wine 跑 makensis.exe 生成卸载器）。makensis.exe 是 32 位 PE，
-              # 所以 wine32 必须装（仅 wine64 会以 wow64 模式加载
-              # C:\windows\syswow64\ntdll.dll 失败：c0000135）。
-              # USE_SYSTEM_WINE=true 让 electron-builder 直接用系统 wine，跳过
-              # 它自带的工具集下载（国内直连 github 不稳，且其 wine-4.0.1-mac 包
-              # 在 Linux 上会 spawn 失败）。
+              # wine 跑 makensis.exe 生成卸载器）。它自带 wine-4.0.1-mac 包在
+              # Linux 上会 spawn 失败，所以 USE_SYSTEM_WINE=true 改用系统 wine，
+              # 跳过它自带的工具集下载（国内直连 github 也不稳）。
+              #
+              # 32 位 wine 不再是必需：旧写法装 wine32:i386 是为了绕开
+              # 实验性 wow64（c0000135 加载 syswow64\ntdll.dll 失败）。wine 10
+              # 的 wow64 已成熟，WINEARCH=win64 单装 wine64 即可；
+              # 只有当宿主机 wine < 9 时才需要补 32 位（wine32:i386）。
               export USE_SYSTEM_WINE=true
               export WINEARCH=win64
               export WINEDEBUG=-all
               # Node 22：electron 44 / electron-builder 26 工具链要求 >=22.12
               # （基础镜像自带 node 20，此处补装满足 engine 要求的版本）
-              dpkg --add-architecture i386
               apt-get update -qq && apt-get install -y -qq zip jq curl >/dev/null
-              apt-get install -y -qq --no-install-recommends wine wine64 wine32:i386 >/dev/null
-              curl -fsSL https://deb.nodesource.com/setup_22.x | bash - >/dev/null
+              apt-get install -y -qq --no-install-recommends wine wine64 >/dev/null
+              curl -fsSL https://deb.nodesource.com/setup_22.x | bash >/dev/null
               apt-get install -y -qq nodejs >/dev/null
+              # Xvfb：wine 在容器内没有 display driver 时，任何 32 位 PE（含
+              # NSIS makensis.exe / 安装器引导程序）都会以
+              # `err:winediag:nodrv_CreateWindow` 秒退，electron-builder 报
+              # "wine process failed 1"。装 Xvfb 后，下面所有 wine 调用统一
+              # 走 xvfb-run -a，不再依赖「Wine 只做命令行、不需要 X」的假设。
+              apt-get install -y -qq --no-install-recommends xvfb xauth >/dev/null
               # 预热 wine prefix（首次运行会创建 ~/.wine，可能耗时数十秒）
-              wineboot --init >/dev/null 2>&1 || true
+              xvfb-run -a wineboot --init >/dev/null 2>&1 || true
               cd desktop
               npm ci --no-audit --no-fund
               node --test
@@ -74,7 +82,9 @@ main:
               # 本项目安装包未做代码签名（README「已知边界」），跳过它可省一轮 wine
               # 调用、降低无显示驱动环境的失败面。产物功能性不受影响，仅 exe 不写
               # 入自定义图标与版本资源。
-              npx electron-builder --win nsis --publish never -c.win.signAndEditExecutable=false
+              # Xvfb 下执行：生成卸载器时 electron-builder 会 wine 调
+              # makensis.exe（32 位 PE），无 display driver 必失败
+              xvfb-run -a npx electron-builder --win nsis --publish never -c.win.signAndEditExecutable=false
               cd ..
               bash tools/release_upload.sh desktop/release/SiteLens-Setup-3.0.0.exe
               SITLENS_TAG=desktop-stable bash tools/release_upload.sh desktop/release/SiteLens-Setup-3.0.0.exe
@@ -86,7 +96,9 @@ main:
       stages:
         - name: build
           script:
-            - apt-get update -qq && apt-get install -y -qq zip jq nsis >/dev/null
+            # wine + Xvfb：tools/ci_nsis_exe.sh 编译后要用 wine 加载校验安装器，
+            # 无 display driver 时 32 位引导程序会秒退（nodrv_CreateWindow）
+            - apt-get update -qq && apt-get install -y -qq zip jq nsis wine wine64 xvfb xauth >/dev/null
             - export SITLENS_BODY_FILE="$PWD/tools/release-body-3.0.0.md"
             - GOOS=windows GOARCH=amd64 go build -ldflags "-s -w" -o SiteLens/sitelens.exe ./cmd/sitelens
             - mkdir -p SiteLens/data
@@ -96,8 +108,9 @@ main:
             - cp README.md docs/产品说明.md SiteLens/ 2>/dev/null || true
             - mkdir -p dist
             - (cd SiteLens && zip -qr ../dist/SiteLens-3.0.0-lite-win64.zip .)
-            # LANG=C.UTF-8 必须设置：C locale 下 makensis 对中文文件名（产品说明.md）会段错误
-            - LANG=C.UTF-8 LC_ALL=C.UTF-8 makensis -V2 -DVERSION=3.0.0 -DSRCDIR="$PWD" -DSTAGEDIR=SiteLens -DOUTFILE="$PWD/dist/SiteLens-3.0.0-setup-lite.exe" installer/installer.nsi
+            # makensis + wine 加载校验统一封装（中文文件名 locale / Xvfb /
+            # wine 退出码不可判成败，详见脚本头注释）
+            - bash tools/ci_nsis_exe.sh -DVERSION=3.0.0 -DSRCDIR="$PWD" -DSTAGEDIR=SiteLens -DOUTFILE="$PWD/dist/SiteLens-3.0.0-setup-lite.exe" installer/installer.nsi
             - SITLENS_BODY_FILE="$PWD/tools/release-body-3.0.0.md" bash tools/release_upload.sh dist/SiteLens-3.0.0-lite-win64.zip
             - SITLENS_BODY_FILE="$PWD/tools/release-body-3.0.0.md" bash tools/release_upload.sh dist/SiteLens-3.0.0-setup-lite.exe
     - name: build-linux
@@ -120,7 +133,9 @@ main:
             - |
               # 模板池与情报库均已入仓库（packs/nuclei-templates.tar.gz + data/），
               # full 构建零外部资产依赖
-              apt-get update -qq && apt-get install -y -qq zip nsis jq >/dev/null
+              # wine + Xvfb：tools/ci_nsis_exe.sh 编译后要用 wine 加载校验安装器，
+              # 无 display driver 时 32 位引导程序会秒退（nodrv_CreateWindow）
+              apt-get update -qq && apt-get install -y -qq zip nsis jq wine wine64 xvfb xauth >/dev/null
               export SITLENS_BODY_FILE="$PWD/tools/release-body-3.0.0.md"
               mkdir -p SiteLens/data/nuclei SiteLens/data dist
               tar --no-same-owner -xzf packs/nuclei-templates.tar.gz -C SiteLens/data/nuclei
@@ -129,8 +144,9 @@ main:
               GOOS=windows GOARCH=amd64 go build -ldflags "-s -w" -o SiteLens/sitelens.exe ./cmd/sitelens
               cp README.md docs/产品说明.md SiteLens/ 2>/dev/null || true
               (cd SiteLens && zip -qr ../dist/SiteLens-3.0.0-full-win64.zip .)
-              # LANG=C.UTF-8 必须设置：C locale 下 makensis 对中文文件名（产品说明.md）会段错误
-              LANG=C.UTF-8 LC_ALL=C.UTF-8 makensis -V2 -DVERSION=3.0.0 -DSRCDIR="$PWD" -DSTAGEDIR=SiteLens -DOUTFILE="$PWD/dist/SiteLens-3.0.0-setup-full.exe" installer/installer.nsi
+              # makensis + wine 加载校验统一封装（中文文件名 locale / Xvfb /
+              # wine 退出码不可判成败，详见脚本头注释）
+              bash tools/ci_nsis_exe.sh -DVERSION=3.0.0 -DSRCDIR="$PWD" -DSTAGEDIR=SiteLens -DOUTFILE="$PWD/dist/SiteLens-3.0.0-setup-full.exe" installer/installer.nsi
               # full 产物上传到本私有仓库 Release（仅协作者可见；intel_dump 不入 git）
               SITLENS_BODY_FILE="$PWD/tools/release-body-3.0.0.md" bash tools/release_upload.sh dist/SiteLens-3.0.0-full-win64.zip
               SITLENS_BODY_FILE="$PWD/tools/release-body-3.0.0.md" bash tools/release_upload.sh dist/SiteLens-3.0.0-setup-full.exe
