@@ -110,7 +110,7 @@
 
 **桌面版**是唯一交付形态 → `SiteLens-Setup-3.0.0.exe`（含全量 NVD + 情报行种子，自动更新）。双击安装即用，Windows / macOS 场景以外的命令行集成直接克隆本仓库，模板池与情报库数据已全部入仓库。
 
-内存建议 8GB 起；磁盘约 800MB（模板池 719MB 为大头，14.5 万小文件的簇开销占了一半）。SHA256（`SiteLens-Setup-3.0.0.exe`）：`8224939e0c970e6267a1225272c0db7028aa8da81d24d3ed8f48c3cecfcbdaab`
+内存建议 8GB 起；磁盘约 800MB（模板池 719MB 为大头，14.5 万小文件的簇开销占了一半）。SHA256（`SiteLens-Setup-3.0.0.exe`）：`__SHA256__`
 
 **升级与回滚**：`.sitelens.yml` 与 `data/state/` 完全兼容，覆盖安装即可；回滚换回 v2.0.0 二进制，数据无需迁移。详细步骤见 [升级指南](docs/upgrade-3.0.md)。
 
