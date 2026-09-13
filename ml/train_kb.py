@@ -182,6 +182,9 @@ def exp1001_severity(kb: dict[str, pd.DataFrame], paths: config.Paths,
     res["feature_ablation_conclusion"] = (
         "text vs metadata-only 的准确率差即文本信号的实证；"
         "两者差异见 models 各条目")
+    res["_art"] = {"vectorizer": vec, "model": models["logistic_regression_sgd"],
+                   "classes": list(models["logistic_regression_sgd"].classes_),
+                   "feature": "tfidf(descr) word 1-2gram"}
     return res
 
 
@@ -267,6 +270,8 @@ def exp1002_product_relation(kb: dict[str, pd.DataFrame], paths: config.Paths,
             "source": "NVD CPE product constraints (vendor/product)",
             "label_type": "weak / relation", "label_confidence": "medium",
             "note": "类=高频产品；新 CVE 的产品预测=关系学习，不是监督攻击标签"},
+        "_art": {"vectorizer": vec, "clf": clf, "classes": list(clf.classes_),
+                 "feature": "tfidf(descr) word 1-2gram"},
     }
     return res
 
@@ -323,6 +328,32 @@ def Counter_t(items):
     return Counter(items)
 
 
+def _persist_model(paths: config.Paths, exp_name: str, art: dict,
+                   upstream: list[Path], task: str, feature_note: str) -> Path:
+    """按 P10 纪律持久化模型 + EXPERIMENT manifest + summary 登记。"""
+    import joblib
+
+    d = paths.out_root / "experiments" / exp_name
+    d.mkdir(parents=True, exist_ok=True)
+    joblib.dump(art, d / "model.joblib")
+    man = manifest.make_manifest(
+        kind="model", version=exp_name,
+        inputs=[manifest.file_input(d / "model.joblib", role="output:model")]
+               + [manifest.file_input(p, role=f"upstream:{p.name}") for p in upstream],
+        params={"task": task, "feature_note": feature_note},
+        producer="ml/train_kb.py",
+        scope={"data_version": DATA_VERSION},
+    )
+    manifest.write_manifest(man, d / "EXPERIMENT_MANIFEST.json")
+    summary = paths.out_root / "metrics" / "summary.jsonl"
+    summary.parent.mkdir(parents=True, exist_ok=True)
+    with open(summary, "a", encoding="utf-8") as f:
+        f.write(json.dumps({"exp_id": exp_name, "task": task,
+                            "data_version": DATA_VERSION,
+                            "git_rev": manifest.git_rev()}) + "\n")
+    return d
+
+
 def run_kb_experiments(paths: config.Paths, seed: int = 20260914) -> dict:
     kb = knowledge.build_kb_tables(paths)
     st = knowledge.kb_stats(kb, paths)
@@ -330,9 +361,15 @@ def run_kb_experiments(paths: config.Paths, seed: int = 20260914) -> dict:
 
     tables, _, _ = dataset.build_tables(paths)
     r1 = exp1001_severity(kb, paths, seed=seed)
+    art1 = r1.pop("_art")
     _save(paths, "EXP-1001-severity", r1, [kb_man], {"task": "K1"})
+    _persist_model(paths, "EXP-1001-severity-model", art1, [kb_man], "K1",
+                   art1["feature"])
     r2 = exp1002_product_relation(kb, paths, seed=seed)
+    art2 = r2.pop("_art")
     _save(paths, "EXP-1002-product-relation", r2, [kb_man], {"task": "K2"})
+    _persist_model(paths, "EXP-1002-product-relation-model", art2, [kb_man], "K2",
+                   art2["feature"])
     r3 = exp1003_template_prior(paths, kb, tables["verified"])
     _save(paths, "EXP-1003-template-prior", r3, [kb_man], {"task": "T2-prior"})
     return {"kb_manifest": str(kb_man), "kb_stats": st,
