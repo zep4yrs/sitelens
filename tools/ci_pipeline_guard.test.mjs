@@ -63,22 +63,21 @@ test("流水线不再产出引擎裸包（4.0 起桌面版是唯一交付形态�
   const section = tagSection();
   // lite / full / linux 打包 stage 已移除：构建/上传指令里不得再引入
   assert.ok(!section.includes("ci_nsis_exe.sh"), "不应再有 makensis 裸包构建");
-  // 上传走两条路：v3.0.0 版本页 exe（release_upload.sh，带重试）与
-  // desktop-stable 三件套按名替换（release_replace.sh）
+  // 上传只有一条路：v3.0.0 版本页 exe（release_upload.sh，带重试）。
+  // CNB 不做自动更新源（desktop-stable 已删，更新源唯一在 GitHub）。
   const uploads = section.split("\n").filter((l) => l.includes("release_upload.sh"));
   const replaces = section.split("\n").filter((l) => l.includes("release_replace.sh"));
   assert.strictEqual(uploads.length, 1, `版本页上传应为 1 条，实际 ${uploads.length}`);
-  assert.strictEqual(replaces.length, 1, `stable 替换应为 1 条，实际 ${replaces.length}`);
-  assert.match(replaces[0], /desktop-stable/);
-  for (const l of [...uploads, ...replaces]) {
+  assert.strictEqual(replaces.length, 0, "CNB 不做更新源，不应有 desktop-stable 替换步骤");
+  for (const l of uploads) {
     assert.ok(!/lite|setup-lite|setup-full|full-win64|linux-amd64/.test(l),
       `上传指令不应涉及裸包: ${l.trim()}`);
   }
-  // 桌面版三件套与发行说明（含 SHA256 占位符）必须就位
+  // 版本页安装包与发行说明（SHA256 占位符）必须就位；CNB 不传 latest.yml/blockmap
   assert.match(section, /SiteLens-Setup-3\.0\.0\.exe/);
-  assert.match(section, /desktop-stable/);
   assert.match(section, /__SHA256__/, "发行说明 SHA256 占位符替换步骤缺失");
   assert.match(section, /SITLENS_BODY_FILE/, "发行说明未挂载");
+  assert.ok(!/release_upload\.sh[^\n]*latest\.yml/.test(section), "CNB 不应上传 latest.yml（更新源在 GitHub）");
 });
 
 test("环境变量前置导出：electron-builder 相关 export 必须在 npm ci 之前", () => {

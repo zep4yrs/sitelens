@@ -34,13 +34,13 @@ main:
 
 # 发版构建（tag 推送触发）。日常提交不自动构建。发版流程：
 #   模板池与情报库均已入仓库（packs/ 与 data/），推送版本 tag 即自动构建
-#   桌面版三件套并上传；同步发布到 desktop-stable 标签，作为已装客户端
-#   的自动更新源（electron-updater generic）。
+#   桌面版安装包并上传到版本 release。CNB 不做自动更新源（用户拍板）：
+#   desktop-stable 更新源在 GitHub，唯一来源。
 #   4.0 起只保留桌面版单一交付形态：引擎裸包（lite/full/linux zip）已按
 #   用户要求移除——桌面壳即产品（2026-09-13）。
 "v*":
   tag_push:
-    - name: 构建桌面版（Electron 壳，双发布到版本 release 与 desktop-stable 更新源；唯一交付形态）
+    - name: 构建桌面版（Electron 壳，唯一交付形态；更新源在 GitHub）
       docker:
         image: golang:1.26.8
       stages:
@@ -114,33 +114,6 @@ main:
               fi
               # 上传（重试 3 次：大文件 PUT 偶发网络中断）
               for i in 1 2 3; do bash tools/release_upload.sh desktop/release/SiteLens-Setup-3.0.0.exe && break || sleep 10; done
-              # ---- desktop-stable 更新源：三件套按名替换（先删后传，绝不留重名） ----
-              bash tools/release_replace.sh desktop-stable \
-                desktop/release/SiteLens-Setup-3.0.0.exe \
-                desktop/release/SiteLens-Setup-3.0.0.exe.blockmap \
-                desktop/release/latest.yml
-
-# 一次性清理任务（用完即删）：删除 desktop-stable 更新源 Release 与标签。
-# 背景：用户拍板 CNB 不做更新源（Gitee 同理，100MB 限制），自动更新走 GitHub。
-"v-cleanup*":
-  tag_push:
-    - name: 清理 desktop-stable 更新源
-      docker:
-        image: golang:1.26.8
-      stages:
-        - name: cleanup
-          script:
-            - |
-              set -e
-              apt-get update -qq && apt-get install -y -qq curl jq >/dev/null
-              API="https://api.cnb.cool/feng-qiao/sitelens"
-              RID=$(curl -sf -H "Authorization: Bearer $CNB_TOKEN" -H "Accept: application/json" \
-                "$API/-/releases/tags/desktop-stable" | jq -r '.id // empty')
-              if [ -n "$RID" ]; then
-                curl -sf -X DELETE -H "Authorization: Bearer $CNB_TOKEN" -H "Accept: application/json" \
-                  "$API/-/releases/$RID" && echo "desktop-stable release deleted"
-              else
-                echo "desktop-stable release 不存在（已清理）"
-              fi
-              git push "https://cnb:$CNB_TOKEN@cnb.cool/feng-qiao/sitelens.git" :refs/tags/desktop-stable \
-                && echo "desktop-stable tag deleted" || echo "tag 已不存在"
+              # CNB 不做自动更新源（desktop-stable 已按用户要求删除，自动更新
+              # 唯一来源是 GitHub desktop-stable release）。此处不要往 CNB 传
+              # latest.yml / blockmap，防止更新源在下次发版时复活。

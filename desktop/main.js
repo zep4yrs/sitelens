@@ -19,15 +19,14 @@ const engine = require('./engine');
 const splash = require('./splash');
 
 const isDev = !app.isPackaged;
+// 自动更新：electron-updater generic 单源（GitHub desktop-stable release）。
+// 更新史：曾用 CNB/Gitee/GitHub 三源轮询采样，但 CNB 的 desktop-stable 已按
+// 用户要求删除（CNB 只保留 v3.0.0 版本页安装包），Gitee 因单文件 100MB 上限
+// 放不下安装包也退出——现在唯一可用源是 GitHub。全源采样逻辑保留：以后若
+// 新增镜像源，往 FEEDS 里加回来即可。
 const RELEASES_URL = 'https://cnb.cool/feng-qiao/sitelens/releases';
-// 更新源轮询顺序：CNB 主源（国内直连）→ Gitee 镜像 → GitHub 镜像。
-// 三个源的 desktop-stable release 须放同一套三件套（exe/blockmap/latest.yml）。
-// Gitee 例外：单文件上限 100MB 放不下安装包，只有 latest.yml 参与版本
-// 采样；全源按 releaseDate 取最新，同刻按此处顺序——CNB/GitHub 任一
-// 可用就轮不到 Gitee 提供下载。
+// 更新源：GitHub desktop-stable release（三件套：exe/blockmap/latest.yml）。
 const FEEDS = [
-  { name: 'CNB', url: 'https://cnb.cool/feng-qiao/sitelens/-/releases/download/desktop-stable/' },
-  { name: 'Gitee', url: 'https://gitee.com/map1ebridge/sitelens/releases/download/desktop-stable/' },
   { name: 'GitHub', url: 'https://github.com/zep4yrs/sitelens/releases/download/desktop-stable/' }
 ];
 const ICON_PATH = isDev ? path.join(__dirname, 'build', 'icon.png')
