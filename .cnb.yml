@@ -104,7 +104,7 @@ main:
               # ---- v3.0.0 版本页：整版重建（幂等） ----
               # 4.0 起桌面版是唯一交付形态。删旧版→带最新发行说明重建，
               # 顺带清掉旧流水线遗留的 lite/full/linux 裸包资产。
-              export SITLENS_BODY_FILE="$PWD/tools/release-body-3.0.0.md"
+              # SITLENS_BODY_FILE 已指向 sed 替换过 SHA256 的 /tmp 副本，勿再覆盖。
               API="https://api.cnb.cool/feng-qiao/sitelens"
               OLD=$(curl -sf -H "Authorization: Bearer $CNB_TOKEN" -H "Accept: application/json" \
                 "$API/-/releases/tags/v3.0.0" | jq -r '.id // empty')
