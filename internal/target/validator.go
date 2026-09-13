@@ -21,6 +21,13 @@ var blockedHosts = map[string]bool{
 	"metadata.google.internal": true,
 }
 
+// isGovCn gov.cn 政府网站代码级硬保护：本工具禁止被用于对政府网站
+// 发起任何请求。这是产品红线，不提供配置开关、不受任何选项影响；
+// 除本工具外的合规授权测试请使用其他途径。命中即整单拒绝。
+func isGovCn(host string) bool {
+	return host == "gov.cn" || strings.HasSuffix(host, ".gov.cn")
+}
+
 // Validate 校验并规范化 URL，返回 (scheme, host, port)。
 // resolve=true 时做 DNS 解析并逐 IP 校验私网/保留地址。
 func Validate(rawURL string, resolve bool) (string, string, int, error) {
@@ -53,6 +60,9 @@ func Validate(rawURL string, resolve bool) (string, string, int, error) {
 	}
 	if blockedHosts[host] || strings.HasSuffix(host, ".local") || strings.HasSuffix(host, ".internal") {
 		return "", "", 0, &Error{"不允许扫描内网或保留主机名"}
+	}
+	if isGovCn(host) {
+		return "", "", 0, &Error{"gov.cn 政府网站受代码级保护，SiteLens 拒绝扫描（不可通过配置关闭）"}
 	}
 	port := 0
 	if p := u.Port(); p != "" {
@@ -89,6 +99,9 @@ func ValidateHostPort(scheme, host string, port int, resolve bool) error {
 	}
 	if blockedHosts[host] || strings.HasSuffix(host, ".local") || strings.HasSuffix(host, ".internal") {
 		return &Error{"不允许扫描内网或保留主机名"}
+	}
+	if isGovCn(host) {
+		return &Error{"gov.cn 政府网站受代码级保护，SiteLens 拒绝探测（不可通过配置关闭）"}
 	}
 	if scheme != "dns" {
 		if port <= 0 || port >= 65536 {

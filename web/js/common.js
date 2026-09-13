@@ -216,7 +216,7 @@
       nav_scan: "Scan", nav_netsec: "Net Scan", nav_audit: "Code Audit",
       nav_brute: "Login Brute", nav_batch: "Batch", nav_history: "History",
       nav_intel: "Intel", nav_verified: "Verified", nav_settings: "Settings",
-      foot_auth: "Authorized targets only", theme_toggle: "Toggle light/dark theme"
+      theme_toggle: "Toggle light/dark theme"
     }
   };
   function t(key) {
@@ -336,7 +336,7 @@
     '<a class="brand" href="/"><span class="txt">sitelens</span><span class="dot"></span></a>' +
     '<button class="theme-btn" onclick="toggleTheme()" title="' + (t("theme_toggle") || "切换明暗主题") + '">◐</button></div>' +
     '<nav class="side-nav">' + nav + "</nav>" +
-    '<div class="side-foot">' + (t("foot_auth") || "仅限授权目标") +
+    '<div class="side-foot">' + (t("foot_auth") || "") +
     '<br><span id="sl-ver">SiteLens</span></div>';
   document.body.insertBefore(aside, document.body.firstChild);
   slUpdateNav();

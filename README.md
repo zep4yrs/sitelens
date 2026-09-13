@@ -126,7 +126,7 @@ go build -o sitelens.exe ./cmd/sitelens
 | `full` | 全流水线（模板子集 + 全模块），最常用 |
 | `assets` | 资产测绘：子域 / 端口 / 服务面 |
 | `stealth` | 隐匿姿态穿 WAF（限速 + 伪装） |
-| `apocalypse` | 全模块 + 大模板量，**仅限授权目标** |
+| `apocalypse` | 全模块 + 大模板量，请求量大，谨慎使用 |
 
 ## 证据链长什么样
 
@@ -162,7 +162,7 @@ go build -o sitelens.exe ./cmd/sitelens
 - **403 绕过探测**：路径变异 × 信任头 × 改写头 × HEAD/OPTIONS 变体表，命中即报"访问控制可被绕过"
 - **漏洞情报关联**：11024 条情报 + CVSS v3.1 评分 + OSV 在线同步 + KEV 在野利用，三级判定（确认 / 可能 / 不受影响）
 - **目录 / 子域 / 接管**：软 404 基线 + 回显剔除；子域 DNS 枚举 + 接管指纹
-- **登录爆破审计**：字典爆破 + 验证码识别 sidecar，仅限授权目标
+- **登录爆破审计**：字典爆破 + 验证码识别 sidecar
 - **白盒源码审计**：TAINT 污点分析引擎 + 规则库，`sitelens audit <dir>`
 - **批量与历史**：批量扫描、历史记录、双扫描 diff、漏洞检索、JSON/CSV/HTML/MD 四格式导出
 

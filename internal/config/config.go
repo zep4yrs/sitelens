@@ -57,7 +57,7 @@ type StoreConfig struct {
 	MaxRecords int    `yaml:"max_records"` // 历史记录留存上限（超出裁掉最旧）
 }
 
-// ActiveConfig 主动探测模块阈值（默认关，仅限授权目标）。
+// ActiveConfig 主动探测模块阈值（默认关；目标合规责任在使用者）。
 type ActiveConfig struct {
 	DirMaxPaths    int    `yaml:"dir_max_paths"`    // 目录探测路径上限
 	DirBypass403   bool   `yaml:"dir_bypass_403"`   // 403 绕过重试（伪造来源头）
@@ -134,14 +134,16 @@ type NetsecConfig struct {
 	MailCheck     bool `yaml:"mail_check"`      // SPF/DMARC/MX 检查开关
 }
 
-// ExploitConfig 3.0 利用级无害验证（授权闸默认关）。
+// ExploitConfig 3.0 利用级无害验证（总闸默认关，设置页可开）。
 type ExploitConfig struct {
 	Enabled          bool     `yaml:"enabled"`            // 总闸：false 时利用级探针一层请求都不发
-	Authorized       []string `yaml:"authorized"`         // 授权目标白名单（精确 host 或 *.domain 后缀）
+	// Authorized 为保留键：授权白名单语义已按用户要求移除（目标合规
+	// 责任在使用者），保留键位以兼容历史 yml，当前版本不消费。
+	Authorized []string `yaml:"authorized"`
 	DelayThresholdMS int      `yaml:"delay_threshold_ms"` // 时延通道判定阈值
 }
 
-// LoginBruteConfig 登录爆破（仅限授权目标）。
+// LoginBruteConfig 登录爆破（默认关；目标合规责任在使用者）。
 type LoginBruteConfig struct {
 	MaxTries      int    `yaml:"max_tries"`       // 总尝试次数上限
 	MaxUsers      int    `yaml:"max_users"`       // 用户名字典截取上限
@@ -224,8 +226,7 @@ func Default() *Config {
 			MaxURLLen:        2048,
 		},
 		Exploit: ExploitConfig{
-			Enabled:          false, // 授权闸默认关：利用级探针需显式开启 + 白名单
-			Authorized:       []string{},
+			Enabled:          false, // 总闸默认关：设置页「利用级验证」可开
 			DelayThresholdMS: 3000,
 		},
 		Intel: IntelConfig{

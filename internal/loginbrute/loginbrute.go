@@ -1,4 +1,4 @@
-// Package loginbrute 登录页弱口令爆破（独立模块，仅限授权目标）。
+// Package loginbrute 登录页弱口令爆破（独立模块；目标合规责任在使用者）。
 //
 // 流程：GET 登录页 → 解析含密码框的表单（字段名缺失按 id/placeholder 推断）
 // → 字典组合 POST 提交 → 按「失败基线 + 响应差异」判定命中。

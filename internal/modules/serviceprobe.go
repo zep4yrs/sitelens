@@ -1,6 +1,6 @@
 // 端口服务识别：连接常见端口读取 banner，对 11966 条 service_fp
 // 指纹做正则匹配（惰性编译 + once 缓存）。移植自 python 分支
-// scanner/modules.py 的 service_probe/_grab；默认关闭，仅限授权目标。
+// scanner/modules.py 的 service_probe/_grab；默认关闭，目标合规责任在使用者。
 package modules
 
 import (

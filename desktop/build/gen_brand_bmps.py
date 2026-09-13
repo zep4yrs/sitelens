@@ -73,7 +73,7 @@ def sidebar(kind):
     d.text(((W - tw) / 2, y + 50), sub, font=f_sub, fill=MUTE)
     # 说明短语（两行内）
     f_tip = font(MSYH, 11)
-    tips = ["深度指纹识别 · 漏洞情报", "仅限授权测试目标"] if kind == "install" \
+    tips = ["深度指纹识别 · 漏洞情报", "扫描 · 指纹 · 情报"] if kind == "install" \
         else ["扫描历史默认保留", "也可选择一并清除"]
     ty = y + 84
     for tip in tips:

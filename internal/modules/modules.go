@@ -1,5 +1,5 @@
 // Package modules 主动探测模块：目录探测 / 子域名枚举 / WebShell 探测。
-// 默认关闭，仅限授权目标；请求总量有硬上限（config.ActiveConfig）。
+// 默认关闭；请求总量有硬上限（config.ActiveConfig），目标合规责任在使用者。
 // 判定语义对齐 python 分支 scanner/modules.py：
 // 目录命中 = 200/401/403 且尺寸偏离软404基线；403 可选一次绕过重试；
 // 子域名 = DNS 可解析；WebShell = 200 且正文非空。

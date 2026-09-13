@@ -45,7 +45,7 @@ type Options struct {
 	Takeover      bool                    // 子域名接管探测（需先开 Subdomain 产出候选）
 	Netsec        bool                    // TLS/DNS 安全检测
 	DAST          bool                    // 参数级注入探测
-	Exploit       bool                    // 利用级无害验证（config exploit.enabled 为总闸）
+	Exploit       bool                    // 利用级无害验证请求开关（总闸：exploit.enabled / 设置页）
 	Passive       bool                    // 被动安全检测
 	JSMap         bool                    // JS 攻击面提取（独立于 DAST 可开：bundle 端点/SourceMap，只读）
 	NetProto      bool                    // 协议模板检测（不开端口服务识别时仅跑 dns 类模板）
@@ -438,18 +438,18 @@ func (e *Engine) Scan(rawURL string, opts Options, onProgress progress, cancel f
 			res.Verified = append(res.Verified, m)
 			dastMaps = append(dastMaps, m)
 		}
-		// 3.0 利用级无害验证：双闸（请求开关 × config exploit.enabled）+
-		// 授权白名单；未授权目标零请求
+		// 3.0 利用级无害验证：双开关（请求开关 × config exploit.enabled，
+		// 设置页「利用级验证」控制总闸）；目标合规责任在使用者
 		if opts.Exploit && e.cfg.Exploit.Enabled && len(dastAll) > 0 {
 			onProgress(86, "利用级无害验证…")
 			proven, observed := e.runExploit(host, dastAll, dastMaps, dastFetcher{client}, emit)
 			res.Extras["exploit"] = map[string]any{
-				"proven": proven, "observed": observed, "gate": "authorized_only",
+				"proven": proven, "observed": observed, "gate": "enabled",
 			}
 		}
 	}
 
-	// 9) 主动模块（默认关，仅限授权目标）
+	// 9) 主动模块（默认关）
 	var dirHits []modules.PageHit
 	if opts.DirScan || opts.Subdomain || opts.Webshell || opts.WeakAudit || opts.ActiveFP || opts.ServiceProbe || opts.NetProto {
 		ac := e.cfg.Active

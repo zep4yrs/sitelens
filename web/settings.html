@@ -228,7 +228,17 @@
         <label>遵循 robots.txt</label>
         <input type="checkbox" id="respect_robots">
         <span class="badge hot">立即生效</span>
-        <span class="hint inline">扫描本地 / 授权靶场（robots 全站禁爬）时需关闭</span>
+        <span class="hint inline">扫描本地 / 靶场（robots 全站禁爬）时需关闭</span>
+      </div>
+    </div>
+
+    <div class="sec">
+      <div class="sec-title">利用级验证（exploit）</div>
+      <div class="row">
+        <label>利用级验证</label>
+        <input type="checkbox" id="exploit_enabled">
+        <span class="badge hot">立即生效</span>
+        <span class="hint inline">开启后，扫描勾选「利用级验证」时对已验证发现发送受控影响证明探针（只读无害：不落盘、不提权、不外发数据）。gov.cn 政府网站受代码级硬保护，任何配置下都拒绝请求。目标是否可用本工具测试，由你自行判断并承担责任。</span>
       </div>
     </div>
 
@@ -338,7 +348,7 @@
       </div>
       <ul class="faq">
         <li><b>首次使用没有模板？</b>模板池不随安装包：执行 update-nuclei 在线拉取（约 700MB）。</li>
-        <li><b>目标 robots 全站禁爬？</b>引擎配置页关闭「遵循 robots.txt」（仅限授权目标）。</li>
+        <li><b>目标 robots 全站禁爬？</b>引擎配置页关闭「遵循 robots.txt」。</li>
         <li><b>桌面版怎么手动检查更新？</b>托盘图标右键 → 检查更新。</li>
         <li><b>换电脑迁移？</b>导出偏好；扫描历史整目录拷贝 %APPDATA%\SiteLens\state。</li>
       </ul>
@@ -433,7 +443,7 @@
           </ul>
           <h4>三、本软件发起的网络请求清单（仅在此列时发生）</h4>
           <ol>
-            <li><b>对扫描目标</b>：探测、验证、利用级请求（仅限授权目标，这是软件功能本身）；</li>
+            <li><b>对扫描目标</b>：探测、验证、利用级请求（这是软件功能本身）；</li>
             <li><b>模板与情报更新（您主动触发或配置的定时任务）</b>：nuclei / afrog / 40k 等模板源的公开仓库与镜像、NVD（nvd.nist.gov）、CISA KEV（cisa.gov）、OSV.dev（api.osv.dev）、微软安全公告（api.msrc.microsoft.com）；</li>
             <li><b>检查更新（桌面版，启动时静默 + 托盘手动）</b>：更新源服务器（当前配置为 cnb.cool 的 release 附件区，请求内容仅含版本号协商所需的最小信息）；</li>
             <li><b>界面字体（CDN）</b>：页面加载时向 jsDelivr（cdn.jsdelivr.net）与 Google Fonts 请求霞鹜文楷 / Noto Sans SC 字体文件，该请求会使 CDN 获知您的 IP 与访问时间——离线时自动回退系统字体栈，对隐私有更高要求的用户可在防火墙中拦截上述域名。</li>
@@ -817,6 +827,7 @@
     setv("max_links_per_page", c.crawler.max_links_per_page);
     setv("crawl_timeout", c.crawler.timeout_sec);
     $("respect_robots").checked = !!c.crawler.respect_robots;
+    $("exploit_enabled").checked = !!(c.exploit && c.exploit.enabled);
     setv("rate_interval_ms", c.scan.rate_interval_ms);
     setv("scan_timeout", c.scan.timeout_sec);
     setv("nuclei_cap", c.checks.nuclei_cap);
@@ -836,6 +847,7 @@
       },
       scan: { rate_interval_ms: num("rate_interval_ms"), timeout_sec: num("scan_timeout") },
       checks: { nuclei_cap: num("nuclei_cap") },
+      exploit: { enabled: $("exploit_enabled").checked },
       intel: { overrides_path: getv("overrides_path") }
     }).then(function () {
       b.disabled = false;
