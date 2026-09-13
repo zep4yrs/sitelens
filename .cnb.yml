@@ -88,19 +88,21 @@ main:
               # makensis.exe（32 位 PE），无 display driver 必失败
               xvfb-run -a npx electron-builder --win nsis --publish never -c.win.signAndEditExecutable=false
               cd ..
-              # 清理历史引擎裸包（4.0 起桌面版是唯一交付形态；这些资产来自
-              # 旧流水线的 lite/full/linux stage，已有包不再提供下载）
-              RID=$(curl -sf -H "Authorization: Bearer $CNB_TOKEN" -H "Accept: application/json"                 "https://api.cnb.cool/feng-qiao/sitelens/-/releases/tags/v3.0.0" | jq -r '.id // empty')
-              if [ -n "$RID" ]; then
-                for N in SiteLens-3.0.0-setup-full.exe SiteLens-3.0.0-full-win64.zip                          SiteLens-3.0.0-setup-lite.exe SiteLens-3.0.0-lite-win64.zip                          SiteLens-3.0.0-linux-amd64.zip; do
-                  AID=$(curl -sf -H "Authorization: Bearer $CNB_TOKEN" -H "Accept: application/json"                     "https://api.cnb.cool/feng-qiao/sitelens/-/releases/tags/v3.0.0"                     | jq -r --arg n "$N" '.assets[] | select(.name==$n) | .id // empty')
-                  if [ -n "$AID" ]; then
-                    curl -sf -X DELETE -H "Authorization: Bearer $CNB_TOKEN" -H "Accept: application/json"                       "https://api.cnb.cool/feng-qiao/sitelens/-/releases/$RID/assets/$AID"                       && echo "removed stale asset: $N" || echo "WARN: 删除失败 $N"
-                  fi
-                done
+              # ---- v3.0.0 版本页：整版重建（幂等） ----
+              # 4.0 起桌面版是唯一交付形态。删旧版→带最新发行说明重建，
+              # 顺带清掉旧流水线遗留的 lite/full/linux 裸包资产。
+              export SITLENS_BODY_FILE="$PWD/tools/release-body-3.0.0.md"
+              API="https://api.cnb.cool/feng-qiao/sitelens"
+              OLD=$(curl -sf -H "Authorization: Bearer $CNB_TOKEN" -H "Accept: application/json" \
+                "$API/-/releases/tags/v3.0.0" | jq -r '.id // empty')
+              if [ -n "$OLD" ]; then
+                curl -sf -X DELETE -H "Authorization: Bearer $CNB_TOKEN" -H "Accept: application/json" \
+                  "$API/-/releases/$OLD" && echo "removed stale v3.0.0 release (含 lite/full/linux 裸包)"
               fi
               # 上传（重试 3 次：大文件 PUT 偶发网络中断）
               for i in 1 2 3; do bash tools/release_upload.sh desktop/release/SiteLens-Setup-3.0.0.exe && break || sleep 10; done
-              SITLENS_TAG=desktop-stable bash tools/release_upload.sh desktop/release/SiteLens-Setup-3.0.0.exe
-              SITLENS_TAG=desktop-stable bash tools/release_upload.sh desktop/release/SiteLens-Setup-3.0.0.exe.blockmap
-              SITLENS_TAG=desktop-stable bash tools/release_upload.sh desktop/release/latest.yml
+              # ---- desktop-stable 更新源：三件套按名替换（先删后传，绝不留重名） ----
+              bash tools/release_replace.sh desktop-stable \
+                desktop/release/SiteLens-Setup-3.0.0.exe \
+                desktop/release/SiteLens-Setup-3.0.0.exe.blockmap \
+                desktop/release/latest.yml
