@@ -29,12 +29,14 @@ main:
     - *regression
 
 # 发版构建（tag 推送触发）。日常提交不自动构建。发版流程：
-#   模板池与情报库均已入仓库（packs/ 与 data/），推送 v3.0.0 tag 即自动构建
-#   5 产物 + 桌面版三件套并上传；桌面包同步发布到 desktop-stable 标签，
-#   作为已装客户端的自动更新源（electron-updater generic）。
+#   模板池与情报库均已入仓库（packs/ 与 data/），推送版本 tag 即自动构建
+#   桌面版三件套并上传；同步发布到 desktop-stable 标签，作为已装客户端
+#   的自动更新源（electron-updater generic）。
+#   4.0 起只保留桌面版单一交付形态：引擎裸包（lite/full/linux zip）已按
+#   用户要求移除——桌面壳即产品（2026-09-13）。
 "v*":
   tag_push:
-    - name: 构建桌面版（Electron 壳，双发布到版本 release 与 desktop-stable 更新源）
+    - name: 构建桌面版（Electron 壳，双发布到版本 release 与 desktop-stable 更新源；唯一交付形态）
       docker:
         image: golang:1.26.8
       stages:
@@ -90,63 +92,3 @@ main:
               SITLENS_TAG=desktop-stable bash tools/release_upload.sh desktop/release/SiteLens-Setup-3.0.0.exe
               SITLENS_TAG=desktop-stable bash tools/release_upload.sh desktop/release/SiteLens-Setup-3.0.0.exe.blockmap
               SITLENS_TAG=desktop-stable bash tools/release_upload.sh desktop/release/latest.yml
-    - name: 构建 Windows lite（zip + NSIS 安装器）
-      docker:
-        image: golang:1.26.8
-      stages:
-        - name: build
-          script:
-            # wine + Xvfb：tools/ci_nsis_exe.sh 编译后要用 wine 加载校验安装器，
-            # 无 display driver 时 32 位引导程序会秒退（nodrv_CreateWindow）
-            - apt-get update -qq && apt-get install -y -qq zip jq nsis wine wine64 xvfb xauth >/dev/null
-            - export SITLENS_BODY_FILE="$PWD/tools/release-body-3.0.0.md"
-            - GOOS=windows GOARCH=amd64 go build -ldflags "-s -w" -o SiteLens/sitelens.exe ./cmd/sitelens
-            - mkdir -p SiteLens/data
-            - cp -r data/go SiteLens/data/go
-            - cp -r data/wordlists SiteLens/data/wordlists
-            - cp data/affected_ranges.json SiteLens/data/affected_ranges.json
-            - cp README.md docs/产品说明.md SiteLens/ 2>/dev/null || true
-            - mkdir -p dist
-            - (cd SiteLens && zip -qr ../dist/SiteLens-3.0.0-lite-win64.zip .)
-            # makensis + wine 加载校验统一封装（中文文件名 locale / Xvfb /
-            # wine 退出码不可判成败，详见脚本头注释）
-            - bash tools/ci_nsis_exe.sh -DVERSION=3.0.0 -DSRCDIR="$PWD" -DSTAGEDIR=SiteLens -DOUTFILE="$PWD/dist/SiteLens-3.0.0-setup-lite.exe" installer/installer.nsi
-            - SITLENS_BODY_FILE="$PWD/tools/release-body-3.0.0.md" bash tools/release_upload.sh dist/SiteLens-3.0.0-lite-win64.zip
-            - SITLENS_BODY_FILE="$PWD/tools/release-body-3.0.0.md" bash tools/release_upload.sh dist/SiteLens-3.0.0-setup-lite.exe
-    - name: build-linux
-      docker:
-        image: golang:1.26.8
-      stages:
-        - name: build
-          script:
-            - apt-get update -qq && apt-get install -y -qq zip jq >/dev/null
-            - mkdir -p dist
-            - GOOS=linux GOARCH=amd64 go build -ldflags "-s -w" -o dist/sitelens-linux-amd64 ./cmd/sitelens
-            - (cd dist && zip -q SiteLens-3.0.0-linux-amd64.zip sitelens-linux-amd64)
-            - SITLENS_BODY_FILE="$PWD/tools/release-body-3.0.0.md" bash tools/release_upload.sh dist/SiteLens-3.0.0-linux-amd64.zip
-    - name: 构建 Windows full 完整版（zip + NSIS 安装器，含情报库）
-      docker:
-        image: golang:1.26.8
-      stages:
-        - name: build
-          script:
-            - |
-              # 模板池与情报库均已入仓库（packs/nuclei-templates.tar.gz + data/），
-              # full 构建零外部资产依赖
-              # wine + Xvfb：tools/ci_nsis_exe.sh 编译后要用 wine 加载校验安装器，
-              # 无 display driver 时 32 位引导程序会秒退（nodrv_CreateWindow）
-              apt-get update -qq && apt-get install -y -qq zip nsis jq wine wine64 xvfb xauth >/dev/null
-              export SITLENS_BODY_FILE="$PWD/tools/release-body-3.0.0.md"
-              mkdir -p SiteLens/data/nuclei SiteLens/data dist
-              tar --no-same-owner -xzf packs/nuclei-templates.tar.gz -C SiteLens/data/nuclei
-              cp data/intel_dump.json.gz data/tpl_intel.json.gz data/affected_ranges.json SiteLens/data/ 2>/dev/null || true
-              cp -r data/go data/wordlists SiteLens/data/ 2>/dev/null || true
-              GOOS=windows GOARCH=amd64 go build -ldflags "-s -w" -o SiteLens/sitelens.exe ./cmd/sitelens
-              cp README.md docs/产品说明.md SiteLens/ 2>/dev/null || true
-              (cd SiteLens && zip -qr ../dist/SiteLens-3.0.0-full-win64.zip .)
-              # makensis + wine 加载校验统一封装（中文文件名 locale / Xvfb /
-              # wine 退出码不可判成败，详见脚本头注释）
-              bash tools/ci_nsis_exe.sh -DVERSION=3.0.0 -DSRCDIR="$PWD" -DSTAGEDIR=SiteLens -DOUTFILE="$PWD/dist/SiteLens-3.0.0-setup-full.exe" installer/installer.nsi
-              # full 产物上传到本私有仓库 Release（仅协作者可见；intel_dump 不入 git）
-              SITLENS_BODY_FILE="$PWD/tools/release-body-3.0.0.md" bash tools/release_upload.sh dist/SiteLens-3.0.0-full-win64.zip
-              SITLENS_BODY_FILE="$PWD/tools/release-body-3.0.0.md" bash tools/release_upload.sh dist/SiteLens-3.0.0-setup-full.exe
