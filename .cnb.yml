@@ -117,3 +117,29 @@ main:
               # CNB 不做自动更新源（desktop-stable 已按用户要求删除，自动更新
               # 唯一来源是 GitHub desktop-stable release）。此处不要往 CNB 传
               # latest.yml / blockmap，防止更新源在下次发版时复活。
+
+# 一次性清理任务第二棒（用完即删）：删掉 v-cleanup-1 的遗留 Release/标签，
+# 然后自删（cleanup-1 自己的自动 Release 与标签也一并清掉）。
+# 用 cleanup-* 前缀是因为它不匹配 "v*"，不会触发整条桌面构建流水线。
+"cleanup-*":
+  tag_push:
+    - name: 清理 v-cleanup-1 遗留并自删
+      docker:
+        image: golang:1.26.8
+      stages:
+        - name: cleanup
+          script:
+            - |
+              set -e
+              apt-get update -qq && apt-get install -y -qq curl jq git >/dev/null
+              API="https://api.cnb.cool/feng-qiao/sitelens"
+              GITURL="https://cnb:$CNB_TOKEN@cnb.cool/feng-qiao/sitelens.git"
+              for T in v-cleanup-1 cleanup-1; do
+                RID=$(curl -sf -H "Authorization: Bearer $CNB_TOKEN" -H "Accept: application/json" \
+                  "$API/-/releases/tags/$T" | jq -r '.id // empty')
+                if [ -n "$RID" ]; then
+                  curl -sf -X DELETE -H "Authorization: Bearer $CNB_TOKEN" -H "Accept: application/json" \
+                    "$API/-/releases/$RID" && echo "$T release deleted" || echo "WARN: $T release 删除失败"
+                fi
+                git push "$GITURL" :refs/tags/$T && echo "$T tag deleted" || echo "$T tag 已不存在"
+              done
