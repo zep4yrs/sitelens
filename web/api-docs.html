@@ -40,7 +40,7 @@
     <pre class="code">{
   "url": "https://example.com",
   "level": "",            // 语义化模式（可选）：quick/standard/deep/full/assets/stealth/apocalypse——
-                          // 预设先套、显式键逐项覆盖；apocalypse=全模块+checks:all+nuclei_cap 6000，仅限授权目标
+                          // 预设先套、显式键逐项覆盖；apocalypse=全模块+checks:all+nuclei_cap 6000，请求量大请谨慎
   "deep": true,           // 同域浅爬取（默认开）
   "active_fp": false,     // FingerDir 主动路径指纹
   "dir_scan": false,      // 目录探测
@@ -189,7 +189,7 @@
   <h2 class="title">安全约定</h2>
   <p class="muted" style="font-size:13.5px;line-height:2;max-width:72em">
     目标 URL 仅接受 http/https；DNS 解析后命中环回、私有、链路本地、保留地址一律拒绝（SSRF 三层防护）。<br>
-    请求全局限速并携带 SiteLens/1.0 UA，遵循 robots.txt；主动模块默认关闭，仅限授权目标。<br>
+    请求全局限速并携带 SiteLens/1.0 UA，遵循 robots.txt；主动模块默认关闭。gov.cn 政府网站受代码级硬保护，任何配置下拒绝请求。<br>
     登录爆破独立于扫描等级链路，需显式授权确认。<br>
     数据库访问全部字面量 SQL + %s 参数绑定；zip 解包防路径穿越；POC 载荷不落盘、不执行。
   </p>

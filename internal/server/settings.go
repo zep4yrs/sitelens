@@ -37,6 +37,9 @@ type settingsConfig struct {
 	Checks struct {
 		NucleiCap int `json:"nuclei_cap"`
 	} `json:"checks"`
+	Exploit struct {
+		Enabled bool `json:"enabled"` // 利用级验证总闸（对下次扫描热生效）
+	} `json:"exploit"`
 	Intel struct {
 		OverridesPath string `json:"overrides_path"`
 	} `json:"intel"`
@@ -58,6 +61,7 @@ func (s *Server) settingsCfg() settingsConfig {
 	v.Scan.RateIntervalMS = s.cfg.Scan.RateIntervalMS
 	v.Scan.TimeoutSec = s.cfg.Scan.TimeoutSec
 	v.Checks.NucleiCap = s.cfg.Checks.NucleiCap
+	v.Exploit.Enabled = s.cfg.Exploit.Enabled
 	v.Intel.OverridesPath = s.cfg.Intel.OverridesPath
 	v.Batch.MaxURLs = s.cfg.Batch.MaxURLs
 	return v
@@ -88,6 +92,7 @@ func (s *Server) applySettings(v settingsConfig) {
 	if v.Checks.NucleiCap > 0 {
 		s.cfg.Checks.NucleiCap = v.Checks.NucleiCap
 	}
+	s.cfg.Exploit.Enabled = v.Exploit.Enabled
 	s.cfg.Intel.OverridesPath = v.Intel.OverridesPath
 	if v.Batch.MaxURLs > 0 {
 		s.cfg.Batch.MaxURLs = v.Batch.MaxURLs
@@ -116,6 +121,7 @@ func (s *Server) persistSettings(v settingsConfig) error {
 			"timeout_sec":      v.Scan.TimeoutSec,
 		},
 		"checks": {"nuclei_cap": v.Checks.NucleiCap},
+		"exploit": {"enabled": v.Exploit.Enabled},
 		"intel":  {"overrides_path": v.Intel.OverridesPath},
 		"batch":  {"max_urls": v.Batch.MaxURLs},
 	}

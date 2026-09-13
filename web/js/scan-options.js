@@ -73,7 +73,7 @@
     }
     if (verify.ex) {
       o.exploit = true;
-      warnings.push("利用级验证需配置 exploit.enabled 与授权白名单；未授权目标零请求。");
+      warnings.push("利用级验证需在 设置 → 引擎配置 开启「利用级验证」总闸；探针只读无害，gov.cn 永久拒绝。");
     }
     if (verify.dast && !scope.web) {
       warnings.push("参数注入依赖爬取到的页面与表单，未选 Web 站点时覆盖有限。");
