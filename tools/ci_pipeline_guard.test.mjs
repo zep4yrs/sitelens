@@ -27,8 +27,9 @@ test("所有 wine 调用都套了 xvfb-run（无 display driver 时必须）", (
     .filter((l) => l && !l.startsWith("#"))
     // wine / wine64 / wineboot 作为独立命令词出现即算一次 wine 调用
     .filter((l) => /(^|[\s;|&(])wine(64|boot)?([\s;|&)]|$)/.test(l))
-    // 安装行（apt-get install ... wine wine64）不是调用
+    // 安装行（apt-get install ... wine wine64）与其反斜杠续行不是调用
     .filter((l) => !/^(-\s*)?apt-get\b/.test(l))
+    .filter((l) => !/^(wine|libwine|fonts-wine)\S*\s.*>\s*\/dev\/null\s*$/.test(l))
     .filter((l) => !l.includes("xvfb-run"));
   assert.deepStrictEqual(
     bare,
@@ -61,18 +62,23 @@ test("tag 流水线安装了 xvfb（含 xauth，xvfb-run 依赖它）", () => {
 test("流水线不再产出引擎裸包（4.0 起桌面版是唯一交付形态）", () => {
   const section = tagSection();
   // lite / full / linux 打包 stage 已移除：构建/上传指令里不得再引入
-  //（清理步骤按名删除历史资产属预期，不在禁止之列）
   assert.ok(!section.includes("ci_nsis_exe.sh"), "不应再有 makensis 裸包构建");
+  // 上传走两条路：v3.0.0 版本页 exe（release_upload.sh，带重试）与
+  // desktop-stable 三件套按名替换（release_replace.sh）
   const uploads = section.split("\n").filter((l) => l.includes("release_upload.sh"));
-  assert.strictEqual(uploads.length, 4, `桌面版上传应为 4 条（版本页 exe + stable 三件套），实际 ${uploads.length}`);
-  for (const l of uploads) {
+  const replaces = section.split("\n").filter((l) => l.includes("release_replace.sh"));
+  assert.strictEqual(uploads.length, 1, `版本页上传应为 1 条，实际 ${uploads.length}`);
+  assert.strictEqual(replaces.length, 1, `stable 替换应为 1 条，实际 ${replaces.length}`);
+  assert.match(replaces[0], /desktop-stable/);
+  for (const l of [...uploads, ...replaces]) {
     assert.ok(!/lite|setup-lite|setup-full|full-win64|linux-amd64/.test(l),
       `上传指令不应涉及裸包: ${l.trim()}`);
   }
-  // 桌面版三件套上传与历史裸包清理必须就位
+  // 桌面版三件套与发行说明（含 SHA256 占位符）必须就位
   assert.match(section, /SiteLens-Setup-3\.0\.0\.exe/);
   assert.match(section, /desktop-stable/);
-  assert.match(section, /stale asset/, "缺少历史裸包清理步骤");
+  assert.match(section, /__SHA256__/, "发行说明 SHA256 占位符替换步骤缺失");
+  assert.match(section, /SITLENS_BODY_FILE/, "发行说明未挂载");
 });
 
 test("环境变量前置导出：electron-builder 相关 export 必须在 npm ci 之前", () => {
