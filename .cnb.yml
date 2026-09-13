@@ -46,20 +46,34 @@ main:
               export ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/
               export ELECTRON_BUILDER_BINARIES_MIRROR=https://npmmirror.com/mirrors/electron-builder-binaries/
               export CSC_IDENTITY_AUTO_DISCOVERY=false
+              # Wine：Linux 上打 Windows NSIS 安装包必需（electron-builder 会用
+              # wine 跑 makensis.exe 生成卸载器）。makensis.exe 是 32 位 PE，
+              # 所以 wine32 必须装（仅 wine64 会以 wow64 模式加载
+              # C:\windows\syswow64\ntdll.dll 失败：c0000135）。
+              # USE_SYSTEM_WINE=true 让 electron-builder 直接用系统 wine，跳过
+              # 它自带的工具集下载（国内直连 github 不稳，且其 wine-4.0.1-mac 包
+              # 在 Linux 上会 spawn 失败）。
+              export USE_SYSTEM_WINE=true
+              export WINEARCH=win64
+              export WINEDEBUG=-all
               # Node 22：electron 44 / electron-builder 26 工具链要求 >=22.12
               # （基础镜像自带 node 20，此处补装满足 engine 要求的版本）
-              # wine 不安装：见下方 electron-builder 参数说明
+              dpkg --add-architecture i386
               apt-get update -qq && apt-get install -y -qq zip jq curl >/dev/null
+              apt-get install -y -qq --no-install-recommends wine wine64 wine32:i386 >/dev/null
               curl -fsSL https://deb.nodesource.com/setup_22.x | bash - >/dev/null
               apt-get install -y -qq nodejs >/dev/null
+              # 预热 wine prefix（首次运行会创建 ~/.wine，可能耗时数十秒）
+              wineboot --init >/dev/null 2>&1 || true
               cd desktop
               npm ci --no-audit --no-fund
               node --test
               npm run engine
-              # signAndEditExecutable=false：打 NSIS 时跳过 exe 图标/元数据写入。
-              # 该步骤在 Linux 上依赖 wine，而 golang 基础镜像内的 wine 无法正常
-              # 初始化（实验性 wow64 模式加载 ntdll.dll 失败 c0000135 / 无显示驱动），
-              # 导致 "wine process failed 1"。产物功能性不受影响，仅 exe 不写入自定义图标。
+              # signAndEditExecutable=false：跳过 exe 图标/元数据写入与代码签名。
+              # 该步骤由 electron-builder 的 rcedit 完成，Linux 上同样经 wine 调用；
+              # 本项目安装包未做代码签名（README「已知边界」），跳过它可省一轮 wine
+              # 调用、降低无显示驱动环境的失败面。产物功能性不受影响，仅 exe 不写
+              # 入自定义图标与版本资源。
               npx electron-builder --win nsis --publish never -c.win.signAndEditExecutable=false
               cd ..
               bash tools/release_upload.sh desktop/release/SiteLens-Setup-3.0.0.exe
