@@ -136,10 +136,10 @@ type NetsecConfig struct {
 
 // ExploitConfig 3.0 利用级无害验证（总闸默认关，设置页可开）。
 type ExploitConfig struct {
-	Enabled          bool     `yaml:"enabled"`            // 总闸：false 时利用级探针一层请求都不发
+	Enabled bool `yaml:"enabled"` // 总闸：false 时利用级探针一层请求都不发
 	// Authorized 为保留键：授权白名单语义已按用户要求移除（目标合规
 	// 责任在使用者），保留键位以兼容历史 yml，当前版本不消费。
-	Authorized []string `yaml:"authorized"`
+	Authorized       []string `yaml:"authorized"`
 	DelayThresholdMS int      `yaml:"delay_threshold_ms"` // 时延通道判定阈值
 }
 
