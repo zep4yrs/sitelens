@@ -101,7 +101,7 @@ main:
               apt-get update -qq && apt-get install -y -qq zip nsis jq >/dev/null
               export SITLENS_BODY_FILE="$PWD/tools/release-body-3.0.0.md"
               mkdir -p SiteLens/data/nuclei SiteLens/data dist
-              tar xzf packs/nuclei-templates.tar.gz -C SiteLens/data/nuclei
+              tar --no-same-owner -xzf packs/nuclei-templates.tar.gz -C SiteLens/data/nuclei
               cp data/intel_dump.json.gz data/tpl_intel.json.gz data/affected_ranges.json SiteLens/data/ 2>/dev/null || true
               cp -r data/go data/wordlists SiteLens/data/ 2>/dev/null || true
               GOOS=windows GOARCH=amd64 go build -ldflags "-s -w" -o SiteLens/sitelens.exe ./cmd/sitelens
