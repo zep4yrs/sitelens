@@ -88,6 +88,10 @@ main:
               # makensis.exe（32 位 PE），无 display driver 必失败
               xvfb-run -a npx electron-builder --win nsis --publish never -c.win.signAndEditExecutable=false
               cd ..
+              # 发行说明里的 SHA256 占位符用本次构建的实际产物替换
+              SHA=$(sha256sum desktop/release/SiteLens-Setup-3.0.0.exe | cut -d' ' -f1)
+              sed "s/__SHA256__/$SHA/" tools/release-body-3.0.0.md > /tmp/release-body.md
+              export SITLENS_BODY_FILE="/tmp/release-body.md"
               # ---- v3.0.0 版本页：整版重建（幂等） ----
               # 4.0 起桌面版是唯一交付形态。删旧版→带最新发行说明重建，
               # 顺带清掉旧流水线遗留的 lite/full/linux 裸包资产。
