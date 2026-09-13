@@ -9,8 +9,9 @@
 
 ```
 desktop/
-├── main.js                  # 壳主进程：窗口 / 托盘 / 单实例 / 崩溃自愈 / 更新事件分发
+├── main.js                  # 壳主进程：启动页编排 / 窗口 / 托盘 / 单实例 / 崩溃自愈 / 更新事件分发
 ├── engine.js                # 引擎子进程管理：配置写入 / 端口协商 / 种子初始化 / 就绪探测
+├── splash.js                # 透明启动页：logo 弹性浮现 + sitelens 描边动画，状态/错误/淡出接口
 ├── preload.js               # contextBridge 桥：设置页经 window.sitelens 调用更新器
 ├── package.json             # electron-builder 配置（NSIS / 更新源 / files 白名单）
 ├── package-lock.json
@@ -27,9 +28,13 @@ desktop/
 │
 ├── build/                   # 打包资源（electron-builder 自动拾取）
 │   ├── icon.ico             #   多尺寸图标 16→256（由 make_icon.py 从品牌 logo 生成）
-│   ├── icon.png             #   512×512 PNG（托盘 / extraResources）
+│   ├── icon.png             #   512×512 PNG（托盘 / extraResources / 启动页 logo）
 │   ├── license.rtf          #   NSIS 安装向导许可协议页（Unicode 转义，任何代码页不乱码）
 │   ├── license.txt          #   许可协议纯文本源
+│   ├── installer.nsh        #   安装器定制：默认装 D 盘 / 用户 PATH 追加与卸载移除 / 品牌进度条 / 卸载数据询问
+│   ├── installerSidebar.bmp #   安装向导品牌侧栏（164×314 24 位 BMP，logo 原样放浅色底板）
+│   ├── uninstallerSidebar.bmp # 卸载向导品牌侧栏
+│   ├── gen_brand_bmps.py    #   侧栏图生成脚本（Pillow；改文案/版本号后重跑）
 │   └── make_icon.py         #   图标生成脚本（Pillow，从 assets/logo.png 裁剪+缩放）
 │
 ├── scripts/
@@ -53,24 +58,31 @@ desktop/
 
 | 文件 | 职责 | 被谁调用 |
 |---|---|---|
-| `main.js` | 壳进程入口：创建窗口、托盘、注册 IPC、分发更新事件、崩溃自愈编排 | Electron 运行时 |
+| `main.js` | 壳进程入口：透明启动页编排（引擎就绪前主窗口不创建）、创建窗口、托盘、注册 IPC、分发更新事件、崩溃自愈编排 | Electron 运行时 |
 | `engine.js` | 引擎子进程全生命周期：配置写入、端口协商（壳偏好 > 配置 > 5087）、种子初始化、就绪轮询、优雅停止、崩溃回调 | main.js require |
+| `splash.js` | 透明启动页窗口：logo 弹性浮现 + sitelens SVG 描边动画；setStatus/splashFail/closeSplash 供 main.js 驱动 | main.js require |
 | `preload.js` | contextBridge 最小暴露：设置页经 `window.sitelens` 调用更新器 / 桌面端偏好 | 设置页渲染进程 |
 | `lib/yml-merge.js` | 纯函数：配置文本合并（受管键原位更新，用户键/注释/未知键保留）、listen 值解析 | engine.js |
 | `lib/port-policy.js` | 纯函数：端口决策（壳偏好 > 配置原文 > 默认），来源标签追踪 | engine.js |
 | `build-engine.js` | 构建脚本（node build-engine.js）：go build 引擎二进制 → 暂存 lite 数据载荷到 engine/ | 开发者手动运行 |
-| `build/make_icon.py` | 从 assets/logo.png 裁剪生成 icon.ico / icon.png | 换 logo 后手动运行 |
+| `build/installer.nsh` | NSIS 定制（electron-builder include 挂载）：默认装 D:\Program Files\SiteLens（无既往安装+无 /D+固定 D 盘）、装/卸维护 HKCU 用户 PATH、品牌进度条、交互卸载询问数据去留 | electron-builder dist |
+| `build/make_icon.py` | 从 assets/logo.png 裁剪生成 icon.ico / icon.png（**原样保留 logo 风格，不改色**） | 换 logo 后手动运行 |
+| `build/gen_brand_bmps.py` | 生成安装/卸载向导品牌侧栏 BMP（164×314 24 位） | 改侧栏文案后手动运行 |
 | `scripts/fetch-electron.js` | npm allow-scripts 门禁拦截 electron postinstall 时手动补拉二进制 | 网络受限环境 |
 
 ### 数据布局（更新/卸载永不伤用户数据）
 
 | 位置 | 内容 | 生命周期 |
 |---|---|---|
-| 安装目录 `%LOCALAPPDATA%\Programs\sitelens` | 引擎 exe + 只读资产（情报库种子/NVD/指纹规则/字典） | 随 app 更新整体替换 |
+| 安装目录（默认 `D:\Program Files\SiteLens`，无固定 D 盘/已有安装时回退 `%LOCALAPPDATA%\Programs\SiteLens`；向导目录页可改） | 引擎 exe + 只读资产（情报库种子/NVD/指纹规则/字典） | 随 app 更新整体替换 |
 | `%APPDATA%\SiteLens\state` | 扫描历史（store.data_dir） | 永久 |
 | `%APPDATA%\SiteLens\pools\nuclei` | 模板池（update-nuclei 在线拉取） | 永久 |
 | `%APPDATA%\SiteLens\plugins` | 用户插件 | 永久 |
 | `%APPDATA%\SiteLens\data` | 可变情报（update-nvd / update-fp / update-ehole 写入） | 永久 |
+
+安装器同时把安装目录追加进**用户 PATH**（`HKCU\Environment`，终端可直接
+`sitelens -h`），卸载时自动移除；交互卸载会询问是否保留 `%APPDATA%\SiteLens`
+（默认保留，静默 /S 同样默认保留）。
 
 首启把安装包内置种子（NVD 37MB + 情报行 + 指纹规则，位于安装目录
 `resources\engine\data`）按缺失补拷到用户数据区——首开即完整体验，
