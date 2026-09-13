@@ -41,6 +41,7 @@
 - [x] 许可协议页 RTF（中文不乱码，`build/license.rtf`，gen_rtf.py 可复现）
 - [x] `allowToChangeInstallationDirectory: true`（可选安装目录）
 - [x] **默认装 D 盘**：`build/installer.nsh` customInit——无既往安装、未用 /D 指定、D: 为固定磁盘三者同时满足时默认 `D:\Program Files\SiteLens`（C 盘安装是大忌）。实测静默装落 D: ✓
+  - **交互模式修正（2026-09-13 晚）**：模式选择页（仅为我/所有人）点下一步时 `setInstallModePerUser` 会重读注册表并重置 $INSTDIR（无既往安装回落 C 盘用户目录），直设的 D 盘被覆盖——「向导默认 C 盘」的根因。修法：交互模式下把 D 盘默认值预写 `InstallLocation`（静默装不写，$INSTDIR 直设即可），让模式页认领回来；安装完成时模板覆写为最终目录，中途取消由 `.onUserAbort` 清理（值=默认目录且该目录无真实安装的卸载器才删，无状态判断）。实测全新路径向导落 D 盘 ✓
 - [x] **PATH 环境变量**：customInstall 把安装目录追加进 `HKCU\Environment`（幂等）+ WM_SETTINGCHANGE 广播；customUnInstall 卸载时按分号边界三态移除。实测：装后 PATH 出现条目、卸后零残留 ✓
   - 注：原设想「自定义安装展开后勾选」做不了——electron-builder 的 MUI2 向导链不允许注入 nsDialogs 自绘页，改为默认开启、卸载自动移除（无残留即无代价）
 - [x] **安装/卸载品牌侧栏图**（164×314 24 位 BMP，gen_brand_bmps.py 生成）：logo 原样放浅色圆角底板 + mono 品牌名 + 绿点 + 站点透视 v3.0.0 + 「仅限授权测试目标」
