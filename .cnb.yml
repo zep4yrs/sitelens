@@ -119,3 +119,28 @@ main:
                 desktop/release/SiteLens-Setup-3.0.0.exe \
                 desktop/release/SiteLens-Setup-3.0.0.exe.blockmap \
                 desktop/release/latest.yml
+
+# 一次性清理任务（用完即删）：删除 desktop-stable 更新源 Release 与标签。
+# 背景：用户拍板 CNB 不做更新源（Gitee 同理，100MB 限制），自动更新走 GitHub。
+"v-cleanup*":
+  tag_push:
+    - name: 清理 desktop-stable 更新源
+      docker:
+        image: golang:1.26.8
+      stages:
+        - name: cleanup
+          script:
+            - |
+              set -e
+              apt-get update -qq && apt-get install -y -qq curl jq >/dev/null
+              API="https://api.cnb.cool/feng-qiao/sitelens"
+              RID=$(curl -sf -H "Authorization: Bearer $CNB_TOKEN" -H "Accept: application/json" \
+                "$API/-/releases/tags/desktop-stable" | jq -r '.id // empty')
+              if [ -n "$RID" ]; then
+                curl -sf -X DELETE -H "Authorization: Bearer $CNB_TOKEN" -H "Accept: application/json" \
+                  "$API/-/releases/$RID" && echo "desktop-stable release deleted"
+              else
+                echo "desktop-stable release 不存在（已清理）"
+              fi
+              git push "https://cnb:$CNB_TOKEN@cnb.cool/feng-qiao/sitelens.git" :refs/tags/desktop-stable \
+                && echo "desktop-stable tag deleted" || echo "tag 已不存在"
