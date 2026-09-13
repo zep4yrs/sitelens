@@ -123,3 +123,14 @@
 - （不做）LLM/RAG/Chat/Agent 类一切内容；深度学习起步；Severity 作 Label；
   无 execution 证据造 negative；为指标造 synthetic 数据；ML 接入生产扫描；
   修改 3.0/4.0 行为代码；伪造任何指标；提前实现 4.0 攻击链字段
+
+## 学习阶段（2026-09-14 第二轮：主仓库 10 万级知识数据）
+
+[x] 61. 数据侦察：144,954 文件/821MB 全盘点（recon-5.0.0）；实证 NVD 371,755（0 重复，pub 1988-2026，303 万产品约束，**CWE 字段=0**）、模板 117,889（56,066 带 CVE）、tpl_intel 29,554、cve_ms 34,931、yaml id 115,635 唯一
+[x] 62. 知识层 kb-5.0.0：kb_cve/kb_cve_product/kb_product_stats/kb_template/kb_template_cve/kb_tpl_intel 六表 + 模板 sev 脏值逐条归一（仅 85 条显式 missing）+ manifest
+[x] 63. EXP-1001 CVE 严重度学习：148k 训练/143k 测试（时间切分），LR+TF-IDF acc 0.574/F1 0.484/AUC(critical) 0.827；消融证明文本主信号；跨源 vuln_kb 81.2%、cve_ms 36.6%；seed 稳定性 0.0028
+[x] 64. EXP-1002 CVE→产品/技术关系预测：200 类/107 万边，**P@5=0.9085/P@10=0.9425/MRR=0.864**（随机 0.025）；35 类直接对应 SiteLens 技术名
+[x] 65. EXP-1003 模板命中先验：216 命中→90 模板；**info 级 lift=12 倍**、community-40k 3.1 倍、wordfence 8.2 万条命中 0（引擎调度先验的实证输入）
+[x] 66. 历史关联覆盖率：历史 77 唯一 CVE 100% 可关联知识层（NVD 77/模板 23/tpl_intel 22）；模型产物持久化 + registry 链验证（EXP-1001/1002-model ok）
+[ ] 67. （等待拍板）update-nvd 投影补 CWE 字段——解锁 CVE↔CWE 关系学习
+[ ] 68. （等待授权窗口）replay 实验与靶场 L2 标签（同 39/40）
