@@ -60,13 +60,30 @@ desktop-stable 标签附件区）：启动静默检查 + 运行期每 6 小时�
 
 前置：Go 1.26+、Node 18+、npm。国内网络 `.npmrc` 已指向 npmmirror。
 
-Linux 上出 Windows NSIS 安装包还需要 **32 位 Wine**（Debian/Ubuntu 下
-`dpkg --add-architecture i386 && apt-get install wine wine64 wine32:i386`）：
-`electron-builder` 会经 wine 调用 NSIS 的 `makensis.exe` 生成卸载器，
-而 `makensis.exe` 是 32 位 PE，只有 `wine64` 时会以 wow64 模式加载
-`C:\windows\syswow64\ntdll.dll` 失败（`c0000135` / `wine process failed`）。
-设 `USE_SYSTEM_WINE=true` 可让 electron-builder 直接用系统 wine，
-跳过它自带的 wine 工具集下载。CI（`.cnb.yml` 的 `v*` tag 流水线）已按此配置。
+Linux 上出 Windows NSIS 安装包需要 **Wine + Xvfb**（Debian/Ubuntu 下
+`apt-get install wine wine64 xvfb xauth`）。两件事都不能少：
+
+- `electron-builder` 会经 wine 调用 NSIS 的 `makensis.exe` 生成卸载器；
+- wine 的图形驱动初始化失败时，**任何 32 位 PE 都会秒退**，日志是
+  `err:winediag:nodrv_CreateWindow Application tried to create a window,
+  but no driver could be loaded.`（随后 electron-builder 报
+  `wine process failed 1`）。容器里没有 X server，必须起虚拟显示：
+  所有 wine 调用都套 `xvfb-run -a`。
+
+设 `USE_SYSTEM_WINE=true` 可让 electron-builder 直接用系统 wine，跳过它
+自带的 wine 工具集下载（其 wine-4.0.1-mac 包在 Linux 上会 spawn 失败）。
+
+> 32 位 wine（`dpkg --add-architecture i386 && apt-get install wine32:i386`）
+> 只在**宿主机 wine < 9** 时才需要：老版本靠 32 位库、或靠实验性 wow64 加载
+> `C:\windows\syswow64\ntdll.dll`（失败即 `c0000135`）。wine 10 起 wow64
+> 已成熟，`WINEARCH=win64` 单装 `wine64` 即可。
+>
+> ⚠️ wine 的退出码不能当成败判据：32 位 NSIS 引导程序在 wine 下常驻不退
+> （`--version` 会一直挂住），/S 静默安装才按 `SetErrorLevel` 返回。
+> 验收请以**产物存在且非空**为准，别拿 wine 退出码判红绿。
+
+CI（`.cnb.yml` 的 `v*` tag 流水线）已按此配置；lite / full 两个 job 里
+`makensis` 的编译 + 加载校验统一收在 `tools/ci_nsis_exe.sh` 里。
 
 ```cmd
 cd desktop
