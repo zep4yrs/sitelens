@@ -120,10 +120,10 @@ func (s *Server) persistSettings(v settingsConfig) error {
 			"rate_interval_ms": v.Scan.RateIntervalMS,
 			"timeout_sec":      v.Scan.TimeoutSec,
 		},
-		"checks": {"nuclei_cap": v.Checks.NucleiCap},
+		"checks":  {"nuclei_cap": v.Checks.NucleiCap},
 		"exploit": {"enabled": v.Exploit.Enabled},
-		"intel":  {"overrides_path": v.Intel.OverridesPath},
-		"batch":  {"max_urls": v.Batch.MaxURLs},
+		"intel":   {"overrides_path": v.Intel.OverridesPath},
+		"batch":   {"max_urls": v.Batch.MaxURLs},
 	}
 	if v.Web.APIToken != "" {
 		updates["web"]["api_token"] = v.Web.APIToken

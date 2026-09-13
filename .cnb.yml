@@ -4,9 +4,13 @@
   docker:
     image: golang:1.26.8
   stages:
+    - name: gofmt 格式检查
+      script:
+        # 独立步骤：失败信息只指向格式问题，不与 vendor 检查混在一条链里
+        #（曾经把排查方向带偏：真正失败在 gofmt，兜底文案却喊 vendor）
+        - test -z "$(gofmt -l internal/ cmd/)" || { echo "× 以下文件未过 gofmt，本地 gofmt -w 后提交："; gofmt -l internal/ cmd/; exit 1; }
     - name: 引擎回归
       script:
-        - gofmt -l internal/ cmd/ && test -z "$(gofmt -l internal/ cmd/)"
         - go vet ./...
         - go mod verify
         # vendor 一致性门禁：仓库里 go.mod 与 vendor 脱节（只提交依赖改动漏跑

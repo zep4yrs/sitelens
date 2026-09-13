@@ -10,9 +10,9 @@ func TestValidateBlocksGovCn(t *testing.T) {
 		"https://www.gov.cn/xinwen",
 		"http://gov.cn",
 		"https://www.gov.cn:8443/",
-		"www.gov.cn",               // 无协议补 https
-		"https://flk.npc.gov.cn/",  // 子域
-		"https://www.mps.gov.cn",   // 部委子域
+		"www.gov.cn",              // 无协议补 https
+		"https://flk.npc.gov.cn/", // 子域
+		"https://www.mps.gov.cn",  // 部委子域
 	} {
 		if _, _, _, err := Validate(raw, false); err == nil {
 			t.Errorf("%s 应被拒扫（gov.cn 硬保护）", raw)
