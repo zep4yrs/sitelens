@@ -13,17 +13,29 @@ import pandas as pd
 
 
 def split_equivalence_report(scans: pd.DataFrame) -> dict:
-    """target 与 host 的对应关系：每个 host 仅一个 distinct 目标 URL 时二者等价。"""
+    """target 与 host 的对应关系。
+
+    若每 host 恰一个目标 URL → target split ≡ host split，二者不可分，
+    只保留 host split。若某 host 有多个目标 URL（如同机多端口应用），
+    也不做 target split：按 URL 切分会把同一 host 的目标分进两侧，
+    引入 host 级交叉泄漏——host split 是更严口径，一律以它为准。
+    """
     if not len(scans):
-        return {"independent_target_groups": False, "targets_per_host": {}}
+        return {"independent_target_groups": False, "targets_per_host": {},
+                "conclusion": "空表"}
     per_host = scans.groupby("host")["url"].nunique()
-    independent = bool((per_host > 1).any())
+    multi = {k: int(v) for k, v in per_host.items() if v > 1}
+    conclusion = (
+        "target 与 host 一一等价：只保留 host split，target split 不单独统计"
+        if not multi else
+        f"存在一 host 多目标（{multi}），但同 host 多目标属同一资产族；"
+        "按 URL 切分会引入 host 级交叉，故只保留更严的 host split，"
+        "target split 不单独统计")
     return {
-        "independent_target_groups": independent,
+        "independent_target_groups": False,
         "targets_per_host": {k: int(v) for k, v in per_host.items()},
-        "conclusion": ("target 与 host 等价：只保留 host split，target split 不单独统计"
-                       if not independent else
-                       "存在独立 target group：host split 与 target split 分别统计"),
+        "hosts_with_multiple_targets": multi,
+        "conclusion": conclusion,
     }
 
 
