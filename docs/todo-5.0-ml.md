@@ -51,7 +51,7 @@
 
 [x] 23. features.py：资产/网络组（P0）
 [x] 24. features.py：技术栈组（one-hot + 类别聚合 + confidence/版本覆盖统计）
-[x] 25. dict_join.py：CVE 级特征（CVSS 8 维向量分解/KEV/ransomware/pub_days/模板可用数）
+[x] 25. CVE 级特征（dataset.build_cve_features 投影 + features 联接：CVSS 8 维向量分解/KEV/ransomware/pub_days/模板可用数）
 [x] 26. features.py：验证面组（check/template 元数据 + 历史命中先验）
 [x] 27. 历史特征严格时间截断：as-of 聚合器（searchsorted side=left），先验只聚合 scanned_at < prediction_time
 [x] 28. features.py：证据强度/时延组（signals 计数、resp_size、timing 数值抽取）
