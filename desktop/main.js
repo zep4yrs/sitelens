@@ -22,6 +22,9 @@ const isDev = !app.isPackaged;
 const RELEASES_URL = 'https://cnb.cool/feng-qiao/sitelens/releases';
 // 更新源轮询顺序：CNB 主源（国内直连）→ Gitee 镜像 → GitHub 镜像。
 // 三个源的 desktop-stable release 须放同一套三件套（exe/blockmap/latest.yml）。
+// Gitee 例外：单文件上限 100MB 放不下安装包，只有 latest.yml 参与版本
+// 采样；全源按 releaseDate 取最新，同刻按此处顺序——CNB/GitHub 任一
+// 可用就轮不到 Gitee 提供下载。
 const FEEDS = [
   { name: 'CNB', url: 'https://cnb.cool/feng-qiao/sitelens/-/releases/download/desktop-stable/' },
   { name: 'Gitee', url: 'https://gitee.com/map1ebridge/sitelens/releases/download/desktop-stable/' },
