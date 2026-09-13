@@ -58,13 +58,21 @@ test("tag 流水线安装了 xvfb（含 xauth，xvfb-run 依赖它）", () => {
   assert.match(tagSection(), /apt-get install[^\n]*\bxauth\b/, "未安装 xauth");
 });
 
-test("lite / full 的 makensis 统一走 tools/ci_nsis_exe.sh", () => {
+test("流水线不再产出引擎裸包（4.0 起桌面版是唯一交付形态）", () => {
   const section = tagSection();
-  const calls = section.match(/bash tools\/ci_nsis_exe\.sh[^\n]*/g) || [];
-  assert.equal(calls.length, 2, `期望 lite/full 各一次，实际 ${calls.length} 次`);
-  // 不允许再有裸 makensis 调用（LANG=C.UTF-8 的坑已在脚本内处理）
-  const naked = section.split("\n").filter((l) => /^\s*[-\s]*LANG=.*makensis/.test(l));
-  assert.deepStrictEqual(naked, [], "仍有裸 makensis 调用，应改走 ci_nsis_exe.sh");
+  // lite / full / linux 打包 stage 已移除：构建/上传指令里不得再引入
+  //（清理步骤按名删除历史资产属预期，不在禁止之列）
+  assert.ok(!section.includes("ci_nsis_exe.sh"), "不应再有 makensis 裸包构建");
+  const uploads = section.split("\n").filter((l) => l.includes("release_upload.sh"));
+  assert.strictEqual(uploads.length, 4, `桌面版上传应为 4 条（版本页 exe + stable 三件套），实际 ${uploads.length}`);
+  for (const l of uploads) {
+    assert.ok(!/lite|setup-lite|setup-full|full-win64|linux-amd64/.test(l),
+      `上传指令不应涉及裸包: ${l.trim()}`);
+  }
+  // 桌面版三件套上传与历史裸包清理必须就位
+  assert.match(section, /SiteLens-Setup-3\.0\.0\.exe/);
+  assert.match(section, /desktop-stable/);
+  assert.match(section, /stale asset/, "缺少历史裸包清理步骤");
 });
 
 test("环境变量前置导出：electron-builder 相关 export 必须在 npm ci 之前", () => {
@@ -81,10 +89,9 @@ test("ci_nsis_exe.sh：makensis 带 UTF-8 locale，且不拿 wine 退出码当�
   assert.match(nsisHelper, /-s "\$OUTFILE"/, "缺产物非空校验");
 });
 
-test("lite / full 的 tar 解包必须 --no-same-owner（跨平台属主）", () => {
+test("tag 流水线如出现 tar 解包必须 --no-same-owner（跨平台属主）", () => {
   const section = tagSection();
   const tars = section.split("\n").filter((l) => /\btar\s/.test(l) && /\.tar\.gz/.test(l));
-  assert.ok(tars.length > 0, "未找到 tar 解包行");
   for (const t of tars) {
     assert.match(t, /--no-same-owner/, `tar 解包缺少 --no-same-owner: ${t.trim()}`);
   }
