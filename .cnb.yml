@@ -46,12 +46,13 @@ main:
               export ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/
               export ELECTRON_BUILDER_BINARIES_MIRROR=https://npmmirror.com/mirrors/electron-builder-binaries/
               export CSC_IDENTITY_AUTO_DISCOVERY=false
-              apt-get update -qq && apt-get install -y -qq nodejs npm zip >/dev/null
+              # wine：electron-builder 在 Linux 上打 Windows NSIS 必需
+              apt-get update -qq && apt-get install -y -qq nodejs npm wine zip jq >/dev/null
               cd desktop
               npm ci --no-audit --no-fund
               node --test
               npm run engine
-              npx electron-builder --win nsis --config.win.signAndEditExecutable=false
+              npx electron-builder --win nsis --publish never
               cd ..
               bash tools/release_upload.sh desktop/release/SiteLens-Setup-3.0.0.exe
               SITLENS_TAG=desktop-stable bash tools/release_upload.sh desktop/release/SiteLens-Setup-3.0.0.exe
