@@ -106,11 +106,15 @@ main:
               # 顺带清掉旧流水线遗留的 lite/full/linux 裸包资产。
               # SITLENS_BODY_FILE 已指向 sed 替换过 SHA256 的 /tmp 副本，勿再覆盖。
               API="https://api.cnb.cool/feng-qiao/sitelens"
+              GITURL="https://cnb:$CNB_TOKEN@cnb.cool/feng-qiao/sitelens.git"
               OLD=$(curl -sf -H "Authorization: Bearer $CNB_TOKEN" -H "Accept: application/json" \
                 "$API/-/releases/tags/v3.0.0" | jq -r '.id // empty')
               if [ -n "$OLD" ]; then
                 curl -sf -X DELETE -H "Authorization: Bearer $CNB_TOKEN" -H "Accept: application/json" \
                   "$API/-/releases/$OLD" && echo "removed stale v3.0.0 release (含 lite/full/linux 裸包)"
+                # CNB 实测：删除 Release 会级联删除同名 git 标签；标签没了
+                # release 就建不回来（本次 3.0.0 页面丢失的根因）。删完立刻推回。
+                git push "$GITURL" v3.0.0 2>/dev/null || { git tag -f v3.0.0 >/dev/null 2>&1 || true; git push "$GITURL" v3.0.0; }
               fi
               # 上传（重试 3 次：大文件 PUT 偶发网络中断）
               for i in 1 2 3; do bash tools/release_upload.sh desktop/release/SiteLens-Setup-3.0.0.exe && break || sleep 10; done
