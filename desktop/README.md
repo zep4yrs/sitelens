@@ -60,6 +60,14 @@ desktop-stable 标签附件区）：启动静默检查 + 运行期每 6 小时�
 
 前置：Go 1.26+、Node 18+、npm。国内网络 `.npmrc` 已指向 npmmirror。
 
+Linux 上出 Windows NSIS 安装包还需要 **32 位 Wine**（Debian/Ubuntu 下
+`dpkg --add-architecture i386 && apt-get install wine wine64 wine32:i386`）：
+`electron-builder` 会经 wine 调用 NSIS 的 `makensis.exe` 生成卸载器，
+而 `makensis.exe` 是 32 位 PE，只有 `wine64` 时会以 wow64 模式加载
+`C:\windows\syswow64\ntdll.dll` 失败（`c0000135` / `wine process failed`）。
+设 `USE_SYSTEM_WINE=true` 可让 electron-builder 直接用系统 wine，
+跳过它自带的 wine 工具集下载。CI（`.cnb.yml` 的 `v*` tag 流水线）已按此配置。
+
 ```cmd
 cd desktop
 npm install                       :: electron 二进制若被 npm 脚本门禁拦下：
