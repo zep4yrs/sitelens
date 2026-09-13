@@ -46,13 +46,21 @@ main:
               export ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/
               export ELECTRON_BUILDER_BINARIES_MIRROR=https://npmmirror.com/mirrors/electron-builder-binaries/
               export CSC_IDENTITY_AUTO_DISCOVERY=false
-              # wine：electron-builder 在 Linux 上打 Windows NSIS 必需
-              apt-get update -qq && apt-get install -y -qq nodejs npm wine zip jq >/dev/null
+              # Node 22：electron 44 / electron-builder 26 工具链要求 >=22.12
+              # （基础镜像自带 node 20，此处补装满足 engine 要求的版本）
+              # wine 不安装：见下方 electron-builder 参数说明
+              apt-get update -qq && apt-get install -y -qq zip jq curl >/dev/null
+              curl -fsSL https://deb.nodesource.com/setup_22.x | bash - >/dev/null
+              apt-get install -y -qq nodejs >/dev/null
               cd desktop
               npm ci --no-audit --no-fund
               node --test
               npm run engine
-              npx electron-builder --win nsis --publish never
+              # signAndEditExecutable=false：打 NSIS 时跳过 exe 图标/元数据写入。
+              # 该步骤在 Linux 上依赖 wine，而 golang 基础镜像内的 wine 无法正常
+              # 初始化（实验性 wow64 模式加载 ntdll.dll 失败 c0000135 / 无显示驱动），
+              # 导致 "wine process failed 1"。产物功能性不受影响，仅 exe 不写入自定义图标。
+              npx electron-builder --win nsis --publish never -c.win.signAndEditExecutable=false
               cd ..
               bash tools/release_upload.sh desktop/release/SiteLens-Setup-3.0.0.exe
               SITLENS_TAG=desktop-stable bash tools/release_upload.sh desktop/release/SiteLens-Setup-3.0.0.exe
