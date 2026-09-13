@@ -16,6 +16,7 @@ const { autoUpdater } = require('electron-updater');
 const fs = require('fs');
 const path = require('path');
 const engine = require('./engine');
+const splash = require('./splash');
 
 const isDev = !app.isPackaged;
 const RELEASES_URL = 'https://cnb.cool/feng-qiao/sitelens/releases';
@@ -33,6 +34,9 @@ let win = null;
 let tray = null;
 let hideHintShown = false;
 let quittingByUser = false;
+// 引擎就绪标记：主窗口就绪显示时据此决定是否淡出启动页（错误路径不淡出，
+// 让用户把启动页上的错误读完，主窗口错误页随后常驻）
+let engineReady = false;
 
 // 桌面壳自身日志（userData/desktop.log）：启动里程碑与异常全落盘，
 // 窗口不出现时用户拿得到证据，而不是静默无窗。
@@ -125,10 +129,10 @@ function createWindow() {
   Menu.setApplicationMenu(null); // 页面导航/刷新快捷键交给页面自身
   win.on('resize', scheduleSaveBounds);
   win.on('move', scheduleSaveBounds);
-  loadShellPage('正在启动引擎，全量情报与模板索引加载约需数秒…');
   const showNow = () => {
     if (win && !win.isDestroyed()) {
-      win.show();
+      fadeIn(win);
+      if (engineReady) splash.closeSplash(); // 淡出启动页，工作台淡入
       bootLog('window shown');
     }
   };
@@ -167,19 +171,54 @@ function createWindow() {
   });
 }
 
-// loadShellPage 壳内页（启动页 / 错误页）：不依赖引擎的本地内容。
+// fadeIn 窗口淡入：透明度 0→1 约 0.3s，与启动页淡出衔接成过渡。
+function fadeIn(w) {
+  if (!w || w.isDestroyed()) return;
+  try { w.setOpacity(0); } catch (_) { w.show(); return; }
+  w.show();
+  var o = 0;
+  var t = setInterval(function () {
+    if (w.isDestroyed()) { clearInterval(t); return; }
+    o += 0.15;
+    if (o >= 1) o = 1;
+    try { w.setOpacity(o); } catch (_) { /* 个别环境不支持透明度，静默 */ }
+    if (o === 1) clearInterval(t);
+  }, 40);
+}
+
+// loadShellPage 壳内页（错误页）：不依赖引擎的本地内容。
+// 视觉与工作台一致：深底 #0f172a、mono 品牌名 + 绿色呼吸点、霞鹜文楷回退栈。
 function loadShellPage(title, detail) {
   if (!win || win.isDestroyed()) return;
   var html = '<!DOCTYPE html><html><head><meta charset="utf-8">' +
-    '<style>body{margin:0;height:100vh;display:grid;place-items:center;' +
-    'background:#0f172a;color:#e2e8f0;font-family:system-ui,sans-serif}' +
-    '.b{font-family:ui-monospace,Consolas,monospace;font-size:40px;' +
-    'letter-spacing:.02em}.d{margin-top:16px;opacity:.75;font-size:14px;' +
-    'max-width:560px;line-height:1.8;text-align:center}</style></head><body>' +
-    '<div style="text-align:center"><div class="b">sitelens</div>' +
-    '<div class="d">' + title + '</div>' +
-    (detail ? '<div class="d" style="opacity:.5">' + detail + '</div>' : '') +
-    '</div></body></html>';
+    '<style>' +
+    '*{box-sizing:border-box;margin:0}' +
+    'body{height:100vh;display:flex;flex-direction:column;justify-content:center;align-items:center;' +
+    'background:#0f172a;color:#e2e8f0;' +
+    'font-family:"LXGW WenKai","Noto Sans SC","Source Han Sans SC","Microsoft YaHei",sans-serif}' +
+    '.brand{display:flex;align-items:baseline;gap:3px;font-family:ui-monospace,Consolas,monospace;' +
+    'font-weight:700;font-size:28px;letter-spacing:.02em;color:#f1f5f9}' +
+    '.brand .dot{width:6px;height:6px;border-radius:50%;background:#22c55e;' +
+    'animation:breath 2.4s ease-in-out infinite}' +
+    '.msg{margin-top:24px;font-size:14px;color:#94a3b8;max-width:480px;' +
+    'text-align:center;line-height:1.8}' +
+    '.err{margin-top:24px;font-size:14px;color:#f87171;max-width:560px;' +
+    'text-align:center;line-height:1.8}' +
+    '.bar{margin-top:28px;width:180px;height:3px;border-radius:99px;' +
+    'background:#1e293b;overflow:hidden;position:relative}' +
+    '.bar::after{content:"";position:absolute;top:0;left:-40%;width:40%;height:100%;' +
+    'border-radius:99px;background:#22c55e;animation:slide 1.4s ease-in-out infinite}' +
+    '@keyframes breath{0%,100%{opacity:.35;transform:scale(.85)}50%{opacity:1;transform:scale(1.15)}}' +
+    '@keyframes slide{0%{left:-40%}100%{left:100%}}' +
+    '</style></head><body>' +
+    '<div class="brand">sitelens<span class="dot"></span></div>' +
+    '<div class="msg">' + title + '</div>' +
+    (detail ? '<div class="err">' + detail + '</div>' : '') +
+    '<div class="bar"><div class="bar-fill"></div></div>' +
+    '<style>.bar-fill{height:100%;width:40%;border-radius:99px;background:#22c55e;' +
+    'animation:barfill 1.4s ease-in-out infinite}@keyframes barfill' +
+    '{0%{left:-40%;position:relative}100%{left:100%;position:relative}}</style>' +
+    '</body></html>';
   win.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(html))
     .catch(function () {});
 }
@@ -469,14 +508,28 @@ async function handleEngineCrash(code) {
   }
 }
 
+// logoDataUrl 启动页 logo 的 data URL（读不到返回空串，启动页降级为纯描边字）。
+function logoDataUrl() {
+  try {
+    return 'data:image/png;base64,' + fs.readFileSync(ICON_PATH).toString('base64');
+  } catch (_) {
+    return '';
+  }
+}
+
 app.on('second-instance', showWindow);
 
 app.whenReady().then(async () => {
   bootLog('app v' + app.getVersion() + ' ready, engine dir: ' + engine.ENGINE_DIR);
   loadDeskPrefs();
   createTray();
-  // 窗口先行：品牌启动页立即可见，引擎冷启动（全量情报加载）不产生空白期
-  createWindow();
+  // 透明启动页先行：引擎冷启动（全量情报与模板索引加载）期间唯一的可见面，
+  // 主窗口在引擎就绪前不创建——消灭无窗空白期，也不再先出深色占位页
+  splash.showSplash(logoDataUrl());
+  bootLog('splash shown');
+  var statusTimer = setTimeout(function () {
+    splash.setStatus('首次启动需加载全量情报，可能需要数十秒…');
+  }, 8000);
   engine.onCrash = (code) => {
     handleEngineCrash(code);
   };
@@ -490,12 +543,18 @@ app.whenReady().then(async () => {
     }
     bootLog('engine ready at ' + engine.url);
   } catch (err) {
+    clearTimeout(statusTimer);
     bootLog('engine failed: ' + err);
-    // 启动失败在窗口内呈现（含日志位置），比一闪而过的系统弹窗有用
+    splash.splashFail(String(err.message || err)); // 启动页显示错误后淡出
+    // 错误页在主窗口内常驻（含日志位置），比一闪而过的系统弹窗有用
+    createWindow();
     loadShellPage('引擎启动失败', String(err.message || err) +
       '<br>日志：' + app.getPath('userData') + '\\engine.log');
     return;
   }
+  clearTimeout(statusTimer);
+  engineReady = true; // 主窗口就绪显示时淡出启动页、工作台淡入
+  createWindow();
   loadApp();
   setupUpdater();
   setupIpc();

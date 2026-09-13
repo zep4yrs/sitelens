@@ -20,8 +20,8 @@ const fs = require('fs');
 const http = require('http');
 const net = require('net');
 const path = require('path');
-const merge = require('../lib/yml-merge.js');
-const portPolicy = require('../lib/port-policy.js');
+const merge = require('./lib/yml-merge.js');
+const portPolicy = require('./lib/port-policy.js');
 
 const isDev = !app.isPackaged;
 const ENGINE_DIR = isDev

@@ -20,6 +20,7 @@
     "files": [
       "main.js",
       "engine.js",
+      "splash.js",
       "preload.js",
       "lib/*.js",
       "package.json"
@@ -51,7 +52,10 @@
       "deleteAppDataOnUninstall": false,
       "differentialPackage": true,
       "allowToChangeInstallationDirectory": true,
-      "license": "build/license.txt"
+      "license": "build/license.rtf",
+      "include": "build/installer.nsh",
+      "installerSidebar": "build/installerSidebar.bmp",
+      "uninstallerSidebar": "build/uninstallerSidebar.bmp"
     },
     "publish": [
       {
