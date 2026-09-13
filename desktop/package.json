@@ -46,10 +46,12 @@
       ]
     },
     "nsis": {
-      "oneClick": true,
+      "oneClick": false,
       "perMachine": false,
       "deleteAppDataOnUninstall": false,
-      "differentialPackage": true
+      "differentialPackage": true,
+      "allowToChangeInstallationDirectory": true,
+      "license": "build/license.txt"
     },
     "publish": [
       {
