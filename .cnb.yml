@@ -58,17 +58,22 @@ main:
               # Linux 上会 spawn 失败，所以 USE_SYSTEM_WINE=true 改用系统 wine，
               # 跳过它自带的工具集下载（国内直连 github 也不稳）。
               #
-              # 32 位 wine 不再是必需：旧写法装 wine32:i386 是为了绕开
-              # 实验性 wow64（c0000135 加载 syswow64\ntdll.dll 失败）。wine 10
-              # 的 wow64 已成熟，WINEARCH=win64 单装 wine64 即可；
-              # 只有当宿主机 wine < 9 时才需要补 32 位（wine32:i386）。
+              # 32 位 wine 是必需的：基础镜像 golang:1.26.8 = Debian bookworm，
+              # apt 的 wine 是 8.0（<9）。wine ≥10 的成熟 wow64 才能不靠
+              # wine32 单独跑 32 位 PE；8.0 走 experimental wow64 会炸
+              # （c0000135 加载 syswow64\ntdll.dll 失败——electron-builder
+              # 生成卸载器时要真把安装器在 wine 里跑一遍，这一步绕不开）。
+              # 所以必须 dpkg 加 i386 架构并装齐 32 位库（2026-09-13 修正）。
+              dpkg --add-architecture i386
+              apt-get update -qq
+              apt-get install -y -qq --no-install-recommends zip jq curl >/dev/null
+              apt-get install -y -qq --no-install-recommends \
+                wine wine32 wine64 libwine libwine:i386 fonts-wine >/dev/null
               export USE_SYSTEM_WINE=true
               export WINEARCH=win64
               export WINEDEBUG=-all
               # Node 22：electron 44 / electron-builder 26 工具链要求 >=22.12
               # （基础镜像自带 node 20，此处补装满足 engine 要求的版本）
-              apt-get update -qq && apt-get install -y -qq zip jq curl >/dev/null
-              apt-get install -y -qq --no-install-recommends wine wine64 >/dev/null
               curl -fsSL https://deb.nodesource.com/setup_22.x | bash >/dev/null
               apt-get install -y -qq nodejs >/dev/null
               # Xvfb：wine 在容器内没有 display driver 时，任何 32 位 PE（含
