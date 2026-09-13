@@ -5,19 +5,62 @@
 （`sitelens serve` + go:embed 前端）里，本目录只是给它套原生窗口壳，
 所有产品化行为靠引擎既有的配置面（「默认值 + yml 部分覆盖」）实现。
 
-## 架构
+## 目录结构
 
 ```
-┌─ SiteLens.exe（Electron 壳，本目录）──────────────────────┐
-│  main.js   窗口 / 托盘 / 单实例 / 自动更新 / 崩溃自愈编排    │
-│  engine.js 用户数据布局 / 端口策略 / 引擎子进程 / 就绪探测   │
-└──────────────┬───────────────────────────────────┘
-               │ spawn（首参纯字面量，cwd=引擎目录）
-┌──────────────▼───────────────────────────────────┐
-│  sitelens.exe serve -config .sitelens.yml          │
-│  （Go 引擎，仓库主体，零改动）                       │
-└───────────────────────────────────────────────────┘
+desktop/
+├── main.js                  # 壳主进程：窗口 / 托盘 / 单实例 / 崩溃自愈 / 更新事件分发
+├── engine.js                # 引擎子进程管理：配置写入 / 端口协商 / 种子初始化 / 就绪探测
+├── preload.js               # contextBridge 桥：设置页经 window.sitelens 调用更新器
+├── package.json             # electron-builder 配置（NSIS / 更新源 / files 白名单）
+├── package-lock.json
+├── .npmrc                   # npmmirror 镜像（electron / builder binaries）
+│
+├── lib/                     # 纯函数库（可独立单测）
+│   ├── yml-merge.js         #   .sitelens.yml 合并器：受管键原位更新，用户键/注释/未知键保留
+│   ├── port-policy.js       #   端口决策：壳偏好 > 配置原文 > 默认 5087，来源标签可追踪
+│   └── ...
+│
+├── test/                    # node --test 单测（CI regression 门禁必跑）
+│   ├── yml-merge.test.js    #   配置合并回归：引号安全 / 用户键保留 / 受管键更新
+│   └── port-policy.test.js  #   端口决策回归：偏好优先 / 非法值遮蔽 / 来源标签
+│
+├── build/                   # 打包资源（electron-builder 自动拾取）
+│   ├── icon.ico             #   多尺寸图标 16→256（由 make_icon.py 从品牌 logo 生成）
+│   ├── icon.png             #   512×512 PNG（托盘 / extraResources）
+│   ├── license.rtf          #   NSIS 安装向导许可协议页（Unicode 转义，任何代码页不乱码）
+│   ├── license.txt          #   许可协议纯文本源
+│   └── make_icon.py         #   图标生成脚本（Pillow，从 assets/logo.png 裁剪+缩放）
+│
+├── scripts/
+│   └── fetch-electron.js    # 手动补拉 Electron 二进制（npm allow-scripts 拦截时用）
+│
+├── build-engine.js          # 构建脚本：go build 引擎 + 暂存数据载荷到 engine/
+├── engine/                  # 构建产物（gitignore）：sitelens.exe + data/ 载荷
+│   ├── sitelens.exe
+│   └── data/                #   NVD 种子 / 情报行 / 指纹规则 / 字典
+│
+├── release/                 # 构建产物（gitignore）：安装包 + win-unpacked
+│   ├── SiteLens-Setup-x.y.z.exe
+│   ├── SiteLens-Setup-x.y.z.exe.blockmap
+│   ├── latest.yml
+│   └── win-unpacked/        # 免安装目录版（E2E 更新测试用）
+│
+└── README.md                # 本文件
 ```
+
+### 各文件职责
+
+| 文件 | 职责 | 被谁调用 |
+|---|---|---|
+| `main.js` | 壳进程入口：创建窗口、托盘、注册 IPC、分发更新事件、崩溃自愈编排 | Electron 运行时 |
+| `engine.js` | 引擎子进程全生命周期：配置写入、端口协商（壳偏好 > 配置 > 5087）、种子初始化、就绪轮询、优雅停止、崩溃回调 | main.js require |
+| `preload.js` | contextBridge 最小暴露：设置页经 `window.sitelens` 调用更新器 / 桌面端偏好 | 设置页渲染进程 |
+| `lib/yml-merge.js` | 纯函数：配置文本合并（受管键原位更新，用户键/注释/未知键保留）、listen 值解析 | engine.js |
+| `lib/port-policy.js` | 纯函数：端口决策（壳偏好 > 配置原文 > 默认），来源标签追踪 | engine.js |
+| `build-engine.js` | 构建脚本（node build-engine.js）：go build 引擎二进制 → 暂存 lite 数据载荷到 engine/ | 开发者手动运行 |
+| `build/make_icon.py` | 从 assets/logo.png 裁剪生成 icon.ico / icon.png | 换 logo 后手动运行 |
+| `scripts/fetch-electron.js` | npm allow-scripts 门禁拦截 electron postinstall 时手动补拉二进制 | 网络受限环境 |
 
 ### 数据布局（更新/卸载永不伤用户数据）
 
@@ -133,8 +176,8 @@ set SITLENS_E2E_UPDATE=1 && release\app300\SiteLens.exe
 ## 图标
 
 `build/icon.ico / icon.png` 由 `build/make_icon.py` 从
-`assets/logo.png`（品牌 logo）生成，勿直接手改；换 logo 后重跑：
-`python build/make_icon.py`（需 Pillow）。
+`assets/logo.png`（品牌 logo）裁剪生成（去掉 67% 留白，内容撑满），
+勿直接手改；换 logo 后重跑：`python build/make_icon.py`（需 Pillow）。
 
 ## 已知边界
 
