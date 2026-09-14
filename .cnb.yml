@@ -18,6 +18,9 @@
         - go mod tidy && go mod vendor && git diff --exit-code -- go.mod go.sum vendor/ || { echo "× vendor 与 go.mod 不同步：本地执行 go mod tidy && go mod vendor 后一并提交"; exit 1; }
         - go test -count=1 ./internal/... ./cmd/...
         - go test -race -count=1 ./internal/... # 实抓过 2 次 race（测试桩并发），列为阻断门禁
+        # 4.0 graph 断言（P10）：事实图 schema/契约/链边证据驱动 + 性能验收，
+        # 单列一步便于失败定位（含 ID 稳定性、无证据不成边、graph 增量 <1%）
+        - go test -count=1 -run 'Graph|Contract|Inspect|Chain|Evidence' -v ./internal/model/ ./internal/chain/ ./internal/engine/ ./internal/store/ || { echo "× 4.0 graph 断言失败（schema 契约 / 链边证据驱动 / 性能验收）"; exit 1; }
         - go install golang.org/x/vuln/cmd/govulncheck@latest && govulncheck ./...
     - name: 前端转义回归
       script:

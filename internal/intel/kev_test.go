@@ -65,3 +65,30 @@ func TestFetchKEVBadStatus(t *testing.T) {
 		t.Fatal("非 200 应报错")
 	}
 }
+
+// TestIsKEVAndCVSSFor：4.0 P10 新增的公开查询入口（供 impact 先验标注）。
+func TestIsKEVAndCVSSFor(t *testing.T) {
+	kb := &KB{}
+	if n := kb.MergeKEV([]KevEntry{{CVE: "CVE-2021-44228"}, {CVE: "cve-2019-0708"}}); n != 2 {
+		t.Fatalf("MergeKEV 新增 = %d，期望 2", n)
+	}
+	// 大小写不敏感。
+	if !kb.IsKEV("CVE-2021-44228") || !kb.IsKEV("cve-2021-44228") {
+		t.Error("IsKEV 应命中且大小写不敏感")
+	}
+	if kb.IsKEV("CVE-0000-0000") {
+		t.Error("未知 CVE 不应命中")
+	}
+	if kb.IsKEV("") {
+		t.Error("空 CVE 不应命中")
+	}
+	// nil 安全。
+	var nilKB *KB
+	if nilKB.IsKEV("CVE-2021-44228") || nilKB.CVSSFor("CVE-2021-44228") != 0 {
+		t.Error("nil KB 应安全返回 false/0")
+	}
+	// 未挂 NVD 时 CVSSFor 返回 0（不臆造）。
+	if kb.CVSSFor("CVE-2021-44228") != 0 {
+		t.Error("未挂 NVD 时 CVSS 应为 0")
+	}
+}
