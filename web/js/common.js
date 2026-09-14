@@ -119,36 +119,36 @@
   /* ---------------- 左侧栏 HTML ---------------- */
   var ICONS = {
     scan: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="3"/><path d="M12 1v4M12 19v4M1 12h4M19 12h4"/></svg>',
-    netsec: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-3 8-10V5l-8-3-8 3v7c0 7 8 10 8 10z"/><path d="m8.5 12 2.5 2.5 4.5-5"/></svg>',
     audit: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="m10 13-2 2 2 2"/><path d="m14 11 2 2-2 2"/></svg>',
-    brute: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>',
     batch: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m12 2 8 5-8 5-8-5z"/><path d="m4 12 8 5 8-5"/><path d="m4 17 8 5 8-5"/></svg>',
     history: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 3"/></svg>',
     intel: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v14c0 1.7 3.6 3 8 3s8-1.3 8-3V5"/><path d="M4 12c0 1.7 3.6 3 8 3s8-1.3 8-3"/></svg>',
-    verified: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 12l2 2 4-4"/><circle cx="12" cy="12" r="9"/></svg>',
     chain: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="5" cy="6" r="2.5"/><circle cx="19" cy="12" r="2.5"/><circle cx="5" cy="18" r="2.5"/><path d="M7.3 7.2 16.7 11M7.3 16.8 16.7 13"/></svg>',
     settings: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33h.09a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82v.09a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>'
   };
+  // 侧栏导航（4.0 布局收敛）：只列**独立页面**。
+  // 「网络检测 / 登录爆破」是扫描页内的页签、「已验证」是历史页内的页签——
+  // 原先各占一个侧栏入口（10 项里有 3 项如此），层级冗余、易误认为独立页。
+  // 现收敛为 7 个真实路由；旧链接（/app#netsec 等）仍可用，只是侧栏不再单列。
   var NAV = [
     ["scan", "/app", "扫描", "nav_scan"],
-    ["netsec", "/app#netsec", "网络检测", "nav_netsec"],
     ["audit", "/audit", "源码审计", "nav_audit"],
-    ["brute", "/app#loginbrute", "登录爆破", "nav_brute"],
     ["batch", "/batch", "批量", "nav_batch"],
     ["history", "/history", "历史", "nav_history"],
     ["chain", "/chain", "攻击链", "nav_chain"],
     ["intel", "/intel", "情报库", "nav_intel"],
-    ["verified", "/history#verified", "已验证", "nav_verified"],
     ["settings", "/settings", "设置", "nav_settings"]
   ];
   function navKey() {
     var p = location.pathname, h = location.hash || "";
     if (p.indexOf("/app") === 0) {
-      if (h === "#netsec") return "netsec";
-      if (h === "#loginbrute") return "brute";
+      // 网络检测 / 登录爆破 是页内页签 → 侧栏高亮所属页面「扫描」
       return "scan";
     }
-    if (p.indexOf("/history") === 0) return h === "#verified" ? "verified" : "history";
+    if (p.indexOf("/history") === 0) {
+      // 已验证 是页内页签 → 侧栏高亮所属页面「历史」
+      return "history";
+    }
     if (p.indexOf("/chain") === 0) return "chain";
     if (p.indexOf("/audit") === 0) return "audit";
     if (p.indexOf("/batch") === 0) return "batch";
