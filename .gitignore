@@ -70,3 +70,6 @@ desktop/release/
 desktop/engine/
 desktop/*.yml
 desktop/feed/
+
+# UI 评审截图（本地产物，不入仓）
+shots/

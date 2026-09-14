@@ -191,6 +191,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/loginbrute", redirect("/app#loginbrute"))
 	mux.HandleFunc("/verified", redirect("/history#verified"))
 	mux.HandleFunc("/js/", s.serveAssetPrefix)
+	mux.HandleFunc("/css/", s.serveAssetPrefix)
 	mux.HandleFunc("/b/", s.hBeacon)
 
 	// API
@@ -343,8 +344,15 @@ func (s *Server) serveAssetPrefix(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
+	// 按扩展名给 MIME（/js/ 与 /css/ 共用本处理器）。
+	ct := "application/javascript; charset=utf-8"
+	if strings.HasSuffix(name, ".css") {
+		ct = "text/css; charset=utf-8"
+	} else if strings.HasSuffix(name, ".json") {
+		ct = "application/json; charset=utf-8"
+	}
 	w.Header().Set("Cache-Control", "no-cache")
-	w.Header().Set("Content-Type", "application/javascript; charset=utf-8")
+	w.Header().Set("Content-Type", ct)
 	_, _ = w.Write(data)
 }
 
