@@ -339,14 +339,17 @@ func (ct *compiledTech) match(ev *Evidence, bodyLow string, litHits map[string]b
 		for name, pats := range ct.headers {
 			if name == "*" {
 				// 通配任意头：EHole 等社区指纹的 header 规则不带头名，
-				// 关键词对全部头值做包含判定（只支持字面量语义）
+				// 关键词对全部头值做包含判定（只支持字面量语义）。
+				// 同样要求强关键词命中：如 must-revalidate / no-cache 之类
+				// 通用缓存头值不构成产品识别依据（曾把 SAMSUNG-SNB-2000
+				// 判在无关联的站点上）。
 				for hn, hv := range ev.Headers {
 					if hv == "" {
 						continue
 					}
 					hvLow := strings.ToLower(hv)
 					for _, p := range pats {
-						if p.isLit && strings.Contains(hvLow, p.lit) {
+						if p.isLit && strings.Contains(hvLow, p.lit) && !weakKeyword(p.raw) {
 							return fmt.Sprintf("%s=%s", hn, truncate(hv, 80)), "", true
 						}
 					}
@@ -386,19 +389,33 @@ func (ct *compiledTech) match(ev *Evidence, bodyLow string, litHits map[string]b
 		}
 	}
 	if len(ct.html) > 0 || len(ct.inline) > 0 {
+		// 字面量关键词通道要求**至少一个强关键词**命中：EHole 类社区指纹是
+		// 「任一关键词命中即算」的 OR 语义，其关键词常含通用词（login /
+		// username / type="password" …），仅凭弱词命中会造成大量假阳性
+		// （实测 DVWA 单站被判 58 项技术，其中 54 项为假阳性）。
+		// 只有弱命中时**不返回**，继续尝试其它通道（最终可能判否）。
+		var weakOnly string
 		for _, p := range ct.html {
 			if p.isLit && litHits != nil {
 				// 预筛已含该字面量才可能命中，省掉逐技术 Contains
 				if !litHits[p.lit] {
 					continue
 				}
-				return fmt.Sprintf("关键词 %s", truncate(p.raw, 40)), "", true
+				desc := fmt.Sprintf("关键词 %s", truncate(p.raw, 40))
+				if weakKeyword(p.raw) {
+					if weakOnly == "" {
+						weakOnly = desc
+					}
+					continue
+				}
+				return desc, "", true
 			}
 			if text, subs := p.findIn(ev.Body, bodyLow); text != "" {
 				return fmt.Sprintf("正则 %s", truncate(p.raw, 40)),
 					versionFromMatch(subs), true
 			}
 		}
+		_ = weakOnly // 仅弱证据不足以识别，继续其它通道
 		if len(ct.src) > 0 {
 			for _, p := range ct.src {
 				for _, src := range ev.ScriptSrcs {

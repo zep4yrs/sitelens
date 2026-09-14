@@ -23,6 +23,7 @@ import (
 	"cnb.cool/feng-qiao/sitelens/internal/engine"
 	"cnb.cool/feng-qiao/sitelens/internal/intel"
 	"cnb.cool/feng-qiao/sitelens/internal/model"
+	"cnb.cool/feng-qiao/sitelens/internal/resource"
 	"cnb.cool/feng-qiao/sitelens/internal/server"
 	"cnb.cool/feng-qiao/sitelens/internal/sitelens"
 )
@@ -80,6 +81,11 @@ func main() {
 		os.Exit(2)
 	}
 	cfg := config.LoadOrDefault(*cfgPath)
+
+	// 4.0 Track A / A1：GC 软上限（零行为变化，仅让 GC 在尖峰前更早介入）。
+	// 放在所有子命令之前——serve 常驻与 scan 一次性调用都受益。
+	resource.Apply(resource.DefaultGCConfig())
+
 	if *graphFlag {
 		cfg.Scan.Graph = true // CLI 开关覆盖配置
 	}
@@ -180,7 +186,10 @@ func runScan(cfg *config.Config, rawURL string) {
 		Graph:   cfg.Scan.Graph,      // 4.0 P2：结构化事实图（默认关）
 	}
 	res := eng.Scan(rawURL, opts, nil, nil)
+	// 4.0 Track A / A4：扫描结束把堆归还 OS（任务管理器可见回落）。
+	// 放在序列化之前——JSON 编码仍需内存，归还发生在扫描峰值之后即可。
 	out, _ := json.MarshalIndent(res, "", "  ")
+	resource.ReleaseToOS()
 	fmt.Println(string(out))
 
 	if res.Error != "" {
