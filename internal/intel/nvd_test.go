@@ -96,12 +96,10 @@ func TestSyncNVDRoundtrip(t *testing.T) {
 		!strings.HasPrefix(e.Vector, "CVSS:3.1/") {
 		t.Errorf("评分投影不完整: %+v", e)
 	}
+	// A2 瘦身后 NVDProd 只保留 VP（版本边界无消费方，已核实）。
 	if len(e.Prods) != 2 || e.Prods[0].VP != "example/example_app" ||
-		e.Prods[0].EE != "1.2.3" {
-		t.Errorf("CPE 约束解析不对: %+v", e.Prods)
-	}
-	if e.Prods[1].V != "2.0" {
-		t.Errorf("cpe 第 6 段应取版本: %+v", e.Prods[1])
+		e.Prods[1].VP != "example/example_pro" {
+		t.Errorf("CPE 产品解析不对（应只留 vendor/product）: %+v", e.Prods)
 	}
 	// 产品检索
 	if hits := store.ByProduct("example_app", 10); len(hits) != 1 {
@@ -215,7 +213,7 @@ func TestIsCWENumber(t *testing.T) {
 	}
 }
 
-// TestNVDVersion2：写出文件版本为 2（新增 cwes）。
+// TestNVDVersion2：写出文件版本为 3（A2 瘦身 prods 后；v1/v2 数据仍可读）。
 func TestNVDVersion2(t *testing.T) {
 	// 通过一次真实写出验证版本号。
 	dir := t.TempDir()
@@ -238,8 +236,8 @@ func TestNVDVersion2(t *testing.T) {
 	if err := json.NewDecoder(gz).Decode(&box); err != nil {
 		t.Fatal(err)
 	}
-	if box.Version != 2 {
-		t.Errorf("写出版本 = %d，期望 2", box.Version)
+	if box.Version != 3 {
+		t.Errorf("写出版本 = %d，期望 3（A2 瘦身后）", box.Version)
 	}
 }
 
