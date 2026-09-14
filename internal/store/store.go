@@ -14,6 +14,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -54,6 +55,7 @@ type Store struct {
 	mu          sync.RWMutex
 	path        string
 	archivePath string
+	dataDir     string // 数据目录（图另存 <dataDir>/graph/<id>/，见 graph.go）
 	max         int
 	h           history
 }
@@ -68,6 +70,7 @@ func New(dataDir string, maxRecords int) (*Store, error) {
 	}
 	s := &Store{path: filepath.Join(dataDir, "history.json"),
 		archivePath: filepath.Join(dataDir, "history.archive.jsonl"),
+		dataDir:     dataDir,
 		max:         maxRecords, h: history{NextID: 1}}
 	data, err := os.ReadFile(s.path)
 	if err == nil {
@@ -100,6 +103,19 @@ func (s *Store) Save(res *engine.Result, options map[string]any) int64 {
 		},
 		Options: options,
 		Result:  res,
+	}
+	// 4.0 P8：图另存独立文件，记录里剥离（history.json 保持 3.0 形态、不膨胀）。
+	// 仅在记录副本上置 nil，调用方 res 与 job 结果仍持有图。
+	if res.Graph != nil {
+		// 落盘时才有 scan_id：回填到图（与扫描记录一致），使导出的 JSONL
+		// header 自带 scan_id——5.0 读端可据此关联来源扫描。
+		if res.Graph.ScanID == "" {
+			res.Graph.ScanID = strconv.FormatInt(id, 10)
+		}
+		_ = s.saveGraph(id, res.Graph, res.URL)
+		cp := *res
+		cp.Graph = nil
+		rec.Result = &cp
 	}
 	if res.Security != nil {
 		rec.SecurityGrade = res.Security.Grade
@@ -189,6 +205,7 @@ func (s *Store) Delete(id int64) bool {
 	for i := range s.h.Scans {
 		if s.h.Scans[i].ID == id {
 			s.h.Scans = append(s.h.Scans[:i], s.h.Scans[i+1:]...)
+			s.deleteGraph(id) // 4.0 P8：同步删除图目录（不留孤儿）
 			s.flush()
 			return true
 		}
@@ -207,6 +224,11 @@ func (s *Store) ClearAll() int {
 		return 0
 	}
 	s.h.Scans = nil
+	// 4.0 P8：清空历史同样清空图（隐私操作，用户预期记录彻底消失）。
+	for _, id := range s.GraphIDs() {
+		s.deleteGraph(id)
+	}
+	_ = os.RemoveAll(filepath.Join(s.dataDir, "graph"))
 	s.flush()
 	return n
 }

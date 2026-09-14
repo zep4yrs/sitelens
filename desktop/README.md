@@ -20,11 +20,13 @@ desktop/
 ├── lib/                     # 纯函数库（可独立单测）
 │   ├── yml-merge.js         #   .sitelens.yml 合并器：受管键原位更新，用户键/注释/未知键保留
 │   ├── port-policy.js       #   端口决策：壳偏好 > 配置原文 > 默认 5087，来源标签可追踪
+│   ├── engine-config.js     #   配置落点决策（用户数据目录，可写）/ 首启内容 / 引擎目录解析
 │   └── ...
 │
 ├── test/                    # node --test 单测（CI regression 门禁必跑）
 │   ├── yml-merge.test.js    #   配置合并回归：引号安全 / 用户键保留 / 受管键更新
-│   └── port-policy.test.js  #   端口决策回归：偏好优先 / 非法值遮蔽 / 来源标签
+│   ├── port-policy.test.js  #   端口决策回归：偏好优先 / 非法值遮蔽 / 来源标签
+│   └── engine-config.test.js #  配置落点回归：写用户目录（不写安装目录）/ 旧配置迁移 / 引擎目录解析
 │
 ├── build/                   # 打包资源（electron-builder 自动拾取）
 │   ├── icon.ico             #   多尺寸图标 16→256（由 make_icon.py 从品牌 logo 生成）
@@ -75,6 +77,7 @@ desktop/
 | 位置 | 内容 | 生命周期 |
 |---|---|---|
 | 安装目录（默认 `D:\Program Files\SiteLens`，无固定 D 盘/已有安装时回退 `%LOCALAPPDATA%\Programs\SiteLens`；向导目录页可改） | 引擎 exe + 只读资产（情报库种子/NVD/指纹规则/字典） | 随 app 更新整体替换 |
+| `%APPDATA%\SiteLens\.sitelens.yml` | **引擎配置**（壳写入的受管键 + 用户经设置页保存的键） | 永久 |
 | `%APPDATA%\SiteLens\state` | 扫描历史（store.data_dir） | 永久 |
 | `%APPDATA%\SiteLens\pools\nuclei` | 模板池（update-nuclei 在线拉取） | 永久 |
 | `%APPDATA%\SiteLens\plugins` | 用户插件 | 永久 |
@@ -86,7 +89,15 @@ desktop/
 
 首启把安装包内置种子（NVD 37MB + 情报行 + 指纹规则，位于安装目录
 `resources\engine\data`）按缺失补拷到用户数据区——首开即完整体验，
-后续 update-\* 成果不会被任何更新覆盖。控制台地址默认
+后续 update-\* 成果不会被任何更新覆盖。
+
+**引擎配置落点（v3.0.1 修正）**：`.sitelens.yml` 写在**用户数据目录**
+（`%APPDATA%\SiteLens\.sitelens.yml`），以**绝对路径**经 `-config` 传给引擎；
+**不写安装目录**——管理员装到 `Program Files` 后该目录只读，旧实现首启写配置即
+`EPERM` 导致引擎起不来。旧版遗留在安装目录的配置（带壳标记）会自动迁移一次。
+设置页保存配置同样落用户目录，故运行期不再需要安装目录写权限。
+
+控制台地址默认
 `http://127.0.0.1:5087`，端口优先级为：
 **壳偏好（`desktop-prefs.json`）> 配置原文 `web.listen` > 5087**。
 被占用才换随机空闲端口，协商结果回写 `desktop-prefs.json` 与
@@ -107,9 +118,10 @@ Gitee → GitHub，均为 `…/releases/download/desktop-stable/` 的
 desktop-stable 标签附件区）：启动静默检查 + 运行期每 6 小时复查，
 失败的源自动切换下一个，成功的源粘住；后台差量下载（blockmap）→
 弹窗「立即重启 / 稍后」→ 静默安装升级（含引擎）；同一版本不重复弹窗。
-发布新版时 CI 自动把三件套覆盖到 desktop-stable（Gitee / GitHub 镜像
-需各自 token，当前为手工同步）；设置页「检查更新」经 IPC 直连更新器，
-真实检查并显示命中的源。
+发布新版时把三件套覆盖到 desktop-stable（更新源唯一在 GitHub；
+Gitee 镜像需各自 token，当前为手工同步）。**v3.0.1 起发版在本地执行**
+（`tools/release_local.sh`，见下「发布一个新版本」）——CI 的 tag 自动构建已停用。
+设置页「检查更新」经 IPC 直连更新器，真实检查并显示命中的源。
 
 ## 本地构建
 
@@ -158,13 +170,26 @@ npm run dist                      :: 出 release\SiteLens-Setup-<版本>.exe
 
 ## 发布一个新版本
 
-常规路径：打 `v*` tag 推送，CI 自动构建并完成双发布（版本 release +
-desktop-stable 更新源），无需手工步骤。
+**v3.0.1 起：本地发版为唯一路径**（CI 的 `v*` tag 自动构建已停用，原因见下）。
 
-手工路径（CI 不可用时）：改 `package.json` 版本号 → `npm run engine &&
-npm run dist` → 把三件套上传到更新源目录。更新源可以是任何静态托管
-（generic 协议只要求 `<url>/latest.yml` 可直连），换托管只需改
-`build.publish.url`。
+```cmd
+:: 1) 改 desktop\package.json 的 version（引擎版本 internal/server.Version 同步）
+:: 2) 一条命令完成：构建引擎（显式 GOOS=windows + PE 校验）→ 打包 →（可选）上传 CNB
+bash tools/release_local.sh              :: 只构建打包
+bash tools/release_local.sh --publish    :: 构建打包 + 上传 CNB 版本 release（需 CNB_TOKEN）
+:: 3) 手工把三件套上传到 GitHub desktop-stable（自动更新唯一来源）
+```
+
+产物三件套见上；`release_local.sh` 会在打包前**校验引擎为 Windows PE**
+（防错平台二进制入包）。
+
+> **为什么停用 CI 自动构建**：CI 跑在 Linux（golang 镜像），而
+> `build-engine.js` 曾执行**不带 GOOS** 的 `go build`——产出的
+> `sitelens.exe` 实为 **Linux ELF 二进制**，装进 Windows 安装包后引擎永远
+> 起不来（v3.0.0 真实事故）。现 `build-engine.js` 已显式
+> `GOOS=windows GOARCH=amd64` 并加 PE 魔数校验，跨平台构建亦安全；
+> 但发版仍以**本地构建**为准——产物可即时验证，且不依赖 CI 平台假设。
+> 更新源可以是任何静态托管（generic 协议只要求 `<url>/latest.yml` 可直连）。
 
 ## E2E 更新实测（发版前建议跑一遍）
 

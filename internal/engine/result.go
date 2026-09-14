@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"cnb.cool/feng-qiao/sitelens/internal/intel"
+	"cnb.cool/feng-qiao/sitelens/internal/model"
 	"cnb.cool/feng-qiao/sitelens/internal/security"
 )
 
@@ -29,6 +30,10 @@ type PageInfo struct {
 // Result 一次扫描的完整结果。
 // verified 为异构条目（checks/dast/passive），统一 map 形态；
 // 其余键位与 Python ScanResult.to_dict() 一致。
+//
+// 4.0 P2：Graph 为可选的结构化事实图（黑盒入口/发现/证据/影响）。
+// 默认 nil（omitempty），此时 JSON 输出与 3.0 逐字节一致；仅在
+// engine.Options.Graph 开启时填充。verified 键位不受其影响。
 type Result struct {
 	URL             string           `json:"url"`
 	Host            string           `json:"host"`
@@ -45,6 +50,7 @@ type Result struct {
 	Verified        []map[string]any `json:"verified"`
 	Extras          map[string]any   `json:"extras"`
 	Pages           []PageInfo       `json:"pages"`
+	Graph           *model.ScanGraph `json:"graph,omitempty"`
 }
 
 // techAcc 技术聚合器：同名合并、证据累加、每次独立命中置信 +5（上限 100）。

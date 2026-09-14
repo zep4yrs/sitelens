@@ -34,6 +34,11 @@ const nvdCVE1 = `{"cve":{
   "lastModified":"2099-01-02T00:00:00.000","vulnStatus":"Analyzed",
   "descriptions":[{"lang":"en","value":"A test vulnerability in ExampleApp allows reading files."}],
   "metrics":{"cvssMetricV31":[{"cvssData":{"baseScore":9.8,"vectorString":"CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H","baseSeverity":"CRITICAL"}}]},
+  "weaknesses":[
+    {"type":"Primary","description":[{"lang":"en","value":"CWE-89"}]},
+    {"type":"Secondary","description":[{"lang":"en","value":"CWE-22"},{"lang":"en","value":"NVD-CWE-noinfo"}]},
+    {"type":"Secondary","description":[{"lang":"en","value":"CWE-89"}]}
+  ],
   "configurations":[{"nodes":[{"cpeMatch":[
     {"criteria":"cpe:2.3:a:example:example_app:1.0:*:*:*:*:*:*:*","versionEndExcluding":"1.2.3"},
     {"criteria":"cpe:2.3:a:example:example_pro:2.0:beta:*:*:*:*:*:*:*"}
@@ -148,5 +153,139 @@ func TestNVDFillEnrichesMissingCVSS(t *testing.T) {
 	kb2.nvdFill(&f3)
 	if f3.CVSSScore != 0 {
 		t.Errorf("未挂载不应填充: %+v", f3)
+	}
+}
+
+// TestSyncNVDParsesCWEs：NVD weaknesses → NVDEntry.CWEs（去重升序、过滤占位值）。
+func TestSyncNVDParsesCWEs(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(nvdPage(1, nvdCVE1)))
+	}))
+	defer srv.Close()
+	oldURL, oldWait := nvdAPIURL, nvdKeyWait
+	nvdAPIURL, nvdKeyWait = srv.URL, time.Millisecond
+	defer func() { nvdAPIURL, nvdKeyWait = oldURL, oldWait }()
+
+	out := filepath.Join(t.TempDir(), "nvd.json.gz")
+	if err := SyncNVD(out, "k", nil); err != nil {
+		t.Fatal(err)
+	}
+	store, err := LoadNVD(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	e, ok := store.ByCVE("CVE-2099-0001")
+	if !ok {
+		t.Fatal("条目应在库")
+	}
+	// CWE-89 重复一次、CWE-22 一次、NVD-CWE-noinfo 应被过滤 → [CWE-22 CWE-89]
+	got := e.CWEs
+	if len(got) != 2 || got[0] != "CWE-22" || got[1] != "CWE-89" {
+		t.Fatalf("CWEs = %v，期望 [CWE-22 CWE-89]（去重升序且过滤占位值）", got)
+	}
+	// 访问器返回副本。
+	c := store.CWEsFor("cve-2099-0001")
+	if len(c) != 2 {
+		t.Fatalf("CWEsFor = %v", c)
+	}
+	c[0] = "MUTATED"
+	if store.CWEsFor("CVE-2099-0001")[0] != "CWE-22" {
+		t.Error("CWEsFor 应返回副本")
+	}
+	// 未知 CVE → nil。
+	if store.CWEsFor("CVE-9999-0000") != nil {
+		t.Error("未知 CVE 应返回 nil")
+	}
+}
+
+// TestIsCWENumber：编号与占位值区分。
+func TestIsCWENumber(t *testing.T) {
+	yes := []string{"CWE-89", "CWE-1", "CWE-1336"}
+	no := []string{"NVD-CWE-noinfo", "NVD-CWE-Other", "CWE-", "CWE-79x", "", "cwe-79"}
+	for _, s := range yes {
+		if !isCWENumber(s) {
+			t.Errorf("%q 应判为编号", s)
+		}
+	}
+	for _, s := range no {
+		if isCWENumber(s) {
+			t.Errorf("%q 不应判为编号", s)
+		}
+	}
+}
+
+// TestNVDVersion2：写出文件版本为 2（新增 cwes）。
+func TestNVDVersion2(t *testing.T) {
+	// 通过一次真实写出验证版本号。
+	dir := t.TempDir()
+	out := filepath.Join(dir, "n.json.gz")
+	if err := writeNVDFile(out, nil); err != nil {
+		t.Fatal(err)
+	}
+	f, err := os.Open(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	gz, err := gzip.NewReader(f)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var box struct {
+		Version int `json:"version"`
+	}
+	if err := json.NewDecoder(gz).Decode(&box); err != nil {
+		t.Fatal(err)
+	}
+	if box.Version != 2 {
+		t.Errorf("写出版本 = %d，期望 2", box.Version)
+	}
+}
+
+// TestLoadNVDUnsortedInput 回归测试：文件非全局有序时，索引仍必须指向正确条目。
+//
+// 背景（真实 bug）：byCVE/byProd 存 *NVDEntry 指针，早期实现「先建索引、后排序」，
+// sort 移动元素会让指针悬空指向错位条目——表现为查到其它 CVE 的 CWE/CVSS。
+// 旧数据文件恰好有序（sort 为 no-op）掩盖了问题；feed 按年拼接的文件非有序才暴露。
+func TestLoadNVDUnsortedInput(t *testing.T) {
+	// 故意逆序写入三条，且各带不同的 CWEs 与 Score 以检测错位。
+	entries := []NVDEntry{
+		{CVE: "CVE-3000-0003", Score: 3.3, CWEs: []string{"CWE-3"}},
+		{CVE: "CVE-3000-0001", Score: 1.1, CWEs: []string{"CWE-1"}},
+		{CVE: "CVE-3000-0002", Score: 2.2, CWEs: []string{"CWE-2"}},
+	}
+	out := filepath.Join(t.TempDir(), "u.json.gz")
+	if err := writeNVDFile(out, entries); err != nil {
+		t.Fatal(err)
+	}
+	store, err := LoadNVD(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// 每条都必须查到自己的 CWE 与分数。
+	want := map[string]struct {
+		cwe   string
+		score float64
+	}{
+		"CVE-3000-0001": {"CWE-1", 1.1},
+		"CVE-3000-0002": {"CWE-2", 2.2},
+		"CVE-3000-0003": {"CWE-3", 3.3},
+	}
+	for cve, w := range want {
+		e, ok := store.ByCVE(cve)
+		if !ok {
+			t.Fatalf("%s 未找到", cve)
+		}
+		if len(e.CWEs) == 0 || e.CWEs[0] != w.cwe {
+			t.Errorf("%s CWEs = %v，期望 [%s]（指针错位会查到他人数据）", cve, e.CWEs, w.cwe)
+		}
+		if e.Score != w.score {
+			t.Errorf("%s Score = %.1f，期望 %.1f", cve, e.Score, w.score)
+		}
+	}
+	// list 应已按 CVE 升序。
+	if store.list[0].CVE != "CVE-3000-0001" {
+		t.Errorf("list 未排序：首条 %s", store.list[0].CVE)
 	}
 }

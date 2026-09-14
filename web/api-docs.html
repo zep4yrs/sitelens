@@ -141,6 +141,25 @@
   </div>
 
   <div class="sec">
+    <div class="sec-title"><span class="method get">GET</span>/api/graph/&lt;scan_id&gt;</div>
+    <p>结构化事实图：入口点 / 漏洞节点 / 数据流 / CWE 关联 / 影响 / 权限变化 / 黑白盒关联，
+    含实体计数与 manifest 元信息。仅在扫描时开启「事实图」（payload <code>graph: true</code>）
+    才有数据，否则返回 404。</p>
+  </div>
+
+  <div class="sec">
+    <div class="sec-title"><span class="method get">GET</span>/api/graph/&lt;scan_id&gt;/chain</div>
+    <p>攻击链视图数据：链节点（含引用实体的可读标签）与关系边（时序 / 影响证明 /
+    黑白盒关联 / 权限变化）。边仅由真实证据支撑，无证据的候选边不会建立。</p>
+  </div>
+
+  <div class="sec">
+    <div class="sec-title"><span class="method get">GET</span>/api/graph/&lt;scan_id&gt;/jsonl</div>
+    <p>导出图 JSONL（<code>application/x-ndjson</code>，首行为 schema 头）。
+    版本化 schema（<code>sitelens.graph/v1</code>），供 5.0 ML 直接流式读取。</p>
+  </div>
+
+  <div class="sec">
     <div class="sec-title"><span class="method get">GET</span>/api/diff?a=1&amp;b=2</div>
     <p>两次扫描差异对比：added / removed / version_changed。</p>
   </div>

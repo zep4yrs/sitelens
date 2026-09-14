@@ -114,3 +114,24 @@ test("耗时预估：同范围下 fast < std < full", () => {
   const fu = scanOpts.estimateSeconds(scanOpts.build(input("full")).options);
   assert.ok(f < s && s < fu, `预估应递增: ${f} < ${s} < ${fu}`);
 });
+
+test("结构化事实图：勾选 settle 下发 graph，未选不下发", () => {
+  const on = scanOpts.build({
+    scope: { web: true }, verify: { settle: true }, strength: "std"
+  });
+  assert.strictEqual(on.options.graph, true);
+
+  const off = scanOpts.build({
+    scope: { web: true }, verify: {}, strength: "std"
+  });
+  assert.strictEqual(off.options.graph, undefined, "未勾选不应下发 graph");
+});
+
+test("结构化事实图：被动模式下不消费（随扫描顺带，但被动不爬取）", () => {
+  const r = scanOpts.build({
+    scope: { web: true }, verify: { passive: true, settle: true }, strength: "std"
+  });
+  // 被动为互斥分支：settle 属主动验证项 → 触发忽略提示，且不下发 graph
+  assert.strictEqual(r.options.graph, undefined);
+  assert.ok(r.warnings.some(w => w.indexOf("被动") >= 0));
+});

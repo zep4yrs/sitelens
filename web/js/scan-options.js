@@ -19,7 +19,7 @@
   };
 
   var SCOPE_KEYS = ["web", "sub", "srv", "np", "js", "weak"];
-  var VERIFY_ACTIVE = ["afp", "dir", "ws", "dast", "by", "ex"];
+  var VERIFY_ACTIVE = ["afp", "dir", "ws", "dast", "by", "ex", "settle"];
 
   function build(input) {
     input = input || {};
@@ -75,6 +75,9 @@
       o.exploit = true;
       warnings.push("利用级验证需在 设置 → 引擎配置 开启「利用级验证」总闸；探针只读无害，gov.cn 永久拒绝。");
     }
+    if (verify.settle) {
+      o.graph = true; // 4.0：收集结构化事实图（CWE 关联 / 攻击链视图）
+    }
     if (verify.dast && !scope.web) {
       warnings.push("参数注入依赖爬取到的页面与表单，未选 Web 站点时覆盖有限。");
     }
@@ -107,6 +110,7 @@
     if (options.weak_audit) t += 60;
     if (options.dir_bypass) t += 25;
     if (options.exploit) t += 60;
+    if (options.graph) t += 3; // 结构化事实收集：随扫描顺带，开销小
     if (options.checks === "core") t += 40 + Math.round((options.nuclei_cap || 300) * 0.1);
     if (options.checks === "all") t += 300 + Math.round((options.nuclei_cap || 300) * 0.35);
     return t;

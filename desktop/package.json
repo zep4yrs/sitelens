@@ -1,7 +1,7 @@
 {
   "name": "sitelens",
   "productName": "SiteLens",
-  "version": "3.0.0",
+  "version": "3.0.1",
   "description": "SiteLens 站点透视 桌面版（Electron 壳 + Go 引擎单二进制）",
   "main": "main.js",
   "author": "feng-qiao",

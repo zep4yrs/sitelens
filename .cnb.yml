@@ -38,86 +38,102 @@ main:
 #   desktop-stable 更新源在 GitHub，唯一来源。
 #   4.0 起只保留桌面版单一交付形态：引擎裸包（lite/full/linux zip）已按
 #   用户要求移除——桌面壳即产品（2026-09-13）。
-"v*":
-  tag_push:
-    - name: 构建桌面版（Electron 壳，唯一交付形态；更新源在 GitHub）
-      docker:
-        image: golang:1.26.8
-      stages:
-        - name: build
-          script:
-            - |
-              # 镜像变量前置导出：electron-builder 自取的 electron zip 与
-              # 打包工具链都走 npmmirror（直连 github 在部分网络不稳）
-              export ELECTRON_SKIP_BINARY_DOWNLOAD=1
-              export ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/
-              export ELECTRON_BUILDER_BINARIES_MIRROR=https://npmmirror.com/mirrors/electron-builder-binaries/
-              export CSC_IDENTITY_AUTO_DISCOVERY=false
-              # Wine：Linux 上打 Windows NSIS 安装包必需（electron-builder 会用
-              # wine 跑 makensis.exe 生成卸载器）。它自带 wine-4.0.1-mac 包在
-              # Linux 上会 spawn 失败，所以 USE_SYSTEM_WINE=true 改用系统 wine，
-              # 跳过它自带的工具集下载（国内直连 github 也不稳）。
-              #
-              # 32 位 wine 是必需的：基础镜像 golang:1.26.8 = Debian bookworm，
-              # apt 的 wine 是 8.0（<9）。wine ≥10 的成熟 wow64 才能不靠
-              # wine32 单独跑 32 位 PE；8.0 走 experimental wow64 会炸
-              # （c0000135 加载 syswow64\ntdll.dll 失败——electron-builder
-              # 生成卸载器时要真把安装器在 wine 里跑一遍，这一步绕不开）。
-              # 所以必须 dpkg 加 i386 架构并装齐 32 位库（2026-09-13 修正）。
-              dpkg --add-architecture i386
-              apt-get update -qq
-              apt-get install -y -qq --no-install-recommends zip jq curl >/dev/null
-              apt-get install -y -qq --no-install-recommends \
-                wine wine32 wine64 libwine libwine:i386 fonts-wine >/dev/null
-              export USE_SYSTEM_WINE=true
-              export WINEARCH=win64
-              export WINEDEBUG=-all
-              # Node 22：electron 44 / electron-builder 26 工具链要求 >=22.12
-              # （基础镜像自带 node 20，此处补装满足 engine 要求的版本）
-              curl -fsSL https://deb.nodesource.com/setup_22.x | bash >/dev/null
-              apt-get install -y -qq nodejs >/dev/null
-              # Xvfb：wine 在容器内没有 display driver 时，任何 32 位 PE（含
-              # NSIS makensis.exe / 安装器引导程序）都会以
-              # `err:winediag:nodrv_CreateWindow` 秒退，electron-builder 报
-              # "wine process failed 1"。装 Xvfb 后，下面所有 wine 调用统一
-              # 走 xvfb-run -a，不再依赖「Wine 只做命令行、不需要 X」的假设。
-              apt-get install -y -qq --no-install-recommends xvfb xauth >/dev/null
-              # 预热 wine prefix（首次运行会创建 ~/.wine，可能耗时数十秒）
-              xvfb-run -a wineboot --init >/dev/null 2>&1 || true
-              cd desktop
-              npm ci --no-audit --no-fund
-              node --test
-              npm run engine
-              # signAndEditExecutable=false：跳过 exe 图标/元数据写入与代码签名。
-              # 该步骤由 electron-builder 的 rcedit 完成，Linux 上同样经 wine 调用；
-              # 本项目安装包未做代码签名（README「已知边界」），跳过它可省一轮 wine
-              # 调用、降低无显示驱动环境的失败面。产物功能性不受影响，仅 exe 不写
-              # 入自定义图标与版本资源。
-              # Xvfb 下执行：生成卸载器时 electron-builder 会 wine 调
-              # makensis.exe（32 位 PE），无 display driver 必失败
-              xvfb-run -a npx electron-builder --win nsis --publish never -c.win.signAndEditExecutable=false
-              cd ..
-              # 发行说明里的 SHA256 占位符用本次构建的实际产物替换
-              SHA=$(sha256sum desktop/release/SiteLens-Setup-3.0.0.exe | cut -d' ' -f1)
-              sed "s/__SHA256__/$SHA/" tools/release-body-3.0.0.md > /tmp/release-body.md
-              export SITLENS_BODY_FILE="/tmp/release-body.md"
-              # ---- v3.0.0 版本页：整版重建（幂等） ----
-              # 4.0 起桌面版是唯一交付形态。删旧版→带最新发行说明重建，
-              # 顺带清掉旧流水线遗留的 lite/full/linux 裸包资产。
-              # SITLENS_BODY_FILE 已指向 sed 替换过 SHA256 的 /tmp 副本，勿再覆盖。
-              API="https://api.cnb.cool/feng-qiao/sitelens"
-              GITURL="https://cnb:$CNB_TOKEN@cnb.cool/feng-qiao/sitelens.git"
-              OLD=$(curl -sf -H "Authorization: Bearer $CNB_TOKEN" -H "Accept: application/json" \
-                "$API/-/releases/tags/v3.0.0" | jq -r '.id // empty')
-              if [ -n "$OLD" ]; then
-                curl -sf -X DELETE -H "Authorization: Bearer $CNB_TOKEN" -H "Accept: application/json" \
-                  "$API/-/releases/$OLD" && echo "removed stale v3.0.0 release (含 lite/full/linux 裸包)"
-                # CNB 实测：删除 Release 会级联删除同名 git 标签；标签没了
-                # release 就建不回来（本次 3.0.0 页面丢失的根因）。删完立刻推回。
-                git push "$GITURL" v3.0.0 2>/dev/null || { git tag -f v3.0.0 >/dev/null 2>&1 || true; git push "$GITURL" v3.0.0; }
-              fi
-              # 上传（重试 3 次：大文件 PUT 偶发网络中断）
-              for i in 1 2 3; do bash tools/release_upload.sh desktop/release/SiteLens-Setup-3.0.0.exe && break || sleep 10; done
-              # CNB 不做自动更新源（desktop-stable 已按用户要求删除，自动更新
-              # 唯一来源是 GitHub desktop-stable release）。此处不要往 CNB 传
-              # latest.yml / blockmap，防止更新源在下次发版时复活。
+
+# --- 发版构建：已改为**本地发版**（v3.0.1 起） ------------------------------
+#
+# 为什么停用 CI 的 tag 自动构建：
+#   CI 跑在 Linux（golang 镜像），而 desktop/build-engine.js 曾执行不带 GOOS 的
+#   go build —— 打出的「sitelens.exe」实为 Linux ELF 二进制，装进 Windows 安装包
+#   后引擎永远起不来（v3.0.0 真实事故，且被壳的配置写入错误掩盖）。
+#   本地在 Windows 上构建产物必为 PE，且可在打包前后即时验证平台。
+#
+# 现在的发版流程（本地）：
+#   改 desktop/package.json 版本号 → tools/release_local.sh [--publish]
+#   脚本：构建引擎（显式 GOOS=windows + PE 魔数校验）→ 打包 NSIS → 可选上传 CNB。
+#   更新源仍唯一在 GitHub desktop-stable（手工同步三件套）。
+#
+# 下列原流水线保留为历史记录（已停用，勿直接启用）：
+#
+# "v*":
+#   tag_push:
+#     - name: 构建桌面版（Electron 壳，唯一交付形态；更新源在 GitHub）
+#       docker:
+#         image: golang:1.26.8
+#       stages:
+#         - name: build
+#           script:
+#             - |
+#               # 镜像变量前置导出：electron-builder 自取的 electron zip 与
+#               # 打包工具链都走 npmmirror（直连 github 在部分网络不稳）
+#               export ELECTRON_SKIP_BINARY_DOWNLOAD=1
+#               export ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/
+#               export ELECTRON_BUILDER_BINARIES_MIRROR=https://npmmirror.com/mirrors/electron-builder-binaries/
+#               export CSC_IDENTITY_AUTO_DISCOVERY=false
+#               # Wine：Linux 上打 Windows NSIS 安装包必需（electron-builder 会用
+#               # wine 跑 makensis.exe 生成卸载器）。它自带 wine-4.0.1-mac 包在
+#               # Linux 上会 spawn 失败，所以 USE_SYSTEM_WINE=true 改用系统 wine，
+#               # 跳过它自带的工具集下载（国内直连 github 也不稳）。
+#               #
+#               # 32 位 wine 是必需的：基础镜像 golang:1.26.8 = Debian bookworm，
+#               # apt 的 wine 是 8.0（<9）。wine ≥10 的成熟 wow64 才能不靠
+#               # wine32 单独跑 32 位 PE；8.0 走 experimental wow64 会炸
+#               # （c0000135 加载 syswow64\ntdll.dll 失败——electron-builder
+#               # 生成卸载器时要真把安装器在 wine 里跑一遍，这一步绕不开）。
+#               # 所以必须 dpkg 加 i386 架构并装齐 32 位库（2026-09-13 修正）。
+#               dpkg --add-architecture i386
+#               apt-get update -qq
+#               apt-get install -y -qq --no-install-recommends zip jq curl >/dev/null
+#               apt-get install -y -qq --no-install-recommends \
+#                 wine wine32 wine64 libwine libwine:i386 fonts-wine >/dev/null
+#               export USE_SYSTEM_WINE=true
+#               export WINEARCH=win64
+#               export WINEDEBUG=-all
+#               # Node 22：electron 44 / electron-builder 26 工具链要求 >=22.12
+#               # （基础镜像自带 node 20，此处补装满足 engine 要求的版本）
+#               curl -fsSL https://deb.nodesource.com/setup_22.x | bash >/dev/null
+#               apt-get install -y -qq nodejs >/dev/null
+#               # Xvfb：wine 在容器内没有 display driver 时，任何 32 位 PE（含
+#               # NSIS makensis.exe / 安装器引导程序）都会以
+#               # `err:winediag:nodrv_CreateWindow` 秒退，electron-builder 报
+#               # "wine process failed 1"。装 Xvfb 后，下面所有 wine 调用统一
+#               # 走 xvfb-run -a，不再依赖「Wine 只做命令行、不需要 X」的假设。
+#               apt-get install -y -qq --no-install-recommends xvfb xauth >/dev/null
+#               # 预热 wine prefix（首次运行会创建 ~/.wine，可能耗时数十秒）
+#               xvfb-run -a wineboot --init >/dev/null 2>&1 || true
+#               cd desktop
+#               npm ci --no-audit --no-fund
+#               node --test
+#               npm run engine
+#               # signAndEditExecutable=false：跳过 exe 图标/元数据写入与代码签名。
+#               # 该步骤由 electron-builder 的 rcedit 完成，Linux 上同样经 wine 调用；
+#               # 本项目安装包未做代码签名（README「已知边界」），跳过它可省一轮 wine
+#               # 调用、降低无显示驱动环境的失败面。产物功能性不受影响，仅 exe 不写
+#               # 入自定义图标与版本资源。
+#               # Xvfb 下执行：生成卸载器时 electron-builder 会 wine 调
+#               # makensis.exe（32 位 PE），无 display driver 必失败
+#               xvfb-run -a npx electron-builder --win nsis --publish never -c.win.signAndEditExecutable=false
+#               cd ..
+#               # 发行说明里的 SHA256 占位符用本次构建的实际产物替换
+#               SHA=$(sha256sum desktop/release/SiteLens-Setup-3.0.0.exe | cut -d' ' -f1)
+#               sed "s/__SHA256__/$SHA/" tools/release-body-3.0.0.md > /tmp/release-body.md
+#               export SITLENS_BODY_FILE="/tmp/release-body.md"
+#               # ---- v3.0.0 版本页：整版重建（幂等） ----
+#               # 4.0 起桌面版是唯一交付形态。删旧版→带最新发行说明重建，
+#               # 顺带清掉旧流水线遗留的 lite/full/linux 裸包资产。
+#               # SITLENS_BODY_FILE 已指向 sed 替换过 SHA256 的 /tmp 副本，勿再覆盖。
+#               API="https://api.cnb.cool/feng-qiao/sitelens"
+#               GITURL="https://cnb:$CNB_TOKEN@cnb.cool/feng-qiao/sitelens.git"
+#               OLD=$(curl -sf -H "Authorization: Bearer $CNB_TOKEN" -H "Accept: application/json" \
+#                 "$API/-/releases/tags/v3.0.0" | jq -r '.id // empty')
+#               if [ -n "$OLD" ]; then
+#                 curl -sf -X DELETE -H "Authorization: Bearer $CNB_TOKEN" -H "Accept: application/json" \
+#                   "$API/-/releases/$OLD" && echo "removed stale v3.0.0 release (含 lite/full/linux 裸包)"
+#                 # CNB 实测：删除 Release 会级联删除同名 git 标签；标签没了
+#                 # release 就建不回来（本次 3.0.0 页面丢失的根因）。删完立刻推回。
+#                 git push "$GITURL" v3.0.0 2>/dev/null || { git tag -f v3.0.0 >/dev/null 2>&1 || true; git push "$GITURL" v3.0.0; }
+#               fi
+#               # 上传（重试 3 次：大文件 PUT 偶发网络中断）
+#               for i in 1 2 3; do bash tools/release_upload.sh desktop/release/SiteLens-Setup-3.0.0.exe && break || sleep 10; done
+#               # CNB 不做自动更新源（desktop-stable 已按用户要求删除，自动更新
+#               # 唯一来源是 GitHub desktop-stable release）。此处不要往 CNB 传
+#               # latest.yml / blockmap，防止更新源在下次发版时复活。

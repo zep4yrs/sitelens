@@ -18,7 +18,32 @@ function tagSection() {
   return cnb.slice(i);
 }
 
-test("所有 wine 调用都套了 xvfb-run（无 display driver 时必须）", () => {
+/**
+ * tag 流水线是否处于**启用**状态。
+ *
+ * v3.0.1 起发版改为本地（tools/release_local.sh）——原因是 CI 在 Linux 上构建
+ * 出的「sitelens.exe」实为 ELF 二进制（build-engine.js 当时未设 GOOS），
+ * 装进 Windows 包后引擎起不来。原 tag 流水线已整体注释保留（见 .cnb.yml 说明）。
+ *
+ * 本判定的意义：**停用时明确跳过（不是静默通过）**；一旦有人取消注释重新启用，
+ * 下列 wine / xvfb / 裸包 / 平台相关断言立即恢复生效——守护不失效。
+ */
+function tagPipelineActive() {
+  // 活跃形态：行首（允许前导空格）为 "v*": 且未被 # 注释
+  return /^\s*"v\*":\s*$/m.test(cnb);
+}
+
+/** 停用时跳过（带明确原因），启用时返回 false 继续断言。 */
+function skipIfRetired(t) {
+  if (!tagPipelineActive()) {
+    t.skip("tag 流水线已停用：发版改为本地 tools/release_local.sh（CI 在 Linux 构建的 exe 实为 ELF，见 .cnb.yml 说明）");
+    return true;
+  }
+  return false;
+}
+
+test("所有 wine 调用都套了 xvfb-run（无 display driver 时必须）", (t) => {
+  if (skipIfRetired(t)) return;
   const section = tagSection();
   // 逐行取「实际会执行的命令」：先剥掉注释与空行，再看该行是否调用 wine
   const bare = section
@@ -38,7 +63,8 @@ test("所有 wine 调用都套了 xvfb-run（无 display driver 时必须）", (
   );
 });
 
-test("electron-builder 调用（隐式经 wine）也必须在 xvfb-run 下", () => {
+test("electron-builder 调用（隐式经 wine）也必须在 xvfb-run 下", (t) => {
+  if (skipIfRetired(t)) return;
   const section = tagSection();
   const eb = section
     .split("\n")
@@ -54,12 +80,14 @@ test("electron-builder 调用（隐式经 wine）也必须在 xvfb-run 下", () 
   }
 });
 
-test("tag 流水线安装了 xvfb（含 xauth，xvfb-run 依赖它）", () => {
+test("tag 流水线安装了 xvfb（含 xauth，xvfb-run 依赖它）", (t) => {
+  if (skipIfRetired(t)) return;
   assert.match(tagSection(), /apt-get install[^\n]*\bxvfb\b/, "未安装 xvfb");
   assert.match(tagSection(), /apt-get install[^\n]*\bxauth\b/, "未安装 xauth");
 });
 
-test("流水线不再产出引擎裸包（4.0 起桌面版是唯一交付形态）", () => {
+test("流水线不再产出引擎裸包（4.0 起桌面版是唯一交付形态）", (t) => {
+  if (skipIfRetired(t)) return;
   const section = tagSection();
   // lite / full / linux 打包 stage 已移除：构建/上传指令里不得再引入
   assert.ok(!section.includes("ci_nsis_exe.sh"), "不应再有 makensis 裸包构建");
@@ -80,7 +108,8 @@ test("流水线不再产出引擎裸包（4.0 起桌面版是唯一交付形态�
   assert.ok(!/release_upload\.sh[^\n]*latest\.yml/.test(section), "CNB 不应上传 latest.yml（更新源在 GitHub）");
 });
 
-test("环境变量前置导出：electron-builder 相关 export 必须在 npm ci 之前", () => {
+test("环境变量前置导出：electron-builder 相关 export 必须在 npm ci 之前", (t) => {
+  if (skipIfRetired(t)) return;
   const section = tagSection();
   const iExport = section.indexOf("export ELECTRON_MIRROR");
   const iNpm = section.indexOf("npm ci");
@@ -94,7 +123,8 @@ test("ci_nsis_exe.sh：makensis 带 UTF-8 locale，且不拿 wine 退出码当�
   assert.match(nsisHelper, /-s "\$OUTFILE"/, "缺产物非空校验");
 });
 
-test("tag 流水线如出现 tar 解包必须 --no-same-owner（跨平台属主）", () => {
+test("tag 流水线如出现 tar 解包必须 --no-same-owner（跨平台属主）", (t) => {
+  if (skipIfRetired(t)) return;
   const section = tagSection();
   const tars = section.split("\n").filter((l) => /\btar\s/.test(l) && /\.tar\.gz/.test(l));
   for (const t of tars) {
