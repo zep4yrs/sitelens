@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 )
 
@@ -99,4 +100,27 @@ func LoadKEVExtra(path string) ([]KevEntry, error) {
 		return nil, err
 	}
 	return box.CVEs, nil
+}
+
+// IsKEV 查询 CVE 是否在 CISA KEV（在野利用）清单内。
+// 供 4.0 impact 先验标注（P10）等外部消费方使用；未挂载/未知返回 false。
+func (k *KB) IsKEV(cve string) bool {
+	if k == nil || cve == "" {
+		return false
+	}
+	return k.kev[strings.ToUpper(strings.TrimSpace(cve))]
+}
+
+// CVSSFor 查询 CVE 的 CVSS base score（NVD 投影；未挂载/未知返回 0）。
+// 供 4.0 impact 先验标注（P10）使用。
+func (k *KB) CVSSFor(cve string) float64 {
+	if k == nil || cve == "" {
+		return 0
+	}
+	if s := k.NVD(); s != nil {
+		if e, ok := s.ByCVE(cve); ok {
+			return e.Score
+		}
+	}
+	return 0
 }

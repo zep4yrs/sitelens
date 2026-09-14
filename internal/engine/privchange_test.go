@@ -3,6 +3,7 @@ package engine
 import (
 	"testing"
 
+	"cnb.cool/feng-qiao/sitelens/internal/intel"
 	"cnb.cool/feng-qiao/sitelens/internal/loginbrute"
 	"cnb.cool/feng-qiao/sitelens/internal/model"
 	"cnb.cool/feng-qiao/sitelens/internal/modules"
@@ -135,5 +136,59 @@ func TestIsHighPrivUser(t *testing.T) {
 		if isHighPrivUser(u) {
 			t.Errorf("%q 不应判为高权", u)
 		}
+	}
+}
+
+// TestAnnotatePriorsWiredToKB：P10 接线验证——annotatePriorsFromKB 用真实
+// intel.KB 为 impact 补 KEV/CVSS 先验。数据不可用时跳过（不在无数据环境误报）。
+func TestAnnotatePriorsWiredToKB(t *testing.T) {
+	kb, err := intel.Load("../../data/intel_dump.json.gz", "../../data/affected_ranges.json")
+	if err != nil || kb == nil {
+		t.Skipf("intel 数据不可用（%v），跳过", err)
+	}
+	if nvd, nerr := intel.LoadNVD("../../data/nvd_cves.json.gz"); nerr == nil && nvd != nil {
+		kb.AttachNVD(nvd)
+	}
+	// 找一个确实在 KEV 且在 NVD 有评分的 CVE 来断言（用已知样本）。
+	const cve = "CVE-2021-44228"
+	if !kb.IsKEV(cve) {
+		t.Skipf("%s 不在本地 KEV 清单，跳过（数据版本相关）", cve)
+	}
+
+	c := newCollector("t")
+	ev := c.ev("response", "dast", "http://t/?id=1", "", 0, "log4shell")
+	vn := model.NewVulnNode(model.OriginBlackbox, "sqli-error", "", "http://t/?id=1", "id", "", 0,
+		model.ObsPositive, "proven", model.ConfConfirmed, []string{ev})
+	vn.CVE = cve
+	c.g.Add(vn)
+	c.g.Add(model.NewImpact("execution", "proven", vn.ID, "", nil, model.ConfProbable, []string{ev}))
+
+	c.annotatePriorsFromKB(kb)
+
+	im := c.g.Impacts[0]
+	if len(im.Priors) == 0 {
+		t.Fatalf("应补上先验标注，实得 %v", im.Priors)
+	}
+	hasKEV := false
+	for _, p := range im.Priors {
+		if p == "kev" {
+			hasKEV = true
+		}
+	}
+	if !hasKEV {
+		t.Errorf("priors 应含 kev，实得 %v", im.Priors)
+	}
+	t.Logf("%s 先验：%v", cve, im.Priors)
+
+	// 无 CVE 的 impact 不应被标注（不臆造）。
+	c2 := newCollector("t")
+	ev2 := c2.ev("response", "dast", "http://t/", "", 0, "x")
+	v2 := model.NewVulnNode(model.OriginBlackbox, "c", "", "http://t/", "", "", 0,
+		model.ObsPositive, "proven", model.ConfProbable, []string{ev2})
+	c2.g.Add(v2)
+	c2.g.Add(model.NewImpact("disclosure", "proven", v2.ID, "", nil, model.ConfProbable, []string{ev2}))
+	c2.annotatePriorsFromKB(kb)
+	if len(c2.g.Impacts[0].Priors) != 0 {
+		t.Error("无 CVE 的 impact 不应有先验")
 	}
 }

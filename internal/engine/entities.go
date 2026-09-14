@@ -306,6 +306,43 @@ func (c *collector) annotateImpactPriors(cveOf map[string]string, kevOf map[stri
 	}
 }
 
+// annotatePriorsFromKB 为图内 impact 补 KEV/CVSS 先验标注（P7 实现，P10 接入）。
+//
+// 数据来源：intel.KB（KEV 清单 + NVD CVSS 投影）。**仅作解释**——
+// priors 不参与建链（internal/chain 不读该字段），也不影响任何判定。
+// 缺数据时不动（不臆造）：未挂 NVD/KEV、或 vuln 无 CVE 时保持 priors 为空。
+//
+// 实现上先按需取数再复用纯逻辑 annotateImpactPriors，保证规则单一来源。
+func (c *collector) annotatePriorsFromKB(kb *intel.KB) {
+	if c == nil || c.g == nil || kb == nil {
+		return
+	}
+	// vuln_node ID → CVE（impact 经 vuln_id 间接拿 CVE）。
+	cveOf := make(map[string]string, len(c.g.VulnNodes))
+	for i := range c.g.VulnNodes {
+		v := c.g.VulnNodes[i]
+		if v.CVE != "" {
+			cveOf[v.ID] = v.CVE
+		}
+	}
+	// 只为「impact 实际引用到的 vuln」取 KEV/CVSS（避免全图查询）。
+	kevOf := map[string]bool{}
+	cvssOf := map[string]float64{}
+	for i := range c.g.Impacts {
+		cve := cveOf[c.g.Impacts[i].VulnID]
+		if cve == "" {
+			continue
+		}
+		key := strings.ToUpper(cve)
+		if _, done := cvssOf[key]; done {
+			continue
+		}
+		kevOf[key] = kb.IsKEV(cve)
+		cvssOf[key] = kb.CVSSFor(cve)
+	}
+	c.annotateImpactPriors(cveOf, kevOf, cvssOf)
+}
+
 // addIntelFinding 收集情报关联结论。指纹命中即为它的证据来源；
 // confirmed（版本区间命中）→ positive + probable，possible → unknown + possible。
 // 情报是提示而非利用验证，故不给 confirmed 置信级（诚实分级）。

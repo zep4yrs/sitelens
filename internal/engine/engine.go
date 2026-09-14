@@ -631,6 +631,10 @@ func (e *Engine) Scan(rawURL string, opts Options, onProgress progress, cancel f
 		if kb != nil && kb.NVDCount() > 0 {
 			cwe.Relate(res.Graph, nvdLookup{kb})
 		}
+		// 4.0 P7/P10：为 impact 补 KEV/CVSS 先验标注（**仅解释，不参与建链**）。
+		if kb != nil {
+			col.annotatePriorsFromKB(kb)
+		}
 		// 4.0 P6：证据驱动建链（无证据的候选边不建；见 internal/chain）。
 		chain.Build(res.Graph, chain.Options{})
 		if err := res.Graph.Validate(); err != nil {
