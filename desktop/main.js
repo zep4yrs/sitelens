@@ -18,6 +18,24 @@ const path = require('path');
 const engine = require('./engine');
 const splash = require('./splash');
 
+// 4.0 Track A / A9：GUI 内存治理（实测见 docs/开发文档-4.0.md 26.24）。
+//
+// in-process-gpu 把 GPU 进程合并进主进程（Chromium 默认单开 GPU 进程，
+// 本项目实测占 109MB）。本机实测：4 进程 410-420MB → 3 进程 ≈374MB（可复现）。
+//
+// 取舍（如实记录）：GPU 崩溃会带走主进程，而独立 GPU 进程崩溃只影响渲染。
+// 本应用页面是轻量表单/列表（无 WebGL/视频），GPU 崩溃面小，换来 37MB 常驻
+// 下降与少一个进程；将来若引入 WebGL 背景等重 GPU 特性，需重新评估。
+app.commandLine.appendSwitch('in-process-gpu');
+
+// 关掉壳不需要的 Chromium 后台服务（媒体路由 / 组件自动更新 / 域可靠性上报 /
+// 优化提示）：桌面壳只访问本地引擎 HTTP，不需要这些。
+app.commandLine.appendSwitch('disable-features',
+  'MediaRouter,OptimizationHints,CalculateNativeWinOcclusion');
+app.commandLine.appendSwitch('disable-background-networking');
+app.commandLine.appendSwitch('disable-component-update');
+app.commandLine.appendSwitch('disable-domain-reliability');
+
 const isDev = !app.isPackaged;
 // 自动更新：electron-updater generic 单源（GitHub desktop-stable release）。
 // 更新史：曾用 CNB/Gitee/GitHub 三源轮询采样，但 CNB 的 desktop-stable 已按
