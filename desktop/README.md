@@ -156,9 +156,28 @@ CI（`.cnb.yml` 的 `v*` tag 流水线）已按此配置；lite / full 两个 jo
 cd desktop
 npm install                       :: electron 二进制若被 npm 脚本门禁拦下：
 node scripts/fetch-electron.js    ::   手动补拉
-npm run engine                    :: go build 引擎 + 暂存数据载荷
+npm run engine                    :: 构建引擎（见下「引擎构建与白盒 AST」）+ 暂存载荷
 npm run dist                      :: 出 release\SiteLens-Setup-<版本>.exe
 ```
+
+## 引擎构建与白盒 AST（v4.0.0）
+
+`npm run engine` 的引擎**必须**是 Windows PE（错平台会把安装包打废，见下），
+并且**应带 CGO**——`internal/astx` 的 AST / 数据流依赖 tree-sitter（CGO），
+缺 CGO 时源码审计会降级为纯规则级（功能不报错，但白盒数据流缺失）。
+
+`build-engine.js` 按以下顺序自动选择构建方式：
+
+1. **Windows 本机有 gcc**（MSYS2 / mingw）→ `CGO_ENABLED=1` 原生构建；
+2. 否则**有 WSL**（含 `mingw-w64` 交叉工具链，即 `x86_64-w64-mingw32-gcc`）
+   → 走 WSL 交叉编译（本项目当前主力路径；WSL 发行版可用
+   `SITLENS_WSL_DISTRO` 指定，默认 `archlinux`）；
+3. 两者皆无 → 回退 `CGO_ENABLED=0` 纯 Go 构建，**AST 降级并打印明确告警**
+   （不静默丢失能力）。
+
+构建产物落 `desktop/engine/sitelens.exe`，并做 **PE 魔数校验**（非 `MZ` 直接失败）。
+
+> 发版统一走 `tools/release_local.sh`（见「发布一个新版本」）。
 
 产物三件套（发布自动更新必须全部上传）：
 
