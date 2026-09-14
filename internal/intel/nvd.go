@@ -14,14 +14,19 @@ import (
 // ① vuln_kb 行缺 CVSS 时的评分补全；② 按 CVE/厂商产品的检索面。
 // 文件缺失时 AttachNVD 跳过，情报层其余功能不受影响。
 
-// NVDProd 一条 CPE 受影响产品约束（vendor/product + 可选版本边界）。
+// NVDProd 一条 CPE 受影响产品约束。
+//
+// A2 字段瘦身（4.0 Track A）：常驻结构**只保留 vendor/product**。
+// 原结构含 6 个 string 字段（96B/条 × 约 300 万条 ≈ 292MB），但全仓核实
+// **版本边界字段（EE/EI/SE/SI/V）无任何消费方**——版本区间判定由
+// vuln_kb / affected_ranges 承担，NVD 侧只做「产品名 → CVE」检索。
+// 瘦到 16B/条后该项内存降约 240MB（full 档峰值主因之一）。
+//
+// 取舍：新版 update-nvd 写出的文件不再含版本边界字段。该字段可从 NVD 源
+// 随时重建（`update-nvd feed`，实测约 5 分钟），故属可恢复的数据精简。
+// 旧文件（含边界）用新结构解码**完全兼容**（未知字段被忽略）。
 type NVDProd struct {
-	VP string `json:"vp"`           // vendor/product
-	EE string `json:"ee,omitempty"` // versionEndExcluding
-	EI string `json:"ei,omitempty"` // versionEndIncluding
-	SE string `json:"se,omitempty"` // versionStartExcluding
-	SI string `json:"si,omitempty"` // versionStartIncluding
-	V  string `json:"v,omitempty"`  // 单版本（无边界时）
+	VP string `json:"vp"` // vendor/product
 }
 
 // NVDEntry 一条 CVE 的紧凑投影。

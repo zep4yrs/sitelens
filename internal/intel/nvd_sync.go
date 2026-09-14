@@ -134,15 +134,12 @@ func cveToEntry(c nvdCVEJSON) NVDEntry {
 					continue
 				}
 				seen[m.Criteria] = true
-				vp, ver, ok := cpeVendorProduct(m.Criteria)
+				vp, _, ok := cpeVendorProduct(m.Criteria)
 				if !ok {
 					continue
 				}
-				e.Prods = append(e.Prods, NVDProd{
-					VP: vp, V: ver,
-					EE: m.VersionEndExcluding, EI: m.VersionEndIncluding,
-					SE: m.VersionStartExcluding, SI: m.VersionStartIncluding,
-				})
+				// A2：只留 vendor/product（版本边界无消费方，见 NVDProd 注释）
+				e.Prods = append(e.Prods, NVDProd{VP: vp})
 			}
 		}
 	}
@@ -268,7 +265,7 @@ func writeNVDFile(outPath string, cves []NVDEntry) error {
 	gz := gzip.NewWriter(f)
 	enc := json.NewEncoder(gz)
 	if err := enc.Encode(map[string]any{
-		"version": 2, // v2：新增 cwes 字段（v1 数据仍可读，cwes 为空）
+		"version": 3, // v3：prods 只留 vp（A2 瘦身；v1/v2 数据仍可读）
 		"count":   len(cves),
 		"cves":    cves,
 	}); err != nil {
