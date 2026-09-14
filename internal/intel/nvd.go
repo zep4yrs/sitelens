@@ -34,6 +34,10 @@ type NVDEntry struct {
 	Vector string    `json:"vec,omitempty"`   // CVSS vector string
 	Descr  string    `json:"descr,omitempty"` // 英文首条描述（截断）
 	Prods  []NVDProd `json:"prods,omitempty"` // 受影响产品约束（去重）
+	// CWEs 弱类型编号（CWE-NNN，去重升序）。4.0 P5 新增：来自 NVD 的
+	// weaknesses 字段（NVD-CWE-* / NVD-CWE-noinfo 等占位值被过滤）。
+	// 旧数据文件（未含该字段）加载后为 nil，消费方按空处理——向后兼容。
+	CWEs []string `json:"cwes,omitempty"`
 }
 
 // NVDStore 内存索引（不可变，可并发读）。
@@ -53,6 +57,18 @@ func (s *NVDStore) ByCVE(cve string) (*NVDEntry, bool) {
 	}
 	e, ok := s.byCVE[strings.ToUpper(strings.TrimSpace(cve))]
 	return e, ok
+}
+
+// CWEsFor 返回 CVE 的 CWE 编号（去重副本；未知 CVE 或旧数据返回 nil）。
+// 4.0 P5：供 cwe_rel 的 CVE↔CWE 关联使用。
+func (s *NVDStore) CWEsFor(cve string) []string {
+	e, ok := s.ByCVE(cve)
+	if !ok || len(e.CWEs) == 0 {
+		return nil
+	}
+	out := make([]string, len(e.CWEs))
+	copy(out, e.CWEs)
+	return out
 }
 
 // ByProduct 按 vendor/product 或其子串检索（q 逐条做子串匹配，小库量级够用）。
@@ -84,6 +100,15 @@ func (s *NVDStore) ByProduct(q string, limit int) []NVDEntry {
 // AttachNVD 旁路挂载 NVD 索引（nil = 不启用）。
 func (k *KB) AttachNVD(s *NVDStore) { k.nvd = s }
 
+// NVD 返回已挂载的 NVD 索引（未挂载返回 nil）。
+// 供 cwe.Relate 等外部消费方按需查询（不暴露内部字段）。
+func (k *KB) NVD() *NVDStore {
+	if k == nil {
+		return nil
+	}
+	return k.nvd
+}
+
 // NVDCount 统计用（未挂载返回 0）。
 func (k *KB) NVDCount() int {
 	if k.nvd == nil {
@@ -92,16 +117,26 @@ func (k *KB) NVDCount() int {
 	return k.nvd.Len()
 }
 
-// nvdFill 在 Match 构造 Finding 后补全缺失的 CVSS（宁缺毋滥：只填空位）。
+// nvdFill 在 Match 构造 Finding 后补全缺失的 CVSS 与 CWE（宁缺毋滥：只填空位）。
 func (k *KB) nvdFill(f *Finding) {
-	if k.nvd == nil || f.CVE == "" || f.CVSSScore > 0 {
+	if k.nvd == nil || f.CVE == "" {
 		return
 	}
-	if e, ok := k.nvd.ByCVE(f.CVE); ok && e.Score > 0 {
+	e, ok := k.nvd.ByCVE(f.CVE)
+	if !ok {
+		return
+	}
+	if f.CVSSScore <= 0 && e.Score > 0 {
 		f.CVSSScore = e.Score
 		if f.CVSSSev == "" {
 			f.CVSSSev = e.Sev
 		}
+	}
+	// CWE 回填（P5）：来自 NVD weaknesses；已有值不覆盖。
+	if len(f.CWEs) == 0 && len(e.CWEs) > 0 {
+		out := make([]string, len(e.CWEs))
+		copy(out, e.CWEs)
+		f.CWEs = out
 	}
 }
 
@@ -125,13 +160,18 @@ func LoadNVD(path string) (*NVDStore, error) {
 	if err := json.NewDecoder(gz).Decode(&box); err != nil {
 		return nil, err
 	}
+	// 先排序、再建索引：byCVE/byProd 存的是 *NVDEntry 指针，若在排序前建立，
+	// sort 移动元素会使指针悬空指向错位条目（真实 bug：feed 按年份拼接的文件
+	// 非全局有序，会触发此问题，表现为查到他人 CWE/CVSS）。
+	sort.Slice(box.Cves, func(i, j int) bool { return box.Cves[i].CVE < box.Cves[j].CVE })
+
 	s := &NVDStore{
 		list:   box.Cves,
 		byCVE:  make(map[string]*NVDEntry, len(box.Cves)),
 		byProd: make(map[string][]*NVDEntry, 4096),
 	}
 	for i := range s.list {
-		e := &s.list[i]
+		e := &s.list[i] // 排序已定，指针稳定
 		s.byCVE[strings.ToUpper(e.CVE)] = e
 		seen := map[string]bool{}
 		for _, p := range e.Prods {
@@ -142,6 +182,5 @@ func LoadNVD(path string) (*NVDStore, error) {
 			s.byProd[strings.ToLower(p.VP)] = append(s.byProd[strings.ToLower(p.VP)], e)
 		}
 	}
-	sort.Slice(s.list, func(i, j int) bool { return s.list[i].CVE < s.list[j].CVE })
 	return s, nil
 }

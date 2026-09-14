@@ -43,7 +43,7 @@ import (
 )
 
 // Version 服务版本。
-const Version = "3.0.0"
+const Version = "3.0.1"
 
 // categoryNames 常见技术类别中文名（对齐 Wappalyzer 类别 id）。
 var categoryNames = map[string]string{
@@ -175,7 +175,7 @@ func (s *Server) Handler() http.Handler {
 		"/app": "app.html", "/batch": "batch.html",
 		"/history": "history.html", "/api-docs": "api-docs.html",
 		"/intel": "intel.html", "/audit": "audit.html",
-		"/settings": "settings.html",
+		"/chain": "chain.html", "/settings": "settings.html",
 	}
 	for route, file := range pages {
 		mux.HandleFunc(route, func(w http.ResponseWriter, r *http.Request) {
@@ -216,6 +216,10 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("DELETE /api/history/{id}", s.hHistoryDelete)
 	mux.HandleFunc("POST /api/history/clear", s.hHistoryClear)
 	mux.HandleFunc("GET /api/export/{id}", s.hExport)
+	// 4.0 P8：结构化事实图（CWE/攻击链）查询、JSONL 导出、攻击链视图
+	mux.HandleFunc("GET /api/graph/{id}", s.hGraph)
+	mux.HandleFunc("GET /api/graph/{id}/jsonl", s.hGraphJSONL)
+	mux.HandleFunc("GET /api/graph/{id}/chain", s.hGraphChain)
 	mux.HandleFunc("GET /api/diff", s.hDiff)
 	mux.HandleFunc("GET /api/vuln-search", s.hVulnSearch)
 	mux.HandleFunc("GET /api/verified", s.hVerified)
@@ -356,7 +360,7 @@ func (s *Server) hRoot(w http.ResponseWriter, r *http.Request) {
 	if strings.HasSuffix(p, ".html") {
 		name := strings.TrimPrefix(p, "/")
 		for _, known := range []string{"app.html", "batch.html", "history.html",
-			"api-docs.html", "intel.html", "audit.html", "settings.html", "404.html"} {
+			"api-docs.html", "intel.html", "audit.html", "chain.html", "settings.html", "404.html"} {
 			if name == known {
 				s.serveAsset(w, name)
 				return
@@ -499,6 +503,7 @@ func scanOptions(body map[string]any) engine.Options {
 	o.Passive = boolOf(body["passive"], false)
 	o.JSMap = boolOf(body["js_map"], false)      // JS 攻击面提取（可独立于 DAST）
 	o.NetProto = boolOf(body["netproto"], false) // 协议模板（可独立于端口识别）
+	o.Graph = boolOf(body["graph"], false)       // 4.0 P8：结构化事实图（CWE/攻击链）
 	// 强度档位的字典缩放与端口集（每扫描覆盖配置；0/缺省 = 沿用配置）
 	if v, ok := body["dir_max_paths"].(float64); ok && v > 0 {
 		o.DirMaxPaths = int(v)

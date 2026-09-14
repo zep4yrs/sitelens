@@ -11,6 +11,7 @@ import (
 	"sort"
 
 	"gopkg.in/yaml.v3"
+	"path/filepath"
 )
 
 // Config 用户可配置项（.sitelens.yml 或默认值）。
@@ -82,6 +83,7 @@ type ScanConfig struct {
 	Deep           bool   `yaml:"deep"`             // 默认开启同域浅爬取
 	Resolve        bool   `yaml:"resolve"`          // 目标校验时是否做 DNS 解析（SSRF 防护强度）
 	MaxConcurrent  int    `yaml:"max_concurrent"`   // 同时进行的扫描任务数（信号量）
+	Graph          bool   `yaml:"graph"`            // 收集结构化事实图（4.0 P2，默认关）
 }
 
 // ChecksConfig 验证型 check 引擎。
@@ -157,10 +159,11 @@ type LoginBruteConfig struct {
 
 // AuditConfig 源码审计。
 type AuditConfig struct {
-	MaxArchiveMB       int `yaml:"max_archive_mb"`        // 上传压缩包大小上限（MB）
-	MaxFiles           int `yaml:"max_files"`             // 最多审计的文件数
-	MaxFileKB          int `yaml:"max_file_kb"`           // 单文件大小上限（KB）
-	MaxFindingsPerRule int `yaml:"max_findings_per_rule"` // 单规则命中上限
+	MaxArchiveMB       int  `yaml:"max_archive_mb"`        // 上传压缩包大小上限（MB）
+	MaxFiles           int  `yaml:"max_files"`             // 最多审计的文件数
+	MaxFileKB          int  `yaml:"max_file_kb"`           // 单文件大小上限（KB）
+	MaxFindingsPerRule int  `yaml:"max_findings_per_rule"` // 单规则命中上限
+	ASTEnabled         bool `yaml:"ast_enabled"`           // AST 污点分析（4.0 P3，需 CGO 构建；关=仅行级正则）
 }
 
 // BatchConfig 批量扫描。
@@ -246,7 +249,7 @@ func Default() *Config {
 		},
 		Audit: AuditConfig{
 			MaxArchiveMB: 20, MaxFiles: 800, MaxFileKB: 512,
-			MaxFindingsPerRule: 50,
+			MaxFindingsPerRule: 50, ASTEnabled: false, // 默认关：与 3.0 行级行为一致；开启需 CGO 构建
 		},
 		Batch: BatchConfig{MaxURLs: 50, Workers: 3},
 		Web: WebConfig{
@@ -408,6 +411,12 @@ func (c *Config) fillDefaults() {
 	}
 	fillInt(&c.Store.MaxRecords, d.Store.MaxRecords)
 
+	// overrides_path 归一到数据目录：它**运行期会被写**（设置页保存 / update-osv），
+	// 默认值 "data/intel_overrides.json" 是相对路径——安装到 Program Files 后
+	// 该目录只读，写入即 EPERM。归入数据目录后，任何配置来源都落在可写位置。
+	c.Intel.OverridesPath = underDataDir(c.Store.DataDir, c.Intel.OverridesPath,
+		d.Intel.OverridesPath)
+
 	fillInt(&c.Active.DirMaxPaths, d.Active.DirMaxPaths)
 	fillInt(&c.Active.SubMaxWords, d.Active.SubMaxWords)
 	fillInt(&c.Active.SubWorkers, d.Active.SubWorkers)
@@ -431,4 +440,29 @@ func fillInt64(v *int64, def int64) {
 	if *v <= 0 {
 		*v = def
 	}
+}
+
+// underDataDir 把「写入型」数据文件的路径归一到数据目录下。
+//
+// 动机：installer 装到 Program Files 等只读目录后，任何相对路径写入都会
+// EPERM。凡是引擎运行期会**写入**的文件（如 intel_overrides.json），
+// 都应落在可写的数据目录里。
+//
+// 规则：
+//   - 空值 → 用默认值（同样归一）；
+//   - 相对路径 → 视为「相对默认数据目录」的约定路径，改挂到实际数据目录下
+//     （用文件名），避免写进安装目录；
+//   - 绝对路径 → 用户显式指定，原样尊重（不擅自搬动）。
+func underDataDir(dataDir, path, def string) string {
+	if path == "" {
+		path = def
+	}
+	if path == "" {
+		return ""
+	}
+	if filepath.IsAbs(path) {
+		return path // 用户显式绝对路径：尊重
+	}
+	// 相对路径：取文件名挂到数据目录（保留用户自定义的基名）
+	return filepath.Join(dataDir, filepath.Base(path))
 }

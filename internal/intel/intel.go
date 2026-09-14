@@ -83,6 +83,9 @@ type Finding struct {
 	Affected   string   `json:"affected"`
 	KEV        bool     `json:"kev"`
 	Templates  []string `json:"templates,omitempty"` // 可直接复跑的模板路径（模板情报层）
+	// CWEs 弱类型编号（4.0 P5）：来自 NVD weaknesses（经 nvdFill 回填）。
+	// 缺口时为空——不臆造，消费方按空处理。
+	CWEs []string `json:"cwes,omitempty"`
 }
 
 var severityOrder = map[string]int{

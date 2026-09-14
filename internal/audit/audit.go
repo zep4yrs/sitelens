@@ -15,6 +15,7 @@ import (
 	"strings"
 
 	"cnb.cool/feng-qiao/sitelens/internal/config"
+	"cnb.cool/feng-qiao/sitelens/internal/model"
 )
 
 // rule 审计规则（id, 严重度, 语言, 标题, 正则, 修复建议）。
@@ -107,6 +108,11 @@ type Report struct {
 
 // Run 审计目录或单文件。
 func Run(root string, cfg config.AuditConfig, onProgress func(done, total int, msg string)) (*Report, error) {
+	return run(root, cfg, onProgress, nil)
+}
+
+// run 是 Run 的核心实现。wb 非空时（P4）顺带把白盒发现实体化进图。
+func run(root string, cfg config.AuditConfig, onProgress func(done, total int, msg string), wb *model.ScanGraph) (*Report, error) {
 	if cfg.MaxFileKB <= 0 {
 		cfg.MaxFileKB = 512
 	}
@@ -166,6 +172,19 @@ func Run(root string, cfg config.AuditConfig, onProgress func(done, total int, m
 		ext := strings.TrimPrefix(strings.ToLower(filepath.Ext(fp)), ".")
 		lines := strings.Split(string(data), "\n")
 
+		// AST 污点分析（4.0 P3，opt-in：config audit.ast_enabled 且 CGO 构建）。
+		// 与下方行级规则并存：AST 命中是附加发现（AST-<sink>），
+		// 行级正则/TAINT-lite 作为兜底始终运行——既有发现不变。
+		if cfg.ASTEnabled {
+			astFind, an := astAnalyze(fp, data, cfg.MaxFindingsPerRule)
+			for _, f := range astFind {
+				rep.Findings = append(rep.Findings, f)
+			}
+			if wb != nil && an != nil {
+				emitASTFacts(wb, fp, an)
+			}
+		}
+
 		// TAINT-lite：污点数据流追踪（仅 .py，行级近似）
 		if ext == "py" && taintHits < cfg.MaxFindingsPerRule {
 			for _, f := range taintFile(fp, lines) {
@@ -200,6 +219,10 @@ func Run(root string, cfg config.AuditConfig, onProgress func(done, total int, m
 						File: fp, Line: n + 1, Snippet: snippet,
 						Match: mt, Advice: r.Advice,
 					})
+					// P4：白盒发现实体化（行级线索 → evidence + vuln_node）。
+					if wb != nil {
+						emitLineFact(wb, fp, r.ID, r.Sev, r.Title, snippet, n+1)
+					}
 				}
 			}
 		}

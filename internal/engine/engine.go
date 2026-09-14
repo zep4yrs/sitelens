@@ -12,9 +12,11 @@ import (
 	"time"
 
 	"cnb.cool/feng-qiao/sitelens/internal/authn"
+	"cnb.cool/feng-qiao/sitelens/internal/chain"
 	"cnb.cool/feng-qiao/sitelens/internal/checks"
 	"cnb.cool/feng-qiao/sitelens/internal/config"
 	"cnb.cool/feng-qiao/sitelens/internal/crawler"
+	"cnb.cool/feng-qiao/sitelens/internal/cwe"
 	"cnb.cool/feng-qiao/sitelens/internal/dast"
 	"cnb.cool/feng-qiao/sitelens/internal/headless"
 	"cnb.cool/feng-qiao/sitelens/internal/htmlx"
@@ -56,6 +58,7 @@ type Options struct {
 	SubMaxWords   int                     // 子域名字典词数上限（0 = 用配置默认）
 	ProbePorts    []int                   // 端口探测端口集（nil = 用配置/默认常见端口集）
 	AuthCookie    string                  // 授权扫描 Cookie
+	Graph         bool                    // 收集结构化事实图（4.0 P2，默认关；关时与 3.0 行为一致）
 	OnEvent       func(kind, text string) // 实时事件回调（阶段/命中/认证，nil = 不回调）
 }
 
@@ -131,6 +134,12 @@ func (e *Engine) Scan(rawURL string, opts Options, onProgress progress, cancel f
 	finish := func() {
 		// 毫秒精度（原 10ms 舍入会把 <5ms 的扫描记成 0.00）
 		res.Duration = float64(int(time.Since(start).Seconds()*1000)) / 1000
+	}
+
+	// 4.0 P2：结构化事实收集器（仅在 opts.Graph 时创建，默认不影响 3.0 行为）
+	var col *collector
+	if opts.Graph {
+		col = newCollector(res.ScannedAt)
 	}
 
 	// 1) 校验（含 SSRF 防护）
@@ -219,9 +228,15 @@ func (e *Engine) Scan(rawURL string, opts Options, onProgress progress, cancel f
 				"url": f.URL, "evidence": f.Evidence, "advice": f.Advice,
 				"src": "js",
 			}))
+			if col != nil {
+				col.addJSFinding(f)
+			}
 		}
 		if len(jsEndpoints) > 0 {
 			res.Extras["js"] = jsEndpoints
+		}
+		if col != nil {
+			col.captureEntryPoints(nil, nil, jsEndpoints)
 		}
 	}
 	if opts.Deep {
@@ -312,6 +327,9 @@ func (e *Engine) Scan(rawURL string, opts Options, onProgress progress, cancel f
 		}
 	}
 	res.Technologies = acc.list()
+	if col != nil {
+		col.captureTechs(res.Technologies)
+	}
 
 	// 5) 安全响应头评分
 	onProgress(70, "评估安全响应头…")
@@ -342,6 +360,9 @@ func (e *Engine) Scan(rawURL string, opts Options, onProgress progress, cancel f
 				"response": h.Response, "signals": h.Signals,
 				"confirmed": h.Confirmed,
 			}))
+			if col != nil {
+				col.addCheckHit(h, "check")
+			}
 			// 版本抽取回填：wp-readme 等命中可为技术补版本，
 			// 让情报关联从 possible 升级为 confirmed
 			if h.Version != "" {
@@ -373,6 +394,9 @@ func (e *Engine) Scan(rawURL string, opts Options, onProgress progress, cancel f
 					"response": h.Response, "signals": h.Signals,
 					"confirmed": h.Confirmed,
 				}))
+				if col != nil {
+					col.addCheckHit(h, "nuclei")
+				}
 			}
 		}
 	}
@@ -387,6 +411,9 @@ func (e *Engine) Scan(rawURL string, opts Options, onProgress progress, cancel f
 					"url": h.URL, "evidence": h.Evidence, "advice": h.Advice,
 					"src": "passive",
 				}))
+				if col != nil {
+					col.addPassiveHit(h)
+				}
 			}
 		}
 	}
@@ -447,6 +474,16 @@ func (e *Engine) Scan(rawURL string, opts Options, onProgress progress, cancel f
 				"proven": proven, "observed": observed, "gate": "enabled",
 			}
 		}
+		// 结构化收集放在 exploit 之后：impact/impact_evidence 已被回填进 dastMaps。
+		if col != nil {
+			for i := range dastAll {
+				var m map[string]any
+				if i < len(dastMaps) {
+					m = dastMaps[i]
+				}
+				col.addDASTFinding(dastAll[i], m)
+			}
+		}
 	}
 
 	// 9) 主动模块（默认关）
@@ -485,6 +522,9 @@ func (e *Engine) Scan(rawURL string, opts Options, onProgress progress, cancel f
 				if h.Bypass != "" {
 					bypassed = append(bypassed, h)
 					emit("bypass", "403 可绕过："+h.Path+"（"+h.Bypass+"）")
+					if col != nil {
+						col.addDirBypass(h)
+					}
 				}
 			}
 			if len(bypassed) > 0 {
@@ -547,6 +587,10 @@ func (e *Engine) Scan(rawURL string, opts Options, onProgress progress, cancel f
 						"advice":   "改用强口令并禁用 HTTP Basic；启用登录失败限制",
 						"src":      "weak", "type": h.Type,
 					}))
+					// P7：弱口令命中 → priv_change（mechanism=credential）。
+					if col != nil {
+						col.addWeakCredential(h)
+					}
 				}
 			}
 		}
@@ -573,6 +617,25 @@ func (e *Engine) Scan(rawURL string, opts Options, onProgress progress, cancel f
 		res.Vulnerabilities = append(res.Vulnerabilities, kb.Match(techs)...)
 		res.Vulnerabilities = append(res.Vulnerabilities, cveMsFindings(kb.MatchCVEMs(techs, 20))...)
 		attachTemplates(e, res.Vulnerabilities)
+		if col != nil {
+			for _, f := range res.Vulnerabilities {
+				col.addIntelFinding(f)
+			}
+		}
+	}
+
+	// 4.0 P2：结构化事实图挂到结果（失败不阻塞扫描——图是附加产物）
+	if col != nil {
+		res.Graph = col.graph()
+		// 4.0 P5：CVE → CWE 关联（NVD weaknesses 通道；未挂 NVD 时跳过）
+		if kb != nil && kb.NVDCount() > 0 {
+			cwe.Relate(res.Graph, nvdLookup{kb})
+		}
+		// 4.0 P6：证据驱动建链（无证据的候选边不建；见 internal/chain）。
+		chain.Build(res.Graph, chain.Options{})
+		if err := res.Graph.Validate(); err != nil {
+			emit("graph", "结构化事实图校验异常："+err.Error())
+		}
 	}
 
 	onProgress(100, fmt.Sprintf("完成，识别 %d 项技术，%d 条已验证发现",

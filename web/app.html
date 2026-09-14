@@ -142,7 +142,8 @@
           <span class="chip on" data-verify="ws" title="常见 WebShell 后门路径探测">WebShell</span>
           <span class="chip on" data-verify="dast" title="参数级无害注入：XSS / SQLi / 盲注双确认 / 重定向 / 遍历">参数注入</span>
           <span class="chip" data-verify="by" title="403 绕过变体表（路径变异 / 信任头 / 只读方法），需与目录探测同开">403 绕过</span>
-          <span class="chip" data-verify="ex" title="利用级无害验证：对已确认发现做影响证明。需 .sitelens.yml exploit.enabled + 授权白名单，未授权目标零请求">利用级</span>
+          <span class="chip" data-verify="ex" title="利用级无害验证：对已确认发现做影响证明。需 .sitelens.yml exploit.enabled，未授权目标零请求">利用级</span>
+          <span class="chip" data-verify="settle" title="结构化事实图：随扫描收集入口/发现/证据/CWE 关联/攻击链，供「攻击链」页查看与导出">事实图</span>
         </div>
       </div>
       <div class="opt-group" id="st-group">
@@ -316,7 +317,7 @@ function setPassive(on) {
   // 互斥联动：被动开启时清空并禁用其余验证；关闭时恢复可选
   var row = document.getElementById("verify-row");
   if (on) {
-    ["afp", "dir", "ws", "dast", "by", "ex"].forEach(function (k) {
+    ["afp", "dir", "ws", "dast", "by", "ex", "settle"].forEach(function (k) {
       verifySet[k] = false;
       var c = document.querySelector('#verify-row [data-verify="' + k + '"]');
       if (c) c.classList.remove("on");
@@ -333,8 +334,11 @@ function setHint() {
     h.textContent = "被动模式：零额外请求，仅响应头评分与被动特征；范围探测（子域 / 端口 / 协议）仍可运行。强度档位在此模式下不生效。";
     h.className = "hint warn";
   } else if (verifySet.ex) {
-    h.textContent = "利用级验证会发送受控影响证明探针，需 .sitelens.yml 开启 exploit.enabled 并配置授权白名单；白名单外目标零请求。";
+    h.textContent = "利用级验证会发送受控影响证明探针，需在 设置 → 引擎配置 开启「利用级验证」总闸；探针只读无害，gov.cn 永久拒绝。";
     h.className = "hint warn";
+  } else if (verifySet.settle) {
+    h.textContent = "事实图：随本次扫描收集入口 / 发现 / 证据 / CWE 关联 / 攻击链，可在「攻击链」页查看并导出 graph JSONL（供 5.0 读取）。";
+    h.className = "hint";
   } else if (verifySet.by) {
     h.textContent = "403 绕过会发送变体重试请求，仅限自有或已书面授权的目标。";
     h.className = "hint warn";

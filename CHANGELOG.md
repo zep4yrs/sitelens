@@ -1,5 +1,41 @@
 # 更新日志
 
+## v3.0.1（2026-09-14，桌面端安装修复）
+
+### 管理员安装后引擎启动失败（EPERM）修复
+
+- **症状**：安装包装到 `D:\Program Files\SiteLens`（或任何受 ACL 保护的目录）后，
+  用管理员安装的机器上启动即失败，日志只有一行
+  `engine failed: Error: EPERM: operation not permitted,
+  open '...
+esources\engine\.sitelens.yml'`，引擎始终起不来。
+- **根因**：桌面壳把**引擎配置** `.sitelens.yml` 写在**安装目录**里。程序文件目录
+  本应只读（Program Files 对普通进程无写权限），首启写配置即被拒。
+- **修复**：配置改落**用户数据目录**（`%APPDATA%\SiteLens\.sitelens.yml`），并以
+  **绝对路径**经 `-config` 传给引擎；安装目录不再承担任何运行期写入。旧版遗留在
+  安装目录的配置（带壳标记）自动迁移一次，用户改过的引擎键不丢。
+- **配套**：`intel.overrides_path`（设置页保存 / `update-osv` 会写）默认值原为相对
+  安装目录的 `data/intel_overrides.json`，一并归一到数据目录，消除同类隐患。
+- **顺带修复**：开发模式（未打包）下引擎目录解析——旧实现只认仓库根，而
+  `npm run engine` 的产物在 `desktop/engine/`，导致源码启动报「引擎程序缺失」；
+  现优先仓库根（存在引擎程序时），否则回退 `desktop/engine/`。
+- 回归：新增 `desktop/test/engine-config.test.js`（配置落点/旧配置迁移/引擎目录解析）
+  与 `internal/config` 的 overrides 归一断言。
+
+### 引擎构建平台修复 + 发版改本地（同批发现的更严重问题）
+
+- **发现**：排查上述 EPERM 时发现，CI 的 tag 流水线跑在 Linux（`golang:1.26.8`），
+  而 `desktop/build-engine.js` 执行的是**不带 `GOOS`** 的 `go build`——打出的
+  「`sitelens.exe`」**实为 Linux ELF 二进制**（`^?ELF`，非 Windows `MZ`/PE）。
+  装进 Windows 安装包后引擎根本无法运行。该问题被上面的配置写入错误掩盖。
+- **修复**：`build-engine.js` 显式 `GOOS=windows GOARCH=amd64 CGO_ENABLED=0`，
+  并在构建后**校验 PE 魔数**（非 PE 直接失败）——错平台二进制不再能静默入包。
+- **发版流程改本地**：CI 的 `v*` tag 自动构建已停用（原配置保留为注释）；
+  统一走 `tools/release_local.sh`（构建引擎→PE 校验→打包 NSIS→可选上传 CNB）。
+  本地在 Windows 构建，产物必为 PE 且可即时验证。
+- 回归：`tools/ci_pipeline_guard.test.mjs` 感知流水线停用状态——停用时
+  **明确跳过**（非静默通过），一旦重新启用断言立即恢复生效。
+
 ## v3.0.0（2026-09-12，利用器）
 
 ### 非 HTTP 协议检测（3.0 主项一）

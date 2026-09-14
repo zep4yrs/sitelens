@@ -1,0 +1,226 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>攻击链视图 — SiteLens</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<script>if(localStorage.getItem("sitelens-theme")==="dark")document.documentElement.classList.add("dark")</script>
+<style>
+  .picker{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:16px}
+  .picker select{min-width:300px}
+  .meta{display:flex;gap:18px;flex-wrap:wrap;margin-bottom:16px;font-size:13px;color:var(--muted-fg)}
+  .meta b{color:var(--fg);font-weight:600}
+  .chainwrap{display:flex;gap:22px;flex-wrap:wrap;align-items:flex-start}
+  .col{flex:1;min-width:320px}
+  .col h2{font-size:14px;font-weight:600;margin:0 0 10px;color:var(--muted-fg)}
+  .nlist{display:flex;flex-direction:column;gap:8px}
+  .node{border:1px solid var(--border);border-radius:10px;background:var(--card);
+    padding:10px 12px;font-size:13px;display:flex;gap:10px;align-items:flex-start}
+  .node .k{font-family:var(--font-mono);font-size:11px;padding:2px 7px;border-radius:6px;
+    white-space:nowrap;font-weight:600}
+  .k-recon{background:color-mix(in srgb,var(--info) 16%,transparent);color:var(--info)}
+  .k-entry{background:color-mix(in srgb,var(--primary) 16%,transparent);color:var(--primary)}
+  .k-exploit{background:color-mix(in srgb,#dc2626 15%,transparent);color:#dc2626}
+  .k-impact{background:color-mix(in srgb,#d97706 18%,transparent);color:#b45309}
+  .k-priv{background:color-mix(in srgb,#7c3aed 15%,transparent);color:#7c3aed}
+  .node .t{flex:1;min-width:0;word-break:break-all}
+  .node .ev{font-family:var(--font-mono);font-size:11px;color:var(--muted-fg);white-space:nowrap}
+  .edges td{font-family:var(--font-mono);font-size:12px;padding:7px 10px;word-break:break-all}
+  .edges{width:100%;border-collapse:collapse}
+  .edges th{font-size:11px;color:var(--muted-fg);text-align:left;padding:6px 10px;
+    border-bottom:1px solid var(--border);font-weight:600}
+  .edges td{border-bottom:1px solid color-mix(in srgb,var(--border) 55%,transparent)}
+  .ek{padding:2px 7px;border-radius:6px;font-weight:600;font-size:11px}
+  .ek-sequence{background:color-mix(in srgb,var(--primary) 15%,transparent);color:var(--primary)}
+  .ek-exploit_impact{background:color-mix(in srgb,#dc2626 14%,transparent);color:#dc2626}
+  .ek-evidence_link{background:color-mix(in srgb,var(--info) 16%,transparent);color:var(--info)}
+  .ek-priv_change{background:color-mix(in srgb,#7c3aed 14%,transparent);color:#7c3aed}
+  .note{margin-top:18px;font-size:12px;color:var(--muted-fg);line-height:1.9}
+  .empty{padding:40px 0;text-align:center;color:var(--muted-fg)}
+</style>
+</head>
+<body>
+<script src="/js/common.js"></script>
+
+<main class="page">
+  <h1>攻击链视图</h1>
+  <p class="sub">基于 <b>真实证据</b> 的发现关系：每次扫描的结构化事实图（入口 / 发现 / 数据流 / CWE / 影响 / 权限变化）与其间的关系边。无证据的候选关系不会被建立。</p>
+
+  <div class="picker">
+    <select id="scan" onchange="loadChain()"></select>
+    <button class="btn small" onclick="loadChain()">刷新</button>
+    <a class="btn ghost small" id="dl" href="#" style="display:none">下载 graph JSONL</a>
+  </div>
+
+  <div class="meta" id="meta" style="display:none"></div>
+
+  <div id="body"><div class="empty">选择一次扫描查看攻击链</div></div>
+
+  <div class="note" id="note" style="display:none"></div>
+</main>
+
+<script>
+"use strict";
+var CUR = 0;
+
+function esc(s){return String(s==null?"":s).replace(/[&<>"]/g,function(c){
+  return {"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;"}[c];});}
+
+function kindLabel(k){
+  return {recon:"信息面",entry:"入口",exploit:"可利用",impact:"影响",priv:"权限变化"}[k]||k;
+}
+function edgeLabel(k){
+  return {sequence:"时序",exploit_impact:"影响证明",evidence_link:"黑白盒关联",priv_change:"权限变化"}[k]||k;
+}
+
+// 列出所有「收集过图」的扫描（用历史接口 + 逐个探测 graph）
+function loadList(){
+  fetch("/api/history?limit=60").then(function(r){return r.json();}).then(function(rows){
+    rows = rows||[];
+    var sel = document.getElementById("scan");
+    if(!rows.length){ sel.innerHTML = '<option value="">（无扫描历史）</option>'; return; }
+    sel.innerHTML = rows.map(function(x){
+      return '<option value="'+x.id+'">#'+x.id+'  '+esc(x.url)+'  ('+esc(x.scanned_at||"")+')</option>';
+    }).join("");
+    // 默认选第一条
+    if(rows.length){ CUR = rows[0].id; loadChain(); }
+  }).catch(function(){ document.getElementById("body").innerHTML =
+    '<div class="empty">加载扫描历史失败</div>'; });
+}
+
+function loadChain(){
+  var sel = document.getElementById("scan");
+  CUR = parseInt(sel.value,10)||0;
+  if(!CUR){ return; }
+  var body = document.getElementById("body");
+  body.innerHTML = '<div class="empty">加载中…</div>';
+
+  fetch("/api/graph/"+CUR).then(function(r){ return r.json().then(function(j){ return {ok:r.ok,code:r.status,j:j}; }); })
+  .then(function(res){
+    if(!res.ok){
+      body.innerHTML = '<div class="empty">'+esc(res.j.error||"该扫描无结构化事实图")+'<br><br>'+
+        '<span style="font-size:12px">在扫描时勾选「结构化事实图」即可收集。</span></div>';
+      document.getElementById("meta").style.display="none";
+      document.getElementById("dl").style.display="none";
+      document.getElementById("note").style.display="none";
+      return;
+    }
+    render(res.j);
+  }).catch(function(e){
+    body.innerHTML = '<div class="empty">加载失败：'+esc(e.message||e)+'</div>';
+  });
+}
+
+function render(g){
+  var c = g.counts||{};
+  var m = document.getElementById("meta");
+  m.style.display="flex";
+  m.innerHTML =
+    "扫描 <b>#"+g.scan_id+"</b>"+
+    "schema <b>"+esc(g.schema)+"</b>"+
+    "漏洞节点 <b>"+(c.vuln_node||0)+"</b>"+
+    "入口 <b>"+(c.entry_point||0)+"</b>"+
+    "数据流 <b>"+(c.dataflow||0)+"</b>"+
+    "CWE 关联 <b>"+(c.cwe_rel||0)+"</b>"+
+    "影响 <b>"+(c.impact||0)+"</b>"+
+    "权限变化 <b>"+(c.priv_change||0)+"</b>";
+  var dl = document.getElementById("dl");
+  dl.style.display = "inline-block";
+  dl.href = "/api/graph/"+g.scan_id+"/jsonl";
+
+  // 链视图（节点 + 边）
+  fetch("/api/graph/"+g.scan_id+"/chain").then(function(r){ return r.json(); }).then(function(ch){
+    renderChain(g, ch);
+  }).catch(function(){ renderTables(g); });
+}
+
+function renderChain(g, ch){
+  var nodes = ch.nodes||[], edges = ch.edges||[];
+  var html = '<div class="chainwrap">';
+
+  // 左：入口 + 发现
+  html += '<div class="col"><h2>入口 / 发现（'+(g.vuln_nodes||[]).length+'+'+
+          (g.entry_points||[]).length+'）</h2><div class="nlist">';
+  (g.entry_points||[]).forEach(function(ep){
+    html += '<div class="node"><span class="k k-entry">入口</span><span class="t">'+
+      esc(ep.url||ep.file)+ (ep.param?' <b>?'+esc(ep.param)+'</b>':'') +'</span></div>';
+  });
+  (g.vuln_nodes||[]).forEach(function(v){
+    var k = v.origin==="whitebox" ? "exploit" : (String(v.check_id||"").indexOf("intel:")===0 ? "recon":"exploit");
+    var cw = (v.cwes||[]).join(" ");
+    html += '<div class="node"><span class="k k-'+k+'">'+esc(kindLabel(k))+'</span>'+
+      '<span class="t">'+esc(v.title||v.check_id||v.rule_id||v.id)+
+      (v.param?' <b>?'+esc(v.param)+'</b>':'')+
+      (v.url?'<br><span style="font-size:11.5px;color:var(--muted-fg)">'+esc(v.url)+'</span>':'')+
+      (cw?'<br><span style="font-size:11.5px">'+esc(cw)+'</span>':'')+
+      '</span><span class="ev">'+(v.evidence_ids||[]).length+' 证据</span></div>';
+  });
+  html += '</div></div>';
+
+  // 右：数据流 / 影响 / 权限变化
+  html += '<div class="col"><h2>数据流 / 影响 / 权限变化</h2><div class="nlist">';
+  (g.dataflows||[]).forEach(function(d){
+    html += '<div class="node"><span class="k k-exploit">数据流</span><span class="t">'+
+      esc(d.file)+(d.func?" · "+esc(d.func):"")+(d.param?' <b>'+esc(d.param)+'</b>':'')+
+      (d.sink?' <span style="color:var(--muted-fg)">→ '+esc(d.sink.expr||"")+'</span>':'')+
+      '</span><span class="ev">'+(d.evidence_ids||[]).length+' 证据</span></div>';
+  });
+  (g.impacts||[]).forEach(function(im){
+    html += '<div class="node"><span class="k k-impact">影响</span><span class="t">'+
+      esc(im.kind)+(im.verdict?" · "+esc(im.verdict):"")+
+      (im.priors&&im.priors.length?' <span style="color:var(--muted-fg)">['+esc(im.priors.join(" "))+']</span>':'')+
+      '</span><span class="ev">'+(im.evidence_ids||[]).length+' 证据</span></div>';
+  });
+  (g.priv_changes||[]).forEach(function(p){
+    html += '<div class="node"><span class="k k-priv">权限变化</span><span class="t">'+
+      esc(p.from)+' → '+esc(p.to)+' <span style="color:var(--muted-fg)">('+esc(p.mechanism)+')</span>'+
+      '</span><span class="ev">'+(p.evidence_ids||[]).length+' 证据</span></div>';
+  });
+  if(!(g.dataflows||[]).length && !(g.impacts||[]).length && !(g.priv_changes||[]).length){
+    html += '<div class="node"><span class="t" style="color:var(--muted-fg)">（本次扫描未产生数据流/影响/权限变化）</span></div>';
+  }
+  html += '</div></div>';
+  html += '</div>';
+
+  // 关系边表
+  html += '<h2 style="font-size:14px;font-weight:600;margin:22px 0 10px;color:var(--muted-fg)">关系边（'+
+          edges.length+'）</h2>';
+  if(edges.length){
+    html += '<table class="edges"><thead><tr><th>类型</th><th>从</th><th>到</th><th>证据</th></tr></thead><tbody>';
+    edges.forEach(function(e){
+      html += '<tr><td><span class="ek ek-'+esc(e.kind)+'">'+esc(edgeLabel(e.kind))+'</span></td>'+
+        '<td>'+esc(resolveNode(nodes,e.from))+'</td>'+
+        '<td>'+esc(resolveNode(nodes,e.to))+'</td>'+
+        '<td>'+(e.derived_from||[]).length+'</td></tr>';
+    });
+    html += '</tbody></table>';
+  } else {
+    html += '<div class="empty">本次扫描未建立关系边（无真实证据共现时不建边）</div>';
+  }
+
+  document.getElementById("body").innerHTML = html;
+
+  var note = document.getElementById("note");
+  note.style.display="block";
+  note.innerHTML = "说明：关系边仅由真实证据支撑（时序=同主机且共享证据；影响证明=exploit 已验证；"+
+    "黑白盒关联=dataflow 与黑盒发现的参数/路径依据）。CWE 关联来自 NVD weaknesses 与本地规则映射。"+
+    "「无真实证据的关系不会被标记为 confirmed」。";
+}
+
+// 把节点 id 解析为可读标签
+function resolveNode(nodes, id){
+  for(var i=0;i<nodes.length;i++){
+    if(nodes[i].id===id){
+      var n = nodes[i];
+      return (n.resolved||n.label||n.ref_id);
+    }
+  }
+  return id;
+}
+
+loadList();
+</script>
+</body>
+</html>
