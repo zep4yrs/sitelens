@@ -628,7 +628,7 @@ func (e *Engine) Scan(rawURL string, opts Options, onProgress progress, cancel f
 	if col != nil {
 		res.Graph = col.graph()
 		// 4.0 P5：CVE → CWE 关联（NVD weaknesses 通道；未挂 NVD 时跳过）
-		if kb != nil && kb.NVDCount() > 0 {
+		if kb != nil && kb.HasNVD() { // A3：只判断是否配置，不拉起索引
 			cwe.Relate(res.Graph, nvdLookup{kb})
 		}
 		// 4.0 P7/P10：为 impact 补 KEV/CVSS 先验标注（**仅解释，不参与建链**）。

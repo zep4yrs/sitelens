@@ -76,9 +76,7 @@ func (s *Server) reloadData() (techN, vulnN int) {
 			filepath.Join(s.cfg.Store.DataDir, "kev_extra.json")); kerr == nil {
 			kb.MergeKEV(entries)
 		}
-		if nvd, nerr := intel.LoadNVD(s.cfg.Intel.NVDPath); nerr == nil && nvd != nil {
-			kb.AttachNVD(nvd)
-		}
+		kb.AttachNVDPath(s.cfg.Intel.NVDPath) // A3 惰性：首次用到时才解码
 		if tc, terr := intel.LoadTechCPE("data/go/tech_cpe.json"); terr == nil && tc != nil {
 			kb.AttachTechCPE(tc)
 		}
