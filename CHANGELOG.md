@@ -1,6 +1,62 @@
 # 更新日志
 
-## v3.0.1（2026-09-14，桌面端安装修复）
+## v4.0.0（2026-09-14，黑白盒安全分析 + 攻击链还原）
+
+> 4.0 主线：从「单点漏洞验证」升级为「黑白盒安全分析 + 攻击链还原」。
+> 详细设计与逐阶段记录见 `docs/开发文档-4.0.md`（主基准文档）。
+
+### 结构化事实模型（P1-P2）
+
+- 新增 `internal/model`：统一数据模型十类实体（入口点 / 漏洞节点 / 证据 /
+  黑白盒关联 / 数据流 / CWE 关联 / 链节点 / 链边 / 权限变化 / 影响），
+  全部具备**确定性稳定 ID**（内容哈希，同事实重扫不变）与 schema 版本
+  `sitelens.graph/v1`，可序列化为 graph JSONL。
+- 黑盒结果结构化（opt-in，`scan.graph` / `-graph`）：扫描的入口点、各类命中
+  （check / Nuclei / 被动 / DAST / JS）、证据链、影响，收集为图实体；
+  **默认关，3.0 JSON 输出逐字节不变**。
+
+### 白盒源码分析（P3）
+
+- 新增 `internal/astx`：基于 tree-sitter 的 AST 分析（Python / JavaScript /
+  PHP / Java / Go），产出函数清单、调用关系、source/sink 与**函数内数据流**。
+  CGO 以 `//go:build cgo` 隔离：无 C 工具链时自动降级为行级规则（不报错）。
+- 源码审计（`-ast`）在既有规则之上**附加** AST 污点发现，原规则保留兜底。
+
+### 黑白盒证据关联（P4）
+
+- 新增 `internal/correlate`：把黑盒发现与白盒数据流按 **参数名 / 路径 / 技术**
+  建立 `evidence_link`（自动关联最高给 probable，不给 confirmed）。
+
+### CWE 关联（P5）
+
+- 新增 `internal/cwe`：check id / 规则 id / CVE 三源 → CWE 的统一映射。
+- NVD 同步恢复 weaknesses 字段（CWE），新增**年度 feed 模式**
+  （`update-nvd feed`，CI 无 key 限速下比逐页 API 快得多）。
+
+### 攻击链 / 权限变化 / 影响（P6-P7）
+
+- 新增 `internal/chain`：**证据驱动**建链——`sequence` 边只连「入口点 → 落在该
+  入口上的发现」（真实因果），无证据的候选边不建（计入 skipped）；
+  情报节点保留为上下文但不参与串联。不回显任何无证据的推测路径。
+- 权限变化三类机制实体化：`bypass-403` / `credential` / `exploit-proven`；
+  影响带 KEV/CVSS **先验标注**（仅解释、不参与建链）。
+
+### Store / API / 视图（P8）
+
+- 结构化事实图**独立落盘**（`data/state/graph/<id>/`），扫描历史
+  `history.json` 格式不变。
+- 新增 API：`GET /api/graph/{id}`（摘要）、`/jsonl`（导出）、`/chain`（攻击链视图）。
+- 新增「攻击链」页（侧栏入口），可视化入口/发现/数据流/CWE/影响/权限变化与关系边。
+
+### 数据接口（P9）
+
+- Schema 契约文档 `docs/schema-graph-v1.md`；Go 参考读端 `sitelens graph-read`
+  （摘要 / `--self-test` 契约自检）。graph JSONL 为语言无关的公开接口，
+  供 5.0 ML 直接读取。
+
+### 桌面端安装修复（原 3.0.1，并入本版）
+
+
 
 ### 管理员安装后引擎启动失败（EPERM）修复
 
