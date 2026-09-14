@@ -97,21 +97,61 @@ func (s *NVDStore) ByProduct(q string, limit int) []NVDEntry {
 	return out
 }
 
-// AttachNVD 旁路挂载 NVD 索引（nil = 不启用）。
+// AttachNVD 直接挂载已解码的 NVD 索引（nil = 不启用）。
+// 已持有索引的调用方用这个；只有路径的调用方用 AttachNVDPath（惰性）。
 func (k *KB) AttachNVD(s *NVDStore) { k.nvd = s }
 
-// NVD 返回已挂载的 NVD 索引（未挂载返回 nil）。
-// 供 cwe.Relate 等外部消费方按需查询（不暴露内部字段）。
-func (k *KB) NVD() *NVDStore {
+// AttachNVDPath 惰性挂载 NVD：**只记路径**，首次真正用到时才解码索引（A3）。
+//
+// 动机：NVD 全量索引（30 万+ CVE）实测占 HeapSys ≈1.7GB，而指纹/端口类扫描
+// 根本用不到它——此前每次启动都全量解码，是引擎空闲 RSS ≈1GB 的主因。
+// 本方法让「用不到就不加载」；真需要时（CVSS 补全 / CPE 检索）自动解码一次。
+func (k *KB) AttachNVDPath(path string) {
+	if k == nil || path == "" {
+		return
+	}
+	k.nvdPath = path
+}
+
+// HasNVD 报告是否配置了 NVD 数据源（**不触发加载**）。
+// 供「是否做 CVE→CWE 关联」这类判断使用，避免判断本身把索引拉起来。
+func (k *KB) HasNVD() bool {
+	if k == nil {
+		return false
+	}
+	return k.nvd != nil || k.nvdPath != ""
+}
+
+// nvdStore 取 NVD 索引；未挂载时按需惰性加载（线程安全，只加载一次）。
+// 所有内部读取都应经此函数；对外用 NVD()。
+func (k *KB) nvdStore() *NVDStore {
 	if k == nil {
 		return nil
 	}
+	if k.nvd != nil {
+		return k.nvd
+	}
+	if k.nvdPath == "" {
+		return nil
+	}
+	k.nvdOnce.Do(func() {
+		s, err := LoadNVD(k.nvdPath)
+		if err != nil {
+			k.nvdErr = err
+			return
+		}
+		k.nvd = s
+	})
 	return k.nvd
 }
 
-// NVDCount 统计用（未挂载返回 0）。
+// NVD 返回 NVD 索引（未挂载/加载失败返回 nil）。**会触发惰性加载**——
+// 供 cwe.Relate 等确实需要数据的消费方使用；只做存在性判断请用 HasNVD。
+func (k *KB) NVD() *NVDStore { return k.nvdStore() }
+
+// NVDCount 统计用：已解码的条数（**不触发加载**，避免统计动作拉起 1.7GB）。
 func (k *KB) NVDCount() int {
-	if k.nvd == nil {
+	if k == nil || k.nvd == nil {
 		return 0
 	}
 	return k.nvd.Len()
@@ -119,10 +159,14 @@ func (k *KB) NVDCount() int {
 
 // nvdFill 在 Match 构造 Finding 后补全缺失的 CVSS 与 CWE（宁缺毋滥：只填空位）。
 func (k *KB) nvdFill(f *Finding) {
-	if k.nvd == nil || f.CVE == "" {
+	if f.CVE == "" {
 		return
 	}
-	e, ok := k.nvd.ByCVE(f.CVE)
+	nvd := k.nvdStore() // A3：真正需要 CVSS/CWE 时才加载
+	if nvd == nil {
+		return
+	}
+	e, ok := nvd.ByCVE(f.CVE)
 	if !ok {
 		return
 	}

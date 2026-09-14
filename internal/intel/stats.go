@@ -107,7 +107,8 @@ func (k *KB) Search(q string, limit int) []SearchResult {
 		out = append(out, h.r)
 	}
 	// NVD 旁路检索：主库命中不足 limit 时用 NVD（CVE 前缀/厂商产品子串）补位。
-	if k.nvd != nil && len(out) < limit {
+	nvd := k.nvdStore() // A3：用户主动检索 NVD 时按需加载
+	if nvd != nil && len(out) < limit {
 		seen := map[string]bool{}
 		for _, r := range out {
 			seen[r.CVE] = true
@@ -116,7 +117,7 @@ func (k *KB) Search(q string, limit int) []SearchResult {
 		nvdLimit := limit - len(out)
 		if !strings.HasPrefix(qcve, "CVE-") || len(qcve) < 8 {
 			// 非 CVE 词：按产品约束补
-			for _, e := range k.nvd.ByProduct(q, nvdLimit) {
+			for _, e := range nvd.ByProduct(q, nvdLimit) {
 				if !seen[e.CVE] {
 					seen[e.CVE] = true
 					out = append(out, SearchResult{
@@ -127,7 +128,7 @@ func (k *KB) Search(q string, limit int) []SearchResult {
 			}
 		}
 		if strings.HasPrefix(qcve, "CVE-") {
-			for _, e := range k.nvd.list {
+			for _, e := range nvd.list {
 				if len(out) >= limit {
 					break
 				}

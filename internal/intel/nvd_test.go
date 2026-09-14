@@ -289,3 +289,75 @@ func TestLoadNVDUnsortedInput(t *testing.T) {
 		t.Errorf("list 未排序：首条 %s", store.list[0].CVE)
 	}
 }
+
+// TestNVDPathLazyLoading：A3 惰性加载——只挂路径不加载；HasNVD/NVDCount
+// 不触发；首次真正取数（NVD()）才解码，且只解码一次（sync.Once）。
+func TestNVDPathLazyLoading(t *testing.T) {
+	// 造一个小 NVD 文件。
+	entries := []NVDEntry{
+		{CVE: "CVE-3000-0001", Score: 9.9, CWEs: []string{"CWE-89"}},
+	}
+	out := filepath.Join(t.TempDir(), "n.json.gz")
+	if err := writeNVDFile(out, entries); err != nil {
+		t.Fatal(err)
+	}
+
+	kb := &KB{}
+	kb.AttachNVDPath(out)
+
+	// 1) 挂路径后：HasNVD=true，但**未加载**（NVDCount 仍 0）。
+	if !kb.HasNVD() {
+		t.Error("AttachNVDPath 后 HasNVD 应为 true")
+	}
+	if n := kb.NVDCount(); n != 0 {
+		t.Errorf("仅挂路径时 NVDCount 应为 0（未加载），实得 %d", n)
+	}
+	if kb.nvd != nil {
+		t.Error("仅挂路径时不应已解码索引")
+	}
+
+	// 2) 存在性判断不得触发加载（关键：避免判断本身拉起 1.7GB）。
+	_ = kb.HasNVD()
+	_ = kb.NVDCount()
+	if kb.nvd != nil {
+		t.Error("HasNVD/NVDCount 不应触发惰性加载")
+	}
+
+	// 3) 真正取数才加载。
+	s := kb.NVD()
+	if s == nil {
+		t.Fatal("NVD() 应触发加载并返回索引")
+	}
+	if e, ok := s.ByCVE("CVE-3000-0001"); !ok || e.Score != 9.9 {
+		t.Errorf("加载后应能查到条目：%+v", e)
+	}
+	if kb.NVDCount() != 1 {
+		t.Errorf("加载后 NVDCount 应为 1，实得 %d", kb.NVDCount())
+	}
+	// 4) 幂等：再次取数返回同一实例（未重复解码）。
+	if kb.NVD() != s {
+		t.Error("重复取数应返回同一实例")
+	}
+}
+
+// TestNVDFillTriggersLazyLoad：CVSS/CWE 补全路径自动触发惰性加载。
+func TestNVDFillTriggersLazyLoad(t *testing.T) {
+	entries := []NVDEntry{{CVE: "CVE-3000-0002", Score: 7.5, Sev: "high", CWEs: []string{"CWE-79"}}}
+	out := filepath.Join(t.TempDir(), "n.json.gz")
+	if err := writeNVDFile(out, entries); err != nil {
+		t.Fatal(err)
+	}
+	kb := &KB{}
+	kb.AttachNVDPath(out)
+	if kb.nvd != nil {
+		t.Fatal("前置：不应已加载")
+	}
+	f := Finding{CVE: "CVE-3000-0002"}
+	kb.nvdFill(&f) // 应触发加载并补全
+	if f.CVSSScore != 7.5 {
+		t.Errorf("CVSS 应被补全为 7.5，实得 %v", f.CVSSScore)
+	}
+	if len(f.CWEs) == 0 || f.CWEs[0] != "CWE-79" {
+		t.Errorf("CWE 应被补全，实得 %v", f.CWEs)
+	}
+}

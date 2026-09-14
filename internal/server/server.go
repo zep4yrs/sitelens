@@ -121,11 +121,10 @@ func New(cfg *config.Config, cfgPath string) (*Server, error) {
 		if n := intel.ApplyOverridesFile(kb, cfg.Intel.OverridesPath); n > 0 {
 			log.Printf("情报覆盖合并：%d 条（%s）", n, cfg.Intel.OverridesPath)
 		}
-		// NVD 全量字典旁路挂载（update-nvd 产物，缺失则跳过）
-		if nvd, nerr := intel.LoadNVD(cfg.Intel.NVDPath); nerr == nil && nvd != nil {
-			kb.AttachNVD(nvd)
-			log.Printf("NVD 字典挂载：%d 条", nvd.Len())
-		}
+		// NVD 全量字典旁路挂载（update-nvd 产物）。A3 惰性：只记路径，
+		// 首次真正用到（CVSS 补全 / CPE 检索 / CVE→CWE）时才解码——
+		// 该索引实测占 HeapSys ≈1.7GB，指纹类场景不必付这笔钱。
+		kb.AttachNVDPath(cfg.Intel.NVDPath)
 		if tc, terr := intel.LoadTechCPE("data/go/tech_cpe.json"); terr == nil && tc != nil {
 			kb.AttachTechCPE(tc)
 		}

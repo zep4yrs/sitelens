@@ -10,6 +10,7 @@ import (
 	"os"
 	"sort"
 	"strings"
+	"sync"
 
 	"cnb.cool/feng-qiao/sitelens/internal/versioncmp"
 )
@@ -117,6 +118,13 @@ type KB struct {
 	serviceFP  []ServiceFPRow
 	nvd        *NVDStore         // 旁路挂载，可 nil
 	techCPE    map[string]string // 技术名 → CPE（NVD 通道），可 nil
+
+	// A3 惰性加载：只记路径，**首次真正用到 NVD 数据时**才解码索引。
+	// 背景：NVD 全量索引实测占 HeapSys ≈1.7GB，是引擎空闲 RSS 的主因；
+	// 而纯指纹/端口场景根本用不到它，此前却在每次启动时全量解码。
+	nvdPath string
+	nvdOnce sync.Once
+	nvdErr  error
 }
 
 // ServiceFPRow 端口服务 banner 指纹行。

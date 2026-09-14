@@ -60,7 +60,11 @@ func (k *KB) nvdPossible(techName string, seen map[int64]bool, out *[]Finding) {
 	if vp == "" {
 		return
 	}
-	entries := k.nvd.ByProduct(strings.ToLower(vp), maxPerTech*2)
+	nvd := k.nvdStore() // A3：CPE 通道确实需要 NVD，惰性取数
+	if nvd == nil {
+		return
+	}
+	entries := nvd.ByProduct(strings.ToLower(vp), maxPerTech*2)
 	n := 0
 	for _, e := range entries {
 		if n >= maxPerTech {
