@@ -4,6 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>扫描历史 — SiteLens</title>
+<script src="/js/turbo.js"></script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@300;400;500;600;700&display=swap" rel="stylesheet">
 <script>if(localStorage.getItem("sitelens-theme")==="dark")document.documentElement.classList.add("dark")</script>
@@ -83,10 +84,13 @@ function switchTab(name) {
   if (window.slUpdateNav) window.slUpdateNav();
   if (name === "verified") loadVerified();
 }
-window.addEventListener("hashchange", function () {
+// Turbo：本脚本随换页重放，window 级监听先卸旧再挂新，防叠加
+if (window.__slHistoryHash) window.removeEventListener("hashchange", window.__slHistoryHash);
+window.__slHistoryHash = function () {
   var h = (location.hash || "#scans").slice(1);
   if (["scans", "verified"].indexOf(h) >= 0) switchTab(h);
-});
+};
+window.addEventListener("hashchange", window.__slHistoryHash);
 var initialTab = (location.hash || "#scans").slice(1);
 if (["scans", "verified"].indexOf(initialTab) >= 0) switchTab(initialTab);
 

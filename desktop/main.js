@@ -128,6 +128,7 @@ function createWindow() {
     minHeight: 700,
     title: 'SiteLens 站点透视',
     icon: ICON_PATH,
+    backgroundColor: '#fafafa', // 主题底色：跨文档导航空帧期不闪白
     autoHideMenuBar: true,
     show: false,
     webPreferences: {
