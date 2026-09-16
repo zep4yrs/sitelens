@@ -62,7 +62,7 @@ const main = async () => {
   let ready = false;
   for (let i = 0; i < 40; i++) {
     try {
-      if (await evalJs(`!!(window.Turbo && document.querySelector('.top-nav a[data-key="history"]') && document.querySelector('.side-nav a[data-key="scan"]'))`)) {
+      if (await evalJs(`!!(window.Turbo && document.querySelector('.top-nav a[data-key="history"]') && document.querySelector('.tw-modes .tab[data-tab="scan"]'))`)) {
         ready = true; break;
       }
     } catch {}
@@ -71,7 +71,7 @@ const main = async () => {
   if (!ready) throw new Error("app not ready");
   // 稳定判定：就绪后 1s 仍在（启动期可能有会话恢复式被动导航）
   await sleep(1000);
-  if (!(await evalJs(`!!(window.Turbo && document.querySelector('.top-nav a[data-key="history"]') && document.querySelector('.side-nav a[data-key="scan"]'))`))) {
+  if (!(await evalJs(`!!(window.Turbo && document.querySelector('.top-nav a[data-key="history"]') && document.querySelector('.tw-modes .tab[data-tab="scan"]'))`))) {
     throw new Error("app not stable");
   }
   await sleep(300);
@@ -105,8 +105,8 @@ const main = async () => {
     });
   }
 
-  // 回工作台（左栏侧栏「综合扫描」）
-  await evalJs(`(function(){ var a = document.querySelector('.side-nav a[data-key="scan"]'); if (a) a.click(); })()`);
+  // 回工作台（被动页主动功能栏列「综合扫描」）
+  await evalJs(`(function(){ var a = document.querySelector('.tw-sidecol a[data-key="scan"]'); if (a) a.click(); })()`);
   for (let i = 0; i < 20; i++) {
     await sleep(300);
     if (await evalJs("location.pathname") === "/app") break;
@@ -115,7 +115,7 @@ const main = async () => {
   // B) 工作台五模式
   for (const mode of ["netsec", "loginbrute", "audit", "batch", "scan"]) {
     const clicked = await evalJs(`(function(){
-      var b = document.querySelector('.side-nav a[data-key="${mode}"]');
+      var b = document.querySelector('.tw-modes .tab[data-tab="${mode}"]');
       if (!b) return 'no-tab'; b.click(); return 'clicked';
     })()`);
     if (clicked !== "clicked") { results.push({ kind: "mode", key: mode, error: clicked }); continue; }
@@ -130,7 +130,7 @@ const main = async () => {
       marker: await evalJs("window.__slMarker ?? null"),
       panel: panel,
       canvas: await evalJs(`document.querySelector('.tw-canvaspane[data-pane="${mode}"]').classList.contains('active')`),
-      active: await evalJs(`(document.querySelector('.side-nav a.active')||{}).getAttribute?.('data-key') || null`),
+      active: await evalJs(`(document.querySelector('.tw-modes .tab.active')||{}).getAttribute?.('data-tab') || null`),
     });
   }
 
