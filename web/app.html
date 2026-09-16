@@ -142,6 +142,30 @@
     max-height:340px;overflow-y:auto;word-break:break-all;display:none}
   .log-box .ok{color:var(--ok)}
   .log-box .fail{color:var(--danger)}
+
+  /* ============ UI 细节打磨 ============ */
+  .tw-urlwrap{position:relative;flex:1}
+  .tw-urlwrap .tw-url{padding-left:36px;padding-right:30px}
+  .tw-url-ico{position:absolute;left:12px;top:50%;transform:translateY(-50%);width:15px;height:15px;color:var(--muted-fg);pointer-events:none}
+  .tw-url-clear{position:absolute;right:8px;top:50%;transform:translateY(-50%);width:20px;height:20px;border:none;border-radius:50%;background:var(--muted);color:var(--muted-fg);cursor:pointer;font-size:13px;line-height:1;display:none}
+  .tw-url-clear:hover{color:var(--foreground);background:var(--accent)}
+  .tw-urlwrap.has-text .tw-url-clear{display:block}
+  .cdd.cdd-multi{width:100%}
+  .cdd.cdd-multi .cdd-pop{width:100%;max-height:280px;overflow-y:auto}
+  .cdd.cdd-multi .cdd-pop .chip-row{gap:6px}
+  .cdd.cdd-multi .cdd-pop .chip{padding:5px 10px;font-size:12px}
+  .tw-fold[open] .tw-fold-body{animation:sl-fadeIn .18s ease}
+  .tw-modes .tab{transition:background .15s,color .15s}
+  .chip,.seg-opt{transition:transform .1s,background .15s,color .15s,border-color .15s}
+  .chip:active,.seg-opt:active{transform:scale(.97)}
+  .tw-run .arr{display:inline-block;transition:transform .15s}
+  .tw-run:hover .arr{transform:translateX(2px)}
+  .empty .big{animation:sl-breath 2.6s ease-in-out infinite}
+  @keyframes sl-breath{0%,100%{opacity:.5}50%{opacity:1}}
+  .st-dot{width:8px;height:8px;border-radius:50%;background:var(--muted-fg);opacity:.55;display:inline-block;flex:none}
+  .st-dot.run{background:var(--ok);opacity:1;animation:st-pulse 1.2s ease-in-out infinite}
+  .st-dot.ok{background:var(--ok);opacity:1}
+  @keyframes st-pulse{0%,100%{box-shadow:0 0 0 0 color-mix(in srgb,var(--ok) 45%,transparent)}50%{box-shadow:0 0 0 5px transparent}}
 </style>
 </head>
 <body>
@@ -156,13 +180,20 @@
 
     <!-- 综合扫描：控制 -->
     <section class="tabpanel active tw-panel" id="tab-scan">
-      <input class="url-input tw-url" id="url" placeholder="https://example.com" autocomplete="off">
+      <div class="tw-urlwrap">
+        <svg class="tw-url-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a15 15 0 0 1 0 18 15 15 0 0 1 0-18"/></svg>
+        <input class="url-input tw-url" id="url" placeholder="https://example.com" autocomplete="off">
+        <button type="button" class="tw-url-clear" id="url-clear" title="清空">×</button>
+      </div>
       <details class="tw-fold">
         <summary>扫描配置</summary>
         <div class="tw-fold-body">
           <div class="opt-group">
             <span class="g-label">范围</span>
-            <div class="chip-row" id="scope-row">
+            <div class="cdd cdd-multi" id="dd-scope">
+              <button type="button" class="cdd-btn"><span class="cdd-label" id="dd-scope-label">Web 站点</span><svg class="cdd-chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg></button>
+              <div class="cdd-pop cdd-popfit">
+              <div class="chip-row" id="scope-row">
               <span class="chip on" data-scope="web" title="爬取工作台：页面 / 表单 / JS 攻击面（默认开，可取消）">Web 站点</span>
               <span class="chip" data-scope="sub" title="子域名枚举 + 潜在接管探测">子域资产</span>
               <span class="chip" data-scope="srv" title="常见端口 banner 识别（服务 / 产品 / 版本）">端口服务</span>
@@ -170,10 +201,15 @@
               <span class="chip" data-scope="js" title="bundle API 端点枚举 + SourceMap 泄露检测（只读）">JS 端点</span>
               <span class="chip" data-scope="weak" title="敏感路径与敏感信息泄露探测">敏感信息</span>
             </div>
+              </div>
+            </div>
           </div>
           <div class="opt-group">
             <span class="g-label">验证</span>
-            <div class="chip-row" id="verify-row">
+            <div class="cdd cdd-multi" id="dd-verify">
+              <button type="button" class="cdd-btn"><span class="cdd-label" id="dd-verify-label">主动指纹 等 4 项</span><svg class="cdd-chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg></button>
+              <div class="cdd-pop cdd-popfit">
+              <div class="chip-row" id="verify-row">
               <span class="chip" data-verify="passive" title="零额外请求：响应头评分 + 被动特征。与其余验证互斥，勾选后其余验证置灰">被动</span>
               <span class="chip on" data-verify="afp" title="主动路径指纹（FingerDir 精编库）">主动指纹</span>
               <span class="chip on" data-verify="dir" title="目录与敏感路径探测（软 404 基线，尺寸偏离才报）">目录探测</span>
@@ -182,6 +218,8 @@
               <span class="chip" data-verify="by" title="403 绕过变体表（路径变异 / 信任头 / 只读方法），需与目录探测同开">403 绕过</span>
               <span class="chip" data-verify="ex" title="利用级无害验证：对已确认发现做影响证明。需 .sitelens.yml exploit.enabled，未授权目标零请求">利用级</span>
               <span class="chip" data-verify="settle" title="结构化事实图：随扫描收集入口/发现/证据/CWE 关联/攻击链，供「攻击链」页查看与导出">事实图</span>
+            </div>
+              </div>
             </div>
           </div>
           <div class="opt-group" id="st-group">
@@ -197,7 +235,7 @@
           <label class="tw-toggle" style="margin:0"><input type="checkbox" id="opt-ua" class="tw-switch"> 浏览器 UA（应对按 UA 降级的站点）</label>
         </div>
       </details>
-      <button class="btn tw-run" id="go" onclick="startScan()">▷ 开始扫描</button>
+      <button class="btn tw-run" id="go" onclick="startScan()"><span class="arr">▷</span> 开始扫描</button>
       <p class="hint" id="hint" style="text-align:center"></p>
       <!-- 空态引导住在控制栏（对齐参照物布局）；扫描开始时由 app.js 隐藏 -->
       <div id="idle-wrap">
@@ -270,6 +308,7 @@
   <!-- ============ 右：画布 ============ -->
   <div class="tw-right">
     <div class="tw-toolbar">
+      <span class="st-dot" id="st-dot"></span>
       <span id="st-state">idle</span>
       <span id="st-msg">等待目标</span>
       <span id="st-time"></span>
