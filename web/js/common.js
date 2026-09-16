@@ -120,6 +120,18 @@
       if (window.slUpdateNav) window.slUpdateNav();
       if (window.slUpdateSide) window.slUpdateSide();
     });
+    // 模式行点击分派：工作台=即时 switchTab；被动页=Turbo 去对应模式
+    document.addEventListener("click", function (e) {
+      var b = e.target && e.target.closest ? e.target.closest(".tw-modes .tab") : null;
+      if (!b) return;
+      var name = b.getAttribute("data-tab");
+      if (typeof window.switchTab === "function") {
+        window.switchTab(name);
+      } else {
+        e.preventDefault();
+        if (window.Turbo) window.Turbo.visit("/app#" + name);
+      }
+    });
     // 侧栏模式点击：工作台内即时切面板（Turbo 会拦 hash 点击且不发 hashchange）
     document.addEventListener("click", function (e) {
       var t = e.target;
@@ -379,6 +391,12 @@
   }
   window.slUpdateSide = updateSideActive;
 
+  /* 模式行（主动五功能）单一来源：工作台与被动页渲染同一份 markup */
+  function modeRowHTML() {
+    return '<div class="tw-modes tabs">' + MODE_SIDE.map(function (m) {
+      return '<button class="tab" data-tab="' + m[0] + '" title="' + m[2] + '">' + m[3] + "<span>" + m[2] + "</span></button>";
+    }).join("") + "</div>";
+  }
   function topNavHTML() {
     var nav = NAV.map(function (n) {
       var label = t(n[3]) || n[2];
@@ -399,41 +417,34 @@
     }).catch(function () {});
   }
   function buildShell() {
-    var workbench = document.querySelector(".tw-app");
+    var app = document.querySelector(".tw-app");
+    if (!app) return;
     var stale = document.querySelector(".wb-top");
-    if (workbench.querySelector(".tw-modes")) {
-      // 工作台：模式行在左栏顶部，导航渲染进工具条槽位（单顶带），独立顶栏不留
-      if (stale && stale.parentNode) stale.parentNode.removeChild(stale);
-      var slot = document.getElementById("tw-topslot");
-      if (slot) {
-        slot.innerHTML = topNavHTML() + topRightHTML();
-        slUpdateNav();
-        fillVersion();
-      }
-      return;
-    }
     if (stale && stale.parentNode) stale.parentNode.removeChild(stale);
-    // 被动页：注入主动功能栏列（常驻返航入口）
-    var staleCol = workbench.querySelector(":scope > .tw-sidecol");
-    if (staleCol && staleCol.parentNode) staleCol.parentNode.removeChild(staleCol);
-    var sidecol = document.createElement("aside");
-    sidecol.className = "tw-sidecol";
-    sidecol.innerHTML =
-      '<div class="sidecol-title">主动功能</div>' +
-      MODE_SIDE.map(function (m) {
-        return '<a href="' + m[1] + '" data-key="' + m[0] + '" title="' + m[2] + '">' + m[3] + "<span>" + m[2] + "</span></a>";
-      }).join("");
-    workbench.insertBefore(sidecol, workbench.firstChild);
-    var header = document.createElement("header");
-    header.className = "wb-top";
-    header.innerHTML =
-      '<a class="brand" href="/"><span class="txt">sitelens</span><span class="dot"></span></a>' +
-      topNavHTML() +
-      topRightHTML();
-    document.body.insertBefore(header, document.body.firstChild);
-    slUpdateNav();
-    /* 顶栏显示服务端版本号（失败保持 SiteLens 文案） */
-    fillVersion();
+
+    // 模式行（同款组件单一来源）：工作台填槽，被动页补同款左列
+    var row = modeRowHTML();
+    var key = sideActive();
+    var modeSlot = document.getElementById("tw-modeslot");
+    if (modeSlot) {
+      modeSlot.outerHTML = row;
+      document.querySelectorAll(".tw-modes .tab").forEach(function (b) {
+        b.classList.toggle("active", b.getAttribute("data-tab") === key);
+      });
+    } else if (!app.querySelector(":scope > .tw-left")) {
+      var col = document.createElement("aside");
+      col.className = "tw-left";
+      col.innerHTML = row;
+      app.insertBefore(col, app.firstChild);
+    }
+
+    // 工具条槽位（被动页导航 + 亮暗 + 版本）
+    var slot = document.getElementById("tw-topslot");
+    if (slot) {
+      slot.innerHTML = topNavHTML() + topRightHTML();
+      slUpdateNav();
+      fillVersion();
+    }
   }
   /* 首次执行位于 body 起始：.tw-app / 槽位尚未解析，等 DOM 就绪再定壳形态；
      Turbo 换页时脚本体在换页后重放，readyState 已过 loading，立即执行 */

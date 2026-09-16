@@ -105,8 +105,8 @@ const main = async () => {
     });
   }
 
-  // 回工作台（被动页主动功能栏列「综合扫描」）
-  await evalJs(`(function(){ var a = document.querySelector('.tw-sidecol a[data-key="scan"]'); if (a) a.click(); })()`);
+  // 回工作台（确定性：Turbo.visit 直达）
+  await evalJs(`window.Turbo.visit("/app#scan")`);
   for (let i = 0; i < 20; i++) {
     await sleep(300);
     if (await evalJs("location.pathname") === "/app") break;
