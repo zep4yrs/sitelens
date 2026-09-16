@@ -63,6 +63,7 @@
       <div class="cdd-pop"></div>
     </div>
     <button class="btn small" onclick="loadChain()">刷新</button>
+    <button class="btn ghost small" id="copy-json" style="display:none">复制链路 JSON</button>
     <a class="btn ghost small" id="dl" href="#" style="display:none">下载 graph JSONL</a>
   </div>
 
@@ -159,6 +160,11 @@ function render(g){
   var dl = document.getElementById("dl");
   dl.style.display = "inline-block";
   dl.href = "/api/graph/"+g.scan_id+"/jsonl";
+  var cp = document.getElementById("copy-json");
+  cp.style.display = "inline-block";
+  cp.onclick = function () {
+    navigator.clipboard.writeText(JSON.stringify(g, null, 2)).then(function () { toast("链路 JSON 已复制", "ok"); });
+  };
 
   // 链视图（节点 + 边）
   fetch("/api/graph/"+g.scan_id+"/chain").then(function(r){ return r.json(); }).then(function(ch){

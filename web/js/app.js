@@ -612,6 +612,7 @@ function runBrute() {
     lbGo.disabled = !lbAuth.checked;
     lbFrame.style.display = "none";
     var hits = (job.result && job.result.hits) || [];
+    window.__slBruteHits = hits;
     if (!hits.length) {
       document.getElementById("lb-out").innerHTML =
         '<p style="color:var(--ok);font-size:14px">✔ 未命中弱口令（字典内无匹配）</p>';
@@ -623,13 +624,31 @@ function runBrute() {
       html += '<tr><td class="mono">' + esc(h.user) + '</td><td class="mono">' + esc(h.password) +
         '</td><td class="mono" style="font-size:12px;word-break:break-all">' + esc(h.url) + "</td></tr>";
     });
-    document.getElementById("lb-out").innerHTML = html + "</table></div>";
+    html += "</table></div>";
+    html += '<button class="btn ghost small" style="margin-top:10px" onclick="exportHits()">⤓ 导出命中（CSV）</button>';
+    document.getElementById("lb-out").innerHTML = html;
   }).catch(function (e) {
     lbGo.disabled = !lbAuth.checked;
     document.getElementById("lb-out").innerHTML =
       '<p style="color:var(--danger);font-size:13.5px">' + esc(e.message) + "</p>";
   });
 }
+
+// 25B-B5：导出命中弱口令为 CSV
+window.exportHits = function () {
+  var hits = (window.__slBruteHits = window.__slBruteHits || []);
+  if (!hits.length) { toast("暂无命中可导出", "err"); return; }
+  var csv = "user,password,url\n" + hits.map(function (h) {
+    return '"' + String(h.user).replace(/"/g, '""') + '","' + String(h.password).replace(/"/g, '""') + '","' + String(h.url).replace(/"/g, '""') + '"';
+  }).join("\n");
+  var blob = new Blob(["\ufeff" + csv], { type: "text/csv;charset=utf-8" });
+  var a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = "brute_hits.csv";
+  a.click();
+  URL.revokeObjectURL(a.href);
+  toast("已导出 " + hits.length + " 条命中", "ok");
+};
 
 /* ================= text-well 布局：左右分割条拖拽 ================= */
 (function () {
