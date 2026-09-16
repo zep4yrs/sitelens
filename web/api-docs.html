@@ -27,8 +27,14 @@
 <body>
 <script src="/js/common.js"></script>
 
-<main class="page">
-  <h1>REST API</h1>
+<div class="tw-app">
+  <div class="tw-right">
+    <div class="tw-toolbar">
+      <span class="tw-pagetitle">REST API</span>
+      <div class="tw-topslot" id="tw-topslot"></div>
+    </div>
+    <div class="tw-canvas">
+      <main class="page">
   <p class="sub">全部接口同源访问，返回 JSON。扫描 / 批量 / 登录爆破为异步任务：提交后凭 job_id 轮询进度。
     若服务端设置了 SLENS_API_TOKEN，/api/* 需携带 X-Token 请求头。</p>
 
@@ -210,6 +216,9 @@
     登录爆破独立于扫描等级链路，需显式授权确认。<br>
     数据库访问全部字面量 SQL + %s 参数绑定；zip 解包防路径穿越；POC 载荷不落盘、不执行。
   </p>
-</main>
+      </main>
+    </div>
+  </div>
+</div>
 </body>
 </html>

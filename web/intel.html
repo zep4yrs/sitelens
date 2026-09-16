@@ -21,8 +21,14 @@
 <body>
 <script src="/js/common.js"></script>
 
-<main class="page">
-  <h1>漏洞情报库</h1>
+<div class="tw-app">
+  <div class="tw-right">
+    <div class="tw-toolbar">
+      <span class="tw-pagetitle">漏洞情报库</span>
+      <div class="tw-topslot" id="tw-topslot"></div>
+    </div>
+    <div class="tw-canvas">
+      <main class="page">
   <p class="sub">11024 条情报（afrog / xray / TscanPlus POC 元数据）+ OSV 版本区间 + KEV 在野利用名单，
     支持产品名模糊与语义检索（product / name / CVE 相关度排序）。</p>
 
@@ -44,7 +50,10 @@
   <div id="out">
     <div class="empty"><span class="big">⌕</span>输入关键词开始检索</div>
   </div>
-</main>
+      </main>
+    </div>
+  </div>
+</div>
 
 <script>
 api.get("/api/stats").then(function (s) {

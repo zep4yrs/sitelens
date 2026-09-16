@@ -84,8 +84,14 @@
 <body>
 <script src="/js/common.js"></script>
 
-<main class="page">
-  <h1>设置</h1>
+<div class="tw-app">
+  <div class="tw-right">
+    <div class="tw-toolbar">
+      <span class="tw-pagetitle">设置</span>
+      <div class="tw-topslot" id="tw-topslot"></div>
+    </div>
+    <div class="tw-canvas">
+      <main class="page">
   <p class="sub">外观与语言即时生效并本机记住；引擎配置保存后：扫描 / 爬取 / Token 立即生效
     （对下一次扫描），监听地址需重启服务。</p>
 
@@ -595,7 +601,10 @@
         窗口大小与位置总是自动记忆，无需设置。</p>
     </div>
   </div>
-</main>
+      </main>
+    </div>
+  </div>
+</div>
 
 <script>
 (function () {

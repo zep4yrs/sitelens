@@ -22,8 +22,14 @@
 <body>
 <script src="/js/common.js"></script>
 
-<main class="page">
-  <h1>源码静态审计</h1>
+<div class="tw-app">
+  <div class="tw-right">
+    <div class="tw-toolbar">
+      <span class="tw-pagetitle">源码静态审计</span>
+      <div class="tw-topslot" id="tw-topslot"></div>
+    </div>
+    <div class="tw-canvas">
+      <main class="page">
   <p class="sub">上传源码文件或 zip 工程包，按 16 条规则扫描危险函数、SQL 拼接、弱哈希、硬编码密钥、
     反序列化等线索，并做 AST 污点数据流分析。文件审计后即删，不做留存。结果仅为线索，需人工复查。</p>
 
@@ -44,7 +50,10 @@
 
   <div id="audit-summary" class="summary" style="display:none"></div>
   <div id="audit-out"></div>
-</main>
+      </main>
+    </div>
+  </div>
+</div>
 
 <script src="/js/audit.js"></script>
 </body>

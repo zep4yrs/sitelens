@@ -22,7 +22,14 @@
 <body>
 <script src="/js/common.js"></script>
 
-<main class="page">
+<div class="tw-app">
+  <div class="tw-right">
+    <div class="tw-toolbar">
+      <span class="tw-pagetitle">404</span>
+      <div class="tw-topslot" id="tw-topslot"></div>
+    </div>
+    <div class="tw-canvas">
+      <main class="page">
   <div class="empty">
     <div class="big mono">404</div>
     <div>页面不存在，或已被移动 / 归档。</div>
@@ -33,7 +40,10 @@
     </div>
     <p class="hint">地址栏路径：<span class="mono" id="p404"></span></p>
   </div>
-</main>
+      </main>
+    </div>
+  </div>
+</div>
 
 <script>
 document.getElementById("p404").textContent =

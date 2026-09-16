@@ -118,6 +118,19 @@
     // 侧栏高亮随 hash 变化（/app#netsec 等页内页签）
     window.addEventListener("hashchange", function () {
       if (window.slUpdateNav) window.slUpdateNav();
+      if (window.slUpdateSide) window.slUpdateSide();
+    });
+    // 侧栏模式点击：工作台内即时切面板（Turbo 会拦 hash 点击且不发 hashchange）
+    document.addEventListener("click", function (e) {
+      var t = e.target;
+      var a = t && t.closest ? t.closest(".wb-side .side-nav a") : null;
+      if (!a || location.pathname !== "/app") return;
+      var key = a.getAttribute("data-key");
+      if (key && typeof window.switchTab === "function") {
+        e.preventDefault();
+        window.switchTab(key);
+        if (window.slUpdateSide) window.slUpdateSide();
+      }
     });
 
     /* 跨页清理注册表：页面级定时器/监听在此登记，换页前统一冲刷 */
@@ -343,6 +356,29 @@
      工作台（.tw-app）：不设独立顶栏——被动页导航/亮暗/版本渲染进画布工具条的
      .tw-topslot 槽位，与左栏模式行同高，构成参照物式的「一条顶带」。
      其余页面：独立 .wb-top 顶栏。 */
+  /* 主动功能侧栏（全页面常驻）：工作台=模式切换，被动页=返航入口 */
+  var MODE_SIDE = [
+    ["scan", "/app#scan", "综合扫描", '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="3"/><path d="M12 1v4M12 19v4M1 12h4M19 12h4"/></svg>'],
+    ["netsec", "/app#netsec", "网络层检测", '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>'],
+    ["loginbrute", "/app#loginbrute", "登录爆破", '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m21 2-9.6 9.6"/><circle cx="7.5" cy="15.5" r="5.5"/><path d="m15.5 7.5 3 3L22 7l-3-3"/></svg>'],
+    ["audit", "/app#audit", "源码审计", '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="m10 13-2 2 2 2"/><path d="m14 11 2 2-2 2"/></svg>'],
+    ["batch", "/app#batch", "批量扫描", '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m12 2 8 5-8 5-8-5z"/><path d="m4 12 8 5 8-5"/><path d="m4 17 8 5 8-5"/></svg>'],
+  ];
+  function sideActive() {
+    var p = location.pathname, h = (location.hash || "").slice(1);
+    if (p.indexOf("/audit") === 0) return "audit";
+    if (p.indexOf("/batch") === 0) return "batch";
+    if (p !== "/app" && p.indexOf("/app") !== 0) return "";
+    return ["scan", "netsec", "loginbrute", "audit", "batch"].indexOf(h) >= 0 ? h : "scan";
+  }
+  function updateSideActive() {
+    var key = sideActive();
+    document.querySelectorAll(".wb-side .side-nav a").forEach(function (a) {
+      a.classList.toggle("active", a.getAttribute("data-key") === key);
+    });
+  }
+  window.slUpdateSide = updateSideActive;
+
   function topNavHTML() {
     var nav = NAV.map(function (n) {
       var label = t(n[3]) || n[2];
@@ -368,6 +404,17 @@
     if (workbench) {
       // 工作台：导航渲染进工具条槽位（单顶带），独立顶栏不留
       if (stale && stale.parentNode) stale.parentNode.removeChild(stale);
+      var staleSide = workbench.querySelector(":scope > .wb-side");
+      if (staleSide && staleSide.parentNode) staleSide.parentNode.removeChild(staleSide);
+      var side = document.createElement("aside");
+      side.className = "wb-side";
+      side.innerHTML =
+        '<div class="side-head"><a class="brand" href="/app" title="工作台"><span class="txt">sitelens</span><span class="dot"></span></a></div>' +
+        '<nav class="side-nav">' + MODE_SIDE.map(function (m) {
+          return '<a href="' + m[1] + '" data-key="' + m[0] + '" title="' + m[2] + '">' + m[3] + "<span>" + m[2] + "</span></a>";
+        }).join("") + "</nav>";
+      workbench.insertBefore(side, workbench.firstChild);
+      updateSideActive();
       var slot = document.getElementById("tw-topslot");
       if (slot) {
         slot.innerHTML = topNavHTML() + topRightHTML();
