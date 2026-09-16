@@ -6,6 +6,10 @@ function switchTab(name) {
   document.querySelectorAll(".tabpanel").forEach(function (p) {
     p.classList.toggle("active", p.id === "tab-" + name);
   });
+  // text-well 布局：左栏控制 + 右画布输出分离，画布面板随页签联动
+  document.querySelectorAll(".tw-canvaspane").forEach(function (p) {
+    p.classList.toggle("active", p.getAttribute("data-pane") === name);
+  });
   if (location.hash !== "#" + name) history.replaceState(null, "", "#" + name);
   if (window.slUpdateNav) window.slUpdateNav();
 }
@@ -623,3 +627,36 @@ function runBrute() {
       '<p style="color:var(--danger);font-size:13.5px">' + esc(e.message) + "</p>";
   });
 }
+
+/* ================= text-well 布局：左右分割条拖拽 ================= */
+(function () {
+  var split = document.getElementById("tw-split");
+  var left = document.getElementById("tw-left");
+  if (!split || !left) return;
+  var st = window.__slSplitState || (window.__slSplitState = { on: false, x: 0, w: 0 });
+  try {
+    var saved = parseInt(localStorage.getItem("tw-left-w") || "", 10);
+    if (saved >= 240 && saved <= 520) left.style.width = saved + "px";
+  } catch (e) {}
+  split.addEventListener("mousedown", function (e) {
+    st.on = true; st.x = e.clientX; st.w = left.getBoundingClientRect().width;
+    split.classList.add("on");
+    document.body.style.cursor = "col-resize";
+    e.preventDefault();
+  });
+  if (window.__slSplitMove) document.removeEventListener("mousemove", window.__slSplitMove);
+  window.__slSplitMove = function (e) {
+    if (!st.on) return;
+    left.style.width = Math.min(520, Math.max(240, st.w + e.clientX - st.x)) + "px";
+  };
+  document.addEventListener("mousemove", window.__slSplitMove);
+  if (window.__slSplitUp) document.removeEventListener("mouseup", window.__slSplitUp);
+  window.__slSplitUp = function () {
+    if (!st.on) return;
+    st.on = false;
+    split.classList.remove("on");
+    document.body.style.cursor = "";
+    try { localStorage.setItem("tw-left-w", String(left.getBoundingClientRect().width)); } catch (e) {}
+  };
+  document.addEventListener("mouseup", window.__slSplitUp);
+})();
