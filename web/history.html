@@ -52,6 +52,13 @@
 
   <!-- ============ 页签 1：扫描历史 ============ -->
   <section class="tabpanel active" id="tab-scans">
+    <div class="summary" id="hist-stats" style="margin:0 0 14px"></div>
+    <div class="chip-row" style="margin-bottom:10px" id="time-chips">
+      <span class="chip on" data-days="0">全部时间</span>
+      <span class="chip" data-days="1">近 24 小时</span>
+      <span class="chip" data-days="7">近 7 天</span>
+      <span class="chip" data-days="30">近 30 天</span>
+    </div>
     <div class="search-row">
       <input class="tb mono" id="q" placeholder="按技术检索，如：Next.js / Nginx / WordPress …">
       <button class="btn small" onclick="load()">检索</button>
@@ -109,10 +116,42 @@ document.getElementById("q").addEventListener("keydown", function (e) {
 });
 
 /* ================= 扫描历史 ================= */
+var histDays = 0; // 25B-B3：时间筛选（0=全部）
+document.querySelector("#time-chips").addEventListener("click", function (e) {
+  var c = e.target.closest(".chip");
+  if (!c) return;
+  this.querySelectorAll(".chip").forEach(function (x) { x.classList.remove("on"); });
+  c.classList.add("on");
+  histDays = parseInt(c.getAttribute("data-days"), 10) || 0;
+  load();
+});
+
 function load() {
   var q = document.getElementById("q").value.trim();
   var url = "/api/history?limit=100" + (q ? "&tech=" + encodeURIComponent(q) : "");
-  api.get(url).then(function (r) { renderRows(r.scans || []); });
+  api.get(url).then(function (r) {
+    var scans = r.scans || [];
+    if (histDays > 0) {
+      var cutoff = Date.now() - histDays * 86400000;
+      scans = scans.filter(function (s) { return new Date(String(s.scanned_at).replace(" ", "T")).getTime() >= cutoff; });
+    }
+    renderStats(scans);
+    renderRows(scans);
+  });
+}
+
+function renderStats(scans) {
+  var el = document.getElementById("hist-stats");
+  if (!el) return;
+  var withVuln = scans.filter(function (s) { return s.vuln_count > 0; }).length;
+  var week = scans.filter(function (s) { return new Date(String(s.scanned_at).replace(" ", "T")).getTime() >= Date.now() - 7 * 86400000; }).length;
+  el.style.display = "grid";
+  el.innerHTML =
+    '<div class="cell"><span>记录总数</span><b class="mono">' + scans.length + "</b></div>" +
+    '<div class="cell"><span>近 7 天</span><b class="mono">' + week + "</b></div>" +
+    '<div class="cell"><span>有漏洞发现</span><b class="mono">' + withVuln + "</b></div>" +
+    '<div class="cell"><span>高危记录占比</span><b class="mono">' +
+    (scans.length ? Math.round(withVuln * 100 / scans.length) : 0) + "%</b></div>";
 }
 
 function renderRows(scans) {

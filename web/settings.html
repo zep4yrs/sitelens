@@ -98,6 +98,9 @@
 
   <div class="tabs" id="tabs"></div>
 
+  <!-- 25B-B7：设置项搜索（按关键字过滤分组；清空恢复全部） -->
+  <input class="tb" id="set-search" placeholder="搜索设置项，如：主题、端口、验证码、exploit…" autocomplete="off" style="max-width:420px;margin:0 0 14px">
+
   <!-- ================ 外观与个性化（首屏默认可见：即使 JS 异常也不白屏） ================ -->
   <div class="tabpanel active" data-tab="look">
     <div class="sec">
@@ -234,10 +237,10 @@
 
     <div class="sec">
       <div class="sec-title">利用级验证（exploit）</div>
-      <div class="row">
+      <div class="row" style="border:1px solid color-mix(in srgb,var(--danger) 40%,transparent);background:color-mix(in srgb,var(--danger) 6%,transparent);border-radius:8px;padding:10px 12px">
         <label>利用级验证</label>
         <input type="checkbox" id="exploit_enabled">
-        <span class="badge hot">立即生效</span>
+        <span class="badge danger">危险</span>
         <span class="hint inline">开启后，扫描勾选「利用级验证」时对已验证发现发送受控影响证明探针（只读无害：不落盘、不提权、不外发数据）。gov.cn 政府网站受代码级硬保护，任何配置下都拒绝请求。目标是否可用本工具测试，由你自行判断并承担责任。</span>
       </div>
     </div>
@@ -990,6 +993,26 @@
       bridge.desktopOpenDataDir();
     });
   }
+})();
+</script>
+<script>
+/* 25B-B7：设置项搜索——按关键字过滤分组，命中跨页签全部展开显示 */
+(function () {
+  var box = document.getElementById("set-search");
+  if (!box) return;
+  box.addEventListener("input", function () {
+    var q = this.value.trim().toLowerCase();
+    var searching = q.length > 0;
+    document.querySelectorAll(".tabpanel").forEach(function (p) {
+      var secHit = false;
+      p.querySelectorAll(".sec").forEach(function (sec) {
+        var hit = !searching || sec.textContent.toLowerCase().indexOf(q) >= 0;
+        sec.style.display = hit ? "" : "none";
+        if (hit && searching) secHit = true;
+      });
+      p.classList.toggle("active", searching ? secHit : p.getAttribute("data-tab") === "look");
+    });
+  });
 })();
 </script>
 </body>
