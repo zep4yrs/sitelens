@@ -144,8 +144,8 @@
   .log-box .fail{color:var(--danger)}
 
   /* ============ UI 细节打磨 ============ */
-  .tw-urlwrap{position:relative;flex:1}
-  .tw-urlwrap .tw-url{padding-left:36px;padding-right:30px}
+  .tw-urlwrap{position:relative;flex:1;margin-bottom:14px}
+  .tw-urlwrap .tw-url{padding-left:36px;padding-right:30px;display:block;margin-bottom:0}
   .tw-url-ico{position:absolute;left:12px;top:50%;transform:translateY(-50%);width:15px;height:15px;color:var(--muted-fg);pointer-events:none}
   .tw-url-clear{position:absolute;right:8px;top:50%;transform:translateY(-50%);width:20px;height:20px;border:none;border-radius:50%;background:var(--muted);color:var(--muted-fg);cursor:pointer;font-size:13px;line-height:1;display:none}
   .tw-url-clear:hover{color:var(--foreground);background:var(--accent)}
@@ -185,9 +185,7 @@
         <input class="url-input tw-url" id="url" placeholder="https://example.com" autocomplete="off">
         <button type="button" class="tw-url-clear" id="url-clear" title="清空">×</button>
       </div>
-      <details class="tw-fold">
-        <summary>扫描配置</summary>
-        <div class="tw-fold-body">
+      <div class="tw-config">
           <div class="opt-group">
             <span class="g-label">范围</span>
             <div class="cdd cdd-multi" id="dd-scope">
@@ -233,8 +231,7 @@
           <div class="tw-fold-sep"></div>
           <input class="tb" id="opt-cookie" style="margin-bottom:12px" placeholder="认证会话（可选）Cookie: session=…" autocomplete="off">
           <label class="tw-toggle" style="margin:0"><input type="checkbox" id="opt-ua" class="tw-switch"> 浏览器 UA（应对按 UA 降级的站点）</label>
-        </div>
-      </details>
+      </div>
       <button class="btn tw-run" id="go" onclick="startScan()"><span class="arr">▷</span> 开始扫描</button>
       <p class="hint" id="hint" style="text-align:center"></p>
       <!-- 空态引导住在控制栏（对齐参照物布局）；扫描开始时由 app.js 隐藏 -->
