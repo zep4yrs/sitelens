@@ -9,15 +9,15 @@
 <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@300;400;500;600;700&display=swap" rel="stylesheet">
 <script>if(localStorage.getItem("sitelens-theme")==="dark")document.documentElement.classList.add("dark")</script>
 <style>
-  /* ============ text-well 式布局：左控制台 + 可拖分割 + 右画布 ============ */
-  .tw-app{position:fixed;inset:0 0 0 var(--side-w);display:flex;background:var(--card)}
+  /* ============ text-well 式布局：顶栏 + 左控制台 + 可拖分割 + 右画布 ============ */
+  .tw-app{position:fixed;inset:var(--top-h) 0 0 0;display:flex;background:var(--card)}
   .tw-left{width:302px;flex:none;display:flex;flex-direction:column;overflow-y:auto;
     border-right:1px solid var(--border);background:var(--card);padding-bottom:18px}
-  .tw-modes{display:grid;grid-template-columns:repeat(3,1fr);border-bottom:1px solid var(--border);
+  .tw-modes{display:grid;grid-template-columns:repeat(5,1fr);border-bottom:1px solid var(--border);
     margin:0 0 14px;flex:none}
-  .tw-modes .tab{display:flex;flex-direction:column;align-items:center;gap:5px;padding:13px 4px 11px;
+  .tw-modes .tab{display:flex;flex-direction:column;align-items:center;gap:5px;padding:12px 2px 10px;
     border:none;border-bottom:2px solid transparent;background:none;cursor:pointer;color:var(--muted-fg);
-    font-size:12px;font-family:inherit;border-radius:0}
+    font-size:11.5px;font-family:inherit;border-radius:0}
   .tw-modes .tab svg{width:18px;height:18px}
   .tw-modes .tab:hover{color:var(--foreground);background:var(--accent)}
   .tw-modes .tab.active{color:var(--foreground);background:var(--secondary);
@@ -111,6 +111,23 @@
     margin:0 0 12px;display:none}
   .auth-row{display:flex;gap:8px;align-items:flex-start;font-size:12.5px;margin:0 0 12px}
   .auth-row input{accent-color:var(--danger);width:15px;height:15px;flex:none;margin-top:2px}
+
+  /* 源码审计 / 批量扫描模式（自 audit.html、batch.html 整编） */
+  .dropzone{border:2px dashed var(--border);border-radius:12px;padding:38px 20px;text-align:center;
+    cursor:pointer;transition:border-color .2s,background .2s;background:var(--card)}
+  .dropzone:hover,.dropzone.drag{border-color:var(--primary);background:var(--accent)}
+  .dz-icon{color:var(--muted-fg);margin-bottom:10px}
+  .dz-main{font-size:15px;font-weight:500}
+  .dz-sub{font-size:12.5px;color:var(--muted-fg);margin-top:6px}
+  .dz-sub .dz-pick{color:var(--info);text-decoration:underline}
+  .dz-names{font-size:12px;color:var(--muted-fg);margin-top:12px;line-height:1.9;word-break:break-all}
+  .count-row{display:flex;align-items:center;gap:14px;margin-top:10px}
+  .count-row .n{font-family:var(--font-mono);font-size:13px;color:var(--muted-fg)}
+  .log-box{margin-top:16px;background:var(--card);border:1px solid var(--border);border-radius:10px;
+    padding:14px 18px;font-family:var(--font-mono);font-size:12.5px;line-height:2.1;
+    max-height:340px;overflow-y:auto;word-break:break-all;display:none}
+  .log-box .ok{color:var(--ok)}
+  .log-box .fail{color:var(--danger)}
 </style>
 </head>
 <body>
@@ -132,6 +149,14 @@
       <button class="tab" data-tab="loginbrute" onclick="switchTab('loginbrute')">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m21 2-9.6 9.6"/><circle cx="7.5" cy="15.5" r="5.5"/><path d="m15.5 7.5 3 3L22 7l-3-3"/></svg>
         <span>登录爆破</span>
+      </button>
+      <button class="tab" data-tab="audit" onclick="switchTab('audit')">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="m10 13-2 2 2 2"/><path d="m14 11 2 2-2 2"/></svg>
+        <span>源码审计</span>
+      </button>
+      <button class="tab" data-tab="batch" onclick="switchTab('batch')">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m12 2 8 5-8 5-8-5z"/><path d="m4 12 8 5 8-5"/><path d="m4 17 8 5 8-5"/></svg>
+        <span>批量扫描</span>
       </button>
     </div>
     <p class="tw-note">仅限自有或已书面授权的目标。主动模块默认关闭。</p>
@@ -222,6 +247,23 @@
       <p class="mono hint tw-run-hint" id="lb-st">需要勾选授权确认</p>
       <div class="progressbar" id="lb-pw" style="display:none"><i id="lb-bar"></i></div>
     </section>
+
+    <!-- 源码审计：控制 -->
+    <section class="tabpanel tw-panel" id="tab-audit">
+      <p class="tw-note" style="margin:0 0 12px">上传源码文件或 zip 工程包，16 条规则 + AST 污点分析。文件审计后即删。</p>
+      <button class="btn tw-run" id="audit-go" onclick="runAudit()">▷ 开始审计</button>
+      <button class="btn ghost tw-run" style="margin-top:8px" onclick="runDemo()">载入演示样本</button>
+      <p class="tw-run-hint">演示样本为内置「故意漏洞」教学代码，服务端拼装、从不执行</p>
+    </section>
+
+    <!-- 批量扫描：控制 -->
+    <section class="tabpanel tw-panel" id="tab-batch">
+      <p class="tw-note" style="margin:0 0 12px">每行一个 URL，3 线程并发逐个扫描并入库，完成后可在历史页导出宽表 CSV。</p>
+      <button class="btn tw-run" id="batch-go" onclick="startBatch()">▷ 开始批量扫描</button>
+      <button class="btn ghost tw-run" id="batch-cancel" onclick="cancelBatch()" style="margin-top:8px;display:none">取消</button>
+      <p class="hint" id="batch-hint" style="text-align:center"></p>
+      <div class="progressbar" id="batch-pw" style="display:none"><i id="batch-bar"></i></div>
+    </section>
   </aside>
 
   <!-- 分割条 -->
@@ -252,10 +294,30 @@
         <iframe id="lb-preview" sandbox="allow-forms allow-same-origin"></iframe>
         <div id="lb-out"></div>
       </section>
+      <!-- 源码审计：输入画布 + 输出 -->
+      <section class="tw-canvaspane" data-pane="audit">
+        <div class="dropzone" id="audit-dz">
+          <input id="audit-files" type="file" multiple style="display:none" accept=".zip,.py,.js,.php">
+          <div class="dz-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:26px;height:26px"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg></div>
+          <div class="dz-main">把源码文件 / zip 包拖到这里</div>
+          <div class="dz-sub">或 <span class="dz-pick">点击选择</span> · 支持多选 · .zip 压缩包自动解包（rar / 7z / tar 不支持）</div>
+          <div class="dz-names mono" id="audit-names"></div>
+        </div>
+        <div id="audit-summary" class="summary" style="display:none;margin-top:16px"></div>
+        <div id="audit-out" style="margin-top:16px"></div>
+      </section>
+      <!-- 批量扫描：输入画布 + 输出 -->
+      <section class="tw-canvaspane" data-pane="batch">
+        <textarea class="batch-box" id="batch-urls" style="min-height:200px" placeholder="https://example.com&#10;https://www.python.org&#10;https://books.toscrape.com"></textarea>
+        <div class="count-row"><span class="n" id="batch-n">-</span></div>
+        <div class="log-box" id="batch-log"></div>
+      </section>
     </div>
   </div>
 </div>
 
 <script src="/js/app.js"></script>
+<script src="/js/audit.js"></script>
+<script src="/js/batch.js"></script>
 </body>
 </html>

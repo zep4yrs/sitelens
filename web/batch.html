@@ -25,101 +25,18 @@
   <h1>批量扫描</h1>
   <p class="sub">每行一个 URL，上限随 batch.max_urls 配置（默认 50）。3 线程并发逐个扫描并入库，完成后可在历史页导出宽表 CSV。</p>
 
-  <textarea class="batch-box" id="urls" placeholder="https://example.com&#10;https://www.python.org&#10;https://books.toscrape.com"></textarea>
+  <textarea class="batch-box" id="batch-urls" placeholder="https://example.com&#10;https://www.python.org&#10;https://books.toscrape.com"></textarea>
   <div class="count-row">
-    <button class="btn" id="go" onclick="startBatch()">▶ 开始批量扫描</button>
-    <button class="btn ghost" id="cancel" onclick="cancelBatch()" style="display:none">取消</button>
-    <span class="n" id="n">-</span>
-    <span class="hint" style="margin:0" id="hint"></span>
+    <button class="btn" id="batch-go" onclick="startBatch()">▶ 开始批量扫描</button>
+    <button class="btn ghost" id="batch-cancel" onclick="cancelBatch()" style="display:none">取消</button>
+    <span class="n" id="batch-n">-</span>
+    <span class="hint" style="margin:0" id="batch-hint"></span>
   </div>
 
-  <div class="progressbar" id="pw" style="display:none;max-width:520px"><i id="bar"></i></div>
-  <div class="log-box" id="log"></div>
+  <div class="progressbar" id="batch-pw" style="display:none;max-width:520px"><i id="batch-bar"></i></div>
+  <div class="log-box" id="batch-log"></div>
 </main>
 
-<script>
-var LIMIT = 50;
-var box = document.getElementById("urls");
-box.addEventListener("input", updateCount);
-
-// 上限随 batch.max_urls 配置（页面加载时拉取一次）
-try {
-  api.get("/api/settings").then(function (c) {
-    var m = c && c.batch && c.batch.max_urls;
-    if (m > 0) { LIMIT = m; updateCount(); }
-  });
-} catch (e) {}
-
-function updateCount() {
-  var urls = box.value.split("\n").map(function (s) { return s.trim(); }).filter(Boolean);
-  document.getElementById("n").textContent = urls.length + " / " + LIMIT + (urls.length > LIMIT ? "（超出部分将被忽略）" : "");
-}
-
-function startBatch() {
-  var urls = box.value.split("\n").map(function (s) { return s.trim(); }).filter(Boolean).slice(0, LIMIT);
-  if (!urls.length) return;
-  document.getElementById("go").disabled = true;
-  document.getElementById("cancel").style.display = "";
-  document.getElementById("pw").style.display = "block";
-  document.getElementById("log").style.display = "block";
-  document.getElementById("log").innerHTML = "";
-  var logBox = document.getElementById("log");
-  var seen = {};
-
-  function addLog(line) {
-    if (!line || seen[line]) return;
-    seen[line] = 1;
-    var div = document.createElement("div");
-    var isFail = line.indexOf("失败") >= 0;
-    var isSkip = line.indexOf("跳过") >= 0;
-    div.innerHTML = '<span class="' + (isFail ? "fail" : "ok") + '">' +
-      (isFail ? "✕" : isSkip ? "⊘" : "✓") + "</span> " + esc(line);
-    logBox.appendChild(div);
-    logBox.scrollTop = logBox.scrollHeight;
-  }
-
-  api.post("/api/batch", { urls: urls }).then(function (r) {
-    var jobId = r.job_id;
-    window.__batchJobId = jobId;
-    return new Promise(function (resolve, reject) {
-      var timer = slPoll(function () {
-        api.get("/api/job/" + jobId + "/results").then(function (job) {
-          document.getElementById("bar").style.width = (job.progress || 0) + "%";
-          addLog(job.message);
-          document.getElementById("hint").textContent =
-            (job.done || 0) + " / " + (job.total || urls.length) + " 已完成" +
-            (job.status === "cancelling" ? "（取消中…）" : "");
-          if (job.status === "done" || job.status === "cancelled") {
-            clearInterval(timer);
-            resolve(job);
-          }
-        }).catch(function (e) { clearInterval(timer); reject(e); });
-      }, 1200);
-    });
-  }).then(function (job) {
-    document.getElementById("go").disabled = false;
-    document.getElementById("cancel").style.display = "none";
-    if (job.status === "cancelled") {
-      document.getElementById("hint").textContent = "批量已取消（未开始的 URL 已跳过）";
-      toast("批量已取消", "err");
-    } else {
-      document.getElementById("hint").innerHTML =
-        '全部完成 · <a href="/history" style="color:var(--info)">→ 查看历史 / 导出宽表</a>';
-      toast("批量扫描完成", "ok");
-    }
-  }).catch(function (e) {
-    document.getElementById("go").disabled = false;
-    document.getElementById("cancel").style.display = "none";
-    document.getElementById("hint").textContent = "失败：" + e.message;
-  });
-}
-
-function cancelBatch() {
-  var btn = document.getElementById("cancel");
-  btn.disabled = true;
-  btn.textContent = "取消中…";
-  api.post("/api/job/" + window.__batchJobId + "/cancel", {}).catch(function () {});
-}
-</script>
+<script src="/js/batch.js"></script>
 </body>
 </html>

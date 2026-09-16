@@ -177,39 +177,27 @@
     chain: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="5" cy="6" r="2.5"/><circle cx="19" cy="12" r="2.5"/><circle cx="5" cy="18" r="2.5"/><path d="M7.3 7.2 16.7 11M7.3 16.8 16.7 13"/></svg>',
     settings: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0 .33-1.82l.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33h.09a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82v.09a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>'
   };
-  // 侧栏导航（4.0 布局收敛）：只列**独立页面**。
-  // 「网络检测 / 登录爆破」是扫描页内的页签、「已验证」是历史页内的页签——
-  // 原先各占一个侧栏入口（10 项里有 3 项如此），层级冗余、易误认为独立页。
-  // 现收敛为 7 个真实路由；旧链接（/app#netsec 等）仍可用，只是侧栏不再单列。
+  // 顶栏导航（视觉升级 2026-09-16）：只放**被动/管理页**；主动功能
+  // （综合扫描/网络层检测/登录爆破/源码审计/批量扫描）是工作台左栏的模式行，
+  // 不占顶栏。品牌 logo 点击即回工作台。
   var NAV = [
-    ["scan", "/app", "扫描", "nav_scan"],
-    ["audit", "/audit", "源码审计", "nav_audit"],
-    ["batch", "/batch", "批量", "nav_batch"],
-    ["history", "/history", "历史", "nav_history"],
-    ["chain", "/chain", "攻击链", "nav_chain"],
+    ["settings", "/settings", "设置", "nav_settings"],
     ["intel", "/intel", "情报库", "nav_intel"],
-    ["settings", "/settings", "设置", "nav_settings"]
+    ["history", "/history", "历史", "nav_history"],
+    ["chain", "/chain", "攻击链", "nav_chain"]
   ];
   function navKey() {
-    var p = location.pathname, h = location.hash || "";
-    if (p.indexOf("/app") === 0) {
-      // 网络检测 / 登录爆破 是页内页签 → 侧栏高亮所属页面「扫描」
-      return "scan";
-    }
-    if (p.indexOf("/history") === 0) {
-      // 已验证 是页内页签 → 侧栏高亮所属页面「历史」
-      return "history";
-    }
+    var p = location.pathname;
+    // 已验证 是历史页内页签 → 侧栏高亮所属页面「历史」
+    if (p.indexOf("/history") === 0) return "history";
     if (p.indexOf("/chain") === 0) return "chain";
-    if (p.indexOf("/audit") === 0) return "audit";
-    if (p.indexOf("/batch") === 0) return "batch";
     if (p.indexOf("/intel") === 0) return "intel";
     if (p.indexOf("/settings") === 0) return "settings";
-    return "";
+    return ""; // 工作台及其模式页：顶栏不高亮（左栏模式行自行高亮）
   }
   function slUpdateNav() {
     var key = navKey();
-    document.querySelectorAll(".side-nav a").forEach(function (a) {
+    document.querySelectorAll(".top-nav a").forEach(function (a) {
       a.classList.toggle("active", a.getAttribute("data-key") === key);
     });
   }
@@ -351,30 +339,29 @@
       esc(text || u) + "</a>";
   };
 
-  /* ================= 每渲染区：壳重建（服务器 HTML 本身无侧栏） ================= */
+  /* ================= 每渲染区：壳重建（顶栏；服务器 HTML 本身无壳） ================= */
   function buildShell() {
-    var stale = document.querySelector(".wb-side");
+    var stale = document.querySelector(".wb-top");
     if (stale && stale.parentNode) stale.parentNode.removeChild(stale);
     var nav = NAV.map(function (n) {
       var label = t(n[3]) || n[2];
       return '<a href="' + n[1] + '" data-key="' + n[0] + '" title="' + label + '">' +
         ICONS[n[0]] + "<span>" + label + "</span></a>";
     }).join("");
-    var aside = document.createElement("aside");
-    aside.className = "wb-side";
-    aside.innerHTML =
-      '<div class="side-head">' +
+    var header = document.createElement("header");
+    header.className = "wb-top";
+    header.innerHTML =
       '<a class="brand" href="/"><span class="txt">sitelens</span><span class="dot"></span></a>' +
-      '<button class="theme-btn" onclick="toggleTheme()" title="' + (t("theme_toggle") || "切换明暗主题") + '">◐</button></div>' +
-      '<nav class="side-nav">' + nav + "</nav>" +
-      '<div class="side-foot">' + (t("foot_auth") || "") +
-      '<br><span id="sl-ver">SiteLens</span></div>';
-    document.body.insertBefore(aside, document.body.firstChild);
+      '<nav class="top-nav">' + nav + "</nav>" +
+      '<div class="top-right">' +
+      '<button class="theme-btn" onclick="toggleTheme()" title="' + (t("theme_toggle") || "切换明暗主题") + '">◐</button>' +
+      '<span class="ver" id="sl-ver">SiteLens</span></div>';
+    document.body.insertBefore(header, document.body.firstChild);
     slUpdateNav();
-    /* 侧栏页脚显示服务端版本号（失败保持 SiteLens 文案） */
+    /* 顶栏显示服务端版本号（失败保持 SiteLens 文案） */
     api.get("/api/version").then(function (v) {
       var el = document.getElementById("sl-ver");
-      if (el && v && v.version) el.textContent = "SiteLens v" + v.version;
+      if (el && v && v.version) el.textContent = "v" + v.version;
     }).catch(function () {});
   }
   buildShell();
