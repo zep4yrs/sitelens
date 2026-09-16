@@ -401,20 +401,9 @@
   function buildShell() {
     var workbench = document.querySelector(".tw-app");
     var stale = document.querySelector(".wb-top");
-    if (workbench) {
-      // 工作台：导航渲染进工具条槽位（单顶带），独立顶栏不留
+    if (workbench.querySelector(".tw-modes")) {
+      // 工作台：模式行在左栏顶部，导航渲染进工具条槽位（单顶带），独立顶栏不留
       if (stale && stale.parentNode) stale.parentNode.removeChild(stale);
-      var staleSide = workbench.querySelector(":scope > .wb-side");
-      if (staleSide && staleSide.parentNode) staleSide.parentNode.removeChild(staleSide);
-      var side = document.createElement("aside");
-      side.className = "wb-side";
-      side.innerHTML =
-        '<div class="side-head"><a class="brand" href="/app" title="工作台"><span class="txt">sitelens</span><span class="dot"></span></a></div>' +
-        '<nav class="side-nav">' + MODE_SIDE.map(function (m) {
-          return '<a href="' + m[1] + '" data-key="' + m[0] + '" title="' + m[2] + '">' + m[3] + "<span>" + m[2] + "</span></a>";
-        }).join("") + "</nav>";
-      workbench.insertBefore(side, workbench.firstChild);
-      updateSideActive();
       var slot = document.getElementById("tw-topslot");
       if (slot) {
         slot.innerHTML = topNavHTML() + topRightHTML();
@@ -424,6 +413,17 @@
       return;
     }
     if (stale && stale.parentNode) stale.parentNode.removeChild(stale);
+    // 被动页：注入主动功能栏列（常驻返航入口）
+    var staleCol = workbench.querySelector(":scope > .tw-sidecol");
+    if (staleCol && staleCol.parentNode) staleCol.parentNode.removeChild(staleCol);
+    var sidecol = document.createElement("aside");
+    sidecol.className = "tw-sidecol";
+    sidecol.innerHTML =
+      '<div class="sidecol-title">主动功能</div>' +
+      MODE_SIDE.map(function (m) {
+        return '<a href="' + m[1] + '" data-key="' + m[0] + '" title="' + m[2] + '">' + m[3] + "<span>" + m[2] + "</span></a>";
+      }).join("");
+    workbench.insertBefore(sidecol, workbench.firstChild);
     var header = document.createElement("header");
     header.className = "wb-top";
     header.innerHTML =
