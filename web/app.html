@@ -9,16 +9,16 @@
 <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@300;400;500;600;700&display=swap" rel="stylesheet">
 <script>if(localStorage.getItem("sitelens-theme")==="dark")document.documentElement.classList.add("dark")</script>
 <style>
-  /* ============ text-well 式布局：顶栏 + 左控制台 + 可拖分割 + 右画布 ============ */
+  /* ============ text-well 式布局：单顶带（模式行|工具条）+ 可拖分割 + 画布 ============ */
   /* 轻感对齐：近无彩色、软填充选中、羽毛按钮、发丝分割、大留白 */
-  .tw-app{position:fixed;inset:var(--top-h) 0 0 0;display:flex;background:var(--card)}
+  .tw-app{position:fixed;inset:0;display:flex;background:var(--card)}
   .tw-left{width:302px;flex:none;display:flex;flex-direction:column;overflow-y:auto;
     border-right:1px solid var(--border);background:var(--card);padding-bottom:18px}
-  .tw-modes{display:grid;grid-template-columns:repeat(5,1fr);gap:3px;padding:6px 6px 0;
+  .tw-modes{display:grid;grid-template-columns:repeat(5,1fr);gap:3px;padding:0 6px;
     border-bottom:1px solid var(--border);margin:0 0 16px;flex:none}
-  .tw-modes .tab{display:flex;flex-direction:column;align-items:center;gap:5px;padding:11px 2px 9px;
-    border:none;border-radius:8px 8px 0 0;background:none;cursor:pointer;color:var(--muted-fg);
-    font-size:11px;font-family:inherit;white-space:nowrap}
+  .tw-modes .tab{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:5px;
+    height:50px;padding:0 2px;border:none;border-radius:8px 8px 0 0;background:none;cursor:pointer;
+    color:var(--muted-fg);font-size:11px;font-family:inherit;white-space:nowrap}
   .tw-modes .tab svg{width:17px;height:17px;opacity:.75}
   .tw-modes .tab:hover{color:var(--foreground);background:var(--accent)}
   .tw-modes .tab.active{color:var(--foreground);background:var(--muted);font-weight:600}
@@ -66,9 +66,12 @@
   .tw-split::before{content:"";position:absolute;left:2px;top:0;bottom:0;width:1px;background:var(--border)}
   .tw-split:hover::before,.tw-split.on::before{width:2px;left:1.5px;background:var(--primary)}
   .tw-right{flex:1;display:flex;flex-direction:column;min-width:0;background:var(--card)}
-  .tw-toolbar{flex:none;display:flex;align-items:center;gap:14px;padding:11px 20px;
+  .tw-toolbar{flex:none;display:flex;align-items:center;gap:14px;height:50px;padding:0 16px;
     border-bottom:1px solid var(--border);background:var(--card)}
   .tw-toolbar .statusline{margin:0}
+  .tw-toolbar .tw-topslot{margin-left:auto;display:flex;align-items:center;gap:2px}
+  .tw-toolbar .top-nav{flex:none}
+  .tw-toolbar .top-right{margin-left:6px}
   .tw-progress-row{flex:none;background:var(--card);padding:0 20px}
   .tw-progress-row .progressbar{margin:0 0 0}
   .tw-canvas{flex:1;overflow-y:auto;padding:34px 36px}
@@ -303,7 +306,8 @@
     <div class="tw-toolbar">
       <span id="st-state">idle</span>
       <span id="st-msg">等待目标</span>
-      <span style="margin-left:auto" id="st-time"></span>
+      <span id="st-time"></span>
+      <div class="tw-topslot" id="tw-topslot"></div>
     </div>
     <div class="tw-progress-row"><div class="progressbar" id="pw" style="display:none"><i id="bar"></i></div></div>
     <div class="tw-canvas">

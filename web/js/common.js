@@ -339,32 +339,62 @@
       esc(text || u) + "</a>";
   };
 
-  /* ================= 每渲染区：壳重建（顶栏；服务器 HTML 本身无壳） ================= */
-  function buildShell() {
-    var stale = document.querySelector(".wb-top");
-    if (stale && stale.parentNode) stale.parentNode.removeChild(stale);
+  /* ================= 每渲染区：壳重建 =================
+     工作台（.tw-app）：不设独立顶栏——被动页导航/亮暗/版本渲染进画布工具条的
+     .tw-topslot 槽位，与左栏模式行同高，构成参照物式的「一条顶带」。
+     其余页面：独立 .wb-top 顶栏。 */
+  function topNavHTML() {
     var nav = NAV.map(function (n) {
       var label = t(n[3]) || n[2];
       return '<a href="' + n[1] + '" data-key="' + n[0] + '" title="' + label + '">' +
         ICONS[n[0]] + "<span>" + label + "</span></a>";
     }).join("");
-    var header = document.createElement("header");
-    header.className = "wb-top";
-    header.innerHTML =
-      '<a class="brand" href="/"><span class="txt">sitelens</span><span class="dot"></span></a>' +
-      '<nav class="top-nav">' + nav + "</nav>" +
-      '<div class="top-right">' +
+    return '<nav class="top-nav">' + nav + "</nav>";
+  }
+  function topRightHTML() {
+    return '<div class="top-right">' +
       '<button class="theme-btn" onclick="toggleTheme()" title="' + (t("theme_toggle") || "切换明暗主题") + '">◐</button>' +
       '<span class="ver" id="sl-ver">SiteLens</span></div>';
-    document.body.insertBefore(header, document.body.firstChild);
-    slUpdateNav();
-    /* 顶栏显示服务端版本号（失败保持 SiteLens 文案） */
+  }
+  function fillVersion() {
     api.get("/api/version").then(function (v) {
       var el = document.getElementById("sl-ver");
       if (el && v && v.version) el.textContent = "v" + v.version;
     }).catch(function () {});
   }
-  buildShell();
+  function buildShell() {
+    var workbench = document.querySelector(".tw-app");
+    var stale = document.querySelector(".wb-top");
+    if (workbench) {
+      // 工作台：导航渲染进工具条槽位（单顶带），独立顶栏不留
+      if (stale && stale.parentNode) stale.parentNode.removeChild(stale);
+      var slot = document.getElementById("tw-topslot");
+      if (slot) {
+        slot.innerHTML = topNavHTML() + topRightHTML();
+        slUpdateNav();
+        fillVersion();
+      }
+      return;
+    }
+    if (stale && stale.parentNode) stale.parentNode.removeChild(stale);
+    var header = document.createElement("header");
+    header.className = "wb-top";
+    header.innerHTML =
+      '<a class="brand" href="/"><span class="txt">sitelens</span><span class="dot"></span></a>' +
+      topNavHTML() +
+      topRightHTML();
+    document.body.insertBefore(header, document.body.firstChild);
+    slUpdateNav();
+    /* 顶栏显示服务端版本号（失败保持 SiteLens 文案） */
+    fillVersion();
+  }
+  /* 首次执行位于 body 起始：.tw-app / 槽位尚未解析，等 DOM 就绪再定壳形态；
+     Turbo 换页时脚本体在换页后重放，readyState 已过 loading，立即执行 */
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", buildShell);
+  } else {
+    buildShell();
+  }
 
   /* ---------------- 主题 ---------------- */
   // 侧栏快捷按钮：在浅/深之间显式切换（auto 模式下点按即固定）
