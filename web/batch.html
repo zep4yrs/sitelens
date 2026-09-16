@@ -21,8 +21,14 @@
 <body>
 <script src="/js/common.js"></script>
 
-<main class="page">
-  <h1>批量扫描</h1>
+<div class="tw-app">
+  <div class="tw-right">
+    <div class="tw-toolbar">
+      <span class="tw-pagetitle">批量扫描</span>
+      <div class="tw-topslot" id="tw-topslot"></div>
+    </div>
+    <div class="tw-canvas">
+      <main class="page">
   <p class="sub">每行一个 URL，上限随 batch.max_urls 配置（默认 50）。3 线程并发逐个扫描并入库，完成后可在历史页导出宽表 CSV。</p>
 
   <textarea class="batch-box" id="batch-urls" placeholder="https://example.com&#10;https://www.python.org&#10;https://books.toscrape.com"></textarea>
@@ -35,7 +41,10 @@
 
   <div class="progressbar" id="batch-pw" style="display:none;max-width:520px"><i id="batch-bar"></i></div>
   <div class="log-box" id="batch-log"></div>
-</main>
+      </main>
+    </div>
+  </div>
+</div>
 
 <script src="/js/batch.js"></script>
 </body>

@@ -62,24 +62,34 @@ const main = async () => {
   let ready = false;
   for (let i = 0; i < 40; i++) {
     try {
-      if (await evalJs(`!!(window.Turbo && document.querySelector('.top-nav a[data-key="history"]'))`)) {
+      if (await evalJs(`!!(window.Turbo && document.querySelector('.top-nav a[data-key="history"]') && document.querySelector('.side-nav a[data-key="scan"]'))`)) {
         ready = true; break;
       }
     } catch {}
     await sleep(500);
   }
   if (!ready) throw new Error("app not ready");
-  await sleep(500);
+  // 稳定判定：就绪后 1s 仍在（启动期可能有会话恢复式被动导航）
+  await sleep(1000);
+  if (!(await evalJs(`!!(window.Turbo && document.querySelector('.top-nav a[data-key="history"]') && document.querySelector('.side-nav a[data-key="scan"]'))`))) {
+    throw new Error("app not stable");
+  }
+  await sleep(300);
   await evalJs("window.__slMarker = 42");
 
   const results = [];
 
   // A) 顶栏被动页
   for (const [key, wantPath] of [["intel", "/intel"], ["history", "/history"], ["chain", "/chain"], ["settings", "/settings"]]) {
-    const clicked = await evalJs(`(function(){
-      var a = document.querySelector('.top-nav a[data-key="${key}"]');
-      if (!a) return 'no-link'; a.click(); return 'clicked';
-    })()`);
+    let clicked = 'no-link';
+    for (let t = 0; t < 3; t++) {
+      clicked = await evalJs(`(function(){
+        var a = document.querySelector('.top-nav a[data-key="${key}"]');
+        if (!a) return 'no-link'; a.click(); return 'clicked';
+      })()`);
+      if (clicked === 'clicked') break;
+      await sleep(1000);
+    }
     if (clicked !== "clicked") { results.push({ key, error: clicked }); continue; }
     let path = null;
     for (let i = 0; i < 20; i++) {
@@ -90,13 +100,13 @@ const main = async () => {
     results.push({
       kind: "top", key, path, wantPath,
       marker: await evalJs("window.__slMarker ?? null"),
-      topbar: await evalJs("document.querySelectorAll('.wb-top').length"),
+      topbar: await evalJs("document.querySelectorAll('.tw-toolbar').length"),
       active: await evalJs(`(document.querySelector('.top-nav a.active')||{}).getAttribute?.('data-key') || null`),
     });
   }
 
-  // 回工作台
-  await evalJs(`document.querySelector('.wb-top .brand').click()`);
+  // 回工作台（左栏侧栏「综合扫描」）
+  await evalJs(`(function(){ var a = document.querySelector('.side-nav a[data-key="scan"]'); if (a) a.click(); })()`);
   for (let i = 0; i < 20; i++) {
     await sleep(300);
     if (await evalJs("location.pathname") === "/app") break;
@@ -105,17 +115,22 @@ const main = async () => {
   // B) 工作台五模式
   for (const mode of ["netsec", "loginbrute", "audit", "batch", "scan"]) {
     const clicked = await evalJs(`(function(){
-      var b = document.querySelector('.tw-modes .tab[data-tab="${mode}"]');
+      var b = document.querySelector('.side-nav a[data-key="${mode}"]');
       if (!b) return 'no-tab'; b.click(); return 'clicked';
     })()`);
     if (clicked !== "clicked") { results.push({ kind: "mode", key: mode, error: clicked }); continue; }
-    await sleep(250);
+    let panel = false;
+    for (let i = 0; i < 10; i++) {
+      await sleep(300);
+      panel = await evalJs(`document.getElementById('tab-${mode}').classList.contains('active')`);
+      if (panel) break;
+    }
     results.push({
       kind: "mode", key: mode,
       marker: await evalJs("window.__slMarker ?? null"),
-      panel: await evalJs(`document.getElementById('tab-${mode}').classList.contains('active')`),
+      panel: panel,
       canvas: await evalJs(`document.querySelector('.tw-canvaspane[data-pane="${mode}"]').classList.contains('active')`),
-      active: await evalJs(`(document.querySelector('.tw-modes .tab.active')||{}).getAttribute?.('data-tab') || null`),
+      active: await evalJs(`(document.querySelector('.side-nav a.active')||{}).getAttribute?.('data-key') || null`),
     });
   }
 

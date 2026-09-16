@@ -126,3 +126,25 @@ table.list th,
    消除整屏瞬切的跳转感；纯淡入不含位移——位移本身就是跳感来源） */
 @keyframes sl-fadeIn{from{opacity:.35}to{opacity:1}}
 body{animation:sl-fadeIn .16s ease}
+
+/* ============ 双区壳（工作台与被动页共用）：单顶带 + 画布 ============ */
+.tw-app{position:fixed;inset:0;display:flex;background:var(--card)}
+.tw-toolbar{flex:none;display:flex;align-items:center;gap:14px;height:50px;padding:0 16px;
+  border-bottom:1px solid var(--border);background:var(--card)}
+.tw-toolbar .tw-topslot{margin-left:auto;display:flex;align-items:center;gap:2px}
+.tw-toolbar .top-nav{flex:none}
+.tw-toolbar .top-right{margin-left:6px}
+.tw-pagetitle{font-size:14px;font-weight:600;color:var(--foreground)}
+.tw-canvas{flex:1;overflow-y:auto}
+
+/* ============ 主动功能侧栏（全页面常驻）：工作台=模式切换，被动页=返航入口 ============ */
+.wb-side{width:200px;flex:none;display:flex;flex-direction:column;padding:14px 10px;
+  border-right:1px solid var(--border);background:var(--card)}
+.tw-app:has(.wb-side) .tw-modes{display:none}
+.wb-side .side-head{padding:2px 6px 14px}
+.wb-side .side-nav{display:flex;flex-direction:column;gap:2px}
+.wb-side .side-nav a{display:flex;align-items:center;gap:10px;padding:9px 12px;
+  border-radius:var(--radius);font-size:13.5px;color:var(--muted-fg);transition:color .2s,background .2s}
+.wb-side .side-nav a svg{width:16px;height:16px;flex:none}
+.wb-side .side-nav a:hover{color:var(--foreground);background:var(--accent)}
+.wb-side .side-nav a.active{color:var(--foreground);background:var(--secondary);font-weight:600}

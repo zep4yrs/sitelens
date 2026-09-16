@@ -34,8 +34,14 @@
 <body>
 <script src="/js/common.js"></script>
 
-<main class="page">
-  <h1>扫描历史</h1>
+<div class="tw-app">
+  <div class="tw-right">
+    <div class="tw-toolbar">
+      <span class="tw-pagetitle">扫描历史</span>
+      <div class="tw-topslot" id="tw-topslot"></div>
+    </div>
+    <div class="tw-canvas">
+      <main class="page">
   <p class="sub">所有结果存于本地 本地文件。支持「哪些站用了某技术」反查、双记录 diff 对比与多格式导出。</p>
 
   <div class="tabs">
@@ -70,7 +76,10 @@
     <p class="sub" style="margin-top:0">历史扫描中由验证型 Check 与 Nuclei 模板实际命中的漏洞，跨扫描汇总展示。</p>
     <div id="v-out"><p class="muted" style="font-size:13px">加载中…</p></div>
   </section>
-</main>
+      </main>
+    </div>
+  </div>
+</div>
 
 <script>
 function switchTab(name) {

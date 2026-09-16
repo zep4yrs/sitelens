@@ -43,8 +43,14 @@
 <body>
 <script src="/js/common.js"></script>
 
-<main class="page">
-  <h1>攻击链视图</h1>
+<div class="tw-app">
+  <div class="tw-right">
+    <div class="tw-toolbar">
+      <span class="tw-pagetitle">攻击链视图</span>
+      <div class="tw-topslot" id="tw-topslot"></div>
+    </div>
+    <div class="tw-canvas">
+      <main class="page">
   <p class="sub">基于 <b>真实证据</b> 的发现关系：每次扫描的结构化事实图（入口 / 发现 / 数据流 / CWE / 影响 / 权限变化）与其间的关系边。无证据的候选关系不会被建立。</p>
 
   <div class="picker">
@@ -64,7 +70,10 @@
   <div id="body"><div class="empty">选择一次扫描查看攻击链</div></div>
 
   <div class="note" id="note" style="display:none"></div>
-</main>
+      </main>
+    </div>
+  </div>
+</div>
 
 <script>
 "use strict";
