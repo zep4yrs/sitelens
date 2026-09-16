@@ -116,15 +116,26 @@ type KB struct {
 	tscanCount int
 	fingerDir  []FingerDirRow
 	serviceFP  []ServiceFPRow
-	nvd        *NVDStore         // 旁路挂载，可 nil
-	techCPE    map[string]string // 技术名 → CPE（NVD 通道），可 nil
+	nvd        *NVDStore // 旁路挂载，可 nil
+	// A5 惰性解码：intel_dump 启动不解码，首次真正用到（Match/检索/统计）才解。
+	dumpPath   string
+	rangesPath string
+	loadMu     sync.Mutex // 守护重解码；Release 复位后须可再次进入（Once 只触发一次）
+	decoded    bool
+	loadErr    error
+	// 惰性期挂起的附加操作（解码后按序应用）：
+	pendingTpl []Entry             // AttachTplIntel 待并入（Release 后亦存回模板行待重并）
+	pendingOv  map[string]Override // 待应用的覆盖（Release 后存回最近覆盖待重放）
+	lastOv     map[string]Override // 最近一次 ApplyOverrides 的数据（Release 重放的来源）
+	techCPE    map[string]string   // 技术名 → CPE（NVD 通道），可 nil
 
 	// A3 惰性加载：只记路径，**首次真正用到 NVD 数据时**才解码索引。
 	// 背景：NVD 全量索引实测占 HeapSys ≈1.7GB，是引擎空闲 RSS 的主因；
 	// 而纯指纹/端口场景根本用不到它，此前却在每次启动时全量解码。
-	nvdPath string
-	nvdOnce sync.Once
-	nvdErr  error
+	nvdPath  string
+	nvdMu    sync.Mutex // 守护重加载；Release 后复位 nvdTried 允许重载
+	nvdTried bool
+	nvdErr   error
 }
 
 // ServiceFPRow 端口服务 banner 指纹行。
@@ -137,7 +148,10 @@ type ServiceFPRow struct {
 }
 
 // ServiceFP 返回端口服务 banner 指纹集。
-func (k *KB) ServiceFP() []ServiceFPRow { return k.serviceFP }
+func (k *KB) ServiceFP() []ServiceFPRow {
+	k.ensureDecoded()
+	return k.serviceFP
+}
 
 // FingerDirRow FingerDir 主动路径指纹行。
 type FingerDirRow struct {
@@ -156,10 +170,79 @@ type FingerDirMatchSpec struct {
 }
 
 // FingerDir 返回主动路径指纹集。
-func (k *KB) FingerDir() []FingerDirRow { return k.fingerDir }
+func (k *KB) FingerDir() []FingerDirRow {
+	k.ensureDecoded()
+	return k.fingerDir
+}
 
-// Load 从知识库数据包与精选区间文件加载知识库。
+// Load 从知识库数据包与精选区间文件加载知识库（立即解码；行为与 3.0 一致）。
+// 与 LoadLazy 共用惰性骨架：KB 保留源路径，Release 后可自动重载。
 func Load(dumpGz, rangesJSON string) (*KB, error) {
+	k := LoadLazy(dumpGz, rangesJSON)
+	k.ensureDecoded()
+	if err := k.loadErr; err != nil {
+		return nil, err
+	}
+	return k, nil
+}
+
+// LoadLazy 惰性加载（A5，4.0 Track A）：只记路径，首次真正用到时才解码。
+// 动机：intel_dump 解码占 HeapSys ≈67MB；serve 空闲期（尚未扫描）不必付。
+// 与 A3 的 NVD 惰性同模式；加载失败延迟到使用点（表为空），可用 LoadError 查询。
+func LoadLazy(dumpGz, rangesJSON string) *KB {
+	return &KB{dumpPath: dumpGz, rangesPath: rangesJSON}
+}
+
+// LoadError 返回惰性解码失败的原因（未失败返回空）。
+func (k *KB) LoadError() string {
+	if k == nil {
+		return ""
+	}
+	if k.loadErr != nil {
+		return k.loadErr.Error()
+	}
+	return ""
+}
+
+// ensureDecoded 确保表已解码（幂等；直接构造 &KB{vulns:...} 的测试场景视为已解码）。
+func (k *KB) ensureDecoded() {
+	if k == nil || k.decoded {
+		return
+	}
+	if k.dumpPath == "" && k.rangesPath == "" {
+		k.decoded = true // 纯内存构造：无源可解
+		return
+	}
+	k.loadMu.Lock()
+	defer k.loadMu.Unlock()
+	if k.decoded { // 双检：等锁期间他人已完成
+		return
+	}
+	nk, err := decodeAll(k.dumpPath, k.rangesPath)
+	if err != nil {
+		k.loadErr = err
+		k.decoded = true
+		return
+	}
+	k.vulns, k.cveMs, k.kev = nk.vulns, nk.cveMs, nk.kev
+	k.ranges, k.tscanCount = nk.ranges, nk.tscanCount
+	k.fingerDir, k.serviceFP, k.techCPE = nk.fingerDir, nk.serviceFP, nk.techCPE
+	k.index = nil // 留给 buildIndex 重建
+	k.decoded = true
+	// 应用挂起的附加操作（顺序：先并入模板情报，再打覆盖；
+	// Release 后的模板行/覆盖重放也走这两步）
+	if len(k.pendingTpl) > 0 {
+		k.AttachTplIntel(k.pendingTpl)
+		k.pendingTpl = nil
+	}
+	if len(k.pendingOv) > 0 {
+		k.ApplyOverrides(k.pendingOv)
+		k.pendingOv = nil
+	}
+}
+
+// decodeAll 原 Load 的解码体（Load 与 A5 惰性路径共用）。
+func decodeAll(dumpGz, rangesJSON string) (*KB, error) {
 	f, err := os.Open(dumpGz)
 	if err != nil {
 		return nil, err
@@ -279,6 +362,7 @@ func Keywords(product string, indexSide bool) map[string]bool {
 // confirmed（版本落在受影响区间）/ possible（同名提示）/
 // excluded（有版本但不在区间，直接跳过不输出）。
 func (k *KB) Match(techs []TechHit) []Finding {
+	k.ensureDecoded()
 	if k.index == nil {
 		k.buildIndex()
 	}
@@ -366,6 +450,7 @@ var lookupAliases = map[string][]string{
 }
 
 func (k *KB) vulnsFor(techName string) []*Entry {
+	k.ensureDecoded()
 	if k.index == nil {
 		k.buildIndex()
 	}
@@ -409,6 +494,7 @@ type CVEMsFinding struct {
 
 // MatchCVEMs 微软安全公告关联（按组件名包含匹配，双向别名）。
 func (k *KB) MatchCVEMs(techs []TechHit, limit int) []CVEMsFinding {
+	k.ensureDecoded()
 	out := []CVEMsFinding{}
 	seen := map[string]bool{}
 	for _, tech := range techs {
@@ -450,4 +536,33 @@ func (k *KB) MatchCVEMs(techs []TechHit, limit int) []CVEMsFinding {
 		}
 	}
 	return out
+}
+
+// Release 释放情报表（A10 自适应版）：清空常驻表并复位解码标记。
+// 下一次访问经 ensureDecoded 自动重新加载（nvdPath/nvd 保留原惰性语义）。
+//
+// 背景：A10 原方案是「情报库独立 sidecar 进程」，目标是任务间隔释放内存。
+// A3+A5 惰性化后，本方法以进程内方式达成同一目标（无 IPC/无额外进程），
+// 供 serve 模式在长时间空闲或管理操作时调用。
+func (k *KB) Release() {
+	if k == nil {
+		return
+	}
+	k.ensureDecoded() // 若尚未解码则无事发生（保持 decoded，不丢挂起队列）
+	// 附加物存回待应用队列，重载后经 ensureDecoded 重放：
+	// 模板行 = 负 ID 段；覆盖 = 最近一次 ApplyOverrides 的数据。
+	var tpl []Entry
+	for _, v := range k.vulns {
+		if v.ID < 0 {
+			tpl = append(tpl, v)
+		}
+	}
+	k.pendingTpl = tpl
+	k.pendingOv = k.lastOv
+	k.vulns, k.cveMs, k.index = nil, nil, nil
+	k.kev, k.ranges = map[string]bool{}, map[string][]CuratedRange{}
+	k.tscanCount = 0
+	k.decoded = false
+	k.nvd = nil        // NVD 亦释放；nvdPath 保留
+	k.nvdTried = false // 复位尝试标记，下次访问可重载
 }

@@ -84,6 +84,8 @@ type ScanConfig struct {
 	Resolve        bool   `yaml:"resolve"`          // 目标校验时是否做 DNS 解析（SSRF 防护强度）
 	MaxConcurrent  int    `yaml:"max_concurrent"`   // 同时进行的扫描任务数（信号量）
 	Graph          bool   `yaml:"graph"`            // 收集结构化事实图（4.0 P2，默认关）
+	MaxMemoryMB    int    `yaml:"max_memory_mb"`    // A7 内存预算（MB）：超限逐级降档；0=默认 768
+	PagesRetained  int    `yaml:"pages_retained"`   // A8 页面清单驻留上限：超出省略并计数；0=默认 2000
 }
 
 // ChecksConfig 验证型 check 引擎。
@@ -205,6 +207,8 @@ func Default() *Config {
 			Deep:           true,
 			Resolve:        true,
 			MaxConcurrent:  3,
+			MaxMemoryMB:    768,
+			PagesRetained:  2000,
 		},
 		Checks: ChecksConfig{
 			Level:     "all",
@@ -337,6 +341,8 @@ func (c *Config) fillDefaults() {
 	fillInt(&c.Scan.MaxHops, d.Scan.MaxHops)
 	fillInt(&c.Scan.MaxBodyMB, d.Scan.MaxBodyMB)
 	fillInt(&c.Scan.MaxConcurrent, d.Scan.MaxConcurrent)
+	fillInt(&c.Scan.MaxMemoryMB, d.Scan.MaxMemoryMB)
+	fillInt(&c.Scan.PagesRetained, d.Scan.PagesRetained)
 	if c.Scan.UserAgent == "" {
 		c.Scan.UserAgent = ""
 	}

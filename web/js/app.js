@@ -36,30 +36,6 @@ function fmtT(sec) {
 }
 
 /* 自定义下拉组件（等级 / 验证码） */
-function initCDD(rootId, onPick) {
-  var root = document.getElementById(rootId);
-  var pop = root.querySelector(".cdd-pop");
-  root.querySelector(".cdd-btn").addEventListener("click", function (e) {
-    e.stopPropagation();
-    var willOpen = !root.classList.contains("open");
-    document.querySelectorAll(".cdd.open").forEach(function (r) { r.classList.remove("open"); });
-    if (willOpen) root.classList.add("open");
-  });
-  pop.addEventListener("click", function (e) { e.stopPropagation(); });
-  pop.querySelectorAll(".cdd-opt").forEach(function (opt) {
-    opt.addEventListener("click", function () {
-      pop.querySelectorAll(".cdd-opt").forEach(function (o) { o.classList.remove("active"); });
-      opt.classList.add("active");
-      root.setAttribute("data-value", opt.getAttribute("data-v"));
-      root.querySelector(".cdd-label").innerHTML =
-        "<b>" + esc(opt.querySelector("b").textContent) + "</b>" +
-        '<span class="cdd-desc">' + esc(opt.querySelector("span").textContent) + "</span>";
-      root.classList.remove("open");
-      if (onPick) onPick(opt.getAttribute("data-v"));
-    });
-  });
-  return { get value() { return root.getAttribute("data-value"); } };
-}
 document.addEventListener("click", function () {
   document.querySelectorAll(".cdd.open").forEach(function (r) { r.classList.remove("open"); });
 });
@@ -300,7 +276,7 @@ function startScan() {
 
 function pollJob(jobId, onProgress) {
   return new Promise(function (resolve, reject) {
-    var timer = setInterval(function () {
+    var timer = slPoll(function () {
       api.get("/api/job/" + jobId).then(function (job) {
         if (job.status === "done") { clearInterval(timer); resolve(job); }
         else if (job.status === "cancelled") {

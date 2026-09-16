@@ -7,6 +7,7 @@ import (
 
 // Stats 知识库统计（对齐 Python /api/stats 中 intel 侧字段）。
 func (k *KB) Stats() map[string]any {
+	k.ensureDecoded()
 	bySev := map[string]int{}
 	sources := map[string]int{}
 	withRanges, withCVSS := 0, 0
@@ -61,6 +62,7 @@ type SearchResult struct {
 // Search 漏洞情报模糊检索：product/name/cve/type 子串匹配，
 // product 命中排前（近似 Python trgm 检索的语义）。
 func (k *KB) Search(q string, limit int) []SearchResult {
+	k.ensureDecoded()
 	q = strings.ToLower(strings.TrimSpace(q))
 	if q == "" || limit <= 0 {
 		return []SearchResult{}

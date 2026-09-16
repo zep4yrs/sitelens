@@ -28,6 +28,7 @@ import (
 	"cnb.cool/feng-qiao/sitelens/internal/netsec"
 	"cnb.cool/feng-qiao/sitelens/internal/nuclei"
 	"cnb.cool/feng-qiao/sitelens/internal/passive"
+	"cnb.cool/feng-qiao/sitelens/internal/resource"
 	"cnb.cool/feng-qiao/sitelens/internal/security"
 	"cnb.cool/feng-qiao/sitelens/internal/sitelens"
 	"cnb.cool/feng-qiao/sitelens/internal/target"
@@ -142,6 +143,17 @@ func (e *Engine) Scan(rawURL string, opts Options, onProgress progress, cancel f
 		col = newCollector(res.ScannedAt)
 	}
 
+	// 4.0 Track A / A7：内存预算器——超限逐级降档（爬取页数减半 → nuclei 减半 →
+	// 跳过主动模块），全部降档动作记入 Extras["budget"] 并推事件流（明示降级）。
+	maxMemMB := float64(e.cfg.Scan.MaxMemoryMB)
+	var budgetDegrades []string
+	overBudget := func() bool {
+		return maxMemMB > 0 && resource.HeapAllocMB() > maxMemMB
+	}
+	noteBudget := func(what string) {
+		budgetDegrades = append(budgetDegrades, what)
+	}
+
 	// 1) 校验（含 SSRF 防护）
 	scheme, host, port, err := target.Validate(rawURL, e.cfg.Scan.Resolve)
 	if err != nil {
@@ -241,7 +253,12 @@ func (e *Engine) Scan(rawURL string, opts Options, onProgress progress, cancel f
 	}
 	if opts.Deep {
 		onProgress(40, "同域浅爬取…")
-		c := crawler.New(client, e.cfg.Crawler, baseURL)
+		cc := e.cfg.Crawler
+		if overBudget() {
+			cc.MaxPages /= 2
+			noteBudget("爬取页数减半（" + fmt.Sprint(cc.MaxPages) + "）")
+		}
+		c := crawler.New(client, cc, baseURL)
 		if e.cfg.Crawler.Headless {
 			c.SetRenderer(chromeRenderer{headless.NewChrome(time.Duration(e.cfg.Crawler.HeadlessTimeoutSec)*time.Second, e.cfg.Crawler.HeadlessExecPath)})
 		}
@@ -313,6 +330,12 @@ func (e *Engine) Scan(rawURL string, opts Options, onProgress progress, cancel f
 		}
 	}
 
+	// 4.0 Track A / A8：页面清单驻留上限（超出省略并计数，削扫描期内存）
+	if capN := e.cfg.Scan.PagesRetained; capN > 0 && len(res.Pages) > capN {
+		res.Extras["pages_omitted"] = len(res.Pages) - capN
+		res.Pages = res.Pages[:capN]
+	}
+
 	// 4) 多页指纹识别
 	if matcher != nil {
 		onProgress(55, fmt.Sprintf("指纹识别（%d 页）…", len(pages)))
@@ -377,6 +400,10 @@ func (e *Engine) Scan(rawURL string, opts Options, onProgress progress, cancel f
 	// 6.5) Nuclei 社区模板子集（all 级别 + 模板库存在时）
 	if opts.Checks == "all" && !cancelled() && e.cfg.Checks.NucleiCap > 0 && e.cfg.Checks.NucleiDir != "" {
 		onProgress(84, "运行 Nuclei 社区模板子集…")
+		if overBudget() {
+			opts.NucleiCap = opts.NucleiCap / 2
+			noteBudget("Nuclei 模板上限减半（" + fmt.Sprint(opts.NucleiCap) + "）")
+		}
 		if nl := e.nucleiSubset(res.Technologies, res.Title, opts.NucleiCap); len(nl) > 0 {
 			for _, h := range checks.RunList(client, baseURL, nl, e.cfg.Checks.Workers, cancelled,
 				func(done, total int, msg string) {
@@ -488,7 +515,10 @@ func (e *Engine) Scan(rawURL string, opts Options, onProgress progress, cancel f
 
 	// 9) 主动模块（默认关）
 	var dirHits []modules.PageHit
-	if opts.DirScan || opts.Subdomain || opts.Webshell || opts.WeakAudit || opts.ActiveFP || opts.ServiceProbe || opts.NetProto {
+	if overBudget() {
+		noteBudget("跳过主动模块（目录/子域/WebShell/指纹/端口）")
+		emit("budget", "内存超预算，跳过主动模块段")
+	} else if opts.DirScan || opts.Subdomain || opts.Webshell || opts.WeakAudit || opts.ActiveFP || opts.ServiceProbe || opts.NetProto {
 		ac := e.cfg.Active
 		if opts.DirBypass {
 			ac.DirBypass403 = true // 每次扫描可覆盖配置（对齐 Python options.dir_bypass）
@@ -624,6 +654,10 @@ func (e *Engine) Scan(rawURL string, opts Options, onProgress progress, cancel f
 		}
 	}
 
+	if len(budgetDegrades) > 0 {
+		res.Extras["budget"] = budgetDegrades
+	}
+
 	// 4.0 P2：结构化事实图挂到结果（失败不阻塞扫描——图是附加产物）
 	if col != nil {
 		res.Graph = col.graph()
@@ -650,6 +684,12 @@ func (e *Engine) Scan(rawURL string, opts Options, onProgress progress, cancel f
 
 // ClientFor 导出客户端装配（登录爆破等模块复用同一套限速/UA/Cookie 配置）。
 func (e *Engine) ClientFor(opts Options) *httpx.Client { return e.newClient(opts) }
+
+// ReleaseIntel 释放情报知识库常驻内存（A10 自适应版）：表清空、惰性路径保留，
+// 下一次扫描/检索自动重载。供 serve 管理端点在长空闲时调用。
+func (e *Engine) ReleaseIntel() {
+	e.kb.Release()
+}
 
 // ---- 内部辅助 ----
 
@@ -776,7 +816,8 @@ func (e *Engine) nucleiSubset(techs []Tech, pageTitle string, cap int) []checks.
 
 	var out []checks.Check
 	for _, ent := range selected {
-		cs, err := nuclei.LoadFile(filepath.Join(e.cfg.Checks.NucleiDir, filepath.FromSlash(ent.Path)))
+		// A6：走编译缓存（mtime 键控，模板更新自然失效）
+		cs, err := nuclei.LoadFileCached(filepath.Join(e.cfg.Checks.NucleiDir, filepath.FromSlash(ent.Path)))
 		if err != nil {
 			continue
 		}

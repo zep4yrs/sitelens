@@ -127,8 +127,8 @@ func (k *KB) HasNVD() bool {
 	return k.nvd != nil || k.nvdPath != ""
 }
 
-// nvdStore 取 NVD 索引；未挂载时按需惰性加载（线程安全，只加载一次）。
-// 所有内部读取都应经此函数；对外用 NVD()。
+// nvdStore 取 NVD 索引；未挂载时按需惰性加载（线程安全）。
+// Release 复位 nvdTried 后可再次加载；所有内部读取都应经此函数；对外用 NVD()。
 func (k *KB) nvdStore() *NVDStore {
 	if k == nil {
 		return nil
@@ -139,14 +139,18 @@ func (k *KB) nvdStore() *NVDStore {
 	if k.nvdPath == "" {
 		return nil
 	}
-	k.nvdOnce.Do(func() {
-		s, err := LoadNVD(k.nvdPath)
-		if err != nil {
-			k.nvdErr = err
-			return
-		}
-		k.nvd = s
-	})
+	k.nvdMu.Lock()
+	defer k.nvdMu.Unlock()
+	if k.nvdTried { // 双检：已尝试过（成功或失败），维持现值
+		return k.nvd
+	}
+	k.nvdTried = true
+	s, err := LoadNVD(k.nvdPath)
+	if err != nil {
+		k.nvdErr = err
+		return nil
+	}
+	k.nvd = s
 	return k.nvd
 }
 
