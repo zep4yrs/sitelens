@@ -121,3 +121,8 @@ table.list th,
   .cdd-opt span{font-size:11.5px;color:var(--muted-fg)}
   .cdd-opt:hover{background:var(--accent)}
 
+
+/* 视觉升级：换页/切模式过渡帧（Turbo 换 body 时 body 动画自动重放，
+   消除整屏瞬切的跳转感；纯淡入不含位移——位移本身就是跳感来源） */
+@keyframes sl-fadeIn{from{opacity:.35}to{opacity:1}}
+body{animation:sl-fadeIn .16s ease}
