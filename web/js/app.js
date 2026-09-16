@@ -660,3 +660,60 @@ function runBrute() {
   };
   document.addEventListener("mouseup", window.__slSplitUp);
 })();
+
+/* ================= UI 细节：多选下拉 / URL 清空 / 状态点 ================= */
+(function () {
+  // 多选下拉（范围/验证）：按钮开合、点芯片不收起、外部点击收起、摘要同步
+  function bindMulti(id, labelId, placeholder) {
+    var root = document.getElementById(id);
+    var label = document.getElementById(labelId);
+    var row = root ? root.querySelector(".chip-row") : null;
+    if (!root || !label || !row) return;
+    function summary() {
+      var on = [...row.querySelectorAll(".chip.on")];
+      var names = on.map(function (c) { return c.textContent.trim(); });
+      if (!names.length) { label.textContent = placeholder; return; }
+      label.textContent = names.length === 1 ? names[0] : names[0] + " 等 " + names.length + " 项";
+    }
+    root.querySelector(".cdd-btn").addEventListener("click", function (e) {
+      e.stopPropagation();
+      var willOpen = !root.classList.contains("open");
+      document.querySelectorAll(".cdd.open").forEach(function (c) { c.classList.remove("open"); });
+      if (willOpen) root.classList.add("open");
+    });
+    root.querySelector(".cdd-pop").addEventListener("click", function (e) { e.stopPropagation(); });
+    row.addEventListener("click", function () { summary(); });
+    summary();
+  }
+  bindMulti("dd-scope", "dd-scope-label", "扫描范围");
+  bindMulti("dd-verify", "dd-verify-label", "验证方式");
+  document.addEventListener("click", function (e) {
+    if (!e.target.closest || e.target.closest(".cdd")) return;
+    document.querySelectorAll(".cdd.open").forEach(function (c) { c.classList.remove("open"); });
+  });
+
+  // URL 一键清空
+  var url = document.getElementById("url");
+  var clearBtn = document.getElementById("url-clear");
+  if (url && clearBtn) {
+    var wrap = url.closest(".tw-urlwrap");
+    var sync = function () { wrap.classList.toggle("has-text", !!url.value); };
+    url.addEventListener("input", sync);
+    clearBtn.addEventListener("click", function () { url.value = ""; sync(); url.focus(); });
+    sync();
+  }
+
+  // 状态点：随 #st-state 文案变色（idle 灰 / running 绿脉冲 / done 绿常亮）
+  var st = document.getElementById("st-state");
+  var dot = document.getElementById("st-dot");
+  if (st && dot) {
+    var apply = function () {
+      var t = st.textContent || "";
+      dot.className = "st-dot";
+      if (/running|扫描/.test(t)) dot.classList.add("run");
+      else if (/done|完成/.test(t)) dot.classList.add("ok");
+    };
+    new MutationObserver(apply).observe(st, { childList: true, characterData: true, subtree: true });
+    apply();
+  }
+})();

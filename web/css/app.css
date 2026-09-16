@@ -137,6 +137,15 @@ body{animation:sl-fadeIn .16s ease}
 .tw-pagetitle{font-size:14px;font-weight:600;color:var(--foreground)}
 .tw-canvas{flex:1;overflow-y:auto}
 
+/* ============ UI 细节打磨（全局） ============ */
+::-webkit-scrollbar{width:8px;height:8px}
+::-webkit-scrollbar-thumb{background:color-mix(in srgb,var(--muted-fg) 30%,transparent);border-radius:999px}
+::-webkit-scrollbar-thumb:hover{background:color-mix(in srgb,var(--muted-fg) 50%,transparent)}
+::-webkit-scrollbar-track{background:transparent}
+.statusline,.cell b,.sec-title .count,.count-row .n{font-variant-numeric:tabular-nums}
+.url-input,.tb,.sel{border-radius:8px}
+table.list tbody tr{transition:background .15s}
+
 /* ============ 同款侧边栏（单一来源）：工作台与被动页共用同一左列/模式行 ============ */
 .tw-left{width:302px;flex:none;display:flex;flex-direction:column;overflow-y:auto;
   border-right:1px solid var(--border);background:var(--card);padding-bottom:18px}
