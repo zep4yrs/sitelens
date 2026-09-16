@@ -79,21 +79,30 @@ func main() {
 		log.Fatalf("引擎健康检查超时: %v", err)
 	}
 
+	// CDP 调试通道默认关：设 SITLENS_CDP_PORT=9223 才开启（验证/排查用）
+	var browserArgs []string
+	if v := os.Getenv("SITLENS_CDP_PORT"); v != "" {
+		browserArgs = append(browserArgs, "--remote-debugging-port="+v)
+	}
 	app := application.New(application.Options{
 		Name:        "SiteLens",
 		Description: "SiteLens 站点透视（Wails 壳）",
+		Windows: application.WindowsOptions{
+			AdditionalBrowserArgs: browserArgs,
+		},
 		Assets: application.AssetOptions{
 			Handler: application.AssetFileServerFS(fallbackAssets),
 		},
 	})
 	app.Window.NewWithOptions(application.WebviewWindowOptions{
-		Title:     "SiteLens 扫描工作台",
-		Width:     1360,
-		Height:    850,
-		MinWidth:  980,
-		MinHeight: 620,
-		Hidden:    len(os.Args) > 1 && os.Args[1] == "-hidden", // 内存测量用：窗口隐藏照常分配
-		URL:       baseURL,
+		Title:            "SiteLens 扫描工作台",
+		Width:            1360,
+		Height:           850,
+		MinWidth:         980,
+		MinHeight:        620,
+		BackgroundColour: application.NewRGB(250, 250, 250), // 主题底色：跨文档导航空帧期不闪白
+		Hidden:           len(os.Args) > 1 && os.Args[1] == "-hidden", // 内存测量用：窗口隐藏照常分配
+		URL:              baseURL,
 	})
 	log.Println("窗口已创建，进入事件循环")
 	if err := app.Run(); err != nil {

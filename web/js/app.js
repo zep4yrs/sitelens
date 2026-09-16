@@ -9,10 +9,13 @@ function switchTab(name) {
   if (location.hash !== "#" + name) history.replaceState(null, "", "#" + name);
   if (window.slUpdateNav) window.slUpdateNav();
 }
-window.addEventListener("hashchange", function () {
+// Turbo：app.js 随换页重放，window 级监听先卸旧再挂新，防叠加
+if (window.__slAppHash) window.removeEventListener("hashchange", window.__slAppHash);
+window.__slAppHash = function () {
   var h = (location.hash || "#scan").slice(1);
   if (["scan", "netsec", "loginbrute"].indexOf(h) >= 0) switchTab(h);
-});
+};
+window.addEventListener("hashchange", window.__slAppHash);
 var initialTab = (location.hash || "#scan").slice(1);
 if (["scan", "netsec", "loginbrute"].indexOf(initialTab) >= 0) switchTab(initialTab);
 
@@ -36,9 +39,11 @@ function fmtT(sec) {
 }
 
 /* 自定义下拉组件（等级 / 验证码） */
-document.addEventListener("click", function () {
+if (window.__slAppDocClick) document.removeEventListener("click", window.__slAppDocClick);
+window.__slAppDocClick = function () {
   document.querySelectorAll(".cdd.open").forEach(function (r) { r.classList.remove("open"); });
-});
+};
+document.addEventListener("click", window.__slAppDocClick);
 var capDD = initCDD("lb-cap");
 
 /* ---- 三维选择器：范围（多选）× 验证（多选，被动互斥）× 强度（单选）
