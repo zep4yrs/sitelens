@@ -132,3 +132,10 @@ func Snapshot() Stats {
 func bytesToMiB(b uint64) float64 {
 	return float64(int64(b)/1024.0/1024.0*10) / 10
 }
+
+// HeapAllocMB 当前堆上对象占用（A7 预算器用；轻量、无 STW 读取）。
+func HeapAllocMB() float64 {
+	var m runtime.MemStats
+	runtime.ReadMemStats(&m)
+	return float64(m.HeapAlloc) / (1024 * 1024)
+}

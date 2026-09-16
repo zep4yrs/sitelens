@@ -36,6 +36,11 @@ func (k *KB) AttachTplIntel(rows []Entry) {
 	if len(rows) == 0 {
 		return
 	}
+	if !k.decoded {
+		// A5 惰性：尚未解码时先挂起，ensureDecoded 末尾按序并入
+		k.pendingTpl = append(k.pendingTpl, rows...)
+		return
+	}
 	next := int64(-1)
 	for _, r := range rows {
 		next--

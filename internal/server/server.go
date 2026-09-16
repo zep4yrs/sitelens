@@ -18,6 +18,7 @@ import (
 	"os/signal"
 	"path"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -36,6 +37,7 @@ import (
 	"cnb.cool/feng-qiao/sitelens/internal/modules"
 	"cnb.cool/feng-qiao/sitelens/internal/netsec"
 	"cnb.cool/feng-qiao/sitelens/internal/replay"
+	"cnb.cool/feng-qiao/sitelens/internal/resource"
 	"cnb.cool/feng-qiao/sitelens/internal/sitelens"
 	"cnb.cool/feng-qiao/sitelens/internal/store"
 	"cnb.cool/feng-qiao/sitelens/internal/target"
@@ -116,8 +118,8 @@ func New(cfg *config.Config, cfgPath string) (*Server, error) {
 	} else {
 		log.Printf("指纹库加载失败（扫描将无指纹识别）：%v", err)
 	}
-	if kb, err := intel.Load(cfg.Intel.DumpPath, cfg.Intel.RangesPath); err == nil {
-		// OSV 覆盖合并（update-osv 产物）：区间补全 + CVSS 评分
+	// A5 惰性：intel_dump 首次用到时才解码（空闲 RSS 再降 ~65MB）
+	if kb := intel.LoadLazy(cfg.Intel.DumpPath, cfg.Intel.RangesPath); true {
 		if n := intel.ApplyOverridesFile(kb, cfg.Intel.OverridesPath); n > 0 {
 			log.Printf("情报覆盖合并：%d 条（%s）", n, cfg.Intel.OverridesPath)
 		}
@@ -133,8 +135,6 @@ func New(cfg *config.Config, cfgPath string) (*Server, error) {
 			log.Printf("模板情报行合并：%d 条", len(tr))
 		}
 		s.kb.Store(kb)
-	} else {
-		log.Printf("知识库加载失败（情报关联降级）：%v", err)
 	}
 	st, err := store.New(cfg.Store.DataDir, cfg.Store.MaxRecords)
 	if err != nil {
@@ -203,6 +203,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/osv-sync", s.hOsvStatus)
 	mux.HandleFunc("GET /api/categories", s.hCategories)
 	mux.HandleFunc("POST /api/admin/reload", s.hAdminReload)
+	// A10 自适应：长空闲释放情报常驻（惰性路径保留，下次访问自动重载）
+	mux.HandleFunc("POST /api/admin/release-intel", s.hAdminReleaseIntel)
 	// 内置 SPA 靶页：JS 延迟注入登录表单，用于无头渲染/登录爆破链路自测
 	mux.HandleFunc("GET /dev/spa-target", hSPATarget)
 	mux.HandleFunc("POST /dev/spa-target/login", hSPATargetLogin)
@@ -234,6 +236,20 @@ func (s *Server) Handler() http.Handler {
 }
 
 // Run 启动 HTTP 服务（Ctrl+C 优雅关闭）。
+// hAdminReleaseIntel 释放情报知识库常驻内存（A10 自适应版；返回堆指标）。
+func (s *Server) hAdminReleaseIntel(w http.ResponseWriter, r *http.Request) {
+	before := resource.Snapshot()
+	s.eng.ReleaseIntel()
+	runtime.GC()
+	after := resource.Snapshot()
+	log.Printf("情报常驻已释放：%.1fMB → %.1fMB", before.HeapAllocMiB, after.HeapAllocMiB)
+	writeJSON(w, 200, map[string]any{
+		"released":       true,
+		"heap_before_mb": before.HeapAllocMiB,
+		"heap_after_mb":  after.HeapAllocMiB,
+	})
+}
+
 func (s *Server) Run() error {
 	s.startKEVDaemon()
 	srv := &http.Server{

@@ -244,6 +244,45 @@
   };
 
   /* 可选模块（extras）条目 → 单行文本；兼容 url/path 等不同字段名，绝不输出 body/headers */
+  /* A9：可见性感知轮询——窗口隐藏/最小化时间隔 ×4（Electron 后台节流之外
+     再省 CPU/网络）；恢复可见立即回到正常间隔。fn 同 setInterval 语义。 */
+  window.slPoll = function (fn, ms) {
+    var timer = null;
+    var tick = function () { if (!document.hidden) fn(); };
+    timer = setInterval(tick, ms);
+    document.addEventListener("visibilitychange", function () {
+      clearInterval(timer);
+      timer = setInterval(tick, document.hidden ? ms * 4 : ms);
+    });
+    return { stop: function () { clearInterval(timer); } };
+  };
+
+  /* 自绘下拉组件（cdd）：app.html 与 chain.html 复用 */
+  window.initCDD = function (rootId, onPick) {
+    var root = document.getElementById(rootId);
+    var pop = root.querySelector(".cdd-pop");
+    root.querySelector(".cdd-btn").addEventListener("click", function (e) {
+      e.stopPropagation();
+      var willOpen = !root.classList.contains("open");
+      document.querySelectorAll(".cdd.open").forEach(function (r) { r.classList.remove("open"); });
+      if (willOpen) root.classList.add("open");
+    });
+    pop.addEventListener("click", function (e) { e.stopPropagation(); });
+    pop.querySelectorAll(".cdd-opt").forEach(function (opt) {
+      opt.addEventListener("click", function () {
+        pop.querySelectorAll(".cdd-opt").forEach(function (o) { o.classList.remove("active"); });
+        opt.classList.add("active");
+        root.setAttribute("data-value", opt.getAttribute("data-v"));
+        root.querySelector(".cdd-label").innerHTML =
+          "<b>" + esc(opt.querySelector("b").textContent) + "</b>" +
+          '<span class="cdd-desc">' + esc(opt.querySelector("span").textContent) + "</span>";
+        root.classList.remove("open");
+        if (onPick) onPick(opt.getAttribute("data-v"));
+      });
+    });
+    return { get value() { return root.getAttribute("data-value"); } };
+  };
+
   window.extrasLine = function (key, it) {
     it = it || {};
     if (key === "netsec")

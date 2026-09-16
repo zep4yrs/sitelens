@@ -9,7 +9,6 @@
 <script>if(localStorage.getItem("sitelens-theme")==="dark")document.documentElement.classList.add("dark")</script>
 <style>
   .picker{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:16px}
-  .picker select{min-width:300px}
   .meta{display:flex;gap:18px;flex-wrap:wrap;margin-bottom:16px;font-size:13px;color:var(--muted-fg)}
   .meta b{color:var(--fg);font-weight:600}
   .chainwrap{display:flex;gap:22px;flex-wrap:wrap;align-items:flex-start}
@@ -48,7 +47,13 @@
   <p class="sub">基于 <b>真实证据</b> 的发现关系：每次扫描的结构化事实图（入口 / 发现 / 数据流 / CWE / 影响 / 权限变化）与其间的关系边。无证据的候选关系不会被建立。</p>
 
   <div class="picker">
-    <select id="scan" onchange="loadChain()"></select>
+    <div class="cdd" id="scan" data-value="" style="width:340px">
+      <button type="button" class="cdd-btn">
+        <span class="cdd-label"><b>（无扫描历史）</b><span class="cdd-desc">选择一次扫描</span></span>
+        <svg class="cdd-chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>
+      </button>
+      <div class="cdd-pop"></div>
+    </div>
     <button class="btn small" onclick="loadChain()">刷新</button>
     <a class="btn ghost small" id="dl" href="#" style="display:none">下载 graph JSONL</a>
   </div>
@@ -74,24 +79,39 @@ function edgeLabel(k){
   return {sequence:"时序",exploit_impact:"影响证明",evidence_link:"黑白盒关联",priv_change:"权限变化"}[k]||k;
 }
 
-// 列出所有「收集过图」的扫描（用历史接口 + 逐个探测 graph）
+// 列出所有「收集过图」的扫描（历史接口；下拉用 cdd 自绘组件）
+var scanDD = null;
+
 function loadList(){
   fetch("/api/history?limit=60").then(function(r){return r.json();}).then(function(rows){
     rows = rows||[];
-    var sel = document.getElementById("scan");
-    if(!rows.length){ sel.innerHTML = '<option value="">（无扫描历史）</option>'; return; }
-    sel.innerHTML = rows.map(function(x){
-      return '<option value="'+x.id+'">#'+x.id+'  '+esc(x.url)+'  ('+esc(x.scanned_at||"")+')</option>';
+    var root = document.getElementById("scan");
+    var pop = root.querySelector(".cdd-pop");
+    if(!rows.length){
+      pop.innerHTML = '<button type="button" class="cdd-opt"><b>（无扫描历史）</b></button>';
+      return;
+    }
+    pop.innerHTML = rows.map(function(x){
+      return '<button type="button" class="cdd-opt'+(x.id===CUR?' active':'')+'" data-v="'+x.id+'">'+
+        '<b>#'+x.id+'</b><span>'+esc(x.url)+'</span></button>';
     }).join("");
     // 默认选第一条
-    if(rows.length){ CUR = rows[0].id; loadChain(); }
+    CUR = rows[0].id;
+    setDDLabel(root, rows[0]);
+    scanDD = initCDD("scan", function(){ loadChain(); });
+    loadChain();
   }).catch(function(){ document.getElementById("body").innerHTML =
     '<div class="empty">加载扫描历史失败</div>'; });
 }
 
+// cdd 选中后更新按钮标签（与 app.html 的 initCDD 行为一致）
+function setDDLabel(root, x){
+  root.querySelector(".cdd-label").innerHTML =
+    '<b>#'+x.id+'</b><span class="cdd-desc">'+esc(x.url)+'</span>';
+}
+
 function loadChain(){
-  var sel = document.getElementById("scan");
-  CUR = parseInt(sel.value,10)||0;
+  CUR = parseInt(document.getElementById("scan").getAttribute("data-value"),10)||0;
   if(!CUR){ return; }
   var body = document.getElementById("body");
   body.innerHTML = '<div class="empty">加载中…</div>';

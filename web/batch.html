@@ -81,7 +81,7 @@ function startBatch() {
     var jobId = r.job_id;
     window.__batchJobId = jobId;
     return new Promise(function (resolve, reject) {
-      var timer = setInterval(function () {
+      var timer = slPoll(function () {
         api.get("/api/job/" + jobId + "/results").then(function (job) {
           document.getElementById("bar").style.width = (job.progress || 0) + "%";
           addLog(job.message);

@@ -854,7 +854,7 @@
     var b = $("osvBtn"), m = $("osvMsg");
     b.disabled = true; m.textContent = "同步中…";
     window.api.post("/api/osv-sync", {}).then(function () {
-      var timer = setInterval(function () {
+      var timer = slPoll(function () {
         window.api.get("/api/osv-sync").then(function (st) {
           if (!st.running) {
             clearInterval(timer); b.disabled = false;

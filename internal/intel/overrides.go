@@ -8,6 +8,7 @@ import (
 
 // CollectCVEs 收集 vuln_kb 全部非空 CVE（大写去重排序）。
 func (k *KB) CollectCVEs() []string {
+	k.ensureDecoded()
 	set := map[string]bool{}
 	for i := range k.vulns {
 		c := strings.ToUpper(strings.TrimSpace(k.vulns[i].CVE))
@@ -25,9 +26,14 @@ func (k *KB) CollectCVEs() []string {
 
 // ApplyOverrides 把 OSV 覆盖数据合并进知识库 vuln 条目（幂等）：
 // Affected 追加去重、CVSS 空位补齐。返回生效条数。
+// 最近一次数据留存于 lastOv，供 Release 后经 pendingOv 重放。
 func (k *KB) ApplyOverrides(ov map[string]Override) int {
+	k.ensureDecoded()
 	if k.vulns == nil {
 		return 0
+	}
+	if len(ov) > 0 {
+		k.lastOv = ov
 	}
 	return MergeOverrides(k.vulns, ov)
 }
