@@ -120,16 +120,20 @@
       if (window.slUpdateNav) window.slUpdateNav();
       if (window.slUpdateSide) window.slUpdateSide();
     });
-    // 模式行点击分派：工作台=即时 switchTab；被动页=Turbo 去对应模式
+    // 模式行点击分派：工作台=即时 switchTab；被动页=Turbo 去对应模式。
+    // 注意不能以「switchTab 函数存在」判定在工作台——Turbo 切页后 window 上的
+    // 旧函数仍残留，会被误判导致只改 hash 不导航；以路径+面板存在为准。
     document.addEventListener("click", function (e) {
       var b = e.target && e.target.closest ? e.target.closest(".tw-modes .tab") : null;
       if (!b) return;
       var name = b.getAttribute("data-tab");
-      if (typeof window.switchTab === "function") {
+      e.preventDefault();
+      var onWorkbench = location.pathname === "/app" &&
+        document.querySelector(".tw-panel") && typeof window.switchTab === "function";
+      if (onWorkbench) {
         window.switchTab(name);
-      } else {
-        e.preventDefault();
-        if (window.Turbo) window.Turbo.visit("/app#" + name);
+      } else if (window.Turbo) {
+        window.Turbo.visit("/app#" + name);
       }
     });
     // 侧栏模式点击：工作台内即时切面板（Turbo 会拦 hash 点击且不发 hashchange）

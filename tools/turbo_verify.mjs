@@ -105,12 +105,16 @@ const main = async () => {
     });
   }
 
-  // 回工作台（确定性：Turbo.visit 直达）
-  await evalJs(`window.Turbo.visit("/app#scan")`);
+  // 回工作台（真实用户路径：被动页上点左列模式行 → 须落到 /app 对应面板。
+  // 此前验证用 Turbo.visit 直调绕开了该路径，漏测了 stale switchTab 误判 bug）
+  await evalJs(`(function(){ var b = document.querySelector('.tw-modes .tab[data-tab="scan"]'); if (b) b.click(); })()`);
+  let backOk = false;
   for (let i = 0; i < 20; i++) {
     await sleep(300);
-    if (await evalJs("location.pathname") === "/app") break;
+    backOk = await evalJs(`location.pathname === "/app" && !!document.getElementById("tab-scan") && document.getElementById("tab-scan").classList.contains("active")`);
+    if (backOk) break;
   }
+  results.push({ kind: "return", key: "scan", via: "passive-mode-row", ok: backOk });
 
   // B) 工作台五模式
   for (const mode of ["netsec", "loginbrute", "audit", "batch", "scan"]) {
@@ -139,7 +143,9 @@ const main = async () => {
   const ok = results.every((r) =>
     r.kind === "top"
       ? r.marker === 42 && r.topbar === 1 && r.path === r.wantPath && r.active === r.key
-      : r.marker === 42 && r.panel === true && r.canvas === true && r.active === r.key);
+      : r.kind === "mode"
+        ? r.marker === 42 && r.panel === true && r.canvas === true && r.active === r.key
+        : r.ok === true);
   console.log(ok && exceptions.length === 0 ? "VERIFY-PASS" : "VERIFY-FAIL");
   process.exit(ok && exceptions.length === 0 ? 0 : 1);
 };
