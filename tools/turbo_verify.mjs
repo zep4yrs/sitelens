@@ -1,4 +1,7 @@
-// Turbo 接入验证：CDP 附加 WebView2，设标记→点侧栏→验标记存活（未整页重载）+ 各页渲染。
+// Turbo + 双区布局验证：
+//  A) 顶栏四个被动页（设置/情报库/历史/攻击链）：点击 → Turbo 换页（标记存活=未整页重载）
+//  B) 工作台五个模式（综合扫描/网络层检测/登录爆破/源码审计/批量扫描）：
+//     点击左栏模式行 → 控制面板 + 画布面板联动
 // 用法: node tools/turbo_verify.mjs [port]
 const port = process.argv[2] || "9223";
 const base = "http://127.0.0.1:" + port;
@@ -22,11 +25,11 @@ const pending = new Map();
 let ws;
 const exceptions = [];
 
-function send(method, params = {}, sessionId) {
+function send(method, params = {}) {
   const id = ++seq;
   return new Promise((resolve, reject) => {
     pending.set(id, { resolve, reject });
-    ws.send(JSON.stringify({ id, method, params, sessionId }));
+    ws.send(JSON.stringify({ id, method, params }));
   });
 }
 
@@ -41,7 +44,10 @@ const main = async () => {
       pending.delete(msg.id);
       msg.error ? reject(new Error(JSON.stringify(msg.error))) : resolve(msg.result);
     } else if (msg.method === "Runtime.exceptionThrown") {
-      exceptions.push(msg.params?.exceptionDetails?.text || "exception");
+      exceptions.push(JSON.stringify({
+        text: msg.params?.exceptionDetails?.text,
+        desc: (msg.params?.exceptionDetails?.exception?.description || "").slice(0, 200),
+      }));
     }
   };
   await send("Runtime.enable");
@@ -52,57 +58,75 @@ const main = async () => {
     return r.result.value;
   }
 
-  // 等引擎 UI 就绪：侧栏链接真的可点（启动期有重定向，等稳定的最终文档）
+  // 等应用就绪（顶栏；工作台模式行待导航回 /app 后再验）
   let ready = false;
   for (let i = 0; i < 40; i++) {
     try {
-      if (await evalJs("!!(window.Turbo && document.querySelector('.side-nav a[data-key=\"history\"]') && document.querySelector('main.page'))")) {
+      if (await evalJs(`!!(window.Turbo && document.querySelector('.top-nav a[data-key="history"]'))`)) {
         ready = true; break;
       }
     } catch {}
     await sleep(500);
   }
   if (!ready) throw new Error("app not ready");
-  await sleep(500); // 首帧脚本全部落定
+  await sleep(500);
+  await evalJs("window.__slMarker = 42");
 
-  await evalJs("window.__slMarker = 42; window.Turbo ? 'turbo-present' : 'turbo-missing'");
-
-  const pages = [
-    ["history", "/history"], ["settings", "/settings"], ["chain", "/chain"],
-    ["batch", "/batch"], ["intel", "/intel"], ["audit", "/audit"], ["scan", "/app"],
-  ];
   const results = [];
-  for (const [key, wantPath] of pages) {
+
+  // A) 顶栏被动页
+  for (const [key, wantPath] of [["intel", "/intel"], ["history", "/history"], ["chain", "/chain"], ["settings", "/settings"]]) {
     const clicked = await evalJs(`(function(){
-      var a = document.querySelector('.side-nav a[data-key="${key}"]');
-      if (!a) return 'no-link';
-      a.click(); return 'clicked';
+      var a = document.querySelector('.top-nav a[data-key="${key}"]');
+      if (!a) return 'no-link'; a.click(); return 'clicked';
     })()`);
     if (clicked !== "clicked") { results.push({ key, error: clicked }); continue; }
-    // 轮询等 Turbo 完成换页（数据重的页面首取 > 900ms）
     let path = null;
     for (let i = 0; i < 20; i++) {
       await sleep(300);
       path = await evalJs("location.pathname");
       if (path === wantPath) break;
     }
-    const state = await evalJs(`(function(){
-      return {
-        marker: window.__slMarker === undefined ? null : window.__slMarker,
-        sidebar: document.querySelectorAll('.wb-side').length,
-        main: !!document.querySelector('main.page'),
-        active: (document.querySelector('.side-nav a.active')||{}).getAttribute?.('data-key') || null
-      };
-    })()`);
-    results.push({ key, path, wantPath, ...state });
+    results.push({
+      kind: "top", key, path, wantPath,
+      marker: await evalJs("window.__slMarker ?? null"),
+      topbar: await evalJs("document.querySelectorAll('.wb-top').length"),
+      active: await evalJs(`(document.querySelector('.top-nav a.active')||{}).getAttribute?.('data-key') || null`),
+    });
   }
+
+  // 回工作台
+  await evalJs(`document.querySelector('.wb-top .brand').click()`);
+  for (let i = 0; i < 20; i++) {
+    await sleep(300);
+    if (await evalJs("location.pathname") === "/app") break;
+  }
+
+  // B) 工作台五模式
+  for (const mode of ["netsec", "loginbrute", "audit", "batch", "scan"]) {
+    const clicked = await evalJs(`(function(){
+      var b = document.querySelector('.tw-modes .tab[data-tab="${mode}"]');
+      if (!b) return 'no-tab'; b.click(); return 'clicked';
+    })()`);
+    if (clicked !== "clicked") { results.push({ kind: "mode", key: mode, error: clicked }); continue; }
+    await sleep(250);
+    results.push({
+      kind: "mode", key: mode,
+      marker: await evalJs("window.__slMarker ?? null"),
+      panel: await evalJs(`document.getElementById('tab-${mode}').classList.contains('active')`),
+      canvas: await evalJs(`document.querySelector('.tw-canvaspane[data-pane="${mode}"]').classList.contains('active')`),
+      active: await evalJs(`(document.querySelector('.tw-modes .tab.active')||{}).getAttribute?.('data-tab') || null`),
+    });
+  }
+
   console.log(JSON.stringify({ results, exceptions: exceptions.slice(0, 5) }, null, 1));
 
-  const allOk = results.every((r) =>
-    r.marker === 42 && r.sidebar === 1 && r.main &&
-    r.path === r.wantPath && r.active === r.key);
-  console.log(allOk && exceptions.length === 0 ? "VERIFY-PASS" : "VERIFY-FAIL");
-  process.exit(allOk && exceptions.length === 0 ? 0 : 1);
+  const ok = results.every((r) =>
+    r.kind === "top"
+      ? r.marker === 42 && r.topbar === 1 && r.path === r.wantPath && r.active === r.key
+      : r.marker === 42 && r.panel === true && r.canvas === true && r.active === r.key);
+  console.log(ok && exceptions.length === 0 ? "VERIFY-PASS" : "VERIFY-FAIL");
+  process.exit(ok && exceptions.length === 0 ? 0 : 1);
 };
 
 main().catch((e) => { console.error("VERIFY-ERROR", e.message); process.exit(2); });

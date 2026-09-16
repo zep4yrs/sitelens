@@ -17,11 +17,11 @@ function switchTab(name) {
 if (window.__slAppHash) window.removeEventListener("hashchange", window.__slAppHash);
 window.__slAppHash = function () {
   var h = (location.hash || "#scan").slice(1);
-  if (["scan", "netsec", "loginbrute"].indexOf(h) >= 0) switchTab(h);
+  if (["scan", "netsec", "loginbrute", "audit", "batch"].indexOf(h) >= 0) switchTab(h);
 };
 window.addEventListener("hashchange", window.__slAppHash);
 var initialTab = (location.hash || "#scan").slice(1);
-if (["scan", "netsec", "loginbrute"].indexOf(initialTab) >= 0) switchTab(initialTab);
+if (["scan", "netsec", "loginbrute", "audit", "batch"].indexOf(initialTab) >= 0) switchTab(initialTab);
 
 /* ================= 综合扫描 ================= */
 var currentScanId = null;
