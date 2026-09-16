@@ -10,52 +10,77 @@
 <script>if(localStorage.getItem("sitelens-theme")==="dark")document.documentElement.classList.add("dark")</script>
 <style>
   /* ============ text-well 式布局：顶栏 + 左控制台 + 可拖分割 + 右画布 ============ */
+  /* 轻感对齐：近无彩色、软填充选中、羽毛按钮、发丝分割、大留白 */
   .tw-app{position:fixed;inset:var(--top-h) 0 0 0;display:flex;background:var(--card)}
   .tw-left{width:302px;flex:none;display:flex;flex-direction:column;overflow-y:auto;
     border-right:1px solid var(--border);background:var(--card);padding-bottom:18px}
-  .tw-modes{display:grid;grid-template-columns:repeat(5,1fr);border-bottom:1px solid var(--border);
-    margin:0 0 14px;flex:none}
-  .tw-modes .tab{display:flex;flex-direction:column;align-items:center;gap:5px;padding:12px 2px 10px;
-    border:none;border-bottom:2px solid transparent;background:none;cursor:pointer;color:var(--muted-fg);
-    font-size:11.5px;font-family:inherit;border-radius:0}
-  .tw-modes .tab svg{width:18px;height:18px}
+  .tw-modes{display:grid;grid-template-columns:repeat(5,1fr);gap:3px;padding:6px 6px 0;
+    border-bottom:1px solid var(--border);margin:0 0 16px;flex:none}
+  .tw-modes .tab{display:flex;flex-direction:column;align-items:center;gap:5px;padding:11px 2px 9px;
+    border:none;border-radius:8px 8px 0 0;background:none;cursor:pointer;color:var(--muted-fg);
+    font-size:11px;font-family:inherit;white-space:nowrap}
+  .tw-modes .tab svg{width:17px;height:17px;opacity:.75}
   .tw-modes .tab:hover{color:var(--foreground);background:var(--accent)}
-  .tw-modes .tab.active{color:var(--foreground);background:var(--secondary);
-    border-bottom-color:var(--primary);font-weight:600}
-  .tw-note{font-size:11.5px;color:var(--muted-fg);line-height:1.7;margin:0 14px 12px}
-  .tw-panel{padding:0 14px}
-  .tw-url{height:46px;font-size:14px;margin-bottom:12px}
-  .tw-fold{border:1px solid var(--border);border-radius:8px;margin-bottom:12px;background:var(--card)}
+  .tw-modes .tab.active{color:var(--foreground);background:var(--muted);font-weight:600}
+  .tw-modes .tab.active svg{opacity:1}
+  .tw-note{font-size:11.5px;color:var(--muted-fg);line-height:1.7;margin:0 16px 14px}
+  .tw-panel{padding:0 16px}
+  .tw-url{height:44px;font-size:14px;margin-bottom:14px;border-radius:8px}
+  /* 折叠：无框，仅一行 + 发丝线 */
+  .tw-fold{border:none;border-radius:0;margin:0 -2px 6px;background:none}
   .tw-fold summary{list-style:none;display:flex;align-items:center;justify-content:space-between;
-    padding:10px 12px;font-size:13.5px;font-weight:600;cursor:pointer;user-select:none}
+    padding:9px 2px;font-size:13px;font-weight:500;cursor:pointer;user-select:none;color:var(--foreground)}
   .tw-fold summary::-webkit-details-marker{display:none}
   .tw-fold summary::after{content:"›";color:var(--muted-fg);transform:rotate(90deg);transition:transform .15s}
   .tw-fold[open] summary::after{transform:rotate(-90deg)}
-  .tw-fold-body{padding:6px 12px 12px;border-top:1px solid var(--border)}
+  .tw-fold-body{padding:4px 2px 10px;border-top:1px solid var(--border)}
   /* 窄栏：配置组改纵向堆叠 */
-  .tw-left .opt-group{flex-direction:column;align-items:stretch;gap:8px;margin:10px 0}
-  .tw-left .g-label{width:auto}
-  .tw-left .tb{width:100%;margin-bottom:12px}
-  .tw-toggle{display:flex;gap:8px;align-items:center;font-size:12.5px;color:var(--muted-fg);
-    margin:0 0 12px;cursor:pointer}
-  .tw-toggle input{accent-color:var(--primary);width:15px;height:15px}
-  .tw-run{width:100%;justify-content:center;height:44px}
-  .tw-run-hint{font-size:11.5px;color:var(--muted-fg);margin:8px 0 0;text-align:center}
+  .tw-left .opt-group{flex-direction:column;align-items:stretch;gap:8px;margin:12px 0}
+  .tw-left .g-label{width:auto;font-size:11.5px}
+  .tw-left .tb{width:100%;margin-bottom:14px;border-radius:8px}
+  /* 软芯片：去描边去彩色，选中=灰底深字 */
+  .tw-left .chip,.tw-left .seg-opt{border:1px solid transparent;background:var(--muted);color:var(--muted-fg);
+    padding:6px 13px;border-radius:7px;font-size:12.5px}
+  .tw-left .chip:hover,.tw-left .seg-opt:hover{border-color:transparent;background:var(--accent);color:var(--foreground)}
+  .tw-left .chip.on,.tw-left .seg-opt.on{background:var(--secondary);color:var(--foreground);
+    font-weight:600;border-color:var(--border)}
+  /* iOS 式开关 */
+  .tw-switch{appearance:none;-webkit-appearance:none;width:34px;height:20px;border-radius:999px;
+    background:var(--border);position:relative;cursor:pointer;transition:background .2s;flex:none;margin:0}
+  .tw-switch::after{content:"";position:absolute;top:2px;left:2px;width:16px;height:16px;border-radius:50%;
+    background:#fff;box-shadow:0 1px 2px rgba(15,23,42,.25);transition:left .18s}
+  .tw-switch:checked{background:var(--ok)}
+  .tw-switch:checked::after{left:16px}
+  .tw-toggle{display:flex;gap:9px;align-items:center;font-size:12.5px;color:var(--muted-fg);
+    margin:2px 0 16px;cursor:pointer}
+  /* 羽毛按钮：浅灰底深字，无重色（.tw-left 提权压过 app.css 的 .btn 深底） */
+  .tw-left .btn.tw-run{width:100%;justify-content:center;height:42px;border-radius:8px;
+    background:var(--secondary);color:var(--foreground);font-weight:500;box-shadow:none;
+    border:1px solid transparent}
+  .tw-left .btn.tw-run:hover{background:color-mix(in srgb,var(--muted-fg) 12%,var(--secondary));box-shadow:none}
+  .tw-left .btn.tw-run:active{transform:none}
+  .tw-left .btn.tw-run:disabled{opacity:.45;cursor:not-allowed}
+  .tw-left .btn.tw-run.ghost-lite{background:var(--card);border:1px solid var(--border);color:var(--muted-fg)}
+  .tw-run-hint{font-size:11.5px;color:var(--muted-fg);margin:9px 0 0;text-align:center;line-height:1.7}
   .tw-split{width:6px;flex:none;cursor:col-resize;position:relative;background:transparent}
   .tw-split::before{content:"";position:absolute;left:2px;top:0;bottom:0;width:1px;background:var(--border)}
   .tw-split:hover::before,.tw-split.on::before{width:2px;left:1.5px;background:var(--primary)}
-  .tw-right{flex:1;display:flex;flex-direction:column;min-width:0;background:var(--background)}
-  .tw-toolbar{flex:none;display:flex;align-items:center;gap:14px;padding:10px 18px;
+  .tw-right{flex:1;display:flex;flex-direction:column;min-width:0;background:var(--card)}
+  .tw-toolbar{flex:none;display:flex;align-items:center;gap:14px;padding:11px 20px;
     border-bottom:1px solid var(--border);background:var(--card)}
   .tw-toolbar .statusline{margin:0}
-  .tw-progress-row{flex:none;background:var(--card);padding:0 18px}
+  .tw-progress-row{flex:none;background:var(--card);padding:0 20px}
   .tw-progress-row .progressbar{margin:0 0 0}
-  .tw-canvas{flex:1;overflow-y:auto;padding:26px 30px}
+  .tw-canvas{flex:1;overflow-y:auto;padding:34px 36px}
   .tw-canvaspane{display:none}
   .tw-canvaspane.active{display:block}
-  .tw-canvas .empty{min-height:56vh}
-  .tw-canvas .empty .big{display:grid;place-items:center;width:64px;height:64px;
-    border:1.5px solid var(--border);border-radius:50%;margin:0 auto 14px;font-size:20px}
+  .tw-canvas .empty{min-height:54vh;gap:4px}
+  .empty .empty-title{font-size:14.5px;font-weight:500;color:var(--foreground)}
+  .empty .empty-desc{font-size:12.5px;color:var(--muted-fg);line-height:1.8;max-width:30em}
+  /* 空态引导住在左栏（对齐参照物）：紧凑版圆标 */
+  .tw-left .empty{min-height:0;padding:30px 4px 0;gap:4px}
+  .tw-left .empty .big{display:grid;place-items:center;width:56px;height:56px;
+    border:1.5px solid var(--border);border-radius:50%;margin:0 auto 12px;font-size:15px;color:var(--muted-fg)}
   .tw-canvas .netsec-out,.tw-canvas .brute-out{max-width:960px}
 
   /* ============ 原有页内样式（保留：JS 产出内容依赖这些类） ============ */
@@ -202,9 +227,13 @@
         </div>
       </details>
       <input class="tb" id="opt-cookie" placeholder="认证会话（可选）Cookie: session=…" autocomplete="off">
-      <label class="tw-toggle"><input type="checkbox" id="opt-ua"> 浏览器 UA（应对按 UA 降级的站点）</label>
+      <label class="tw-toggle"><input type="checkbox" id="opt-ua" class="tw-switch"> 浏览器 UA（应对按 UA 降级的站点）</label>
       <button class="btn tw-run" id="go" onclick="startScan()">▷ 开始扫描</button>
       <p class="hint" id="hint" style="text-align:center"></p>
+      <!-- 空态引导住在控制栏（对齐参照物布局）；扫描开始时由 app.js 隐藏 -->
+      <div id="idle-wrap">
+        <div class="empty"><span class="big">▷</span><span class="empty-title">输入目标网址开始扫描</span><span class="empty-desc">在上方输入目标，选择范围与强度，点击「开始扫描」按钮</span></div>
+      </div>
     </section>
 
     <!-- 网络层检测：控制 -->
@@ -252,7 +281,7 @@
     <section class="tabpanel tw-panel" id="tab-audit">
       <p class="tw-note" style="margin:0 0 12px">上传源码文件或 zip 工程包，16 条规则 + AST 污点分析。文件审计后即删。</p>
       <button class="btn tw-run" id="audit-go" onclick="runAudit()">▷ 开始审计</button>
-      <button class="btn ghost tw-run" style="margin-top:8px" onclick="runDemo()">载入演示样本</button>
+      <button class="btn tw-run ghost-lite" style="margin-top:8px" onclick="runDemo()">载入演示样本</button>
       <p class="tw-run-hint">演示样本为内置「故意漏洞」教学代码，服务端拼装、从不执行</p>
     </section>
 
@@ -260,7 +289,7 @@
     <section class="tabpanel tw-panel" id="tab-batch">
       <p class="tw-note" style="margin:0 0 12px">每行一个 URL，3 线程并发逐个扫描并入库，完成后可在历史页导出宽表 CSV。</p>
       <button class="btn tw-run" id="batch-go" onclick="startBatch()">▷ 开始批量扫描</button>
-      <button class="btn ghost tw-run" id="batch-cancel" onclick="cancelBatch()" style="margin-top:8px;display:none">取消</button>
+      <button class="btn tw-run ghost-lite" id="batch-cancel" onclick="cancelBatch()" style="margin-top:8px;display:none">取消</button>
       <p class="hint" id="batch-hint" style="text-align:center"></p>
       <div class="progressbar" id="batch-pw" style="display:none"><i id="batch-bar"></i></div>
     </section>
@@ -278,11 +307,8 @@
     </div>
     <div class="tw-progress-row"><div class="progressbar" id="pw" style="display:none"><i id="bar"></i></div></div>
     <div class="tw-canvas">
-      <!-- 综合扫描：输出 -->
+      <!-- 综合扫描：输出画布（空载留白，引导在左栏） -->
       <section class="tw-canvaspane active" data-pane="scan">
-        <div id="idle-wrap">
-          <div class="empty"><span class="big">▷</span><span>输入目标网址开始扫描</span></div>
-        </div>
         <div id="result"></div>
       </section>
       <!-- 网络层检测：输出 -->
