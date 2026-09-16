@@ -192,6 +192,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/verified", redirect("/history#verified"))
 	mux.HandleFunc("/js/", s.serveAssetPrefix)
 	mux.HandleFunc("/css/", s.serveAssetPrefix)
+	mux.HandleFunc("/monaco/", s.hMonaco)
 	mux.HandleFunc("/b/", s.hBeacon)
 
 	// API
@@ -350,6 +351,39 @@ func (s *Server) serveAsset(w http.ResponseWriter, name string) {
 	//（旧 common.js + 新页面是白屏的经典组合）
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	_, _ = w.Write(data)
+}
+
+// hMonaco Monaco Editor 静态资源（25A）：读 web.MonacoFS（embed 根 monaco/），
+// 经 /monaco/ 前缀服务；vendor 文件随二进制版本发布，给一天强缓存。
+func (s *Server) hMonaco(w http.ResponseWriter, r *http.Request) {
+	name := strings.TrimPrefix(path.Clean(r.URL.Path), "/monaco/")
+	if name == "" || strings.Contains(name, "..") {
+		http.NotFound(w, r)
+		return
+	}
+	data, err := web.MonacoFS.ReadFile("monaco/" + name)
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	ct := "application/javascript; charset=utf-8"
+	switch {
+	case strings.HasSuffix(name, ".css"):
+		ct = "text/css; charset=utf-8"
+	case strings.HasSuffix(name, ".json"):
+		ct = "application/json; charset=utf-8"
+	case strings.HasSuffix(name, ".ttf"):
+		ct = "font/ttf"
+	case strings.HasSuffix(name, ".woff"):
+		ct = "font/woff"
+	case strings.HasSuffix(name, ".woff2"):
+		ct = "font/woff2"
+	case strings.HasSuffix(name, ".svg"):
+		ct = "image/svg+xml"
+	}
+	w.Header().Set("Cache-Control", "public, max-age=86400")
+	w.Header().Set("Content-Type", ct)
 	_, _ = w.Write(data)
 }
 
@@ -1099,6 +1133,8 @@ func (s *Server) hAudit(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 400, map[string]any{"error": "压缩包中没有可审计的文本源码"})
 		return
 	}
+	// 25A 源码预览：文本路径 + ≤512KB 内容随响应回传（服务端即删，不落盘）
+	rep.Sources, rep.Contents = audit.CollectSources(dir, audit.MaxContentBytes)
 	writeJSON(w, 200, rep)
 }
 
@@ -1145,6 +1181,7 @@ func (s *Server) hAuditDemo(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 500, map[string]any{"error": "审计失败"})
 		return
 	}
+	rep.Sources, rep.Contents = audit.CollectSources(dir, audit.MaxContentBytes)
 	writeJSON(w, 200, rep)
 }
 

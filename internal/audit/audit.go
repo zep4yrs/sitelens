@@ -8,11 +8,14 @@
 package audit
 
 import (
+	"bytes"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
+	"unicode/utf8"
 
 	"cnb.cool/feng-qiao/sitelens/internal/config"
 	"cnb.cool/feng-qiao/sitelens/internal/model"
@@ -104,6 +107,45 @@ type Report struct {
 	Files      int            `json:"files"`
 	Lines      int            `json:"lines"`
 	BySeverity map[string]int `json:"by_severity"`
+	// 25A 源码预览（server 侧填充，audit 引擎不感知）：
+	// Sources 为文本源码相对路径；Contents 为 ≤MaxContentBytes 的 UTF-8 文本内容。
+	// 二进制/超大文件不回传内容；内容仅回传发起审计的用户，服务端仍审计后即删。
+	Sources  []string          `json:"sources,omitempty"`
+	Contents map[string]string `json:"contents,omitempty"`
+}
+
+// MaxContentBytes 单文件回传内容上限（25A：≤512KB 文本才随响应携带）。
+const MaxContentBytes = 512 << 10
+
+// CollectSources 遍历审计目录，产出文本源码相对路径列表与内容映射（25A 源码预览）。
+// 含 NUL 或非 UTF-8 的二进制、超过 maxBytes 的文件只登记路径、不回传内容；
+// 内容仅随响应回传发起审计的用户浏览器，服务端依旧审计后即删、不落盘。
+func CollectSources(root string, maxBytes int64) (sources []string, contents map[string]string) {
+	contents = map[string]string{}
+	_ = filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return nil
+		}
+		rel, rerr := filepath.Rel(root, path)
+		if rerr != nil {
+			return nil
+		}
+		rel = filepath.ToSlash(rel)
+		data, rerr := os.ReadFile(path)
+		if rerr != nil {
+			return nil
+		}
+		if bytes.IndexByte(data, 0) >= 0 || !utf8.Valid(data) {
+			return nil // 二进制：不入树不回传
+		}
+		sources = append(sources, rel)
+		if int64(len(data)) <= maxBytes {
+			contents[rel] = string(data)
+		}
+		return nil
+	})
+	sort.Strings(sources)
+	return sources, contents
 }
 
 // Run 审计目录或单文件。

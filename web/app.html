@@ -281,12 +281,17 @@
       <div class="progressbar" id="lb-pw" style="display:none"><i id="lb-bar"></i></div>
     </section>
 
-    <!-- 源码审计：控制 -->
+    <!-- 源码审计：控制（上传收纳一行 + 文件树 + 运行键；Monaco 画布见 data-pane=audit） -->
     <section class="tabpanel tw-panel" id="tab-audit">
-      <p class="tw-note" style="margin:0 0 12px">上传源码文件或 zip 工程包，16 条规则 + AST 污点分析。文件审计后即删。</p>
+      <div class="dropzone dz-mini" id="audit-dz">
+        <input id="audit-files" type="file" multiple style="display:none" accept=".zip,.py,.js,.php">
+        <svg class="dz-mini-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg>
+        <span class="dz-mini-txt">点击或拖入上传<span class="dz-mini-sub">.zip / .py / .js / .php</span></span>
+      </div>
+      <div class="dz-names mono" id="audit-names"></div>
+      <div class="audit-tree" id="audit-tree"></div>
       <button class="btn tw-run" id="audit-go" onclick="runAudit()">▷ 开始审计</button>
-      <button class="btn tw-run ghost-lite" style="margin-top:8px" onclick="runDemo()">载入演示样本</button>
-      <p class="tw-run-hint">演示样本为内置「故意漏洞」教学代码，服务端拼装、从不执行</p>
+      <p class="tw-run-hint">16 条规则 + AST 污点分析 · 文件审计后即删</p>
     </section>
 
     <!-- 批量扫描：控制 -->
@@ -326,17 +331,20 @@
         <iframe id="lb-preview" sandbox="allow-forms allow-same-origin"></iframe>
         <div id="lb-out"></div>
       </section>
-      <!-- 源码审计：输入画布 + 输出 -->
+      <!-- 源码审计：Monaco 画布 + 发现面板 -->
       <section class="tw-canvaspane" data-pane="audit">
-        <div class="dropzone" id="audit-dz">
-          <input id="audit-files" type="file" multiple style="display:none" accept=".zip,.py,.js,.php">
-          <div class="dz-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:26px;height:26px"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg></div>
-          <div class="dz-main">把源码文件 / zip 包拖到这里</div>
-          <div class="dz-sub">或 <span class="dz-pick">点击选择</span> · 支持多选 · .zip 压缩包自动解包（rar / 7z / tar 不支持）</div>
-          <div class="dz-names mono" id="audit-names"></div>
+        <div class="audit-work">
+          <div class="audit-edwrap">
+            <div class="audit-editor" id="audit-editor"></div>
+            <div class="audit-ed-empty" id="audit-ed-empty">
+              <span class="big">▷</span>
+              <span class="empty-title">审计结果将在这里打开</span>
+              <span class="empty-desc">左侧上传源码并开始审计后，点文件树中的文件即可预览代码与错误标注</span>
+            </div>
+          </div>
         </div>
-        <div id="audit-summary" class="summary" style="display:none;margin-top:16px"></div>
-        <div id="audit-out" style="margin-top:16px"></div>
+        <div id="audit-summary" class="summary" style="display:none;margin-top:14px"></div>
+        <div id="audit-out" style="margin-top:14px"></div>
       </section>
       <!-- 批量扫描：输入画布 + 输出 -->
       <section class="tw-canvaspane" data-pane="batch">
