@@ -34,6 +34,8 @@
   .tw-fold summary::after{content:"›";color:var(--muted-fg);transform:rotate(90deg);transition:transform .15s}
   .tw-fold[open] summary::after{transform:rotate(-90deg)}
   .tw-fold-body{padding:4px 2px 10px;border-top:1px solid var(--border)}
+  .tw-fold-sep{height:1px;background:var(--border);margin:12px 0}
+  .tabpanel.active,.tw-canvaspane.active{animation:sl-fadeIn .16s ease}
   /* 窄栏：配置组改纵向堆叠 */
   .tw-left .opt-group{flex-direction:column;align-items:stretch;gap:8px;margin:12px 0}
   .tw-left .g-label{width:auto;font-size:11.5px}
@@ -192,7 +194,7 @@
     <!-- 综合扫描：控制 -->
     <section class="tabpanel active tw-panel" id="tab-scan">
       <input class="url-input tw-url" id="url" placeholder="https://example.com" autocomplete="off">
-      <details class="tw-fold" open>
+      <details class="tw-fold">
         <summary>扫描配置</summary>
         <div class="tw-fold-body">
           <div class="opt-group">
@@ -227,10 +229,11 @@
               <span class="seg-opt" data-st="full" title="all 全量模板 + nuclei 上限 6000 + 全字典 + 全端口集">完整</span>
             </div>
           </div>
+          <div class="tw-fold-sep"></div>
+          <input class="tb" id="opt-cookie" style="margin-bottom:12px" placeholder="认证会话（可选）Cookie: session=…" autocomplete="off">
+          <label class="tw-toggle" style="margin:0"><input type="checkbox" id="opt-ua" class="tw-switch"> 浏览器 UA（应对按 UA 降级的站点）</label>
         </div>
       </details>
-      <input class="tb" id="opt-cookie" placeholder="认证会话（可选）Cookie: session=…" autocomplete="off">
-      <label class="tw-toggle"><input type="checkbox" id="opt-ua" class="tw-switch"> 浏览器 UA（应对按 UA 降级的站点）</label>
       <button class="btn tw-run" id="go" onclick="startScan()">▷ 开始扫描</button>
       <p class="hint" id="hint" style="text-align:center"></p>
       <!-- 空态引导住在控制栏（对齐参照物布局）；扫描开始时由 app.js 隐藏 -->
