@@ -544,18 +544,21 @@ function runNetsec() {
     var hits = r.findings || [];
     if (!hits.length) {
       document.getElementById("ns-out").innerHTML =
-        '<p style="color:var(--ok);font-size:14px">✔ ' + esc(r.host) + " 未发现网络层安全问题</p>";
+        '<div class="ns-grid"><div class="ns-card" style="border-top:3px solid var(--ok)"><div class="ns-head"><span class="ns-light" style="background:var(--ok)"></span><b>' + esc(r.host) + "</b></div><div class='ns-title'>未发现网络层安全问题</div></div></div>";
       return;
     }
-    var html = '<div class="tbl-wrap"><table class="list"><tr><th>严重度</th><th>检测项</th><th>证据</th><th>修复建议</th></tr>';
-    hits.forEach(function (h) {
-      html += "<tr><td>" + sevBadge(h.severity) + "</td>" +
-        '<td class="mono">' + esc(h.check) + '<br><span class="hint" style="margin:0">' + esc(h.title) + "</span></td>" +
-        '<td class="mono" style="font-size:12px;word-break:break-all">' + esc(h.url) +
-        (h.evidence ? "<br>" + esc(h.evidence) : "") + "</td>" +
-        "<td>" + esc(h.advice) + "</td></tr>";
+    var cards = hits.map(function (h) {
+      var sev = (h.severity || "").toLowerCase();
+      var dot = (sev === "high" || sev === "critical") ? "var(--danger)" : sev === "medium" ? "var(--warn)" : "var(--info)";
+      return '<div class="ns-card" style="border-top:3px solid ' + dot + '">' +
+        '<div class="ns-head"><span class="ns-light" style="background:' + dot + '"></span><b class="mono">' + esc(h.check) + "</b>" + sevBadge(h.severity) + "</div>" +
+        '<div class="ns-title">' + esc(h.title) + "</div>" +
+        (h.url ? '<div class="mono ns-ev">' + esc(h.url) + "</div>" : "") +
+        (h.evidence ? '<div class="mono ns-ev">' + esc(h.evidence) + "</div>" : "") +
+        (h.advice ? '<div class="hint">' + esc(h.advice) + "</div>" : "") +
+        "</div>";
     });
-    document.getElementById("ns-out").innerHTML = html + "</table></div>";
+    document.getElementById("ns-out").innerHTML = '<div class="ns-grid">' + cards.join("") + "</div>";
   }).catch(function (e) {
     document.getElementById("ns-go").disabled = false;
     document.getElementById("ns-out").innerHTML =

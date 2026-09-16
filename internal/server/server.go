@@ -655,6 +655,12 @@ func (s *Server) jobOut(w http.ResponseWriter, id string, withResults bool) {
 		}
 		out["events"] = evs
 	}
+	// 25B-B1：批量逐 URL 结构化状态（运行中即可取，驱动任务队列表格）
+	if j.Result != nil {
+		if rws, ok := j.Result["rows"]; ok {
+			out["rows"] = rws
+		}
+	}
 	if j.Status == "done" && j.Result != nil {
 		out["status"] = "done"
 		if scanID, ok := j.Result["scan_id"]; ok {
@@ -718,6 +724,7 @@ func (s *Server) runBatch(jobID string, urls []string) {
 	var mu sync.Mutex
 	done := 0
 	var lines []string
+	rows := make([]map[string]any, 0, len(urls)) // 25B-B1：逐 URL 结构化状态（任务队列表格数据源）
 	idx := atomic.Int64{}
 	var wg sync.WaitGroup
 	for w := 0; w < workers; w++ {
@@ -733,26 +740,34 @@ func (s *Server) runBatch(jobID string, urls []string) {
 				if s.jobs.CancelRequested(jobID) {
 					mu.Lock()
 					lines = append(lines, u+" -> 已跳过（任务取消）")
+					rows = append(rows, map[string]any{"url": u, "status": "skipped"})
 					mu.Unlock()
 				} else {
+					start := time.Now()
 					s.sem <- struct{}{}
 					res := s.eng.Scan(u, engine.DefaultOptions(), nil,
 						func() bool { return s.jobs.CancelRequested(jobID) })
 					<-s.sem
+					elapsed := time.Since(start).Milliseconds()
 					if res.Error != "" {
 						mu.Lock()
 						lines = append(lines, u+" -> 失败（"+res.Error+"）")
+						rows = append(rows, map[string]any{"url": u, "status": "failed", "error": res.Error, "elapsed_ms": elapsed})
 						mu.Unlock()
 					} else {
 						s.st.Save(res, map[string]any{"batch": true})
 						mu.Lock()
 						lines = append(lines, fmt.Sprintf("%s -> 完成（%d 项技术）", u, len(res.Technologies)))
+						rows = append(rows, map[string]any{"url": u, "status": "done",
+							"findings": len(res.Vulnerabilities) + len(res.Verified), "techs": len(res.Technologies), "elapsed_ms": elapsed})
 						mu.Unlock()
 					}
 				}
 				mu.Lock()
 				done++
 				d, ln := done, append([]string{}, lines...)
+				rws := make([]map[string]any, len(rows))
+				copy(rws, rows)
 				mu.Unlock()
 				s.jobs.Update(jobID, func(j *store.Job) {
 					j.Done = d
@@ -760,7 +775,7 @@ func (s *Server) runBatch(jobID string, urls []string) {
 					if len(ln) > 0 {
 						j.Message = ln[len(ln)-1]
 					}
-					j.Result = map[string]any{"lines": ln}
+					j.Result = map[string]any{"lines": ln, "rows": rws}
 				})
 			}
 		}()
