@@ -48,6 +48,24 @@
     api.post("/api/batch", { urls: urls }).then(function (r) {
       var jobId = r.job_id;
       window.__batchJobId = jobId;
+      // 25B-B1：任务队列表格
+      var queueWrap = document.getElementById("batch-queue");
+      var rowsEl = document.getElementById("batch-rows");
+      if (queueWrap) queueWrap.style.display = "";
+      var seenStatus = {};
+      function renderRows(rows) {
+        if (!rows || !rowsEl) return;
+        rowsEl.innerHTML = rows.map(function (rw) {
+          var st = rw.status || "queued";
+          var cls = st === "done" ? "ok" : st === "failed" ? "danger" : st === "skipped" ? "muted" : "warn";
+          var label = st === "done" ? "完成" : st === "failed" ? "失败" : st === "skipped" ? "跳过" : "扫描中";
+          var elapsed = rw.elapsed_ms ? (rw.elapsed_ms / 1000).toFixed(1) + "s" : "—";
+          var findings = st === "done" ? (rw.findings != null ? rw.findings : "—") : "—";
+          return "<tr><td><span class=\"badge " + (st === "done" ? "ok" : st === "failed" ? "danger" : "warn") + "\">" + label + "</span></td>" +
+            '<td class="mono" style="word-break:break-all">' + esc(rw.url) + "</td>" +
+            "<td>" + findings + "</td><td>" + elapsed + "</td></tr>";
+        }).join("");
+      }
       return new Promise(function (resolve, reject) {
         // slPoll 句柄：必须用 handle.stop() 停止（clearInterval 对句柄无效）
         var handle = slPoll(function () {
@@ -57,6 +75,8 @@
             document.getElementById("batch-hint").textContent =
               (job.done || 0) + " / " + (job.total || urls.length) + " 已完成" +
               (job.status === "cancelling" ? "（取消中…）" : "");
+            var rows = job.rows || (job.results && job.results.rows);
+            if (rows) renderRows(rows);
             if (job.status === "done" || job.status === "cancelled") {
               handle.stop();
               resolve(job);

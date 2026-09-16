@@ -127,14 +127,20 @@
   .auth-row input{accent-color:var(--danger);width:15px;height:15px;flex:none;margin-top:2px}
 
   /* 源码审计 / 批量扫描模式（自 audit.html、batch.html 整编） */
-  .dropzone{border:2px dashed var(--border);border-radius:12px;padding:38px 20px;text-align:center;
-    cursor:pointer;transition:border-color .2s,background .2s;background:var(--card)}
-  .dropzone:hover,.dropzone.drag{border-color:var(--primary);background:var(--accent)}
-  .dz-icon{color:var(--muted-fg);margin-bottom:10px}
-  .dz-main{font-size:15px;font-weight:500}
-  .dz-sub{font-size:12.5px;color:var(--muted-fg);margin-top:6px}
-  .dz-sub .dz-pick{color:var(--info);text-decoration:underline}
-  .dz-names{font-size:12px;color:var(--muted-fg);margin-top:12px;line-height:1.9;word-break:break-all}
+  /* 上传（紧凑，25A）+ 网络层检测卡片（25B-B2） */
+  .dropzone.dz-mini{display:flex;align-items:center;gap:9px;border:1.5px dashed var(--border);border-radius:8px;
+    padding:10px 12px;cursor:pointer;transition:border-color .15s,background .15s;background:var(--card)}
+  .dropzone.dz-mini:hover,.dropzone.dz-mini.drag{border-color:var(--primary);background:var(--accent)}
+  .dz-mini-ico{width:16px;height:16px;color:var(--muted-fg);flex:none}
+  .dz-mini-txt{display:flex;flex-direction:column;font-size:12.5px;color:var(--foreground);line-height:1.4}
+  .dz-mini-sub{font-size:11px;color:var(--muted-fg)}
+  .dz-names{font-size:11px;color:var(--muted-fg);margin:0 0 10px;line-height:1.8;word-break:break-all}
+  .ns-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:12px}
+  .ns-card{background:var(--card);border:1px solid var(--border);border-radius:10px;padding:12px 14px}
+  .ns-head{display:flex;align-items:center;gap:8px;margin-bottom:6px}
+  .ns-title{font-size:13.5px;font-weight:500;margin-bottom:4px}
+  .ns-light{width:8px;height:8px;border-radius:50%;display:inline-block;flex:none}
+  .ns-ev{font-size:11.5px;color:var(--muted-fg);word-break:break-all;margin:4px 0}
   .count-row{display:flex;align-items:center;gap:14px;margin-top:10px}
   .count-row .n{font-family:var(--font-mono);font-size:13px;color:var(--muted-fg)}
   .log-box{margin-top:16px;background:var(--card);border:1px solid var(--border);border-radius:10px;
@@ -166,6 +172,38 @@
   .st-dot.run{background:var(--ok);opacity:1;animation:st-pulse 1.2s ease-in-out infinite}
   .st-dot.ok{background:var(--ok);opacity:1}
   @keyframes st-pulse{0%,100%{box-shadow:0 0 0 0 color-mix(in srgb,var(--ok) 45%,transparent)}50%{box-shadow:0 0 0 5px transparent}}
+
+  /* ============ 源码审计（25A）：文件树 + Monaco 工作区 + 发现卡 ============ */
+  .audit-tree{flex:1;min-height:160px;overflow-y:auto;border-top:1px solid var(--border);
+    padding:10px 2px 0;font-size:12.5px}
+  .audit-tree .tree-empty{color:var(--muted-fg);font-size:12px;text-align:center;padding:26px 8px}
+  .audit-tree .tw-node{display:flex;align-items:center;gap:6px;padding:4px 6px;border-radius:6px;
+    cursor:pointer;color:var(--muted-fg);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .audit-tree .tw-node:hover{color:var(--foreground);background:var(--accent)}
+  .audit-tree .tw-node.on{color:var(--foreground);background:var(--muted);font-weight:600}
+  .audit-tree .tw-node.no-preview{opacity:.45;cursor:not-allowed}
+  .audit-tree .tw-node svg{width:14px;height:14px;flex:none}
+  .audit-tree .tw-dir{color:var(--foreground)}
+  .audit-tree ul{list-style:none;margin:0;padding:0}
+  .audit-tree ul ul{padding-left:14px}
+  .audit-work{height:420px}
+  .audit-edwrap{position:relative;height:100%;border:1px solid var(--border);border-radius:10px;
+    overflow:hidden;background:var(--card)}
+  .audit-editor{position:absolute;inset:0}
+  .audit-ed-empty{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;
+    justify-content:center;gap:8px;color:var(--muted-fg);font-size:13px;text-align:center;padding:0 24px}
+  .audit-ed-empty .big{display:grid;place-items:center;width:56px;height:56px;
+    border:1.5px solid var(--border);border-radius:50%;margin:0 auto 6px;font-size:15px}
+  .audit-find{padding:10px 12px;border:1px solid var(--border);border-left-width:3px;border-radius:8px;
+    background:var(--card);margin-bottom:8px;cursor:pointer;transition:background .15s}
+  .audit-find:hover{background:var(--accent)}
+  .audit-find.sev-high,.audit-find.sev-critical{border-left-color:var(--danger)}
+  .audit-find.sev-medium{border-left-color:var(--warn)}
+  .audit-find.sev-low,.audit-find.sev-info{border-left-color:var(--info)}
+  .audit-line-critical{background:color-mix(in srgb,var(--danger) 14%,transparent)}
+  .audit-line-high{background:color-mix(in srgb,var(--danger) 10%,transparent)}
+  .audit-line-medium{background:color-mix(in srgb,var(--warn) 10%,transparent)}
+  .audit-line-low{background:color-mix(in srgb,var(--info) 8%,transparent)}
 </style>
 </head>
 <body>
@@ -350,6 +388,12 @@
       <section class="tw-canvaspane" data-pane="batch">
         <textarea class="batch-box" id="batch-urls" style="min-height:200px" placeholder="https://example.com&#10;https://www.python.org&#10;https://books.toscrape.com"></textarea>
         <div class="count-row"><span class="n" id="batch-n">-</span></div>
+        <div class="tbl-wrap" id="batch-queue" style="display:none;margin-top:14px">
+          <table class="list">
+            <thead><tr><th style="width:96px">状态</th><th>URL</th><th style="width:80px">发现</th><th style="width:110px">耗时</th></tr></thead>
+            <tbody id="batch-rows"></tbody>
+          </table>
+        </div>
         <div class="log-box" id="batch-log"></div>
       </section>
     </div>
