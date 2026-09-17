@@ -1,0 +1,49 @@
+{
+  "skill": "check",
+  "generated_at": "2026-09-17T23:50:00+08:00",
+  "project_name": "SiteLens",
+  "target": "25A 源码审计升级 + 25B 七页体验升级 + Corporate 动效基准（工作台五模式 + 四被动页）",
+  "findings": [
+    {
+      "category": "feedback",
+      "severity": "major",
+      "description": "登录爆破进行时无「已尝试 N」实时计数（poll 仅整体 message，后端无逐次事件流）",
+      "suggestion": "复用 25B-B1 模式：job.Result 加 attempts 计数，poll 时前端展示",
+      "location": "工作台-登录爆破 / internal/server loginbrute job"
+    },
+    {
+      "category": "components",
+      "severity": "minor",
+      "description": "圆角 7px 残留 2 处（左栏软芯片、模式行 tab），违反 8px 统一刻度",
+      "suggestion": "统一 8px",
+      "location": "web/app.html 芯片规则 / web/css/app.css 模式行（本次走查已当场修复）"
+    },
+    {
+      "category": "feedback",
+      "severity": "minor",
+      "description": "被动页顶带当前项高亮仅视觉，无 aria-current=\"page\"",
+      "suggestion": "slUpdateNav 时同步 setAttribute(\"aria-current\", \"page\")",
+      "location": "web/js/common.js topNavHTML/slUpdateNav"
+    },
+    {
+      "category": "components",
+      "severity": "minor",
+      "description": "tw-fold 折叠样式 9 行死代码残留（扫描配置折叠壳已拆除，无引用）",
+      "suggestion": "下轮样式清理时删除",
+      "location": "web/app.html style 块"
+    },
+    {
+      "category": "responsive",
+      "severity": "minor",
+      "description": "窄窗（980px 下限）时左控制列 302px 固定，五模式行 11px 标签贴边拥挤",
+      "suggestion": "窄窗媒体查询下模式行标签缩至 10.5px",
+      "location": "web/app.html .tw-modes"
+    }
+  ],
+  "summary": {
+    "blocker": 0,
+    "major": 1,
+    "minor": 4,
+    "pass": 7
+  }
+}
