@@ -141,6 +141,13 @@ func CollectSources(root string, maxBytes int64) (sources []string, contents map
 		sources = append(sources, rel)
 		if int64(len(data)) <= maxBytes {
 			contents[rel] = string(data)
+		} else {
+			// 超限截断回传：树可开、编辑器可预览前段 + 截断标记
+			cut := data[:maxBytes]
+			for len(cut) > 0 && !utf8.Valid(cut) {
+				cut = cut[:len(cut)-1] // 避免截在多字节中间
+			}
+			contents[rel] = string(cut) + "\n\n/* … 文件超过 512KB，预览已截断（审计仍按全文件进行）… */\n"
 		}
 		return nil
 	})
@@ -156,7 +163,7 @@ func Run(root string, cfg config.AuditConfig, onProgress func(done, total int, m
 // run 是 Run 的核心实现。wb 非空时（P4）顺带把白盒发现实体化进图。
 func run(root string, cfg config.AuditConfig, onProgress func(done, total int, msg string), wb *model.ScanGraph) (*Report, error) {
 	if cfg.MaxFileKB <= 0 {
-		cfg.MaxFileKB = 512
+		cfg.MaxFileKB = 8192 // 审计读入上限 8MB（预览截断另由 CollectSources 的 512KB 管，互不拦）
 	}
 	if cfg.MaxFiles <= 0 {
 		cfg.MaxFiles = 800
@@ -206,6 +213,13 @@ func run(root string, cfg config.AuditConfig, onProgress func(done, total int, m
 		if serr != nil || st.Size() > int64(cfg.MaxFileKB)*1024 {
 			continue
 		}
+		// 25A：finding 路径写相对斜杠路径（与 sources/contents 同键）——
+		// 前端标注/跳转按此对齐；绝对路径+反斜杠曾致标注映射失败
+		rel, rerr := filepath.Rel(root, fp)
+		if rerr != nil {
+			rel = filepath.Base(fp)
+		}
+		rel = filepath.ToSlash(rel)
 		data, rerr := os.ReadFile(fp)
 		if rerr != nil {
 			continue
@@ -258,7 +272,7 @@ func run(root string, cfg config.AuditConfig, onProgress func(done, total int, m
 					}
 					rep.Findings = append(rep.Findings, Finding{
 						Rule: r.ID, Severity: r.Sev, Title: r.Title,
-						File: fp, Line: n + 1, Snippet: snippet,
+						File: rel, Line: n + 1, Snippet: snippet,
 						Match: mt, Advice: r.Advice,
 					})
 					// P4：白盒发现实体化（行级线索 → evidence + vuln_node）。

@@ -46,10 +46,11 @@ func TestCollectSources(t *testing.T) {
 	if contents["app.py"] == "" || contents["lib/db.php"] == "" {
 		t.Fatalf("小文本应有内容: %v", contents)
 	}
-	if _, ok := contents["huge.log"]; ok {
-		t.Fatal("超限文件不应回传内容")
+	// 25A 更新：超限文件改为截断回传（树可开+预览前段+截断标记）
+	if c, ok := contents["huge.log"]; !ok || !strings.Contains(c, "预览已截断") {
+		t.Fatal("超限文件应截断回传并带截断标记")
 	}
-	if len(contents["app.py"]) > MaxContentBytes {
-		t.Fatal("内容超限")
+	if len(contents["huge.log"]) > MaxContentBytes+200 {
+		t.Fatal("截断内容应不超过上限+标记")
 	}
 }
