@@ -91,6 +91,8 @@
       renderLineHighlight: "all", padding: { top: 10 }, lineNumbersMinChars: 3
     });
     ed._slHost = editorEl;
+    var wrap = editorEl.parentElement;
+    if (wrap) wrap.classList.add("ready"); // 25B：编辑器就绪淡入
     window.__slAuditEditor = ed;
     return ed;
   }
@@ -254,7 +256,14 @@
           var line = parseInt(row.getAttribute("data-line"), 10);
           ensureMonaco(function () {
             var ed = ensureEditor();
-            if (line) { ed.revealLineInCenter(line); ed.setPosition({ lineNumber: line, column: 1 }); }
+            if (line) {
+              ed.revealLineInCenter(line);
+              ed.setPosition({ lineNumber: line, column: 1 });
+              // 25B 联动反馈：目标行闪烁高亮 600ms 渐隐（一次性，非循环）
+              var flash = ed.deltaDecorations([], [{ range: new monaco.Range(line, 1, line, 1),
+                options: { isWholeLine: true, className: "audit-line-flash" } }]);
+              setTimeout(function () { try { ed.deltaDecorations(flash, []); } catch (e) {} }, 650);
+            }
           });
         });
       });
