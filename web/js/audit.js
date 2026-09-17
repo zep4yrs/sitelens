@@ -84,8 +84,11 @@
     return true;
   }
 
-  // 把目录文件集打包 zip（JSZip，页内生成），rootName 为顶层目录名
+  // 把目录文件集打包 zip（JSZip，页内生成），rootName 为顶层目录名。
+  // 打包期间置忙：input 上挂着的 zip 在完成前不被新 ingest 覆盖（懒加载竞态）。
+  var ingestBusy = false;
   function ingestFolder(files, rootName) {
+    if (ingestBusy) { toast("正在打包上一个目录…", "err"); return; }
     files.forEach(function (f) {
       if (!f.__rel) {
         // webkitdirectory 路径形如 root/sub/a.py → 去掉顶层 root 后为 zip 内相对路径
@@ -104,17 +107,33 @@
     var namesEl = document.getElementById("audit-names");
     if (namesEl) namesEl.textContent = info;
 
+    ingestBusy = true;
+    var busyTimeout = setTimeout(function () {  // 防卡死：30s 未完成自动复位
+      if (ingestBusy) { ingestBusy = false; toast("目录打包超时，请重试", "err"); }
+    }, 30000);
     ensureJsZip(function () {
+      if (!window.JSZip) { // 三次重试后仍未就位：明确报错并复位，不再静默卡死
+        clearTimeout(busyTimeout);
+        ingestBusy = false;
+        toast("打包组件加载失败，请刷新页面重试", "err");
+        return;
+      }
       var zip = new JSZip();
       kept.forEach(function (f) {
         zip.file(rootName + "/" + f.__rel, f);
       });
       zip.generateAsync({ type: "blob", compression: "DEFLATE" }).then(function (blob) {
+        clearTimeout(busyTimeout);
         var dt = new DataTransfer();
         dt.items.add(new File([blob], rootName + ".zip", { type: "application/zip" }));
         input.files = dt.files;
+        ingestBusy = false;
         showNames();
         toast("目录已打包：" + kept.length + " 个文件，可开始审计", "ok");
+      }).catch(function () {
+        clearTimeout(busyTimeout);
+        ingestBusy = false;
+        toast("目录打包失败", "err");
       });
     });
   }
@@ -144,17 +163,23 @@
     return readAll().then(function () { return out; });
   }
 
-  var jszipLoading = null;
+  var jszipLoading = null, jszipTags = 0;
   function ensureJsZip(cb) {
     if (window.JSZip) { cb(); return; }
-    if (jszipLoading) { jszipLoading.then(cb); return; }
+    if (jszipLoading) {
+      // 已有进行中的加载：settle 后重查全局——若仍未就位（加载无效/被清），下次调用会另装新标签
+      jszipLoading.then(function () { ensureJsZip(cb); });
+      return;
+    }
     jszipLoading = new Promise(function (resolve) {
+      jszipTags++;
       var s = document.createElement("script");
-      s.src = "/js/jszip.min.js";
-      s.onload = resolve;
-      s.onerror = resolve;
+      s.src = "/js/jszip.min.js?v=" + jszipTags; // 版本号击穿可能失效的缓存响应
+      s.onload = s.onerror = function () { resolve(); }; // settle 只代表本次尝试结束
       document.head.appendChild(s);
+      setTimeout(resolve, 8000); // 请求悬挂兜底
     });
+    jszipLoading.then(function () { jszipLoading = null; }); // settle 即作废句柄
     jszipLoading.then(cb);
   }
 
@@ -253,7 +278,7 @@
         f.setAttribute("data-file", full);
         f.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg><span>' + esc(name) + "</span>";
         f.addEventListener("click", function () {
-          if (!has) { toast("该文件无预览（二进制或超过 512KB）", "err"); return; }
+          if (!has) { toast("该文件无预览（二进制或未收录）", "err"); return; }
           openFile(full);
         });
         li.appendChild(f);
@@ -423,5 +448,8 @@
   window.__slIngestFolder = ingestFolder;
 
   // 初始空态
-  treeEl.innerHTML = '<div class="tree-empty">上传源码并开始审计后，文件将显示在这里</div>';
+  if (treeEl) treeEl.innerHTML = '<div class="tree-empty">上传源码并开始审计后，文件将显示在这里</div>';
+
+  // 预热 JSZip：文件夹链路首次点击前脚本已就位，消除懒加载竞态
+  ensureJsZip(function () {});
 })();

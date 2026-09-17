@@ -134,7 +134,10 @@
   .dz-mini-ico{width:16px;height:16px;color:var(--muted-fg);flex:none}
   .dz-mini-txt{display:flex;flex-direction:column;font-size:12.5px;color:var(--foreground);line-height:1.4}
   .audit-src-row{display:flex;gap:8px;align-items:stretch}
-  .audit-src-row .dz-dir-btn{flex:none;justify-content:center;gap:6px;padding:0 12px;font-size:12.5px}
+  .audit-src-row .dropzone.dz-mini{flex:1;min-width:0}
+  .audit-src-row .dz-mini-txt{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .tw-left .btn.tw-run.dz-dir-btn{flex:none;width:38px;height:44px;padding:0;justify-content:center}
+  .tw-left .btn.tw-run.dz-dir-btn:hover{width:38px}
   .dz-mini-sub{font-size:11px;color:var(--muted-fg);opacity:.7}
   .dz-names{font-size:11px;color:var(--muted-fg);margin:0 0 10px;line-height:1.8;word-break:break-all}
   .ns-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:12px}
@@ -216,7 +219,7 @@
   <!-- ============ 左：控制台 ============ -->
   <aside class="tw-left" id="tw-left">
     <div class="tw-modes tabs" id="tw-modeslot"></div>
-    <p class="tw-note">仅限自有或已书面授权的目标。主动模块默认关闭。</p>
+    <p class="tw-note">主动验证模块默认关闭，需要时在「验证」中勾选。</p>
 
     <!-- 综合扫描：控制 -->
     <section class="tabpanel active tw-panel" id="tab-scan">
@@ -276,13 +279,13 @@
       <p class="hint" id="hint" style="text-align:center"></p>
       <!-- 空态引导住在控制栏（对齐参照物布局）；扫描开始时由 app.js 隐藏 -->
       <div id="idle-wrap">
-        <div class="empty"><span class="big">▷</span><span class="empty-title">输入目标网址开始扫描</span><span class="empty-desc">在上方输入目标，选择范围与强度，点击「开始扫描」按钮</span></div>
+        <div class="empty"><span class="big">▷</span><span class="empty-title">输入目标网址开始扫描</span></div>
       </div>
     </section>
 
     <!-- 网络层检测：控制 -->
     <section class="tabpanel tw-panel" id="tab-netsec">
-      <p class="tw-note" style="margin:0 0 12px">TLS 证书 + DNS 邮件安全，纯只读检测，无需全量扫描。</p>
+      <p class="tw-note" style="margin:0 0 12px">TLS 证书 + DNS 邮件安全，只读检测。</p>
       <input class="url-input tw-url" id="ns-host" placeholder="example.com" autocomplete="off">
       <button class="btn tw-run" id="ns-go" onclick="runNetsec()">▷ 开始检测</button>
     </section>
@@ -315,7 +318,6 @@
         </div>
         <input class="tb" id="lb-cap-field" placeholder="字段名，留空自动识别">
       </div>
-      <p class="hint" id="lb-cap-hint" style="margin:0 0 12px">OCR 依赖 ddddocr 本地推理；点选按首框坐标提交；滑块暂不支持。</p>
       <button class="btn tw-run" id="lb-go" onclick="runBrute()" disabled>▶ 开始爆破</button>
       <p class="mono hint tw-run-hint" id="lb-st">需要勾选授权确认</p>
       <div class="progressbar" id="lb-pw" style="display:none"><i id="lb-bar"></i></div>
@@ -330,20 +332,19 @@
           <span class="dz-mini-txt">点击或拖入文件 / 文件夹<span class="dz-mini-sub">.zip / .py / .js / .php</span></span>
         </div>
         <button type="button" class="btn tw-run ghost-lite dz-dir-btn" id="audit-dir-btn" title="选择整个项目文件夹">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:14px;height:14px"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/></svg>
-          选文件夹
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:15px;height:15px"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/></svg>
         </button>
         <input id="audit-dir-input" type="file" webkitdirectory directory multiple style="display:none">
       </div>
       <div class="dz-names mono" id="audit-names"></div>
       <div class="audit-tree" id="audit-tree"></div>
       <button class="btn tw-run" id="audit-go" onclick="runAudit()">▷ 开始审计</button>
-      <p class="tw-run-hint">16 条规则 + AST 污点分析 · 文件审计后即删</p>
+      <p class="tw-run-hint">本地静态分析 · 审计后即删</p>
     </section>
 
     <!-- 批量扫描：控制 -->
     <section class="tabpanel tw-panel" id="tab-batch">
-      <p class="tw-note" style="margin:0 0 12px">每行一个 URL，3 线程并发逐个扫描并入库，完成后可在历史页导出宽表 CSV。</p>
+      <p class="tw-note" style="margin:0 0 12px">扫描完成后可在历史页导出 CSV。</p>
       <button class="btn tw-run" id="batch-go" onclick="startBatch()">▷ 开始批量扫描</button>
       <button class="btn tw-run ghost-lite" id="batch-cancel" onclick="cancelBatch()" style="margin-top:8px;display:none">取消</button>
       <p class="hint" id="batch-hint" style="text-align:center"></p>
@@ -386,7 +387,6 @@
             <div class="audit-ed-empty" id="audit-ed-empty">
               <span class="big">▷</span>
               <span class="empty-title">审计结果将在这里打开</span>
-              <span class="empty-desc">左侧上传源码并开始审计后，点文件树中的文件即可预览代码与错误标注</span>
             </div>
           </div>
         </div>

@@ -218,7 +218,7 @@ function setProgress(p, msg, job) {
   if (!evs.length) { feedEl.innerHTML = ""; return; }
   var hits = 0, bypass = 0;
   var rows = evs.slice(-8).reverse().map(function (ev) {
-    var color = "#94a3b8";
+    var color = getComputedStyle(document.documentElement).getPropertyValue("--muted-fg").trim() || "#9b9ba4";
     if (ev.kind === "hit") { hits++; color = "#f87171"; }
     else if (ev.kind === "bypass") { bypass++; color = "#fbbf24"; }
     else if (ev.kind === "auth") { color = "#5eead4"; }

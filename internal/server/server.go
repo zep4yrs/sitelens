@@ -171,9 +171,9 @@ func (s *Server) Handler() http.Handler {
 	// 页面（产品形态：无宣传首页与关于页，根路径即工作台）
 	// "/" 不进表：由 hRoot 统一处理根路径、.html 直达与样式化 404
 	pages := map[string]string{
-		"/app": "app.html", "/batch": "batch.html",
+		"/app": "app.html",
 		"/history": "history.html", "/api-docs": "api-docs.html",
-		"/intel": "intel.html", "/audit": "audit.html",
+		"/intel": "intel.html",
 		"/chain": "chain.html", "/settings": "settings.html",
 	}
 	for route, file := range pages {
@@ -189,6 +189,8 @@ func (s *Server) Handler() http.Handler {
 	// 兼容旧路由：独立页已并入工作台标签
 	mux.HandleFunc("/netsec", redirect("/app#netsec"))
 	mux.HandleFunc("/loginbrute", redirect("/app#loginbrute"))
+	mux.HandleFunc("/audit", redirect("/app#audit"))
+	mux.HandleFunc("/batch", redirect("/app#batch"))
 	mux.HandleFunc("/verified", redirect("/history#verified"))
 	mux.HandleFunc("/js/", s.serveAssetPrefix)
 	mux.HandleFunc("/css/", s.serveAssetPrefix)
@@ -416,8 +418,8 @@ func (s *Server) hRoot(w http.ResponseWriter, r *http.Request) {
 	}
 	if strings.HasSuffix(p, ".html") {
 		name := strings.TrimPrefix(p, "/")
-		for _, known := range []string{"app.html", "batch.html", "history.html",
-			"api-docs.html", "intel.html", "audit.html", "chain.html", "settings.html", "404.html"} {
+		for _, known := range []string{"app.html", "history.html",
+			"api-docs.html", "intel.html", "chain.html", "settings.html", "404.html"} {
 			if name == known {
 				s.serveAsset(w, name)
 				return
