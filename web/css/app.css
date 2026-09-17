@@ -115,7 +115,7 @@ table.list th,
     border-radius:10px;box-shadow:var(--shadow-md);padding:5px;display:none}
   .cdd.open .cdd-pop{display:block;animation:sl-fadeUp var(--t-med) var(--ease)}
   .cdd-opt{display:flex;flex-direction:column;gap:1px;width:100%;text-align:left;padding:8px 12px;
-    border:none;background:none;border-radius:7px;cursor:pointer;font-family:inherit;
+    border:none;background:none;border-radius:8px;cursor:pointer;font-family:inherit;
     color:var(--foreground);position:relative}
   .cdd-opt b{font-size:13px;font-weight:600}
   .cdd-opt span{font-size:11.5px;color:var(--muted-fg)}
