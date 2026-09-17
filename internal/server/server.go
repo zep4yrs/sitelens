@@ -1151,7 +1151,7 @@ func (s *Server) hAudit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// 25A 源码预览：文本路径 + ≤512KB 内容随响应回传（服务端即删，不落盘）
-	rep.Sources, rep.Contents = audit.CollectSources(dir, audit.MaxContentBytes)
+	rep.Sources, rep.Contents = audit.CollectSources(dir)
 	writeJSON(w, 200, rep)
 }
 
@@ -1198,7 +1198,7 @@ func (s *Server) hAuditDemo(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 500, map[string]any{"error": "审计失败"})
 		return
 	}
-	rep.Sources, rep.Contents = audit.CollectSources(dir, audit.MaxContentBytes)
+	rep.Sources, rep.Contents = audit.CollectSources(dir)
 	writeJSON(w, 200, rep)
 }
 

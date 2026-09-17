@@ -8,7 +8,7 @@ import (
 	"testing"
 )
 
-// TestCollectSources：文本入树入内容；二进制不入树；超限只入树不回传内容。
+// TestCollectSources：文本入树入内容（全量，不截断）；二进制不入树。
 func TestCollectSources(t *testing.T) {
 	dir := t.TempDir()
 	write := func(rel, data string) {
@@ -26,7 +26,7 @@ func TestCollectSources(t *testing.T) {
 	write("invalid.txt", "ok\xff\xfe junk")          // 内容非 UTF-8：不入树
 	write("huge.log", strings.Repeat("a", 600*1024)) // 600KB > 512KB：入树无内容
 
-	sources, contents := CollectSources(dir, MaxContentBytes)
+	sources, contents := CollectSources(dir)
 
 	got := strings.Join(sources, ",")
 	if !strings.Contains(got, "app.py") || !strings.Contains(got, "lib/db.php") {
@@ -46,11 +46,11 @@ func TestCollectSources(t *testing.T) {
 	if contents["app.py"] == "" || contents["lib/db.php"] == "" {
 		t.Fatalf("小文本应有内容: %v", contents)
 	}
-	// 25A 更新：超限文件改为截断回传（树可开+预览前段+截断标记）
-	if c, ok := contents["huge.log"]; !ok || !strings.Contains(c, "预览已截断") {
-		t.Fatal("超限文件应截断回传并带截断标记")
+	// 25A 终版（用户拍板拒绝截断）：文本文件全量回传，不带任何截断标记
+	if c, ok := contents["huge.log"]; !ok || strings.Contains(c, "预览已截断") {
+		t.Fatal("超 512KB 文本应全量回传且无截断标记")
 	}
-	if len(contents["huge.log"]) > MaxContentBytes+200 {
-		t.Fatal("截断内容应不超过上限+标记")
+	if len(contents["huge.log"]) != 600*1024 {
+		t.Fatalf("全量回传长度应等于原文件: %d", len(contents["huge.log"]))
 	}
 }

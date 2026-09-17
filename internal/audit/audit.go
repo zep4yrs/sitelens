@@ -108,19 +108,17 @@ type Report struct {
 	Lines      int            `json:"lines"`
 	BySeverity map[string]int `json:"by_severity"`
 	// 25A 源码预览（server 侧填充，audit 引擎不感知）：
-	// Sources 为文本源码相对路径；Contents 为 ≤MaxContentBytes 的 UTF-8 文本内容。
-	// 二进制/超大文件不回传内容；内容仅回传发起审计的用户，服务端仍审计后即删。
+	// Sources 为文本源码相对路径；Contents 为 UTF-8 文本全量内容（不截断——
+	// 用户拍板；单文件上限由上传/解压 8MB 闸门把守，总量可控）。
+	// 二进制不回传；内容仅回传发起审计的用户，服务端仍审计后即删。
 	Sources  []string          `json:"sources,omitempty"`
 	Contents map[string]string `json:"contents,omitempty"`
 }
 
-// MaxContentBytes 单文件回传内容上限（25A：≤512KB 文本才随响应携带）。
-const MaxContentBytes = 512 << 10
-
 // CollectSources 遍历审计目录，产出文本源码相对路径列表与内容映射（25A 源码预览）。
-// 含 NUL 或非 UTF-8 的二进制、超过 maxBytes 的文件只登记路径、不回传内容；
-// 内容仅随响应回传发起审计的用户浏览器，服务端依旧审计后即删、不落盘。
-func CollectSources(root string, maxBytes int64) (sources []string, contents map[string]string) {
+// 含 NUL 或非 UTF-8 的二进制不入树不回传；文本文件**全量回传，不截断**
+// （用户拍板：拒绝截断——单文件上限由上传/解压 8MB 闸门把守，总量可控）。
+func CollectSources(root string) (sources []string, contents map[string]string) {
 	contents = map[string]string{}
 	_ = filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
 		if err != nil || d.IsDir() {
@@ -139,16 +137,7 @@ func CollectSources(root string, maxBytes int64) (sources []string, contents map
 			return nil // 二进制：不入树不回传
 		}
 		sources = append(sources, rel)
-		if int64(len(data)) <= maxBytes {
-			contents[rel] = string(data)
-		} else {
-			// 超限截断回传：树可开、编辑器可预览前段 + 截断标记
-			cut := data[:maxBytes]
-			for len(cut) > 0 && !utf8.Valid(cut) {
-				cut = cut[:len(cut)-1] // 避免截在多字节中间
-			}
-			contents[rel] = string(cut) + "\n\n/* … 文件超过 512KB，预览已截断（审计仍按全文件进行）… */\n"
-		}
+		contents[rel] = string(data)
 		return nil
 	})
 	sort.Strings(sources)
