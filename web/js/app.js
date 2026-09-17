@@ -1,7 +1,9 @@
 /* ================= 页签路由（hash 持久化 + 侧栏高亮联动） ================= */
 function switchTab(name) {
   document.querySelectorAll(".tab").forEach(function (t) {
-    t.classList.toggle("active", t.getAttribute("data-tab") === name);
+    var on = t.getAttribute("data-tab") === name;
+    t.classList.toggle("active", on);
+    if (on) t.setAttribute("aria-current", "true"); else t.removeAttribute("aria-current");
   });
   document.querySelectorAll(".tabpanel").forEach(function (p) {
     p.classList.toggle("active", p.id === "tab-" + name);
@@ -285,15 +287,16 @@ function startScan() {
 
 function pollJob(jobId, onProgress) {
   return new Promise(function (resolve, reject) {
-    var timer = slPoll(function () {
+    // slPoll 句柄必须 handle.stop()（clearInterval 对句柄无效，会漏成每秒永续轮询）
+    var handle = slPoll(function () {
       api.get("/api/job/" + jobId).then(function (job) {
-        if (job.status === "done") { clearInterval(timer); resolve(job); }
+        if (job.status === "done") { handle.stop(); resolve(job); }
         else if (job.status === "cancelled") {
-          clearInterval(timer); resolve({ cancelled: true, message: job.message });
+          handle.stop(); resolve({ cancelled: true, message: job.message });
         }
-        else if (job.status === "error") { clearInterval(timer); reject(new Error(job.message || "任务失败")); }
+        else if (job.status === "error") { handle.stop(); reject(new Error(job.message || "任务失败")); }
         else if (onProgress) onProgress(job.progress || 0, job.message, job);
-      }).catch(function (e) { clearInterval(timer); reject(e); });
+      }).catch(function (e) { handle.stop(); reject(e); });
     }, 1000);
   });
 }
@@ -598,20 +601,38 @@ function runBrute() {
   lbFrame.style.display = "none";
   document.getElementById("lb-pw").style.display = "block";
   document.getElementById("lb-out").innerHTML = "";
+  var t0 = Date.now(); // 实时面板计时起点
+  var jobId = null;
   api.post("/api/loginbrute", {
     url: url,
     authorized: true,
     captcha_type: capDD.value,
-    captcha_field: document.getElementById("lb-cap-field").value.trim() || "captcha"
+    // 无验证码档位必须发空串：后端把非空 captcha_field 当「显式指定」，
+    // 会导致每次尝试都去找验证码图片而全部跳过
+    captcha_field: capDD.value !== "none" ? (document.getElementById("lb-cap-field").value.trim() || "captcha") : ""
   }).then(function (r) {
-    return pollJob(r.job_id, function (p, msg) {
+    jobId = r.job_id;
+    return pollJob(jobId, function (p, msg, job) {
       document.getElementById("lb-bar").style.width = p + "%";
       document.getElementById("lb-st").textContent = msg || "";
+      // 走查 Major：实时尝试计数（done/total 由引擎 progress 回调逐次上报）
+      var done = job.done || 0, total = job.total || 0;
+      var secs = ((Date.now() - t0) / 1000).toFixed(0);
+      document.getElementById("lb-out").innerHTML =
+        '<div class="lb-live"><span class="badge warn">尝试中</span>' +
+        '<span class="mono" style="font-size:13px">' + done + " / " + total + "</span>" +
+        '<span class="muted" style="font-size:12.5px">已用 ' + secs + "s · " +
+        (total ? Math.round(done * 100 / total) : 0) + "%</span>" +
+        '<span class="mono muted" style="font-size:12px;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' +
+        esc(msg || "") + "</span></div>";
     });
+  }).then(function () {
+    // /api/job/{id} 不带 results：完成后必须取 /results 才有 hits
+    return api.get("/api/job/" + jobId + "/results");
   }).then(function (job) {
     lbGo.disabled = !lbAuth.checked;
     lbFrame.style.display = "none";
-    var hits = (job.result && job.result.hits) || [];
+    var hits = (job.results && job.results.hits) || [];
     window.__slBruteHits = hits;
     if (!hits.length) {
       document.getElementById("lb-out").innerHTML =

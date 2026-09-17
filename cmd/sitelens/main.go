@@ -84,7 +84,10 @@ func main() {
 
 	// 4.0 Track A / A1：GC 软上限（零行为变化，仅让 GC 在尖峰前更早介入）。
 	// 放在所有子命令之前——serve 常驻与 scan 一次性调用都受益。
-	resource.Apply(resource.DefaultGCConfig())
+	// SITLENS_RESOURCE_OFF=1 仅用于时长 A/B 实测（治理开/关同机对照），产品路径不感知。
+	if os.Getenv("SITLENS_RESOURCE_OFF") != "1" {
+		resource.Apply(resource.DefaultGCConfig())
+	}
 
 	if *graphFlag {
 		cfg.Scan.Graph = true // CLI 开关覆盖配置

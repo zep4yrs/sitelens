@@ -24,6 +24,7 @@ import (
 	"time"
 
 	"github.com/wailsapp/wails/v3/pkg/application"
+	"gopkg.in/yaml.v3"
 )
 
 //go:embed assets/index.html
@@ -149,7 +150,8 @@ func freePort() (int, error) {
 }
 
 // writeUserConfig 最小配置落用户目录（%APPDATA%/SiteLens-Wails/config.yml）。
-// 其余配置项由引擎默认值合并，壳只注入 listen——与 Electron 壳 yml-merge 同思路的最小子集。
+// merge 语义（与 Electron 壳 yml-merge 同思路）：保留文件里已有的其余键
+// （用户的 scan/loginbrute 等自定义），只更新 web.listen；解析失败时重建新文件。
 func writeUserConfig(listen string) (string, error) {
 	dir, err := os.UserConfigDir()
 	if err != nil {
@@ -160,8 +162,24 @@ func writeUserConfig(listen string) (string, error) {
 		return "", err
 	}
 	p := filepath.Join(dir, "config.yml")
-	body := fmt.Sprintf("web:\n  listen: %s\n", listen)
-	if err := os.WriteFile(p, []byte(body), 0o644); err != nil {
+	var cfg map[string]any
+	if b, rerr := os.ReadFile(p); rerr == nil {
+		_ = yaml.Unmarshal(b, &cfg)
+	}
+	if cfg == nil {
+		cfg = map[string]any{}
+	}
+	web, _ := cfg["web"].(map[string]any)
+	if web == nil {
+		web = map[string]any{}
+		cfg["web"] = web
+	}
+	web["listen"] = listen
+	body, merr := yaml.Marshal(cfg)
+	if merr != nil {
+		body = []byte(fmt.Sprintf("web:\n  listen: %s\n", listen))
+	}
+	if err := os.WriteFile(p, body, 0o644); err != nil {
 		return "", err
 	}
 	return p, nil

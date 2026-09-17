@@ -185,7 +185,8 @@ table.list tbody tr{transition:background .15s}
 
 /* ============ 同款侧边栏（单一来源）：工作台与被动页共用同一左列/模式行 ============ */
 .tw-left{width:302px;flex:none;display:flex;flex-direction:column;overflow-y:auto;
-  border-right:1px solid var(--border);background:var(--card);padding-bottom:18px}
+  border-right:1px solid var(--border);background:var(--card);padding-bottom:18px;
+  container-type:inline-size} /* 窄栏自适应按左列自身宽度判定（分割条拖窄不受视口影响） */
 .tw-modes{display:grid;grid-template-columns:repeat(5,1fr);gap:3px;padding:0 6px;
   border-bottom:1px solid var(--border);margin:0 0 16px;flex:none}
 .tw-modes .tab{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:5px;
@@ -195,3 +196,8 @@ table.list tbody tr{transition:background .15s}
 .tw-modes .tab:hover{color:var(--foreground);background:var(--accent)}
 .tw-modes .tab.active{color:var(--foreground);background:var(--muted);font-weight:600}
 .tw-modes .tab.active svg{opacity:1}
+/* 窄左列：模式行收成纯图标（label 靠 title 提示），不再挤压换行 */
+@container (max-width: 336px){
+  .tw-modes .tab span{display:none}
+  .tw-modes .tab{height:42px}
+}
