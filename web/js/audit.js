@@ -36,11 +36,127 @@
     dz.addEventListener(ev, function (e) { e.preventDefault(); dz.classList.remove("drag"); });
   });
   dz.addEventListener("drop", function (e) {
-    if (e.dataTransfer && e.dataTransfer.files.length) {
+    if (!e.dataTransfer) return;
+    // 拖入目录（Chromium：items 带 webkitGetAsEntry）
+    var entry = e.dataTransfer.items && e.dataTransfer.items[0] &&
+      e.dataTransfer.items[0].webkitGetAsEntry && e.dataTransfer.items[0].webkitGetAsEntry();
+    if (entry && entry.isDirectory) {
+      e.preventDefault();
+      collectDirEntry(entry).then(function (files) { ingestFolder(files, entry.name); });
+      return;
+    }
+    if (e.dataTransfer.files.length) {
       input.files = e.dataTransfer.files;
       showNames();
     }
   });
+
+  /* ---------------- 文件夹选择（25A：整目录上传） ---------------- */
+  var dirBtn = document.getElementById("audit-dir-btn");
+  var dirInput = document.getElementById("audit-dir-input");
+  if (dirBtn && dirInput) {
+    dirBtn.addEventListener("click", function (e) {
+      e.stopPropagation();
+      dirInput.click();
+    });
+    dirInput.addEventListener("change", function () {
+      var files = [...dirInput.files];
+      if (!files.length) return;
+      // webkitdirectory：每个 file.webkitRelativePath = "所选目录名/子路径/文件"
+      var root = (files[0].webkitRelativePath || "project/").split("/")[0] || "project";
+      ingestFolder(files, root);
+      dirInput.value = "";
+    });
+  }
+
+  // 可审计文本扩展（后端 zip 链路最终只认 .py/.js/.php，其余入树但不产出规则命中）
+  var DIR_OK_EXT = ["py", "js", "php", "go", "java", "ts", "tsx", "jsx", "html", "htm",
+    "css", "scss", "sql", "yml", "yaml", "json", "rb", "c", "h", "cpp", "cc", "sh", "md", "txt", "env", "ini", "xml"];
+  var DIR_SKIP_DIR = /(^|\/)(node_modules|\.git|vendor|dist|build|__pycache__|\.venv|venv|target|\.idea|\.vscode)(\/|$)/;
+  var MAX_DIR_FILES = 800;
+  var MAX_DIR_BYTES = 8 << 20;
+
+  function dirKeep(relPath, size) {
+    var ext = (/\.([a-z0-9]+)$/i.exec(relPath) || [])[1];
+    if (!ext || DIR_OK_EXT.indexOf(ext.toLowerCase()) < 0) return false;
+    if (DIR_SKIP_DIR.test(relPath)) return false;
+    if (size > MAX_DIR_BYTES) return false;
+    return true;
+  }
+
+  // 把目录文件集打包 zip（JSZip，页内生成），rootName 为顶层目录名
+  function ingestFolder(files, rootName) {
+    files.forEach(function (f) {
+      if (!f.__rel) {
+        // webkitdirectory 路径形如 root/sub/a.py → 去掉顶层 root 后为 zip 内相对路径
+        var rp = f.webkitRelativePath || f.name;
+        var parts = rp.split("/");
+        parts.shift();
+        f.__rel = parts.join("/") || f.name;
+      }
+    });
+    var kept = files.filter(function (f) { return dirKeep(f.__rel, f.size); });
+    if (!kept.length) { toast("该目录没有可审计的源码文件", "err"); return; }
+    var total = kept.reduce(function (a, f) { return a + f.size; }, 0);
+    if (kept.length > MAX_DIR_FILES) kept = kept.slice(0, MAX_DIR_FILES);
+    var info = "已选目录「" + rootName + "」：" + kept.length + " 个文件（" +
+      (total / 1024).toFixed(0) + " KB）" + (kept.length < files.length ? "，已过滤 " + (files.length - kept.length) + " 个（依赖/二进制/超限）" : "");
+    var namesEl = document.getElementById("audit-names");
+    if (namesEl) namesEl.textContent = info;
+
+    ensureJsZip(function () {
+      var zip = new JSZip();
+      kept.forEach(function (f) {
+        zip.file(rootName + "/" + f.__rel, f);
+      });
+      zip.generateAsync({ type: "blob", compression: "DEFLATE" }).then(function (blob) {
+        var dt = new DataTransfer();
+        dt.items.add(new File([blob], rootName + ".zip", { type: "application/zip" }));
+        input.files = dt.files;
+        showNames();
+        toast("目录已打包：" + kept.length + " 个文件，可开始审计", "ok");
+      });
+    });
+  }
+
+  // 递归读取拖入的目录项（Chromium FileSystemEntry）
+  function collectDirEntry(dirEntry) {
+    var out = [];
+    var reader = dirEntry.createReader();
+    function readAll() {
+      return new Promise(function (resolve) {
+        reader.readEntries(function (entries) {
+          if (!entries.length) return resolve();
+          var ops = entries.map(function (en) {
+            if (en.isDirectory) return collectDirEntry(en).then(function (sub) { out = out.concat(sub); });
+            return new Promise(function (res2) {
+              en.file(function (f) {
+                f.__rel = f.webkitRelativePath || en.fullPath.replace(/^\//, "");
+                out.push(f);
+                res2();
+              }, res2);
+            });
+          });
+          Promise.all(ops).then(function () { readAll().then(resolve); });
+        }, resolve);
+      });
+    }
+    return readAll().then(function () { return out; });
+  }
+
+  var jszipLoading = null;
+  function ensureJsZip(cb) {
+    if (window.JSZip) { cb(); return; }
+    if (jszipLoading) { jszipLoading.then(cb); return; }
+    jszipLoading = new Promise(function (resolve) {
+      var s = document.createElement("script");
+      s.src = "/js/jszip.min.js";
+      s.onload = resolve;
+      s.onerror = resolve;
+      document.head.appendChild(s);
+    });
+    jszipLoading.then(cb);
+  }
 
   function showNames() {
     var el = document.getElementById("audit-names");
@@ -304,6 +420,7 @@
 
   // 测试/验收钩子：CDP 直接以数据驱动渲染（不必真传文件）
   window.__slAuditRender = render;
+  window.__slIngestFolder = ingestFolder;
 
   // 初始空态
   treeEl.innerHTML = '<div class="tree-empty">上传源码并开始审计后，文件将显示在这里</div>';

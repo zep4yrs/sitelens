@@ -12,7 +12,7 @@
   /* ============ text-well 式布局：单顶带（模式行|工具条）+ 可拖分割 + 画布 ============ */
   /* 轻感对齐：近无彩色、软填充选中、羽毛按钮、发丝分割、大留白 */
   /* .tw-left / .tw-modes 公共样式已上移 app.css（工作台与被动页同款侧边栏单一来源） */
-  .tw-note{font-size:11.5px;color:var(--muted-fg);line-height:1.7;margin:0 16px 14px}
+  .tw-note{font-size:11.5px;color:var(--muted-fg);opacity:.75;line-height:1.7;margin:0 16px 14px}
   .tw-panel{padding:0 16px}
   .tw-url{height:44px;font-size:14px;margin-bottom:14px;border-radius:8px}
   /* 折叠：无框，仅一行 + 发丝线 */
@@ -52,7 +52,7 @@
   .tw-left .btn.tw-run:active{transform:none}
   .tw-left .btn.tw-run:disabled{opacity:.45;cursor:not-allowed}
   .tw-left .btn.tw-run.ghost-lite{background:var(--card);border:1px solid var(--border);color:var(--muted-fg)}
-  .tw-run-hint{font-size:11.5px;color:var(--muted-fg);margin:9px 0 0;text-align:center;line-height:1.7}
+  .tw-run-hint{font-size:11.5px;color:var(--muted-fg);opacity:.7;margin:9px 0 0;text-align:center;line-height:1.7}
   .tw-split{width:6px;flex:none;cursor:col-resize;position:relative;background:transparent}
   .tw-split::before{content:"";position:absolute;left:2px;top:0;bottom:0;width:1px;background:var(--border)}
   .tw-split:hover::before,.tw-split.on::before{width:2px;left:1.5px;background:var(--primary)}
@@ -65,7 +65,7 @@
   .tw-canvaspane.active{display:block}
   .tw-canvas .empty{min-height:54vh;gap:4px}
   .empty .empty-title{font-size:14.5px;font-weight:500;color:var(--foreground)}
-  .empty .empty-desc{font-size:12.5px;color:var(--muted-fg);line-height:1.8;max-width:30em}
+  .empty .empty-desc{font-size:12.5px;color:var(--muted-fg);opacity:.7;line-height:1.8;max-width:30em}
   /* 空态引导住在左栏（对齐参照物）：紧凑版圆标 */
   .tw-left .empty{min-height:0;padding:30px 4px 0;gap:4px}
   .tw-left .empty .big{display:grid;place-items:center;width:56px;height:56px;
@@ -76,7 +76,7 @@
   #hint.warn{color:var(--warn)}
   .chip-row,.seg{display:flex;gap:8px;flex-wrap:wrap}
   .opt-group{display:flex;align-items:center;gap:10px;margin:6px 0}
-  .g-label{font-size:12.5px;color:var(--muted-fg);width:42px;flex:none}
+  .g-label{font-size:12.5px;color:var(--muted-fg);opacity:.75;width:42px;flex:none}
   .chip,.seg-opt{padding:6px 14px;border:1px solid var(--border);border-radius:999px;
     font-size:13px;cursor:pointer;user-select:none;background:var(--card)}
   .chip:hover,.seg-opt:hover{border-color:color-mix(in srgb,var(--primary) 45%,var(--border))}
@@ -133,7 +133,9 @@
   .dropzone.dz-mini:hover,.dropzone.dz-mini.drag{border-color:var(--primary);background:var(--accent)}
   .dz-mini-ico{width:16px;height:16px;color:var(--muted-fg);flex:none}
   .dz-mini-txt{display:flex;flex-direction:column;font-size:12.5px;color:var(--foreground);line-height:1.4}
-  .dz-mini-sub{font-size:11px;color:var(--muted-fg)}
+  .audit-src-row{display:flex;gap:8px;align-items:stretch}
+  .audit-src-row .dz-dir-btn{flex:none;justify-content:center;gap:6px;padding:0 12px;font-size:12.5px}
+  .dz-mini-sub{font-size:11px;color:var(--muted-fg);opacity:.7}
   .dz-names{font-size:11px;color:var(--muted-fg);margin:0 0 10px;line-height:1.8;word-break:break-all}
   .ns-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:12px}
   .ns-card{background:var(--card);border:1px solid var(--border);border-radius:10px;padding:12px 14px}
@@ -176,7 +178,7 @@
   /* ============ 源码审计（25A）：文件树 + Monaco 工作区 + 发现卡 ============ */
   .audit-tree{flex:1;min-height:160px;overflow-y:auto;border-top:1px solid var(--border);
     padding:10px 2px 0;font-size:12.5px}
-  .audit-tree .tree-empty{color:var(--muted-fg);font-size:12px;text-align:center;padding:26px 8px}
+  .audit-tree .tree-empty{color:var(--muted-fg);opacity:.7;font-size:12px;text-align:center;padding:26px 8px}
   .audit-tree .tw-node{display:flex;align-items:center;gap:6px;padding:4px 6px;border-radius:6px;
     cursor:pointer;color:var(--muted-fg);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   .audit-tree .tw-node:hover{color:var(--foreground);background:var(--accent)}
@@ -319,12 +321,19 @@
       <div class="progressbar" id="lb-pw" style="display:none"><i id="lb-bar"></i></div>
     </section>
 
-    <!-- 源码审计：控制（上传收纳一行 + 文件树 + 运行键；Monaco 画布见 data-pane=audit） -->
+    <!-- 源码审计：控制（上传收纳一行 + 文件夹选择 + 文件树 + 运行键） -->
     <section class="tabpanel tw-panel" id="tab-audit">
-      <div class="dropzone dz-mini" id="audit-dz">
-        <input id="audit-files" type="file" multiple style="display:none" accept=".zip,.py,.js,.php">
-        <svg class="dz-mini-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg>
-        <span class="dz-mini-txt">点击或拖入上传<span class="dz-mini-sub">.zip / .py / .js / .php</span></span>
+      <div class="audit-src-row">
+        <div class="dropzone dz-mini" id="audit-dz" style="flex:1">
+          <input id="audit-files" type="file" multiple style="display:none" accept=".zip,.py,.js,.php">
+          <svg class="dz-mini-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg>
+          <span class="dz-mini-txt">点击或拖入文件 / 文件夹<span class="dz-mini-sub">.zip / .py / .js / .php</span></span>
+        </div>
+        <button type="button" class="btn tw-run ghost-lite dz-dir-btn" id="audit-dir-btn" title="选择整个项目文件夹">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:14px;height:14px"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/></svg>
+          选文件夹
+        </button>
+        <input id="audit-dir-input" type="file" webkitdirectory directory multiple style="display:none">
       </div>
       <div class="dz-names mono" id="audit-names"></div>
       <div class="audit-tree" id="audit-tree"></div>
