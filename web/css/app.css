@@ -113,7 +113,7 @@ table.list th,
   .cdd-pop{position:absolute;top:calc(100% + 6px);left:0;z-index:50;width:max-content;min-width:100%;
     max-width:min(360px,calc(100vw - 60px));background:var(--card);border:1px solid var(--border);
     border-radius:10px;box-shadow:var(--shadow-md);padding:5px;display:none}
-  .cdd.open .cdd-pop{display:block;animation:sl-fadeUp .18s ease}
+  .cdd.open .cdd-pop{display:block;animation:sl-fadeUp var(--t-med) var(--ease)}
   .cdd-opt{display:flex;flex-direction:column;gap:1px;width:100%;text-align:left;padding:8px 12px;
     border:none;background:none;border-radius:7px;cursor:pointer;font-family:inherit;
     color:var(--foreground);position:relative}
@@ -125,7 +125,7 @@ table.list th,
 /* 视觉升级：换页/切模式过渡帧（Turbo 换 body 时 body 动画自动重放，
    消除整屏瞬切的跳转感；纯淡入不含位移——位移本身就是跳感来源） */
 @keyframes sl-fadeIn{from{opacity:.35}to{opacity:1}}
-body{animation:sl-fadeIn .16s ease}
+body{animation:sl-fadeIn var(--t-fast) var(--ease)}
 
 /* ============ 双区壳（工作台与被动页共用）：单顶带 + 画布 ============ */
 .tw-app{position:fixed;inset:0;display:flex;background:var(--card)}
@@ -136,6 +136,39 @@ body{animation:sl-fadeIn .16s ease}
 .tw-toolbar .top-right{margin-left:6px}
 .tw-pagetitle{font-size:14px;font-weight:600;color:var(--foreground)}
 .tw-canvas{flex:1;overflow-y:auto}
+
+/* ============ 动效基准（25C Corporate 全站统一） ============
+   签名缓动 cubic-bezier(0.2,0,0,1)；时长三档 快150/标准250/慢400；
+   入场=淡入+小幅上移（≤8px），无 overshoot；禁 linear 空间位移 */
+:root{
+  --t-fast:150ms;--t-med:250ms;--t-slow:400ms;
+  --ease:cubic-bezier(0.2,0,0,1);
+}
+@keyframes sl-underline{from{transform:scaleX(0)}to{transform:scaleX(1)}}
+@keyframes sl-rowIn{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
+/* 列表/卡片级联入场：前 12 行 25ms 步进（预算 ≤300ms），其后直接呈现 */
+.list tbody tr,.ns-grid .ns-card,.audit-find{animation:sl-rowIn var(--t-med) var(--ease) both}
+.list tbody tr:nth-child(2),.ns-grid .ns-card:nth-child(2),.audit-find:nth-child(2){animation-delay:25ms}
+.list tbody tr:nth-child(3),.ns-grid .ns-card:nth-child(3),.audit-find:nth-child(3){animation-delay:50ms}
+.list tbody tr:nth-child(4),.ns-grid .ns-card:nth-child(4),.audit-find:nth-child(4){animation-delay:75ms}
+.list tbody tr:nth-child(5),.ns-grid .ns-card:nth-child(5),.audit-find:nth-child(5){animation-delay:100ms}
+.list tbody tr:nth-child(6),.ns-grid .ns-card:nth-child(6),.audit-find:nth-child(6){animation-delay:125ms}
+.list tbody tr:nth-child(7),.ns-grid .ns-card:nth-child(7),.audit-find:nth-child(7){animation-delay:150ms}
+.list tbody tr:nth-child(8),.ns-grid .ns-card:nth-child(8),.audit-find:nth-child(8){animation-delay:175ms}
+.list tbody tr:nth-child(9),.ns-grid .ns-card:nth-child(9),.audit-find:nth-child(9){animation-delay:200ms}
+.list tbody tr:nth-child(10),.ns-grid .ns-card:nth-child(10),.audit-find:nth-child(10){animation-delay:225ms}
+.list tbody tr:nth-child(11),.ns-grid .ns-card:nth-child(11),.audit-find:nth-child(11){animation-delay:250ms}
+.list tbody tr:nth-child(12),.ns-grid .ns-card:nth-child(12),.audit-find:nth-child(12){animation-delay:275ms}
+/* 顶带当前项下划线展开（staging：当前项强调） */
+.top-nav a.active::before{transform-origin:center;animation:sl-underline var(--t-med) var(--ease) both}
+/* 降级：偏好减少动效时移除位移/循环，保留透明度，时长减半 */
+@media (prefers-reduced-motion: reduce){
+  *,*::before,*::after{
+    animation-duration:.01ms !important;
+    animation-iteration-count:1 !important;
+    transition-duration:.01ms !important;
+  }
+}
 
 /* ============ UI 细节打磨（全局） ============ */
 ::-webkit-scrollbar{width:8px;height:8px}

@@ -1,0 +1,113 @@
+{
+  "project_name": "SiteLens",
+  "generated_at": "2026-09-17",
+  "personality": {
+    "archetype": "Corporate",
+    "confirmed_by": "用户 AskUserQuestion 显式拍板（2026-09-17）",
+    "keywords": ["专业", "利落", "可信", "安全工具本色"]
+  },
+  "brand_motion_identity": {
+    "signature_easing": "cubic-bezier(0.2, 0, 0, 1)",
+    "duration_palette": { "quick": 150, "standard": 250, "slow": 400 },
+    "entrance_pattern": "fade + 6px 上移（无 overshoot，位移仅 6-8px 小幅）"
+  },
+  "scope": {
+    "target_pages": ["工作台-综合扫描", "工作台-网络层检测", "工作台-登录爆破", "工作台-源码审计", "工作台-批量扫描", "设置", "情报库", "历史", "攻击链"],
+    "target_elements": ["顶带导航", "模式行", "左栏控制组", "折叠面板(已拆)", "多选下拉", "芯片/分段", "按钮族", "表格与卡片列表", "空态", "状态点", "审计发现条目", "Monaco 容器"]
+  },
+  "element_specs": [
+    {
+      "element": "顶带导航（top-nav）",
+      "visual_description": "悬停项灰底浮起、当前项底部 2px 主色条从中心展开；无位移",
+      "duration_ms": 150, "easing": "cubic-bezier(0.2,0,0,1)",
+      "disney_principles": ["staging（当前项强调，其余不抢）"],
+      "layers": { "primary": "背景/下划线过渡", "secondary": "图标透明度 0.75→1", "ambient": "无" }
+    },
+    {
+      "element": "模式行（tw-modes .tab）",
+      "visual_description": "选中项灰底块 150ms 浮现、图标提亮；面板随动 200ms 淡入",
+      "duration_ms": 150, "easing": "cubic-bezier(0.2,0,0,1)",
+      "disney_principles": ["follow-through（面板内容随后 50ms 淡入）"],
+      "layers": { "primary": "选中块背景", "secondary": "图标 opacity + 面板内容淡入", "ambient": "无" }
+    },
+    {
+      "element": "左栏控制组（配置三行/上传/文件树）",
+      "visual_description": "整组随工作台入场淡入上移 6px；文件树节点悬停灰底",
+      "duration_ms": 250, "easing": "cubic-bezier(0.2,0,0,1)",
+      "disney_principles": ["slow in/out"],
+      "layers": { "primary": "组淡入", "secondary": "文件树节点 hover", "ambient": "无" }
+    },
+    {
+      "element": "多选下拉（cdd-multi）",
+      "visual_description": "弹层 200ms 淡入+4px 上移展开；摘要行随选择即时更新",
+      "duration_ms": 200, "easing": "cubic-bezier(0.2,0,0,1)",
+      "disney_principles": ["staging（弹层置顶遮挡，无位移大跳）"],
+      "layers": { "primary": "弹层淡入上移", "secondary": "选中芯片底色过渡", "ambient": "无" }
+    },
+    {
+      "element": "芯片/分段（chip/seg-opt）",
+      "visual_description": "悬停底色 150ms；按下 scale 0.98（≤3% 合规）回弹归位",
+      "duration_ms": 150, "easing": "cubic-bezier(0.2,0,0,1)",
+      "disney_principles": ["squash & stretch（按压压缩，Corporate 限幅度）"],
+      "layers": { "primary": "底色/缩放", "secondary": "文字颜色", "ambient": "无" }
+    },
+    {
+      "element": "按钮族（tw-run/btn）",
+      "visual_description": "悬停边框/底色 150ms + 箭头右移 2px；按下下沉 1px；无回弹",
+      "duration_ms": 150, "easing": "cubic-bezier(0.2,0,0,1)",
+      "disney_principles": ["anticipation（箭头预位移暗示方向）"],
+      "layers": { "primary": "底色/边框", "secondary": "箭头位移", "ambient": "无" }
+    },
+    {
+      "element": "表格与卡片列表（历史/发现/ns-card/batch rows）",
+      "visual_description": "入场逐行级联淡入+4px 上移，行间 25ms；悬停行底色 150ms",
+      "duration_ms": 250, "easing": "cubic-bezier(0.2,0,0,1)",
+      "disney_principles": ["choreography（行级 stagger）", "slow in/out"],
+      "layers": { "primary": "行级联入场", "secondary": "悬停底色", "ambient": "无" },
+      "stagger": { "per_row_ms": 25, "budget_ms": 300 }
+    },
+    {
+      "element": "空态（empty 圆圈+引导）",
+      "visual_description": "圆圈 2.6s 呼吸微动画（透明度 0.5↔1）；文案淡入",
+      "duration_ms": 2600, "easing": "sine ease-in-out（环境循环）",
+      "disney_principles": ["secondary action（环境生命感）"],
+      "layers": { "primary": "圆圈呼吸", "secondary": "文案层级", "ambient": "呼吸即环境层" }
+    },
+    {
+      "element": "状态点（st-dot）",
+      "visual_description": "扫描中绿色脉冲（box-shadow 扩散 1.2s 循环）；状态切换颜色 200ms",
+      "duration_ms": 1200, "easing": "sine ease-in-out（环境循环）",
+      "disney_principles": ["secondary action"],
+      "layers": { "primary": "脉冲扩散", "secondary": "颜色状态切换", "ambient": "脉冲即环境层" }
+    },
+    {
+      "element": "审计发现条目（audit-find）",
+      "visual_description": "入场随列表级联；悬停灰底 150ms；左侧 3px 严重度色条常驻；点击→编辑器跳行+行背景 400ms 慢速高亮渐隐",
+      "duration_ms": 250, "easing": "cubic-bezier(0.2,0,0,1)",
+      "disney_principles": ["staging（色条分级强调）", "follow-through（跳行后高亮渐隐）"],
+      "layers": { "primary": "点击跳行", "secondary": "行背景高亮渐隐 400ms", "ambient": "无" }
+    },
+    {
+      "element": "Monaco 容器（audit-editor）",
+      "visual_description": "懒加载期间骨架 shimmer；就绪后编辑器 250ms 淡入；标注行底色常驻",
+      "duration_ms": 250, "easing": "cubic-bezier(0.2,0,0,1)",
+      "disney_principles": ["anticipation（加载骨架先行）"],
+      "layers": { "primary": "编辑器淡入", "secondary": "骨架 shimmer", "ambient": "标注行底色" }
+    },
+    {
+      "element": "换页过渡（Turbo body）",
+      "visual_description": "整页 160ms 淡入（已实现 sl-fadeIn），对齐 Corporate quick→standard 之间",
+      "duration_ms": 160, "easing": "ease",
+      "disney_principles": ["slow in/out"],
+      "layers": { "primary": "整页透明度", "secondary": "无", "ambient": "无" }
+    }
+  ],
+  "choreography": {
+    "workbench_first_paint": "骨架(100ms) → 模式行(150ms) → 控制组级联(30ms×3) → 画布淡入(250ms)；总预算 ≤ 400ms",
+    "stagger_budget_ms": 300
+  },
+  "reduced_motion_fallback": {
+    "strategy": "@media (prefers-reduced-motion: reduce)：移除全部位移与缩放（保留 opacity 淡入）、呼吸/脉冲动画停止改为静态、时长减半；sl-fadeUp 位移归零"
+  },
+  "implementation_note": "项目为原生 JS + Turbo（非 React），motion-apply 不适用；实现走 CSS 自定义属性（--t-fast/--t-med/--t-slow + 签名缓动变量）+ 既有 keyframes 扩展，由本 Skill 按 CSS 交付"
+}
