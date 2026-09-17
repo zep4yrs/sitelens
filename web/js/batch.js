@@ -1,5 +1,4 @@
-/* 批量扫描：URL 列表 → /api/batch → 进度 + 日志流。
-   工作台模式与独立 /batch 页共用；ID 统一 batch- 前缀。 */
+/* 批量扫描：URL 列表 → /api/batch → 进度 + 日志流。工作台批量页签专用；ID 统一 batch- 前缀。 */
 (function () {
   "use strict";
   var box = document.getElementById("batch-urls");
