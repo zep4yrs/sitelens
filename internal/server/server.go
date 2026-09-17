@@ -1020,6 +1020,7 @@ func (s *Server) hLoginBrute(w http.ResponseWriter, r *http.Request) {
 			s.jobs.Update(jobID, func(j *store.Job) {
 				j.Status = "running"
 				j.Progress = done * 100 / max(1, total)
+				j.Done, j.Total = done, total // 实时尝试计数（走查 Major）
 				j.Message = msg
 			})
 		}

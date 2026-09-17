@@ -227,7 +227,9 @@
   function slUpdateNav() {
     var key = navKey();
     document.querySelectorAll(".top-nav a").forEach(function (a) {
-      a.classList.toggle("active", a.getAttribute("data-key") === key);
+      var on = a.getAttribute("data-key") === key;
+      a.classList.toggle("active", on);
+      if (on) a.setAttribute("aria-current", "page"); else a.removeAttribute("aria-current");
     });
   }
   window.slUpdateNav = slUpdateNav;
@@ -390,7 +392,9 @@
   function updateSideActive() {
     var key = sideActive();
     document.querySelectorAll(".wb-side .side-nav a").forEach(function (a) {
-      a.classList.toggle("active", a.getAttribute("data-key") === key);
+      var on = a.getAttribute("data-key") === key;
+      a.classList.toggle("active", on);
+      if (on) a.setAttribute("aria-current", "page"); else a.removeAttribute("aria-current");
     });
   }
   window.slUpdateSide = updateSideActive;
@@ -433,7 +437,9 @@
     if (modeSlot) {
       modeSlot.outerHTML = row;
       document.querySelectorAll(".tw-modes .tab").forEach(function (b) {
-        b.classList.toggle("active", b.getAttribute("data-tab") === key);
+        var on = b.getAttribute("data-tab") === key;
+        b.classList.toggle("active", on);
+        if (on) b.setAttribute("aria-current", "true"); else b.removeAttribute("aria-current");
       });
     } else if (!app.querySelector(":scope > .tw-left")) {
       var col = document.createElement("aside");
