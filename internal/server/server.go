@@ -1111,7 +1111,9 @@ func (s *Server) hAudit(w http.ResponseWriter, r *http.Request) {
 		lower := strings.ToLower(name)
 		switch {
 		case strings.HasSuffix(lower, ".zip"):
-			if err = extractZip(fh, hdr.Size, dir, int64(s.cfg.Audit.MaxFileKB)*1024); err != nil {
+			// 解压单文件限额独立放大到 8MB（与审计读入上限一致）；
+			// 512KB 只约束 CollectSources 的预览回传（截断），不再拦截文件入树
+			if err = extractZip(fh, hdr.Size, dir, 8<<20); err != nil {
 				fh.Close()
 				writeJSON(w, 400, map[string]any{"error": name + "：" + err.Error()})
 				return
@@ -1125,7 +1127,7 @@ func (s *Server) hAudit(w http.ResponseWriter, r *http.Request) {
 				writeJSON(w, 500, map[string]any{"error": "写文件失败"})
 				return
 			}
-			_, _ = io.Copy(dst, io.LimitReader(fh, int64(s.cfg.Audit.MaxFileKB)*1024))
+			_, _ = io.Copy(dst, io.LimitReader(fh, 8<<20))
 			dst.Close()
 		default:
 			skipped = append(skipped, name) // 不支持的格式：跳过不算失败
