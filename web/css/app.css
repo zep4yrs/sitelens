@@ -169,6 +169,10 @@ body{animation:sl-fadeIn var(--t-fast) var(--ease)}
     transition-duration:.01ms !important;
   }
 }
+/* 25B 审计联动反馈：编辑器就绪淡入 + 发现跳行闪烁（一次性，非循环） */
+.audit-edwrap.ready .audit-editor{animation:sl-fadeIn var(--t-med) var(--ease)}
+.audit-line-flash{animation:sl-flashFade .6s var(--ease) both}
+@keyframes sl-flashFade{from{background:color-mix(in srgb,var(--warn) 32%,transparent)}to{background:transparent}}
 
 /* ============ UI 细节打磨（全局） ============ */
 ::-webkit-scrollbar{width:8px;height:8px}

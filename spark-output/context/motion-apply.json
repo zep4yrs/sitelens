@@ -1,0 +1,41 @@
+{
+  "project_name": "SiteLens",
+  "applied_at": "2026-09-17",
+  "framework": "vanilla-js (Turbo Drive, 无 React——ReactBits 组件库不适用)",
+  "scene": "DASHBOARD",
+  "scene_source": "sniff（扫描器工作台：表格/表单/状态面板为主）",
+  "personality_applied": {
+    "archetype": "Corporate",
+    "source": "motion-plan-link"
+  },
+  "path_decisions": [
+    { "path": "0a 直接写 CSS/JS", "reason": "原生 JS 项目，全部动效为 transition/一次性 keyframes 可覆盖，无 timeline/物理/3D 需求", "scene": "DASHBOARD" }
+  ],
+  "installed_components": [],
+  "css_snippets": [
+    { "name": "动效 tokens", "scope": "全局 :root", "detail": "--t-fast 150ms / --t-med 250ms / --t-slow 400ms / --ease cubic-bezier(0.2,0,0,1)" },
+    { "name": "换页淡入", "target": "body（Turbo swap 重放）", "detail": "sl-fadeIn 150ms" },
+    { "name": "级联入场", "target": ".list tbody tr / .ns-card / .audit-find", "detail": "sl-rowIn 250ms + 前 12 行 25ms 步进（预算 300ms）" },
+    { "name": "顶带下划线展开", "target": ".top-nav a.active::before", "detail": "sl-underline scaleX 250ms" },
+    { "name": "弹层展开", "target": ".cdd.open .cdd-pop", "detail": "sl-fadeUp 250ms" },
+    { "name": "面板淡入", "target": ".tabpanel.active / .tw-canvaspane.active", "detail": "sl-fadeIn 250ms" },
+    { "name": "Monaco 就绪淡入", "target": ".audit-edwrap.ready .audit-editor", "detail": "sl-fadeIn 250ms，创建实例时挂 ready 类" },
+    { "name": "发现跳行闪烁", "target": "#audit-out .audit-find 点击", "detail": "audit-line-flash 600ms 一次性高亮渐隐（非循环）", "scene_compliance_passed": true },
+    { "name": "reduced-motion 降级", "target": "全站", "detail": "prefers-reduced-motion 时移除位移/循环、保留透明度" }
+  ],
+  "prop_overrides_from_motion_plan": {
+    "mode_row_tabs": { "duration_ms": 150, "easing": "cubic-bezier(0.2,0,0,1)" },
+    "panel_switch": { "duration_ms": 250, "easing": "cubic-bezier(0.2,0,0,1)" },
+    "chips_press": { "scale": 0.97, "duration_ms": 100 },
+    "list_stagger_ms": 25,
+    "stagger_budget_ms": 300,
+    "finding_jump_flash_ms": 600
+  },
+  "exceptions_user_confirmed": [
+    "空态圆圈呼吸（2.6s 循环）——用户在 13 项细节清单中逐项批准",
+    "状态点运行脉冲（1.2s 循环）——功能性运行态反馈，状态门控非持续装饰",
+    "logo 呼吸点——3.0 品牌资产既有，非本 skill 产出"
+  ],
+  "scene_compliance_passed": true,
+  "profile_path": "spark-output/profile/motion-apply.md"
+}
