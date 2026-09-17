@@ -110,7 +110,7 @@
     });
     return root;
   }
-  function renderTree(node, contents, openPath) {
+  function renderTree(node, contents, openPath, prefix) {
     var ul = document.createElement("ul");
     Object.keys(node).sort(function (a, b) {
       var da = node[a] !== null, db = node[b] !== null; // 目录优先
@@ -119,25 +119,26 @@
     }).forEach(function (name) {
       var li = document.createElement("li");
       var child = node[name];
+      var full = prefix ? prefix + "/" + name : name; // 完整相对路径（contents 的键）
       if (child !== null) {
         var dir = document.createElement("div");
         dir.className = "tw-node tw-dir";
         dir.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 14 1.5-2.9A2 2 0 0 1 9.24 9.8H12a2 2 0 0 1 1.98 1.83L14 14"/><path d="M3 12V7.82a2 2 0 0 1 .58-1.41L7.41 2.6A2 2 0 0 1 8.82 2h6.36a2 2 0 0 1 1.41.58l3.83 3.82A2 2 0 0 1 21 7.82V17a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"/></svg><span>' + esc(name) + "</span>";
-        var sub = renderTree(child, contents, openPath);
+        var sub = renderTree(child, contents, openPath, full);
         dir.addEventListener("click", function () {
           sub.style.display = sub.style.display === "none" ? "" : "none";
         });
         li.appendChild(dir);
         li.appendChild(sub);
       } else {
-        var has = Object.prototype.hasOwnProperty.call(contents, name) && contents[name] !== undefined;
+        var has = Object.prototype.hasOwnProperty.call(contents, full) && contents[full] !== undefined;
         var f = document.createElement("div");
         f.className = "tw-node" + (has ? "" : " no-preview");
-        f.setAttribute("data-file", name);
+        f.setAttribute("data-file", full);
         f.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg><span>' + esc(name) + "</span>";
         f.addEventListener("click", function () {
           if (!has) { toast("该文件无预览（二进制或超过 512KB）", "err"); return; }
-          openFile(name);
+          openFile(full);
         });
         li.appendChild(f);
       }
@@ -149,6 +150,13 @@
   function openFile(path) {
     var contents = window.__slAuditContents || {};
     var content = contents[path];
+    if (content === undefined) {
+      // 兜底：叶子名精确匹配失败时按路径后缀找（历史响应路径差异容错）
+      var cand = Object.keys(contents).filter(function (k) {
+        return k === path || k.indexOf("/" + path, k.length - path.length - 1) >= 0;
+      });
+      if (cand.length) { path = cand[0]; content = contents[path]; }
+    }
     if (content === undefined) { toast("该文件无预览内容", "err"); return; }
     ensureMonaco(function () {
       var ed = ensureEditor();
