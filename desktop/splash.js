@@ -1,86 +1,133 @@
-// 透明启动页（无底板）：logo 弹性浮现 + "sitelens" 描边逐笔画字，
-// 没有窗口框、没有底色——像一枚浮在桌面上的品牌挂件。
-// 引擎冷启动（加载全量情报与模板索引）期间它就是唯一的可见面：
-// 状态文字报告进度；失败时显示错误再淡出，由主窗口接管错误页。
+// 透明启动页 v2「对焦」（2026-09-18 motion-web 升级）：
+// 浅色品牌底板（近黑 logo 在任何壁纸上成立——品牌规则的容器处理，资产原样），
+// logo 克制落位 → 细描边准星环绕画出+四刻度落定（透视锁定隐喻）→
+// sitelens 描边逐笔画出转实色 → 状态行/进度发丝线。
 //
-// 时序（与 TODO.md 设计一致）：
-//   0s    logo 从 scale(.6)+opacity(0) 弹性放大
-//   0.3s  描边文字逐笔画出轮廓（stroke-dashoffset）
-//   1.8s  轮廓画完，文字从空心过渡到实色
-//   2.4s  状态文字「正在启动引擎…」淡入
+// ★ 同源双宿主：本文件与 desktop-wails/assets/splash.html（wails HTML 选项注入）
+//   共享同一设计与时序——改任何一边必须同步另一边。
+// 时序（Corporate --ease cubic-bezier(.2,0,0,1) 家族）：
+//   0ms 底板 400ms / 100ms logo 450ms / 250ms 准星环 700ms（950ms 刻度）
+//   350ms 描边字 900ms（1300ms 转实色 400ms）/ 600ms 状态行 / 350ms 起进度线循环
+// 退场 fadeOut()：内容 150ms（transition）→ 整板 300ms（显式动画 plateOut——
+//   撤 animation 与 transition 同帧不触发过渡，实测瞬跳，故退场走动画通道）。
+// prefers-reduced-motion：全部直接终态，进度线静止。
 "use strict";
-const { BrowserWindow } = require('electron');
+const { BrowserWindow, app } = require('electron');
 
 let splashWin = null;
 
-function buildPage(logoTag) {
-  return '<!DOCTYPE html><html><head><meta charset="utf-8"><style>' +
+function buildPage(logoTag, ver) {
+  return '<!DOCTYPE html><html lang="zh-CN"><head><meta charset="utf-8"><style>' +
+    ':root{--ease:cubic-bezier(.2,0,0,1);--fg:#1a1a1a;--muted:#6f6f76;--faint:#9b9ba4;' +
+    '--danger:#dc2626;--track:rgba(0,0,0,.08)}' +
     '*{box-sizing:border-box;margin:0}' +
-    'body{height:100vh;display:flex;flex-direction:column;justify-content:center;' +
-    'align-items:center;background:transparent;overflow:hidden;user-select:none;' +
-    'transition:opacity .45s ease}' +
-    'body.out{opacity:0}' +
-    '@keyframes pop{from{opacity:0;transform:scale(.6)}' +
-    '60%{transform:scale(1.06)}to{opacity:1;transform:scale(1)}}' +
-    '@keyframes draw{to{stroke-dashoffset:0}}' +
-    '@keyframes solid{to{fill:#f1f5f9}}' +
-    '@keyframes bar{0%{left:-40%}100%{left:100%}}' +
-    '.logo{width:76px;height:76px;animation:pop .8s cubic-bezier(.22,1,.36,1) both}' +
-    '.word{margin-top:12px}' +
+    'html,body{height:100%}' +
+    'body{background:transparent;display:flex;align-items:center;justify-content:center;' +
+    'overflow:hidden;user-select:none;font-family:"Noto Sans SC","Microsoft YaHei",sans-serif}' +
+    '.plate{width:380px;height:250px;border-radius:20px;display:flex;align-items:center;' +
+    'justify-content:center;background:rgba(250,250,250,.94);border:1px solid rgba(0,0,0,.07);' +
+    'box-shadow:0 24px 64px rgba(15,15,20,.22),0 2px 8px rgba(15,15,20,.08);' +
+    'opacity:1;transform:none;animation:plateIn 400ms var(--ease) both;' +
+    'transition:opacity 300ms var(--ease),transform 300ms var(--ease);position:relative}' +
+    '@keyframes plateIn{from{opacity:0;transform:scale(.96)}}' +
+    '.inner{display:flex;flex-direction:column;align-items:center;transition:opacity 150ms var(--ease)}' +
+    '.mark{position:relative;width:76px;height:76px;margin-bottom:14px}' +
+    '.mark .logo{width:76px;height:76px;opacity:1;animation:logoIn 450ms var(--ease) 100ms both}' +
+    '@keyframes logoIn{from{opacity:0;transform:scale(1.05)}}' +
+    '.reticle{position:absolute;inset:-26px;width:128px;height:128px;pointer-events:none}' +
+    '.reticle .ring{fill:none;stroke:rgba(26,26,26,.55);stroke-width:1.5;' +
+    'stroke-dasharray:340;stroke-dashoffset:340;animation:ringDraw 700ms var(--ease) 250ms forwards}' +
+    '@keyframes ringDraw{to{stroke-dashoffset:0}}' +
+    '.reticle .tick{stroke:var(--fg);stroke-width:1.5;opacity:0;' +
+    'animation:tickIn 150ms var(--ease) 950ms forwards}' +
+    '@keyframes tickIn{to{opacity:.45}}' +
+    '.word{margin-top:2px}' +
     '.word text{font-family:Consolas,ui-monospace,monospace;font-weight:700;font-size:40px;' +
-    'letter-spacing:3px;fill:transparent;stroke:#f1f5f9;stroke-width:.8;' +
+    'letter-spacing:3px;fill:transparent;stroke:var(--fg);stroke-width:.8;' +
     'stroke-dasharray:900;stroke-dashoffset:900;' +
-    'animation:draw 1.4s cubic-bezier(.4,0,.2,1) .3s forwards,' +
-    'solid .5s ease 1.8s forwards}' +
-    '.bar{margin-top:16px;width:130px;height:2px;border-radius:99px;' +
-    'background:rgba(255,255,255,.10);overflow:hidden;position:relative}' +
-    '.bar i{position:absolute;height:100%;width:40%;border-radius:99px;' +
-    'background:#22c55e;animation:bar 1.2s ease-in-out infinite}' +
-    '.status{margin-top:14px;font-size:12px;color:#94a3b8;opacity:0;' +
-    'animation:st_in .5s ease 2.4s forwards;font-family:' +
-    '"LXGW WenKai","Noto Sans SC","Microsoft YaHei",sans-serif}' +
-    '.status.err{color:#f87171;animation:st_in .3s ease forwards}' +
-    '@keyframes st_in{to{opacity:1}}' +
+    'animation:wordDraw 900ms var(--ease) 350ms forwards,' +
+    'wordSolid 400ms var(--ease) 1300ms forwards}' +
+    '@keyframes wordDraw{to{stroke-dashoffset:0}}' +
+    '@keyframes wordSolid{to{fill:var(--fg)}}' +
+    '.bar{margin-top:18px;width:150px;height:2px;border-radius:99px;background:var(--track);' +
+    'overflow:hidden;position:relative;opacity:0;animation:fadeIn 250ms var(--ease) 350ms forwards}' +
+    '.bar i{position:absolute;top:0;height:100%;width:34%;border-radius:99px;background:var(--fg);' +
+    'opacity:.72;animation:barSweep 1.15s var(--ease) infinite}' +
+    '@keyframes barSweep{0%{left:-34%}100%{left:100%}}' +
+    '@keyframes fadeIn{to{opacity:1}}' +
+    '.status{margin-top:14px;font-size:12px;color:var(--muted);opacity:0;' +
+    'animation:fadeIn 250ms var(--ease) 600ms forwards;' +
+    'transition:opacity 150ms var(--ease),color 150ms var(--ease)}' +
+    '.ver{position:absolute;right:16px;bottom:12px;font-family:Consolas,ui-monospace,monospace;' +
+    'font-size:10.5px;color:var(--faint);opacity:0;animation:fadeIn 250ms var(--ease) 900ms forwards}' +
+    'body.err .reticle .ring{stroke:var(--danger)}' +
+    'body.err .reticle .tick{stroke:var(--danger);animation:tickIn 150ms var(--ease) forwards}' +
+    'body.err .bar i{background:var(--danger);opacity:.85}' +
+    'body.err .status{color:var(--danger);opacity:1;animation:none}' +
+    'body.out .inner{opacity:0}' +
+    'body.out .plate{animation:plateOut 300ms var(--ease) forwards}' +
+    '@keyframes plateOut{to{opacity:0;transform:scale(.97)}}' +
+    '@media (prefers-reduced-motion: reduce){' +
+    '.plate,.mark .logo{opacity:1;transform:none;animation:none}' +
+    '.reticle .ring{stroke-dashoffset:0;animation:none}' +
+    '.reticle .tick{opacity:.45;animation:none}' +
+    '.word text{stroke-dashoffset:0;fill:var(--fg);animation:none}' +
+    '.bar{opacity:1;animation:none}.bar i{animation:none;left:33%}' +
+    '.status,.ver{opacity:1;animation:none}' +
+    '.plate,body.out .plate{transition:none;animation:none}' +
+    'body.out .plate{opacity:0}' +
+    '}' +
     '</style></head><body>' +
+    '<div class="plate"><div class="inner">' +
+    '<div class="mark">' +
+    '<svg class="reticle" viewBox="0 0 128 128" aria-hidden="true">' +
+    '<circle class="ring" cx="64" cy="64" r="54"></circle>' +
+    '<line class="tick" x1="64" y1="2" x2="64" y2="10"></line>' +
+    '<line class="tick" x1="126" y1="64" x2="118" y2="64"></line>' +
+    '<line class="tick" x1="64" y1="126" x2="64" y2="118"></line>' +
+    '<line class="tick" x1="2" y1="64" x2="10" y2="64"></line></svg>' +
     logoTag +
-    '<div class="word"><svg viewBox="0 0 320 60" width="310" height="58">' +
-    '<text x="160" y="44" text-anchor="middle" fill="transparent" stroke="#f1f5f9" ' +
-    'stroke-width="0.8" stroke-dasharray="900" stroke-dashoffset="900" ' +
-    'font-family="Consolas,ui-monospace,monospace" font-weight="700" font-size="40" ' +
-    'letter-spacing="3">sitelens</text></svg></div>' +
+    '</div>' +
+    '<div class="word"><svg viewBox="0 0 320 60" width="300" height="56" aria-label="sitelens">' +
+    '<text x="160" y="44" text-anchor="middle">sitelens</text></svg></div>' +
     '<div class="bar"><i></i></div>' +
     '<div class="status" id="st">正在启动引擎…</div>' +
-    '<script>function setStatus(t){var e=document.getElementById("st");' +
-    'e.className="status";e.textContent=t}' +
-    'function setError(t){var e=document.getElementById("st");' +
-    'e.className="status err";e.textContent=t}' +
+    '</div>' +
+    (ver ? '<div class="ver">' + String(ver).replace(/[<>&]/g, '') + '</div>' : '') +
+    '</div>' +
+    '<script>function setStatus(t){swap(t,false)}' +
+    'function setError(t){document.body.classList.add("err");swap(t,true)}' +
+    'function swap(t,force){var e=document.getElementById("st");' +
+    'e.style.opacity="0";' +
+    'setTimeout(function(){e.textContent=String(t||"");e.style.opacity=force?"1":""},150)}' +
     'function fadeOut(){document.body.classList.add("out")}<\/script>' +
     '</body></html>';
 }
 
-// showSplash 显示启动页；logoDataUrl 为 logo 的 data:image/png;base64 URL
-//（可空：空时只保留描边文字动画）。
-function showSplash(logoDataUrl) {
+// showSplash 显示启动页；logoTag 为 logo 的 data:image/png URL（可空=无 logo 降级隐藏品牌标）。
+function showSplash(logoTag) {
   if (splashWin && !splashWin.isDestroyed()) return;
   splashWin = new BrowserWindow({
-    width: 400,
-    height: 280,
+    width: 460,
+    height: 330,
     transparent: true,
     frame: false,
     resizable: false,
     movable: false,
     alwaysOnTop: true,
     skipTaskbar: true,
-    hasShadow: false,
+    hasShadow: false, // 阴影由底板 CSS 自绘（透明窗 OS 阴影不可靠）
     show: false,
     center: true,
     webPreferences: { nodeIntegration: false, contextIsolation: true, sandbox: true }
   });
-  var logoTag = logoDataUrl
-    ? '<img class="logo" src="' + logoDataUrl + '" alt="">'
-    : '';
+  var tag = logoTag
+    ? '<img class="logo" alt="SiteLens" src="' + logoTag + '">'
+    : '<img class="logo" alt="" style="display:none">';
+  var ver = '';
+  try { ver = app.getVersion() || ''; } catch (e) {}
   splashWin.loadURL('data:text/html;charset=utf-8,' +
-    encodeURIComponent(buildPage(logoTag)));
+    encodeURIComponent(buildPage(tag, ver)));
   splashWin.once('ready-to-show', function () {
     if (splashWin && !splashWin.isDestroyed()) splashWin.show();
   });
@@ -92,7 +139,7 @@ function showSplash(logoDataUrl) {
   }, 3000);
 }
 
-// setStatus 更新状态文字（引擎阶段提示，如「首次启动需加载全量情报…」）。
+// setStatus 更新状态文字（150ms 交叉淡切，如「首次启动需加载全量情报…」）。
 function setStatus(text) {
   if (!splashWin || splashWin.isDestroyed()) return;
   splashWin.webContents.executeJavaScript(

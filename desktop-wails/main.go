@@ -18,6 +18,7 @@ package main
 
 import (
 	"embed"
+	"encoding/base64"
 	"fmt"
 	"log"
 	"net"
@@ -25,9 +26,12 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/wailsapp/wails/v3/pkg/application"
+	"github.com/wailsapp/wails/v3/pkg/events"
 	"gopkg.in/yaml.v3"
 )
 
@@ -38,6 +42,24 @@ var fallbackAssets embed.FS
 var iconICO []byte // SiteLens 品牌 logo（与 Electron 壳 desktop/build/icon.ico 同源）：
 // Windows 窗口/任务栏/资源管理器/任务管理器图标统一由 exe 内嵌资源提供
 //（rsrc_windows_amd64.syso），托盘图标用这份字节运行时注入
+
+//go:embed assets/splash.html
+var splashTmpl string
+
+//go:embed assets/icon.png
+var splashPNG []byte
+
+// buildSplashHTML 组装启动页：logo 以 data URI 注入（资产原样），无图则降级隐藏品牌标。
+func buildSplashHTML() string {
+	logoTag := `<img class="logo" alt="" style="display:none">`
+	if len(splashPNG) > 0 {
+		logoTag = `<img class="logo" alt="SiteLens" src="data:image/png;base64,` +
+			base64.StdEncoding.EncodeToString(splashPNG) + `">`
+	}
+	// 全量替换（-1）：注释与正文槽位都吃，避免「第一处在注释里」把正文槽漏掉
+	h := strings.ReplaceAll(splashTmpl, "{{LOGO}}", logoTag)
+	return strings.ReplaceAll(h, "{{VER}}", "")
+}
 
 func main() {
 	log.SetFlags(log.Ltime | log.Lmicroseconds)
@@ -84,15 +106,15 @@ func main() {
 	}()
 
 	baseURL := fmt.Sprintf("http://127.0.0.1:%d", port)
-	if err := waitReady(baseURL+"/api/version", 30*time.Second); err != nil {
-		_ = eng.Kill()
-		log.Fatalf("引擎健康检查超时: %v", err)
-	}
 
 	// CDP 调试通道默认关：设 SITLENS_CDP_PORT=9223 才开启（验证/排查用）
 	var browserArgs []string
 	if v := os.Getenv("SITLENS_CDP_PORT"); v != "" {
 		browserArgs = append(browserArgs, "--remote-debugging-port="+v)
+	}
+	// SITLENS_RM=1：强制 prefers-reduced-motion（启动页降级路径的验证开关，产品路径不感知）
+	if os.Getenv("SITLENS_RM") == "1" {
+		browserArgs = append(browserArgs, "--force-prefers-reduced-motion")
 	}
 	app := application.New(application.Options{
 		Name:        "SiteLens",
@@ -104,28 +126,71 @@ func main() {
 			Handler: application.AssetFileServerFS(fallbackAssets),
 		},
 	})
-	win := app.Window.NewWithOptions(application.WebviewWindowOptions{
-		Title:            "SiteLens 扫描工作台",
-		Width:            1360,
-		Height:           850,
-		MinWidth:         980,
-		MinHeight:        620,
-		BackgroundColour: application.NewRGB(250, 250, 250), // 主题底色：跨文档导航空帧期不闪白
-		Hidden:           len(os.Args) > 1 && os.Args[1] == "-hidden", // 内存测量用：窗口隐藏照常分配
-		URL:              baseURL,
+
+	// 启动页「对焦」先行：引擎冷启动期间的唯一可见面（与 Electron 壳 splash 同源设计）
+	splashWin := app.Window.NewWithOptions(application.WebviewWindowOptions{
+		Title:            "SiteLens 启动中",
+		Width:            460,
+		Height:           330,
+		Frameless:        true,
+		DisableResize:    true,
+		AlwaysOnTop:      true,
+		Windows:          application.WindowsWindow{HiddenOnTaskbar: true},
+		BackgroundType:   application.BackgroundTypeTransparent,
+		BackgroundColour: application.NewRGB(0, 0, 0),
+		HTML:             buildSplashHTML(),
 	})
-	log.Println("窗口已创建，进入事件循环")
+
+	// 主窗在引擎就绪后由 goroutine 创建（URL 指向引擎，避免加载死引擎出错页）
+	hiddenForMeasure := len(os.Args) > 1 && os.Args[1] == "-hidden"
+	makeMain := func() application.Window {
+		return app.Window.NewWithOptions(application.WebviewWindowOptions{
+			Title:            "SiteLens 扫描工作台",
+			Width:            1360,
+			Height:           850,
+			MinWidth:         980,
+			MinHeight:        620,
+			BackgroundColour: application.NewRGB(250, 250, 250), // 主题底色：跨文档导航空帧期不闪白
+			Hidden:           hiddenForMeasure, // 内存测量用：窗口隐藏照常分配
+			URL:              baseURL,
+		})
+	}
+	var mainWin application.Window
+	holdSplash := os.Getenv("SITLENS_SPLASH_HOLD") == "1" // 验证/预览：启动页常驻不自动退场
+	app.Event.OnApplicationEvent(events.Windows.ApplicationStarted, func(*application.ApplicationEvent) {
+		go func() {
+			if err := waitReady(baseURL+"/api/version", 30*time.Second); err != nil {
+				_ = eng.Kill()
+				splashWin.ExecJS("setError(" + strconv.Quote("引擎健康检查超时") + ")")
+				time.Sleep(3500 * time.Millisecond)
+				splashWin.Close()
+				log.Fatalf("引擎健康检查超时: %v", err)
+			}
+			mainWin = makeMain()
+			log.Println("窗口已创建")
+			if !holdSplash {
+				splashWin.ExecJS("fadeOut()")
+				time.Sleep(450 * time.Millisecond)
+				splashWin.Close()
+			}
+		}()
+	})
 
 	// 通知栏托盘（对齐 Electron 壳 createTray 的最小集）：品牌图标 + 显示主界面/退出
 	tray := app.SystemTray.New()
 	tray.SetIcon(iconICO)
 	tray.SetTooltip("SiteLens 站点透视")
 	trayMenu := app.NewMenu()
-	trayMenu.Add("显示主界面").OnClick(func(*application.Context) { win.Show() })
+	trayMenu.Add("显示主界面").OnClick(func(*application.Context) {
+		if mainWin != nil {
+			mainWin.Show()
+		}
+	})
 	trayMenu.AddSeparator()
 	trayMenu.Add("退出 SiteLens").OnClick(func(*application.Context) { app.Quit() })
 	tray.SetMenu(trayMenu)
 
+	log.Println("进入事件循环")
 	if err := app.Run(); err != nil {
 		log.Printf("app.Run 退出: %v", err)
 		log.Println("---- shell 结束(带错误) ----")
