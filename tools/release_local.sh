@@ -39,9 +39,12 @@ fi
 echo "  ✓ PE 头正确"
 "$DESKTOP/engine/sitelens.exe" -version
 
-# 3) 打包 NSIS 安装包（跳过 exe 图标改写/签名，与 CI 同参）。
+# 3) 打包 NSIS 安装包。
+#    signExecutable=false：只跳过代码签名，保留 exe 图标/版本元数据改写
+#   （旧参 signAndEditExecutable=false 连图标一起跳过——安装后 exe 与桌面
+#     快捷方式全是默认图标，2026-09-18 用户实测发现，已修正）。
 echo "== [3/4] 打包安装包 =="
-npx electron-builder --win nsis --publish never -c.win.signAndEditExecutable=false
+npx electron-builder --win nsis --publish never -c.win.signExecutable=false
 
 EXE="$DESKTOP/release/SiteLens-Setup-$VER.exe"
 [ -f "$EXE" ] || { echo "× 未产出安装包：$EXE"; exit 1; }
