@@ -10,6 +10,10 @@
 //  5. 退出时回收引擎进程
 //
 // 引擎 UI 即引擎 HTTP 服务本身，本壳不做任何资源伺服（无 ASAR 白名单问题）。
+//
+// 构建：go build -ldflags "-s -w -H windowsgui" -o sitelens-wails.exe .
+//（-H windowsgui = GUI 子系统不弹控制台；图标资源在 rsrc_windows_amd64.syso，
+// 由 go-winres simply --icon assets/icon.ico 生成，仓库已带，日常构建无需重造）。
 package main
 
 import (
@@ -29,6 +33,11 @@ import (
 
 //go:embed assets/index.html
 var fallbackAssets embed.FS
+
+//go:embed assets/icon.ico
+var iconICO []byte // SiteLens 品牌 logo（与 Electron 壳 desktop/build/icon.ico 同源）：
+// Windows 窗口/任务栏/资源管理器/任务管理器图标统一由 exe 内嵌资源提供
+//（rsrc_windows_amd64.syso），托盘图标用这份字节运行时注入
 
 func main() {
 	log.SetFlags(log.Ltime | log.Lmicroseconds)
@@ -95,7 +104,7 @@ func main() {
 			Handler: application.AssetFileServerFS(fallbackAssets),
 		},
 	})
-	app.Window.NewWithOptions(application.WebviewWindowOptions{
+	win := app.Window.NewWithOptions(application.WebviewWindowOptions{
 		Title:            "SiteLens 扫描工作台",
 		Width:            1360,
 		Height:           850,
@@ -106,6 +115,17 @@ func main() {
 		URL:              baseURL,
 	})
 	log.Println("窗口已创建，进入事件循环")
+
+	// 通知栏托盘（对齐 Electron 壳 createTray 的最小集）：品牌图标 + 显示主界面/退出
+	tray := app.SystemTray.New()
+	tray.SetIcon(iconICO)
+	tray.SetTooltip("SiteLens 站点透视")
+	trayMenu := app.NewMenu()
+	trayMenu.Add("显示主界面").OnClick(func(*application.Context) { win.Show() })
+	trayMenu.AddSeparator()
+	trayMenu.Add("退出 SiteLens").OnClick(func(*application.Context) { app.Quit() })
+	tray.SetMenu(trayMenu)
+
 	if err := app.Run(); err != nil {
 		log.Printf("app.Run 退出: %v", err)
 		log.Println("---- shell 结束(带错误) ----")
