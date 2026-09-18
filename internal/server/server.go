@@ -171,7 +171,7 @@ func (s *Server) Handler() http.Handler {
 	// 页面（产品形态：无宣传首页与关于页，根路径即工作台）
 	// "/" 不进表：由 hRoot 统一处理根路径、.html 直达与样式化 404
 	pages := map[string]string{
-		"/app": "app.html",
+		"/app":     "app.html",
 		"/history": "history.html", "/api-docs": "api-docs.html",
 		"/intel": "intel.html",
 		"/chain": "chain.html", "/settings": "settings.html",
