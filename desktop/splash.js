@@ -16,6 +16,12 @@ const { BrowserWindow, app } = require('electron');
 
 let splashWin = null;
 
+// 最低展示时长：暖启动引擎 ~300ms 就绪，若随 closeSplash 立即退场，
+// 入场动画只播到准星阶段就被掐掉（用户实测"看不见动画"）。
+// 1.9s = 入场全序列 ~1.7s（logo/准星/描边字转实色）+ 0.2s 停顿，之后才走两段退场。
+const SPLASH_MIN_SHOW_MS = 1900;
+let splashShownAt = 0;
+
 function buildPage(logoTag, ver) {
   return '<!DOCTYPE html><html lang="zh-CN"><head><meta charset="utf-8"><style>' +
     ':root{--ease:cubic-bezier(.2,0,0,1);--fg:#f1f5f9;--muted:#94a3b8;--faint:#94a3b8;' +
@@ -127,12 +133,16 @@ function showSplash(logoTag) {
   splashWin.loadURL('data:text/html;charset=utf-8,' +
     encodeURIComponent(buildPage(tag, ver)));
   splashWin.once('ready-to-show', function () {
-    if (splashWin && !splashWin.isDestroyed()) splashWin.show();
+    if (splashWin && !splashWin.isDestroyed()) {
+      splashWin.show();
+      splashShownAt = Date.now();
+    }
   });
   // 兜底：透明窗个别 GPU 环境不触发 ready-to-show
   setTimeout(function () {
     if (splashWin && !splashWin.isDestroyed() && !splashWin.isVisible()) {
       splashWin.show();
+      splashShownAt = Date.now();
     }
   }, 3000);
 }
@@ -154,14 +164,21 @@ function splashFail(text) {
 }
 
 // closeSplash 淡出并关闭（引擎就绪，主窗口即将淡入）。
+// 不足最低展示时长时先补齐：保证入场动画完整可感。
 function closeSplash() {
   var w = splashWin;
   splashWin = null;
   if (!w || w.isDestroyed()) return;
-  w.webContents.executeJavaScript('fadeOut()').catch(function () {});
+  var wait = splashShownAt
+    ? Math.max(0, SPLASH_MIN_SHOW_MS - (Date.now() - splashShownAt))
+    : 0;
   setTimeout(function () {
-    if (!w.isDestroyed()) w.destroy(); // destroy：跳过 close 事件链，动画已自理
-  }, 500);
+    if (w.isDestroyed()) return;
+    w.webContents.executeJavaScript('fadeOut()').catch(function () {});
+    setTimeout(function () {
+      if (!w.isDestroyed()) w.destroy(); // destroy：跳过 close 事件链，动画已自理
+    }, 500);
+  }, wait);
 }
 
 function fadeAndClose(w) {

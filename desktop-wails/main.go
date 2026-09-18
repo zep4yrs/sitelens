@@ -128,6 +128,7 @@ func main() {
 	})
 
 	// 启动页「对焦」先行：引擎冷启动期间的唯一可见面（与 Electron 壳 splash 同源设计）
+	splashBorn := time.Now() // 最低展示时长的起点（暖启动引擎 ~300ms 就绪，动画需 ~1.9s 播完）
 	splashWin := app.Window.NewWithOptions(application.WebviewWindowOptions{
 		Title:            "SiteLens 启动中",
 		Width:            460,
@@ -169,6 +170,10 @@ func main() {
 			mainWin = makeMain()
 			log.Println("窗口已创建")
 			if !holdSplash {
+				// 最低展示 1.9s：入场动画（logo/准星/描边字转实色）完整可感再退场
+				if d := 1900*time.Millisecond - time.Since(splashBorn); d > 0 {
+					time.Sleep(d)
+				}
 				splashWin.ExecJS("fadeOut()")
 				time.Sleep(450 * time.Millisecond)
 				splashWin.Close()
