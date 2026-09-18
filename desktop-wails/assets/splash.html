@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<!-- SiteLens 启动页 v2「对焦」（2026-09-18 motion-web 升级）
+     ★ 同源双宿主：desktop-wails/assets/splash.html（wails HTML 选项注入）
+       与 desktop/splash.js buildPage（Electron data URL）——改任何一边必须同步另一边。
+     占位符：LOGO 槽 = logo data URI（空 = 无 logo 降级）；VER 槽 = 版本号（空 = 不显示）。
+     （注意：本注释不得出现字面花括号占位符——Replace 是全量替换，注释里的也会被吃掉）
+     时序（Corporate --ease cubic-bezier(.2,0,0,1) 家族）：
+       0ms    底板 淡入+scale(.96→1) 400ms
+       100ms  logo 克制落位 scale(1.05→1) 450ms
+       250ms  准星环绕 logo 画出 700ms；950ms 四刻度落定
+       350ms  sitelens 描边逐笔画出 900ms；1300ms 转实色 400ms
+       600ms  状态行淡入（setStatus 交叉淡切 150ms）；进度发丝线循环 1.15s
+     退场 fadeOut()：内容 150ms → 整板 300ms 两段式。
+     prefers-reduced-motion：全部直接终态，进度线静止。
+     外部接口（两壳经 ExecJS/executeJavaScript 调用）：setStatus(t) setError(t) fadeOut()
+-->
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<style>
+  :root{--ease:cubic-bezier(.2,0,0,1);--fg:#1a1a1a;--muted:#6f6f76;--faint:#9b9ba4;
+    --danger:#dc2626;--track:rgba(0,0,0,.08)}
+  *{box-sizing:border-box;margin:0}
+  html,body{height:100%}
+  body{background:transparent;display:flex;align-items:center;justify-content:center;
+    overflow:hidden;user-select:none;font-family:"Noto Sans SC","Microsoft YaHei",sans-serif}
+
+  .plate{width:380px;height:250px;border-radius:20px;display:flex;align-items:center;
+    justify-content:center;background:rgba(250,250,250,.94);border:1px solid rgba(0,0,0,.07);
+    box-shadow:0 24px 64px rgba(15,15,20,.22),0 2px 8px rgba(15,15,20,.08);
+    opacity:1;transform:none; /* 终态写在基础声明：退场撤动画时不瞬跳 */
+    animation:plateIn 400ms var(--ease) both;
+    transition:opacity 300ms var(--ease),transform 300ms var(--ease)}
+  @keyframes plateIn{from{opacity:0;transform:scale(.96)}}
+
+  .inner{display:flex;flex-direction:column;align-items:center;transition:opacity 150ms var(--ease)}
+
+  .mark{position:relative;width:76px;height:76px;margin-bottom:14px}
+  .mark .logo{width:76px;height:76px;opacity:1;
+    animation:logoIn 450ms var(--ease) 100ms both}
+  @keyframes logoIn{from{opacity:0;transform:scale(1.05)}}
+  .reticle{position:absolute;inset:-26px;width:128px;height:128px;pointer-events:none}
+  .reticle .ring{fill:none;stroke:rgba(26,26,26,.55);stroke-width:1.5;
+    stroke-dasharray:340;stroke-dashoffset:340;
+    animation:ringDraw 700ms var(--ease) 250ms forwards}
+  @keyframes ringDraw{to{stroke-dashoffset:0}}
+  .reticle .tick{stroke:var(--fg);stroke-width:1.5;opacity:0;
+    animation:tickIn 150ms var(--ease) 950ms forwards}
+  @keyframes tickIn{to{opacity:.45}}
+
+  .word{margin-top:2px}
+  .word text{font-family:Consolas,ui-monospace,monospace;font-weight:700;font-size:40px;
+    letter-spacing:3px;fill:transparent;stroke:var(--fg);stroke-width:.8;
+    stroke-dasharray:900;stroke-dashoffset:900;
+    animation:wordDraw 900ms var(--ease) 350ms forwards,
+      wordSolid 400ms var(--ease) 1300ms forwards}
+  @keyframes wordDraw{to{stroke-dashoffset:0}}
+  @keyframes wordSolid{to{fill:var(--fg)}}
+
+  .bar{margin-top:18px;width:150px;height:2px;border-radius:99px;background:var(--track);
+    overflow:hidden;position:relative;opacity:0;animation:fadeIn 250ms var(--ease) 350ms forwards}
+  .bar i{position:absolute;top:0;height:100%;width:34%;border-radius:99px;background:var(--fg);
+    opacity:.72;animation:barSweep 1.15s var(--ease) infinite}
+  @keyframes barSweep{0%{left:-34%}100%{left:100%}}
+  @keyframes fadeIn{to{opacity:1}}
+
+  .status{margin-top:14px;font-size:12px;color:var(--muted);opacity:0;
+    animation:fadeIn 250ms var(--ease) 600ms forwards;
+    transition:opacity 150ms var(--ease),color 150ms var(--ease)}
+  .ver{position:absolute;right:16px;bottom:12px;font-family:Consolas,ui-monospace,monospace;
+    font-size:10.5px;color:var(--faint);opacity:0;animation:fadeIn 250ms var(--ease) 900ms forwards}
+
+  /* 错误态：准星与进度线转语义红（logo 资产不动） */
+  body.err .reticle .ring{stroke:var(--danger)}
+  body.err .reticle .tick{stroke:var(--danger);animation:tickIn 150ms var(--ease) forwards}
+  body.err .bar i{background:var(--danger);opacity:.85}
+  body.err .status{color:var(--danger);opacity:1;animation:none}
+
+  /* 退场：内容先走 150ms（transition），整板走显式退场动画（与入场动画同通道，规避
+     「撤 animation 与 transition 同帧」的规范灰区——transition 在该场景不触发，实测瞬跳） */
+  body.out .inner{opacity:0}
+  body.out .plate{animation:plateOut 300ms var(--ease) forwards}
+  @keyframes plateOut{to{opacity:0;transform:scale(.97)}}
+
+  @media (prefers-reduced-motion: reduce){
+    .plate,.mark .logo{opacity:1;transform:none;animation:none}
+    .reticle .ring{stroke-dashoffset:0;animation:none}
+    .reticle .tick{opacity:.45;animation:none}
+    .word text{stroke-dashoffset:0;fill:var(--fg);animation:none}
+    .bar{opacity:1;animation:none}
+    .bar i{animation:none;left:33%}
+    .status,.ver{opacity:1;animation:none}
+    .plate,body.out .plate{transition:none;animation:none}
+    body.out .plate{opacity:0}
+  }
+</style>
+</head>
+<body>
+<div class="plate">
+  <div class="inner">
+    <div class="mark">
+      <svg class="reticle" viewBox="0 0 128 128" aria-hidden="true">
+        <circle class="ring" cx="64" cy="64" r="54"/>
+        <line class="tick" x1="64" y1="2" x2="64" y2="10"/>
+        <line class="tick" x1="126" y1="64" x2="118" y2="64"/>
+        <line class="tick" x1="64" y1="126" x2="64" y2="118"/>
+        <line class="tick" x1="2" y1="64" x2="10" y2="64"/>
+      </svg>
+      {{LOGO}}
+    </div>
+    <div class="word"><svg viewBox="0 0 320 60" width="300" height="56" aria-label="sitelens">
+      <text x="160" y="44" text-anchor="middle">sitelens</text></svg></div>
+    <div class="bar"><i></i></div>
+    <div class="status" id="st">正在启动引擎…</div>
+  </div>
+  <div class="ver" id="ver">{{VER}}</div>
+</div>
+<script>
+  function setStatus(t){swap(t,false)}
+  function setError(t){document.body.classList.add("err");swap(t,true)}
+  function swap(t,force){
+    var e=document.getElementById("st");
+    e.style.opacity="0";
+    setTimeout(function(){e.textContent=String(t||"");e.style.opacity=force?"1":""},150);
+  }
+  function fadeOut(){document.body.classList.add("out")}
+</script>
+</body>
+</html>
