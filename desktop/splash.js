@@ -1,7 +1,7 @@
 // 透明启动页 v2「对焦」（2026-09-18 motion-web 升级）：
-// 视觉契约（用户拍板 2026-09-18）= 透明无底板挂件（v1 语言）：浅色字/绿进度线，
-// 容器只承载动画不加视觉。动效：logo 克制落位 → 细描边准星环绕画出+四刻度落定
-// （透视锁定隐喻）→ sitelens 描边逐笔画出转实色 → 状态行/进度发丝线。
+// 视觉契约（用户拍板 2026-09-18）= 透明无底板挂件——只撤底板视觉，
+// 其余一切（配色/尺寸/动效）维持 v2 原案。动效：logo 克制落位 → 细描边准星
+// 环绕画出+四刻度落定（透视锁定隐喻）→ sitelens 描边逐笔画出转实色 → 状态行/进度线。
 //
 // ★ 同源双宿主：本文件与 desktop-wails/assets/splash.html（wails HTML 选项注入）
 //   共享同一设计与时序——改任何一边必须同步另一边。
@@ -18,8 +18,8 @@ let splashWin = null;
 
 function buildPage(logoTag, ver) {
   return '<!DOCTYPE html><html lang="zh-CN"><head><meta charset="utf-8"><style>' +
-    ':root{--ease:cubic-bezier(.2,0,0,1);--fg:#f1f5f9;--muted:#94a3b8;--faint:#94a3b8;' +
-    '--ok:#22c55e;--danger:#f87171;--track:rgba(255,255,255,.10)}' +
+    ':root{--ease:cubic-bezier(.2,0,0,1);--fg:#1a1a1a;--muted:#6f6f76;--faint:#9b9ba4;' +
+    '--danger:#dc2626;--track:rgba(0,0,0,.08)}' +
     '*{box-sizing:border-box;margin:0}' +
     'html,body{height:100%}' +
     'body{background:transparent;display:flex;align-items:center;justify-content:center;' +
@@ -33,7 +33,7 @@ function buildPage(logoTag, ver) {
     '.mark .logo{width:76px;height:76px;opacity:1;animation:logoIn 450ms var(--ease) 100ms both}' +
     '@keyframes logoIn{from{opacity:0;transform:scale(1.05)}}' +
     '.reticle{position:absolute;inset:-26px;width:128px;height:128px;pointer-events:none}' +
-    '.reticle .ring{fill:none;stroke:rgba(241,245,249,.55);stroke-width:1.5;' +
+    '.reticle .ring{fill:none;stroke:rgba(26,26,26,.55);stroke-width:1.5;' +
     'stroke-dasharray:340;stroke-dashoffset:340;animation:ringDraw 700ms var(--ease) 250ms forwards}' +
     '@keyframes ringDraw{to{stroke-dashoffset:0}}' +
     '.reticle .tick{stroke:var(--fg);stroke-width:1.5;opacity:0;' +
@@ -49,8 +49,8 @@ function buildPage(logoTag, ver) {
     '@keyframes wordSolid{to{fill:var(--fg)}}' +
     '.bar{margin-top:18px;width:150px;height:2px;border-radius:99px;background:var(--track);' +
     'overflow:hidden;position:relative;opacity:0;animation:fadeIn 250ms var(--ease) 350ms forwards}' +
-    '.bar i{position:absolute;top:0;height:100%;width:34%;border-radius:99px;background:var(--ok);' +
-    'animation:barSweep 1.15s var(--ease) infinite}' +
+    '.bar i{position:absolute;top:0;height:100%;width:34%;border-radius:99px;background:var(--fg);' +
+    'opacity:.72;animation:barSweep 1.15s var(--ease) infinite}' +
     '@keyframes barSweep{0%{left:-34%}100%{left:100%}}' +
     '@keyframes fadeIn{to{opacity:1}}' +
     '.status{margin-top:14px;font-size:12px;color:var(--muted);opacity:0;' +
@@ -106,8 +106,8 @@ function buildPage(logoTag, ver) {
 function showSplash(logoTag) {
   if (splashWin && !splashWin.isDestroyed()) return;
   splashWin = new BrowserWindow({
-    width: 400,
-    height: 280,
+    width: 460,
+    height: 330,
     transparent: true,
     frame: false,
     resizable: false,
