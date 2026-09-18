@@ -130,8 +130,8 @@ func main() {
 	// 启动页「对焦」先行：引擎冷启动期间的唯一可见面（与 Electron 壳 splash 同源设计）
 	splashWin := app.Window.NewWithOptions(application.WebviewWindowOptions{
 		Title:            "SiteLens 启动中",
-		Width:            460,
-		Height:           330,
+		Width:            400,
+		Height:           280,
 		Frameless:        true,
 		DisableResize:    true,
 		AlwaysOnTop:      true,
