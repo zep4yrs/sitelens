@@ -181,6 +181,24 @@ function closeSplash() {
   }, wait);
 }
 
+// handoff 交接：补齐最低展示时长后，先亮主窗（revealMain 回调）再启动两段退场——
+// 工作台在启动页淡出下方浮现，不再"弹得比动画快"。
+function handoff(revealMain) {
+  var w = splashWin;
+  splashWin = null;
+  var wait = (w && !w.isDestroyed() && splashShownAt)
+    ? Math.max(0, SPLASH_MIN_SHOW_MS - (Date.now() - splashShownAt))
+    : 0;
+  setTimeout(function () {
+    if (revealMain) revealMain();
+    if (!w || w.isDestroyed()) return;
+    w.webContents.executeJavaScript('fadeOut()').catch(function () {});
+    setTimeout(function () {
+      if (!w.isDestroyed()) w.destroy();
+    }, 500);
+  }, wait);
+}
+
 function fadeAndClose(w) {
   if (splashWin === w) splashWin = null;
   if (w.isDestroyed()) return;
@@ -190,4 +208,4 @@ function fadeAndClose(w) {
   }, 500);
 }
 
-module.exports = { showSplash, setStatus, splashFail, closeSplash };
+module.exports = { showSplash, setStatus, splashFail, closeSplash, handoff };

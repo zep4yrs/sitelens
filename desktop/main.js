@@ -149,10 +149,15 @@ function createWindow() {
   win.on('resize', scheduleSaveBounds);
   win.on('move', scheduleSaveBounds);
   const showNow = () => {
-    if (win && !win.isDestroyed()) {
-      fadeIn(win);
-      if (engineReady) splash.closeSplash(); // 淡出启动页，工作台淡入
-      bootLog('window shown');
+    if (win && !win.isDestroyed() && !win.isVisible()) {
+      if (engineReady) {
+        // 交接：憋到启动页最低展示期满，主窗现身与启动页退场同时呈现
+        //（否则工作台在动画播完前弹出来抢镜）
+        splash.handoff(function () { fadeIn(win); bootLog('window shown'); });
+      } else {
+        fadeIn(win);
+        bootLog('window shown');
+      }
     }
   };
   win.once('ready-to-show', showNow);
