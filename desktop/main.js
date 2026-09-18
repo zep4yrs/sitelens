@@ -18,15 +18,13 @@ const path = require('path');
 const engine = require('./engine');
 const splash = require('./splash');
 
-// 4.0 Track A / A9：GUI 内存治理（实测见 docs/开发文档-4.0.md 26.24）。
+// 4.0 发版实测撤销 in-process-gpu（2026-09-18，发版阻断）。
 //
-// in-process-gpu 把 GPU 进程合并进主进程（Chromium 默认单开 GPU 进程，
-// 本项目实测占 109MB）。本机实测：4 进程 410-420MB → 3 进程 ≈374MB（可复现）。
-//
-// 取舍（如实记录）：GPU 崩溃会带走主进程，而独立 GPU 进程崩溃只影响渲染。
-// 本应用页面是轻量表单/列表（无 WebGL/视频），GPU 崩溃面小，换来 37MB 常驻
-// 下降与少一个进程；将来若引入 WebGL 背景等重 GPU 特性，需重新评估。
-app.commandLine.appendSwitch('in-process-gpu');
+// 历史与教训：A9 曾实测 in-process-gpu 省 37MB 常驻（4→3 进程），4.0.0 构建时
+// Electron 解析为 44.3.0（新拉取）后，该组合在本机出现「渲染层正常但屏幕合成
+// 全白 + 主进程静默退出」——正是下述取舍里写的 GPU 崩溃带走主进程，只是表现为
+// 合成失败而非崩溃对话框。GUI ≤250MB 目标已按实测封存（Electron 形态不可达），
+// 这 37MB 不再值得冒险：恢复 Chromium 默认的独立 GPU 进程。
 
 // 关掉壳不需要的 Chromium 后台服务（媒体路由 / 组件自动更新 / 域可靠性上报 /
 // 优化提示）：桌面壳只访问本地引擎 HTTP，不需要这些。
