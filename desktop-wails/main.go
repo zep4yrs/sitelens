@@ -142,7 +142,8 @@ func main() {
 		HTML:             buildSplashHTML(),
 	})
 
-	// 主窗在引擎就绪后由 goroutine 创建（URL 指向引擎，避免加载死引擎出错页）
+	// 主窗在引擎就绪后由 goroutine 创建（URL 指向引擎，避免加载死引擎出错页）；
+	// 创建即隐藏——憋到启动页最低展示期满才现身，与启动页退场同时呈现
 	hiddenForMeasure := len(os.Args) > 1 && os.Args[1] == "-hidden"
 	makeMain := func() application.Window {
 		return app.Window.NewWithOptions(application.WebviewWindowOptions{
@@ -152,7 +153,7 @@ func main() {
 			MinWidth:         980,
 			MinHeight:        620,
 			BackgroundColour: application.NewRGB(250, 250, 250), // 主题底色：跨文档导航空帧期不闪白
-			Hidden:           hiddenForMeasure, // 内存测量用：窗口隐藏照常分配
+			Hidden:           true, // 交接时序由 goroutine 控制（见下方 handoff 注释）
 			URL:              baseURL,
 		})
 	}
@@ -168,11 +169,15 @@ func main() {
 				log.Fatalf("引擎健康检查超时: %v", err)
 			}
 			mainWin = makeMain()
-			log.Println("窗口已创建")
+			log.Println("窗口已创建（隐藏，待交接）")
 			if !holdSplash {
-				// 最低展示 1.9s：入场动画（logo/准星/描边字转实色）完整可感再退场
+				// 交接时序：补齐最低展示 1.9s（入场动画完整可感）→
+				// 主窗现身与启动页两段退场同时开始——工作台不抢动画的镜
 				if d := 1900*time.Millisecond - time.Since(splashBorn); d > 0 {
 					time.Sleep(d)
+				}
+				if !hiddenForMeasure {
+					mainWin.Show()
 				}
 				splashWin.ExecJS("fadeOut()")
 				time.Sleep(450 * time.Millisecond)
