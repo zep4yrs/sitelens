@@ -1,7 +1,5 @@
 # SiteLens v4.0.0 — 攻击链还原
 
-![SiteLens 4.0.0 扫描工作台](../../assets/release-4.0.0.png)
-
 发布日期：2026-09-18 ｜ 上个版本：[v3.0.0](../../releases/tag/v3.0.0) ｜ GPL-3.0
 
 4.0 做了三件事。
