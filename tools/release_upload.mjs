@@ -4,7 +4,7 @@
 import fs from "fs";
 
 const TOKEN = process.env.CNB_TOKEN;
-const TAG = process.env.SITLENS_TAG || "v" + JSON.parse(fs.readFileSync("desktop/package.json", "utf8")).version;
+const TAG = process.env.SITLENS_TAG || "v" + JSON.parse(fs.readFileSync(new URL("../desktop/package.json", import.meta.url), "utf8")).version;
 const BODY_FILE = process.env.SITLENS_BODY_FILE;
 const REPO = process.env.SITLENS_REPO || "feng-qiao/sitelens";
 const API = `https://api.cnb.cool/${REPO}`;

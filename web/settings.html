@@ -870,7 +870,7 @@
       var timer = slPoll(function () {
         window.api.get("/api/osv-sync").then(function (st) {
           if (!st.running) {
-            clearInterval(timer); b.disabled = false;
+            timer.stop(); b.disabled = false;
             m.className = st.last_msg === "同步完成" ? "ok" : "err";
             m.textContent = (st.last_msg || "") + " " + (st.last_n || 0) + " 条 @ " + (st.last_at || "");
           }

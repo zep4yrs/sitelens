@@ -265,6 +265,39 @@
     put: function (u, d) { return request("PUT", u, d || {}); },
     del: function (u, d) { return request("DELETE", u, d); }
   };
+  // 供无法走 api 封装的裸 fetch（如 FormData 上传）手动补 X-Token 头
+  window.apiTok = tok;
+
+  /* 带 X-Token 的下载：location.href 导航无法携带自定义头，token 模式下
+     /api/* 导航必 401，故统一 fetch→Blob→a.download。preferOpen 为真且
+     响应无 attachment 头（如 HTML 报告预览）时改为新开标签。 */
+  window.slDownload = function (url, fallbackName, preferOpen) {
+    return fetch(url, { headers: tok() }).then(function (r) {
+      if (!r.ok) {
+        return r.json().catch(function () { return {}; }).then(function (j) {
+          throw new Error(j.error || "HTTP " + r.status);
+        });
+      }
+      var cd = r.headers.get("Content-Disposition") || "";
+      var m = cd.match(/filename\*?=(?:UTF-8'')?"?([^";]+)/i);
+      var name = (m && m[1]) || fallbackName || "download";
+      return r.blob().then(function (b) {
+        var u = URL.createObjectURL(b);
+        if (preferOpen && !cd) {
+          var w = window.open(u, "_blank");
+          if (!w) location.href = u;
+          return;
+        }
+        var a = document.createElement("a");
+        a.href = u;
+        a.download = name;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        setTimeout(function () { URL.revokeObjectURL(u); }, 10000);
+      });
+    });
+  };
 
   var toastTimer = null;
   window.toast = function (msg, cls) {

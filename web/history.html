@@ -326,13 +326,18 @@ function cell(k, v) {
   return '<div class="cell"><span>' + esc(k) + '</span><b class="mono">' + esc(v) + "</b></div>";
 }
 
-function exportAs(id, fmt) { location.href = "/api/export/" + id + "?fmt=" + fmt; }
+function exportAs(id, fmt) {
+  slDownload("/api/export/" + id + "?fmt=" + fmt, "sitelens-" + id + "." + fmt, fmt === "html")
+    .catch(function (e) { toast("导出失败：" + e.message, "err"); });
+}
 
 function delScan(id) {
   if (!confirm("删除扫描记录 #" + id + "？（含技术明细，不可恢复）")) return;
-  fetch("/api/history/" + id, { method: "DELETE" }).then(function () {
+  api.del("/api/history/" + id).then(function () {
     toast("已删除记录 #" + id, "ok");
     load();
+  }).catch(function (e) {
+    toast("删除失败：" + e.message, "err");
   });
 }
 
@@ -349,7 +354,7 @@ function doDiff() {
     var html = "<p class='mono'>" + esc(d.a.host) + " (" + esc(d.a.scanned_at) + ") ⇄ " +
       esc(d.b.host) + " (" + esc(d.b.scanned_at) + ")</p>";
     html += "<p><b>新增 " + d.added.length + "：</b>" +
-      (d.added.map(function (t) { return esc(t.name) + (t.version ? " v" + t.version : ""); })
+      (d.added.map(function (t) { return esc(t.name) + (t.version ? " v" + esc(t.version) : ""); })
         .join("、") || "无") + "</p>";
     html += "<p><b>消失 " + d.removed.length + "：</b>" +
       (d.removed.map(function (t) { return esc(t.name); }).join("、") || "无") + "</p>";

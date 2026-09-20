@@ -523,7 +523,10 @@ function exportButtons() {
     '<button class="btn ghost small" onclick="exportAs(\'md\')">MD 报告</button>';
 }
 window.exportAs = function (fmt) {
-  if (currentScanId) location.href = "/api/export/" + currentScanId + "?fmt=" + fmt;
+  if (!currentScanId) return;
+  slDownload("/api/export/" + currentScanId + "?fmt=" + fmt,
+    "sitelens-" + currentScanId + "." + fmt, fmt === "html")
+    .catch(function (e) { toast("导出失败：" + e.message, "err"); });
 };
 
 /* ?url= 自动开扫（首页搜索框跳转入口） */

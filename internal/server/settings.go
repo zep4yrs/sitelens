@@ -179,7 +179,6 @@ func (s *Server) hOsvSync(w http.ResponseWriter, r *http.Request) {
 		defer func() {
 			s.osvMu.Lock()
 			s.osvRunning = false
-			s.osvLastMsg = "同步完成"
 			s.osvMu.Unlock()
 		}()
 		kb := s.KB()

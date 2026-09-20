@@ -107,6 +107,108 @@ func TestBuildEvidenceLinkEdge(t *testing.T) {
 	}
 }
 
+// TestBuildEvidenceLinkViaDataflow：P4 关联的白盒端是 dataflow（自身无链节点，
+// correlate 对 dataflow 事实产出 WhiteboxVulnID==""），应经 dataflow.VulnID
+// 映射到白盒 vuln_node 的链节点建 evidence_link 边，而不是静默丢边。
+func TestBuildEvidenceLinkViaDataflow(t *testing.T) {
+	g := model.NewGraph("s")
+	ev1 := model.NewEvidence("response", model.OriginBlackbox, "dast", "s",
+		"http://t/?cmd=1", "", 0, "sql syntax error")
+	wEv := model.NewEvidence("sink", model.OriginWhitebox, "audit", "", "", "u.py", 5,
+		"cursor.execute(sql)")
+	g.Add(ev1)
+	g.Add(wEv)
+	bv := model.NewVulnNode(model.OriginBlackbox, "sqli-error", "", "http://t/?cmd=1",
+		"cmd", "", 0, model.ObsPositive, "proven", model.ConfConfirmed, []string{ev1.ID})
+	g.Add(bv)
+	wv := model.NewVulnNode(model.OriginWhitebox, "", "AST-sql", "", "", "u.py", 5,
+		model.ObsPositive, "detected", model.ConfProbable, []string{wEv.ID})
+	g.Add(wv)
+	// audit 产出形态的 dataflow：带 VulnID。
+	df := model.NewDataflow("python", "u.py", "handler", "cmd", 5, nil, nil, nil,
+		model.ConfProbable, []string{wEv.ID})
+	df.VulnID = wv.ID
+	g.Add(df)
+	link, err := model.NewEvidenceLink(bv.ID, df.ID, "", "param", model.ConfProbable,
+		[]string{ev1.ID, wEv.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	g.Add(link)
+
+	res := Build(g, Options{})
+	var el *model.ChainEdge
+	for i := range res.Edges {
+		if res.Edges[i].Kind == "evidence_link" {
+			el = &res.Edges[i]
+		}
+	}
+	if el == nil {
+		t.Fatalf("dataflow 端的 evidence_link 应建链；edges=%+v", res.Edges)
+	}
+	// 白盒端应落在白盒 vuln_node 的链节点上（RefID = wv.ID）。
+	var toRef string
+	for _, n := range g.ChainNodes {
+		if n.ID == el.To {
+			toRef = n.RefID
+		}
+	}
+	if toRef != wv.ID {
+		t.Errorf("evidence_link 白盒端应映射到白盒 vuln_node 链节点，实得 ref=%s", toRef)
+	}
+	if err := g.Validate(); err != nil {
+		t.Fatalf("建链后图应通过校验：%v", err)
+	}
+}
+
+// TestBuildEvidenceLinkDataflowNoVulnID：dataflow 无 VulnID 可映射时，
+// 应为其补建 kind=exploit 链节点再建 evidence_link 边。
+func TestBuildEvidenceLinkDataflowNoVulnID(t *testing.T) {
+	g := model.NewGraph("s")
+	ev1 := model.NewEvidence("response", model.OriginBlackbox, "dast", "s",
+		"http://t/?cmd=1", "", 0, "traceback: os.system")
+	wEv := model.NewEvidence("sink", model.OriginWhitebox, "audit", "", "", "u.py", 5,
+		"os.system(cmd)")
+	g.Add(ev1)
+	g.Add(wEv)
+	bv := model.NewVulnNode(model.OriginBlackbox, "rce-error", "", "http://t/?cmd=1",
+		"cmd", "", 0, model.ObsPositive, "proven", model.ConfConfirmed, []string{ev1.ID})
+	g.Add(bv)
+	// 无 VulnID 的 dataflow。
+	df := model.NewDataflow("python", "u.py", "handler", "cmd", 5, nil, nil, nil,
+		model.ConfProbable, []string{wEv.ID})
+	g.Add(df)
+	link, err := model.NewEvidenceLink(bv.ID, df.ID, "", "url", model.ConfProbable,
+		[]string{ev1.ID, wEv.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	g.Add(link)
+
+	res := Build(g, Options{})
+	found := false
+	for _, e := range res.Edges {
+		if e.Kind == "evidence_link" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("无 VulnID 的 dataflow 端也应建 evidence_link；edges=%+v", res.Edges)
+	}
+	var cn *model.ChainNode
+	for i := range g.ChainNodes {
+		if g.ChainNodes[i].RefID == df.ID {
+			cn = &g.ChainNodes[i]
+		}
+	}
+	if cn == nil || cn.Kind != "exploit" {
+		t.Errorf("应为 dataflow 补建 kind=exploit 链节点，实得 %+v", cn)
+	}
+	if err := g.Validate(); err != nil {
+		t.Fatalf("建链后图应通过校验：%v", err)
+	}
+}
+
 // TestBuildIdempotent：重复建链不重复加边。
 func TestBuildIdempotent(t *testing.T) {
 	g, _ := buildGraph()

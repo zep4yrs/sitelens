@@ -95,7 +95,7 @@ function edgeLabel(k){
 var scanDD = null;
 
 function loadList(){
-  fetch("/api/history?limit=60").then(function(r){return r.json();}).then(function(rows){
+  fetch("/api/history?limit=60", { headers: apiTok() }).then(function(r){return r.json();}).then(function(rows){
     rows = rows||[];
     var root = document.getElementById("scan");
     var pop = root.querySelector(".cdd-pop");
@@ -109,6 +109,7 @@ function loadList(){
     }).join("");
     // 默认选第一条
     CUR = rows[0].id;
+    root.setAttribute("data-value", rows[0].id);
     setDDLabel(root, rows[0]);
     scanDD = initCDD("scan", function(){ loadChain(); });
     loadChain();
@@ -128,7 +129,7 @@ function loadChain(){
   var body = document.getElementById("body");
   body.innerHTML = '<div class="empty">加载中…</div>';
 
-  fetch("/api/graph/"+CUR).then(function(r){ return r.json().then(function(j){ return {ok:r.ok,code:r.status,j:j}; }); })
+  fetch("/api/graph/"+CUR, { headers: apiTok() }).then(function(r){ return r.json().then(function(j){ return {ok:r.ok,code:r.status,j:j}; }); })
   .then(function(res){
     if(!res.ok){
       body.innerHTML = '<div class="empty">'+esc(res.j.error||"该扫描无结构化事实图")+'<br><br>'+
@@ -167,7 +168,7 @@ function render(g){
   };
 
   // 链视图（节点 + 边）
-  fetch("/api/graph/"+g.scan_id+"/chain").then(function(r){ return r.json(); }).then(function(ch){
+  fetch("/api/graph/"+g.scan_id+"/chain", { headers: apiTok() }).then(function(r){ return r.json(); }).then(function(ch){
     renderChain(g, ch);
   }).catch(function(){ renderTables(g); });
 }
