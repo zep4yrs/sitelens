@@ -79,12 +79,12 @@
 
 | 文件 | 说明 |
 | --- | --- |
-| `SiteLens-Setup-4.0.1.exe` | Windows 安装包（约 156MB） |
+| `SiteLens-Setup-4.0.1.exe` | Windows 安装包（约 163MB） |
 
 SHA256：
 
 ```
-SHA256-PENDING
+6cbe4198effa8aebba9280be38171bdf759bfe22b18fd2ace769f62fe1a9a4f0
 ```
 
 > Gitee 渠道只同步源码（其单文件 100MB 限制装不下安装包），
