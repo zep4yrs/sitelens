@@ -45,7 +45,7 @@ import (
 )
 
 // Version 服务版本。
-const Version = "4.0.0"
+const Version = "4.0.1"
 
 // categoryNames 常见技术类别中文名（对齐 Wappalyzer 类别 id）。
 var categoryNames = map[string]string{
