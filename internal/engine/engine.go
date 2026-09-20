@@ -73,11 +73,12 @@ type progress func(percent int, msg string)
 // matcher/kb 支持运行期热替换（SetMatcher/SetKB）：换枪为指针原子语义，
 // 进行中的扫描持旧快照不受影响，新扫描取新数据。
 type Engine struct {
-	cfg       *config.Config
-	dataMu    sync.Mutex
-	matcher   *sitelens.Matcher
-	kb        *intel.KB
-	nucleiLRU map[string]int64 // Nuclei 模板 LRU 调度表（持久化，重启不丢轮转进度）
+	cfg         *config.Config
+	dataMu      sync.Mutex
+	matcher     *sitelens.Matcher
+	kb          *intel.KB
+	activeScans int              // 活跃扫描计数（>0 时 ReleaseIntel 跳过释放，避免与快照 Match 竞争）
+	nucleiLRU   map[string]int64 // Nuclei 模板 LRU 调度表（持久化，重启不丢轮转进度）
 }
 
 // New 创建引擎。matcher / kb 可为 nil（对应能力降级跳过，不阻塞扫描）。
@@ -119,6 +120,16 @@ func (e *Engine) snapshot() (*sitelens.Matcher, *intel.KB) {
 // Scan 执行扫描，异常统一进 Result.Error（消息可直接展示）。
 // cancel 非空时在阶段边界与 check 循环内轮询，返回 true 即尽快终止（局部结果仍返回）。
 func (e *Engine) Scan(rawURL string, opts Options, onProgress progress, cancel func() bool) *Result {
+	// 活跃扫描计数：增减均持 dataMu，与 ReleaseIntel 的「检查+释放」互斥，
+	// 杜绝计数为 0 判定后、释放完成前新扫描取到快照的窗口。
+	e.dataMu.Lock()
+	e.activeScans++
+	e.dataMu.Unlock()
+	defer func() {
+		e.dataMu.Lock()
+		e.activeScans--
+		e.dataMu.Unlock()
+	}()
 	if onProgress == nil {
 		onProgress = func(int, string) {}
 	}
@@ -328,6 +339,11 @@ func (e *Engine) Scan(rawURL string, opts Options, onProgress progress, cancel f
 				dastFormTargets = append(dastFormTargets, dast.FormTarget{Action: f.Action, Fields: f.Names})
 			}
 		}
+		// 爬取面入图：带参链接与表单是无证据的攻击面事实，不喂 collector
+		// 则图内 entry_points 少报（命中时才补建），与设计意图不符
+		if col != nil {
+			col.captureEntryPoints(dastLinks, dastFormTargets, nil)
+		}
 	}
 
 	// 4.0 Track A / A8：页面清单驻留上限（超出省略并计数，削扫描期内存）
@@ -401,7 +417,14 @@ func (e *Engine) Scan(rawURL string, opts Options, onProgress progress, cancel f
 	if opts.Checks == "all" && !cancelled() && e.cfg.Checks.NucleiCap > 0 && e.cfg.Checks.NucleiDir != "" {
 		onProgress(84, "运行 Nuclei 社区模板子集…")
 		if overBudget() {
-			opts.NucleiCap = opts.NucleiCap / 2
+			// 先解析有效值：未显式指定（0）时降档须作用于配置默认上限，
+			// 否则 0/2=0 会被 nucleiSubset 重置回全量配置上限（降档空操作）
+			if opts.NucleiCap <= 0 {
+				opts.NucleiCap = e.cfg.Checks.NucleiCap
+			}
+			if opts.NucleiCap > 1 {
+				opts.NucleiCap /= 2
+			}
 			noteBudget("Nuclei 模板上限减半（" + fmt.Sprint(opts.NucleiCap) + "）")
 		}
 		if nl := e.nucleiSubset(res.Technologies, res.Title, opts.NucleiCap); len(nl) > 0 {
@@ -687,7 +710,15 @@ func (e *Engine) ClientFor(opts Options) *httpx.Client { return e.newClient(opts
 
 // ReleaseIntel 释放情报知识库常驻内存（A10 自适应版）：表清空、惰性路径保留，
 // 下一次扫描/检索自动重载。供 serve 管理端点在长空闲时调用。
+// 并发安全：全程持 dataMu，消除对 e.kb 的无锁读（与 SetKB 热替换的指针竞争）；
+// 活跃扫描计数 >0 时跳过释放——进行中的扫描全程共用快照 *KB（契约见上），
+// KB.Release 的清表会与其 Match 读构成数据竞争。
 func (e *Engine) ReleaseIntel() {
+	e.dataMu.Lock()
+	defer e.dataMu.Unlock()
+	if e.activeScans > 0 {
+		return
+	}
 	e.kb.Release()
 }
 

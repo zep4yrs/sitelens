@@ -25,7 +25,10 @@
     var urls = box.value.split("\n").map(function (s) { return s.trim(); }).filter(Boolean).slice(0, LIMIT);
     if (!urls.length) return;
     document.getElementById("batch-go").disabled = true;
-    document.getElementById("batch-cancel").style.display = "";
+    var cancelBtn = document.getElementById("batch-cancel");
+    cancelBtn.disabled = false;
+    cancelBtn.textContent = "取消";
+    cancelBtn.style.display = "";
     document.getElementById("batch-pw").style.display = "block";
     document.getElementById("batch-log").style.display = "block";
     var logBox = document.getElementById("batch-log");

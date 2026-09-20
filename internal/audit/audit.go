@@ -152,7 +152,7 @@ func Run(root string, cfg config.AuditConfig, onProgress func(done, total int, m
 // run 是 Run 的核心实现。wb 非空时（P4）顺带把白盒发现实体化进图。
 func run(root string, cfg config.AuditConfig, onProgress func(done, total int, msg string), wb *model.ScanGraph) (*Report, error) {
 	if cfg.MaxFileKB <= 0 {
-		cfg.MaxFileKB = 8192 // 审计读入上限 8MB（预览截断另由 CollectSources 的 512KB 管，互不拦）
+		cfg.MaxFileKB = 8192 // 审计读入上限 8MB；CollectSources 预览为全量回传（不截断），总量由上传/解压 8MB 闸门把守
 	}
 	if cfg.MaxFiles <= 0 {
 		cfg.MaxFiles = 800

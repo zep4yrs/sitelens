@@ -206,6 +206,12 @@ func linkEvidenceLinks(g *model.ScanGraph) []model.ChainEdge {
 	for i := range g.ChainNodes {
 		nodeID[g.ChainNodes[i].RefID] = g.ChainNodes[i].ID
 	}
+	// dataflow 索引：P4 关联的白盒端是 dataflow（自身无链节点），需经其
+	// VulnID 映射到白盒 vuln_node 的链节点（audit 产出的 dataflow 均带）。
+	dfs := map[string]model.Dataflow{}
+	for _, d := range g.Dataflows {
+		dfs[d.ID] = d
+	}
 	var out []model.ChainEdge
 	for _, l := range g.EvidenceLinks {
 		if len(l.EvidenceIDs) == 0 {
@@ -215,6 +221,17 @@ func linkEvidenceLinks(g *model.ScanGraph) []model.ChainEdge {
 		wb := nodeID[l.WhiteboxDataflowID]
 		if wb == "" {
 			wb = nodeID[l.WhiteboxVulnID]
+		}
+		if wb == "" && l.WhiteboxDataflowID != "" {
+			// dataflow 端在链上无节点：先映射到其白盒 vuln_node 的链节点；
+			// 无 VulnID 可映射时为 dataflow 补建 exploit 链节点（不丢关联）。
+			if d, ok := dfs[l.WhiteboxDataflowID]; ok && d.VulnID != "" {
+				wb = nodeID[d.VulnID]
+			}
+			if wb == "" {
+				wb = ensureChainNode(g, nodeID, l.WhiteboxDataflowID, "exploit",
+					"白盒数据流", l.EvidenceIDs)
+			}
 		}
 		if bb == "" || wb == "" {
 			continue

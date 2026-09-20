@@ -150,7 +150,8 @@
             if (en.isDirectory) return collectDirEntry(en).then(function (sub) { out = out.concat(sub); });
             return new Promise(function (res2) {
               en.file(function (f) {
-                f.__rel = f.webkitRelativePath || en.fullPath.replace(/^\//, "");
+                // fullPath 形如 /root/sub/a.py，去掉顶层目录段（rootName 由 ingestFolder 统一前置），避免 zip 内 proj/proj/…
+                f.__rel = en.fullPath.replace(/^\//, "").split("/").slice(1).join("/") || f.name;
                 out.push(f);
                 res2();
               }, res2);
@@ -329,7 +330,7 @@
     var fd = new FormData();
     [...picked].forEach(function (f) { fd.append("files", f); });
     busy(true);
-    fetch("/api/audit", { method: "POST", body: fd })
+    fetch("/api/audit", { method: "POST", headers: apiTok(), body: fd })
       .then(function (r) {
         return r.json().then(function (j) {
           if (!r.ok) throw new Error(j.error || "HTTP " + r.status);

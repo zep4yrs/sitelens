@@ -48,6 +48,9 @@ func JSONBrute(p Poster, o Options, onProgress func(done, total int, msg string)
 
 	var hits []Hit
 	for i, c := range combos {
+		if o.Cancel != nil && o.Cancel() {
+			break // 已取消：停止后续登录尝试，命中结果照常返回
+		}
 		sleepInterval(o.IntervalMS, i)
 		body := applyJSON(o.JSONTemplate, c.u, c.pw)
 		status, rbody, rerr := p.PostJSON(endpoint, body)

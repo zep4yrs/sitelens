@@ -1018,7 +1018,7 @@ func (s *Server) hLoginBrute(w http.ResponseWriter, r *http.Request) {
 		}
 		progress := func(done, total int, msg string) {
 			s.jobs.Update(jobID, func(j *store.Job) {
-				j.Status = "running"
+				// 不写 j.Status：进度上报不得覆写 hJobCancel 置上的 cancelling
 				j.Progress = done * 100 / max(1, total)
 				j.Done, j.Total = done, total // 实时尝试计数（走查 Major）
 				j.Message = msg
@@ -1037,6 +1037,7 @@ func (s *Server) hLoginBrute(w http.ResponseWriter, r *http.Request) {
 				IntervalMS:      s.cfg.LoginBrute.IntervalMS,
 				SuccessContains: successContains,
 				CaptchaField:    captchaField, // 用户显式指定优先于自动识别
+				Cancel:          func() bool { return s.jobs.CancelRequested(jobID) },
 			}, progress)
 		} else {
 			hits, err = loginbrute.Brute(f, loginbrute.Options{
@@ -1048,6 +1049,7 @@ func (s *Server) hLoginBrute(w http.ResponseWriter, r *http.Request) {
 				CaptchaType:  captchaType,
 				CaptchaField: captchaField, // 用户显式指定优先（空 = 自动识别）
 				OCRURL:       s.cfg.LoginBrute.CaptchaOCRURL,
+				Cancel:       func() bool { return s.jobs.CancelRequested(jobID) },
 				FetchImage: func(rawURL string) ([]byte, error) {
 					rr, rerr := s.eng.ClientFor(scanOptions(body)).GetDirect(rawURL)
 					if rerr != nil || rr == nil {
@@ -1057,6 +1059,11 @@ func (s *Server) hLoginBrute(w http.ResponseWriter, r *http.Request) {
 				},
 				RenderedBody: rendered,
 			}, progress)
+		}
+		// 取消检查须在 Update 回调外（RWMutex 不可重入），且优先于 error/done 收尾
+		if s.jobs.CancelRequested(jobID) {
+			s.jobs.Update(jobID, func(j *store.Job) { j.Status = "cancelled"; j.Message = "已取消" })
+			return
 		}
 		if err != nil {
 			s.jobs.Update(jobID, func(j *store.Job) { j.Status = "error"; j.Message = err.Error() })
@@ -1114,8 +1121,9 @@ func (s *Server) hAudit(w http.ResponseWriter, r *http.Request) {
 		lower := strings.ToLower(name)
 		switch {
 		case strings.HasSuffix(lower, ".zip"):
-			// 解压单文件限额独立放大到 8MB（与审计读入上限一致）；
-			// 512KB 只约束 CollectSources 的预览回传（截断），不再拦截文件入树
+			// 解压单文件限额独立放大到 8MB；审计读入上限由下方 acfg 对齐到
+			// 同一 8MB（否则 512KB~8MB 文件入树、计入 rep.Files 却零规则扫描）。
+			// CollectSources 预览为全量回传（不截断），总量同样由 8MB 闸门把守
 			if err = extractZip(fh, hdr.Size, dir, 8<<20); err != nil {
 				fh.Close()
 				writeJSON(w, 400, map[string]any{"error": name + "：" + err.Error()})
@@ -1144,7 +1152,13 @@ func (s *Server) hAudit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	rep, err := audit.Run(dir, s.cfg.Audit, nil)
+	// 三闸门对齐：解压/直传单文件已放大到 8MB，规则扫描的读入上限一并抬到
+	// 8MB，否则 512KB~8MB 源码计入「扫描文件」却一条规则都不跑（零发现）
+	acfg := s.cfg.Audit
+	if acfg.MaxFileKB < 8192 {
+		acfg.MaxFileKB = 8192
+	}
+	rep, err := audit.Run(dir, acfg, nil)
 	if err != nil {
 		writeJSON(w, 500, map[string]any{"error": "审计失败：" + err.Error()})
 		return
@@ -1196,7 +1210,11 @@ func (s *Server) hAuditDemo(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 500, map[string]any{"error": "写样本失败"})
 		return
 	}
-	rep, err := audit.Run(dir, s.cfg.Audit, nil)
+	acfg := s.cfg.Audit
+	if acfg.MaxFileKB < 8192 {
+		acfg.MaxFileKB = 8192 // 与 hAudit 一致：审计读入上限对齐 8MB 上传闸门
+	}
+	rep, err := audit.Run(dir, acfg, nil)
 	if err != nil {
 		writeJSON(w, 500, map[string]any{"error": "审计失败"})
 		return

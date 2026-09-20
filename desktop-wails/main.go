@@ -12,7 +12,7 @@
 // 引擎 UI 即引擎 HTTP 服务本身，本壳不做任何资源伺服（无 ASAR 白名单问题）。
 //
 // 构建：go build -ldflags "-s -w -H windowsgui" -o sitelens-wails.exe .
-//（-H windowsgui = GUI 子系统不弹控制台；图标资源在 rsrc_windows_amd64.syso，
+// （-H windowsgui = GUI 子系统不弹控制台；图标资源在 rsrc_windows_amd64.syso，
 // 由 go-winres simply --icon assets/icon.ico 生成，仓库已带，日常构建无需重造）。
 package main
 
@@ -26,8 +26,11 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
+	"runtime"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/wailsapp/wails/v3/pkg/application"
@@ -102,7 +105,7 @@ func main() {
 	eng := cmd.Process
 	log.Printf("引擎已启动 pid=%d listen=%s dir=%s", eng.Pid, listen, engineDir)
 	defer func() {
-		_ = eng.Kill()
+		killEngineTree(eng)
 	}()
 
 	baseURL := fmt.Sprintf("http://127.0.0.1:%d", port)
@@ -153,22 +156,39 @@ func main() {
 			MinWidth:         980,
 			MinHeight:        620,
 			BackgroundColour: application.NewRGB(250, 250, 250), // 主题底色：跨文档导航空帧期不闪白
-			Hidden:           true, // 交接时序由 goroutine 控制（见下方 handoff 注释）
+			Hidden:           true,                              // 交接时序由 goroutine 控制（见下方 handoff 注释）
 			URL:              baseURL,
 		})
 	}
-	var mainWin application.Window
+	// mainWin 跨 goroutine 共享：就绪 goroutine 写（下方 ApplicationStarted 回调），
+	// 托盘「显示主界面」OnClick 在另一执行流读，必须 mutex 同步——否则数据竞争
+	//（-race 必标），且冷启动 waitReady 期间托盘读到撕裂/未发布的值。
+	var (
+		mainWinMu sync.Mutex
+		mainWin   application.Window
+	)
+	setMainWin := func(w application.Window) {
+		mainWinMu.Lock()
+		mainWin = w
+		mainWinMu.Unlock()
+	}
+	getMainWin := func() application.Window {
+		mainWinMu.Lock()
+		defer mainWinMu.Unlock()
+		return mainWin
+	}
 	holdSplash := os.Getenv("SITLENS_SPLASH_HOLD") == "1" // 验证/预览：启动页常驻不自动退场
 	app.Event.OnApplicationEvent(events.Windows.ApplicationStarted, func(*application.ApplicationEvent) {
 		go func() {
 			if err := waitReady(baseURL+"/api/version", 30*time.Second); err != nil {
-				_ = eng.Kill()
+				killEngineTree(eng) // log.Fatalf=os.Exit 跳过 defer，先树杀再退出
 				splashWin.ExecJS("setError(" + strconv.Quote("引擎健康检查超时") + ")")
 				time.Sleep(3500 * time.Millisecond)
 				splashWin.Close()
 				log.Fatalf("引擎健康检查超时: %v", err)
 			}
-			mainWin = makeMain()
+			win := makeMain()
+			setMainWin(win)
 			log.Println("窗口已创建（隐藏，待交接）")
 			if !holdSplash {
 				// 交接时序：补齐最低展示 1.9s（入场动画完整可感）→
@@ -177,7 +197,7 @@ func main() {
 					time.Sleep(d)
 				}
 				if !hiddenForMeasure {
-					mainWin.Show()
+					win.Show()
 				}
 				splashWin.ExecJS("fadeOut()")
 				time.Sleep(450 * time.Millisecond)
@@ -192,8 +212,8 @@ func main() {
 	tray.SetTooltip("SiteLens 站点透视")
 	trayMenu := app.NewMenu()
 	trayMenu.Add("显示主界面").OnClick(func(*application.Context) {
-		if mainWin != nil {
-			mainWin.Show()
+		if w := getMainWin(); w != nil {
+			w.Show()
 		}
 	})
 	trayMenu.AddSeparator()
@@ -204,10 +224,29 @@ func main() {
 	if err := app.Run(); err != nil {
 		log.Printf("app.Run 退出: %v", err)
 		log.Println("---- shell 结束(带错误) ----")
+		killEngineTree(eng) // log.Fatal=os.Exit 跳过 defer，退出前显式树杀引擎
 		log.SetOutput(os.Stderr)
 		log.Fatal(err)
 	}
 	log.Println("---- shell 正常结束 ----")
+}
+
+// killEngineTree 树杀引擎进程（对齐 Electron 壳 stop() 的 taskkill /T 语义，
+// 见 desktop/engine.js:302-325）：Windows 上 os.Process.Kill=TerminateProcess
+// 只杀引擎 PID 本身，引擎扫描时经 chromedp 拉起的 Chrome 等子进程会成孤儿
+// 继续驻留内存；taskkill /PID /T /F 把整棵树连同孙进程一并强杀（引擎已退出
+// 时 taskkill 报错属常态，忽略）。POSIX 下引擎未单独设进程组（cmd 未用
+// Setpgid），组杀无对象，退化为 Kill 引擎本身（与原 eng.Kill 行为一致）。
+// log.Fatal=os.Exit 会跳过 defer，故引擎启动后的所有 Fatal 退出路径都必须
+// 显式调用本函数。
+func killEngineTree(p *os.Process) {
+	if p == nil {
+		return
+	}
+	if runtime.GOOS == "windows" {
+		_ = exec.Command("taskkill", "/PID", strconv.Itoa(p.Pid), "/T", "/F").Run()
+	}
+	_ = p.Kill() // 兜底：树杀失败时至少杀引擎本身（已死则返回错误，忽略）
 }
 
 // detectEngineDir 引擎目录探测：环境变量 > exe 同级 engine/ > 开发态 ../desktop/engine。
@@ -223,8 +262,8 @@ func detectEngineDir() (string, bool) {
 	}
 	exeDir = filepath.Dir(exeDir)
 	for _, cand := range []string{
-		filepath.Join(exeDir, "engine"),                       // 打包态（安装器布局）
-		filepath.Join(exeDir, "..", "desktop", "engine"),      // 开发态（仓库布局）
+		filepath.Join(exeDir, "engine"),                          // 打包态（安装器布局）
+		filepath.Join(exeDir, "..", "desktop", "engine"),         // 开发态（仓库布局）
 		`D:\fengqiao\Desktop\26-08python实训\实训考核2\desktop\engine`, // 本机实验兜底
 	} {
 		if _, err := os.Stat(filepath.Join(cand, "sitelens.exe")); err == nil {
@@ -246,7 +285,8 @@ func freePort() (int, error) {
 
 // writeUserConfig 最小配置落用户目录（%APPDATA%/SiteLens-Wails/config.yml）。
 // merge 语义（与 Electron 壳 yml-merge 同思路）：保留文件里已有的其余键
-// （用户的 scan/loginbrute 等自定义），只更新 web.listen；解析失败时重建新文件。
+// （用户的 scan/loginbrute 等自定义），只更新 web.listen；解析失败时按行
+// 文本合并、原文其余内容原样保留（不整文件重建清空用户键）。
 func writeUserConfig(listen string) (string, error) {
 	dir, err := os.UserConfigDir()
 	if err != nil {
@@ -259,7 +299,17 @@ func writeUserConfig(listen string) (string, error) {
 	p := filepath.Join(dir, "config.yml")
 	var cfg map[string]any
 	if b, rerr := os.ReadFile(p); rerr == nil {
-		_ = yaml.Unmarshal(b, &cfg)
+		if uerr := yaml.Unmarshal(b, &cfg); uerr != nil {
+			// 解析失败（重复键/Tab 缩进等手滑）时 cfg 为 nil，继续走结构化合并
+			// 会把文件重置成只剩 web.listen，用户的 scan/loginbrute 等全部键被
+			// 静默抹掉，违反上方 merge 契约。改为按行文本合并兜底：坏文件其余
+			// 行原样保留，只更新 web.listen 一行，并留日志告警。
+			log.Printf("writeUserConfig: %s 解析失败(%v)，按行合并仅更新 web.listen，其余内容原样保留", p, uerr)
+			if werr := os.WriteFile(p, []byte(mergeWebListen(string(b), listen)), 0o644); werr != nil {
+				return "", werr
+			}
+			return p, nil
+		}
 	}
 	if cfg == nil {
 		cfg = map[string]any{}
@@ -278,6 +328,79 @@ func writeUserConfig(listen string) (string, error) {
 		return "", err
 	}
 	return p, nil
+}
+
+// 两层结构行匹配（对齐 desktop/lib/yml-merge.js 的段头/段内键正则）：
+// 顶层段头如 "web:" 或 "web: # 注释"；段内键如 "  listen: 127.0.0.1:8080"。
+var (
+	sectionRe = regexp.MustCompile(`^([A-Za-z_][\w-]*):\s*(#.*)?$`)
+	kvRe      = regexp.MustCompile(`^(\s+)([A-Za-z_][\w-]*):\s*(.*)$`)
+)
+
+// mergeWebListen 在原文上按行合并 web.listen（与 Electron 壳 yml-merge.mergeManaged
+// 的文本合并同思路，仅受管 web.listen 一个键）：web: 段下已有 listen 行则原位替换值，
+// 没有则追加到段尾；web: 段不存在则整段追加到文件末尾；注释、空行、其余键一律
+// 原样保留。仅在原文件 YAML 解析失败时兜底调用，坏文件不做结构化重建。
+func mergeWebListen(src, listen string) string {
+	lines := strings.Split(src, "\n")
+	out := make([]string, 0, len(lines)+2)
+	inWeb, seenWeb, seenListen := false, false, false
+	for _, line := range lines {
+		if m := sectionRe.FindStringSubmatch(line); m != nil {
+			inWeb = m[1] == "web"
+			if inWeb {
+				seenWeb = true
+			}
+			out = append(out, line)
+			continue
+		}
+		if m := kvRe.FindStringSubmatch(line); m != nil && inWeb && m[2] == "listen" {
+			seenListen = true
+			nl := "" // 保留原行尾（CRLF 文件避免行尾混用）
+			if strings.HasSuffix(line, "\r") {
+				nl = "\r"
+			}
+			out = append(out, m[1]+"listen: "+listen+nl)
+			continue
+		}
+		out = append(out, line)
+	}
+	if !seenWeb {
+		if n := len(out); n > 0 && strings.TrimSpace(out[n-1]) != "" {
+			out = append(out, "")
+		}
+		out = append(out, "web:", "  listen: "+listen, "")
+		return strings.Join(out, "\n")
+	}
+	if !seenListen {
+		if at := lastLineOfWebSection(out); at >= 0 {
+			out = append(out, "")
+			copy(out[at+2:], out[at+1:])
+			out[at+1] = "  listen: " + listen
+		}
+	}
+	return strings.Join(out, "\n")
+}
+
+// lastLineOfWebSection 返回 web: 段（段头起直到下一个顶层段前）最后一行的下标，
+// 对齐 desktop/lib/yml-merge.js 的 lastLineOfSection。
+func lastLineOfWebSection(lines []string) int {
+	at := -1
+	for i, line := range lines {
+		if line == "web:" || strings.HasPrefix(line, "web: ") {
+			at = i
+			continue
+		}
+		if at >= 0 {
+			if line != "" && line[0] != ' ' && line[0] != '\t' { // 下一个顶层段：结束
+				break
+			}
+			if strings.TrimSpace(line) != "" {
+				at = i // 段内子行（含注释）
+			}
+		}
+	}
+	return at
 }
 
 // waitReady 轮询引擎健康端点直到就绪或超时。

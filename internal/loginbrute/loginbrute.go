@@ -305,6 +305,7 @@ type Options struct {
 	JSONEndpoint    string                              // json 模式登录接口（空 = PageURL）
 	JSONTemplate    string                              // 含 {user}/{pass} 占位符的 JSON 模板
 	SuccessContains string                              // json 模式可选成功特征
+	Cancel          func() bool                         // 取消轮询：返回 true 时爆破提前终止（由调用方注入，nil = 不可取消）
 }
 
 // Brute 执行爆破：返回命中列表（命中一组即停，控制请求量）。
@@ -381,6 +382,9 @@ func Brute(p Poster, opts Options, onProgress func(done, total int, msg string))
 
 	var hits []Hit
 	for i, c := range combos {
+		if opts.Cancel != nil && opts.Cancel() {
+			break // 已取消：停止后续登录尝试，命中结果照常返回
+		}
 		sleepInterval(opts.IntervalMS, i)
 		fields := map[string]string{}
 		for k, v := range form.Hidden {

@@ -127,6 +127,11 @@ func (s *Store) Save(res *engine.Result, options map[string]any) int64 {
 	// 可人工查看/回灌），避免"裁剪即数据丢失"
 	if over := len(s.h.Scans) - s.max; over > 0 {
 		sort.Slice(s.h.Scans, func(i, j int) bool { return s.h.Scans[i].ID < s.h.Scans[j].ID })
+		// 图随记录走：被裁记录已不可经 API 触达（Get 404），图目录须同步删除，
+		// 否则永久泄漏（与 Delete 的"不留孤儿"语义对齐）。
+		for _, r := range s.h.Scans[:over] {
+			s.deleteGraph(r.ID)
+		}
 		s.archive(s.h.Scans[:over])
 		s.h.Scans = s.h.Scans[over:]
 	}
@@ -220,15 +225,17 @@ func (s *Store) ClearAll() int {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	n := len(s.h.Scans)
-	if n == 0 {
-		return 0
-	}
-	s.h.Scans = nil
 	// 4.0 P8：清空历史同样清空图（隐私操作，用户预期记录彻底消失）。
+	// 先清图再判空：历史为空时图目录可能仍残留（history.json 损坏重建、
+	// 孤儿图），不能因记录数为 0 就提前返回放过磁盘数据。
 	for _, id := range s.GraphIDs() {
 		s.deleteGraph(id)
 	}
 	_ = os.RemoveAll(filepath.Join(s.dataDir, "graph"))
+	if n == 0 {
+		return 0
+	}
+	s.h.Scans = nil
 	s.flush()
 	return n
 }

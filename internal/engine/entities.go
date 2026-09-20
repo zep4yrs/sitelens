@@ -197,6 +197,11 @@ func (c *collector) addDASTFinding(f dast.Finding, m map[string]any) {
 	if len(f.Signals) > 0 {
 		evs = addEv(evs, c.ev("signals", "dast", f.URL, "", 0, strings.Join(f.Signals, "\n")))
 	}
+	// 结构化字段全空但带文本证据（如 ssrf-oob 出带确认）时回退建 snippet，
+	// 保证 positive vuln_node 恒有证据（对齐 addSimpleFinding）。
+	if len(evs) == 0 && f.Evidence != "" {
+		evs = addEv(evs, c.ev("snippet", "dast", f.URL, "", 0, f.Evidence))
+	}
 	entryID := c.addParamEntry(f.URL, f.Param, "GET", evs)
 	vn := model.NewVulnNode(model.OriginBlackbox, f.Check, "", f.URL, f.Param, "", 0,
 		model.ObsPositive, "detected", model.ConfConfirmed, evs)
