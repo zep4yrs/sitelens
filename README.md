@@ -5,7 +5,7 @@
 <br>
 
 <div align="center">
-  <img src="assets/banner-3.0-exploit.png" width="100%" alt="SiteLens 3.0 利用器 — 从验证漏洞，到证明影响。Exploit Validation">
+  <img src="assets/banner-4.0-attackchain.png" width="100%" alt="SiteLens 4.0 攻击链 — 从单点突破，到攻击链分析。Attack Chain Analysis">
 </div>
 
 <div align="center">
@@ -71,6 +71,7 @@ web                 内嵌前端（HTML/CSS/JS，零构建）
 
 | 形态 | 入口 | 说明 |
 |---|---|---|
+| 桌面版 | 安装包 `SiteLens-Setup-*.exe` | Electron 壳 + 引擎，安装即用，自动更新（唯一正式交付形态） |
 | CLI | `sitelens scan <url>` | 全流水线扫描，stdout 出 JSON，可直接管道消费 |
 | Web 控制台 | `sitelens serve` | 内嵌 SPA + REST API，默认 `http://127.0.0.1:5000` |
 | 白盒审计 | `sitelens audit <dir>` | 源码污点分析，输出 JSON 报告 |
@@ -94,13 +95,9 @@ SiteLens 不是只报"可能有问题"的扫描器——每条发现都做**二�
 
 ## 五分钟上手
 
-**方式一：图形安装（推荐）** —— 从 [Releases](../../releases) 下载 `SiteLens-3.0.0-setup-full.exe`，向导安装，完成即启动。
+**方式一：桌面安装包（推荐）** —— 从 [Releases](../../releases) 下载 `SiteLens-Setup-4.0.1.exe`，向导安装，完成即启动；带自动更新，新版本下载后重启即升级。详见 [desktop/README.md](desktop/README.md)。
 
-**方式二：桌面版（独立窗口 + 自动更新）** —— 下载 `SiteLens Setup 3.0.0.exe` 双击安装；常驻托盘，新版本自动下载、重启即升级。详见 [desktop/README.md](desktop/README.md)。
-
-**方式三：便携包** —— 下载 `full-win64.zip` 解压，双击 `sitelens.exe`。
-
-**方式四：源码**
+**方式二：源码**
 
 ```bash
 go build -o sitelens.exe ./cmd/sitelens
@@ -191,8 +188,8 @@ go build -o sitelens.exe ./cmd/sitelens
 |---|---|---|---|
 | **1.0 发现器**（已发布） | DISCOVERY | 看见攻击面 | 指纹识别 · 资产发现 · 情报关联 · DAST · 扫描模式 |
 | **2.0 验证器**（已发布） | VERIFICATION | 证明漏洞真实存在 | 证据链（请求/响应/命中）· 盲注/出带验证 · 认证态复用 · 可复现报告 |
-| **3.0 利用器** ✅ 当前版本（待发布） | EXPLOIT VALIDATION | 证明漏洞能够影响 | 非 HTTP 协议检测（214 协议模板）· 利用级无害验证四通道 · 验证回归 replay |
-| **4.0 攻击链·黑白盒验证** | ATTACK CHAIN | 还原完整攻击路径 | 黑盒行为分析 · 白盒代码分析 · AST/Data Flow · CWE 关联 · 攻击链推导 |
+| **3.0 利用器**（已发布） | EXPLOIT VALIDATION | 证明漏洞能够影响 | 非 HTTP 协议检测（214 协议模板）· 利用级无害验证四通道 · 验证回归 replay · 数据扩容 · 桌面安装版唯一交付形态 |
+| **4.0 攻击链·黑白盒验证**（已发布，当前版本） | ATTACK CHAIN | 把结果连成证据链 | 事实图与证据关联 · 黑白盒关联 · AST/Data Flow · CWE 关联 · 攻击链还原（证据驱动，不做自动路径推理）· 内存治理 |
 | **5.0 安全推理器·ML** | ML REASONING | 让机器理解安全关系 | 风险评分 · 漏洞关联预测 · 攻击路径评分 · 验证目标排序 · 异常行为识别 |
 | **6.0 红蓝对抗验证** | RED-BLUE VALIDATION | 验证攻击，也验证防御 | 攻击验证 · 检测结果 · 防御结果 · 攻防效果对比 · 重新验证 |
 | **7.0 安全知识系统** | SECURITY INTELLIGENCE | 积累安全经验 | 漏洞 · 证据 · 攻击链 · 代码关系 · 历史案例 |
@@ -215,7 +212,7 @@ go build -o sitelens.exe ./cmd/sitelens
 
 ## 合规
 
-仅限对**自有或已获书面授权**的目标使用；全程只读无害验证，主动能力默认关闭且有硬上限。对未授权目标使用属违法行为。
+使用本工具产生的合规责任由使用者承担，请遵守所在司法辖区的法律法规。主动能力默认关闭且有硬上限；`*.gov.cn` 政府站点在代码层面被强制拒绝扫描，该保护无法通过配置关闭。
 
 ## 开源协议
 
