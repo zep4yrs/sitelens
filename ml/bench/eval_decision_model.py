@@ -63,6 +63,9 @@ class LlamaClient:
         payload = {
             "prompt": prompt, "grammar": grammar, "n_predict": n_predict,
             "temperature": 0.0, "n_probs": n_probs, "cache_prompt": True,
+            # 掩码后分布：top_logprobs 只含语法合法的 token（kev 式读出头的正确实现；
+            # 缺省时报告的是未掩码原始分布，2026-09-28 仪器修正，见实验报告）
+            "post_sampling_probs": True,
         }
         req = urllib.request.Request(
             self.url, data=json.dumps(payload).encode("utf-8"),
@@ -71,25 +74,31 @@ class LlamaClient:
             return json.loads(r.read().decode("utf-8"))
 
     def first_token_dist(self, resp: dict) -> list[tuple[str, float]]:
-        """容忍多版本字段名，取首个生成 token 的候选分布 [(piece, prob)]。"""
-        entries = None
-        for key in ("completion_probabilities", "probs", "logprobs"):
-            v = resp.get(key)
-            if isinstance(v, list) and v:
-                entries = v
-                break
+        """容忍多版本字段名，取首个生成 token 的候选分布 [(piece, prob)]。
+        llama.cpp b11222：completion_probabilities[].top_logprobs[].{token,logprob}。
+        """
+        import math
+        entries = (resp.get("completion_probabilities")
+                   or resp.get("probs") or resp.get("logprobs") or [])
         if not entries:
             return []
         first = entries[0]
-        if isinstance(first, dict):
-            inner = first.get("probs")
-            if isinstance(inner, list) and inner:
-                return [(str(p.get("tok_str") or p.get("token") or p.get("piece") or ""),
-                         float(p.get("prob") or 0.0)) for p in inner]
-            piece = str(first.get("tok_str") or first.get("token")
-                        or first.get("piece") or first.get("content") or "")
-            return [(piece, float(first.get("prob") or 0.0))]
-        return []
+        if not isinstance(first, dict):
+            return []
+        cands = first.get("top_logprobs") or first.get("probs") or [first]
+        out = []
+        for p in cands:
+            if not isinstance(p, dict):
+                continue
+            piece = str(p.get("token") or p.get("tok_str") or p.get("piece") or "")
+            if "prob" in p:
+                prob = float(p["prob"])
+            elif "logprob" in p:
+                prob = math.exp(float(p["logprob"]))
+            else:
+                prob = 0.0
+            out.append((piece, prob))
+        return out
 
 
 def _truncate(text: str, n: int = 600) -> str:
@@ -249,6 +258,8 @@ def main() -> int:
     ap.add_argument("--server-pid", type=int, default=0)
     ap.add_argument("--load-time-s", type=float, default=None)
     ap.add_argument("--workers", type=int, default=8)
+    ap.add_argument("--tasks", default="e1,e2,e3",
+                    help="逗号分隔：e1,e2,e3（E2 与概率读出无关，仪器修正后可只跑 e1,e3）")
     ap.add_argument("--out-root", default="data/ml")
     ap.add_argument("--probe", action="store_true",
                     help="只发一次探针请求并打印原始响应（调试字段名用）")
@@ -284,19 +295,24 @@ def main() -> int:
             print(f"[rss sampler stopped] {e}")
 
     threading.Thread(target=sampler, daemon=True).start()
+    tasks = {t.strip() for t in args.tasks.split(",") if t.strip()}
     t0 = time.perf_counter()
     res = {
         "experiment": "EXP-1004",
         "side": "decision-model",
         "model_name": args.model_name,
         "model_file": args.model_file,
+        "tasks_run": sorted(tasks),
         "server": {"runtime": "llama.cpp b11222 win-cpu-x64",
                    "threads": 24, "parallel_slots": args.workers,
                    "temperature": 0},
-        "e1_severity": run_e1(client, eval_dir, res_dir, args.workers),
-        "e2_product": run_e2(client, eval_dir, res_dir, args.workers),
-        "e3_candidates": run_e3(client, eval_dir, res_dir, args.workers),
     }
+    if "e1" in tasks:
+        res["e1_severity"] = run_e1(client, eval_dir, res_dir, args.workers)
+    if "e2" in tasks:
+        res["e2_product"] = run_e2(client, eval_dir, res_dir, args.workers)
+    if "e3" in tasks:
+        res["e3_candidates"] = run_e3(client, eval_dir, res_dir, args.workers)
     stop.set()
     res["resources"] = {
         "llama_server_peak_rss_mb": round(peak["rss_mb"], 1),
