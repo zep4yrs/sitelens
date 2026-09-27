@@ -52,6 +52,7 @@ def build_kb_tables(paths: config.Paths) -> dict[str, pd.DataFrame]:
     nvd = _load_json_gz(paths.nvd_cves)["cves"]
     cve_rows = []
     edges = []
+    cwe_edges = []
     for e in nvd:
         cve = (e.get("cve") or "").upper()
         if not cve:
@@ -72,8 +73,17 @@ def build_kb_tables(paths: config.Paths) -> dict[str, pd.DataFrame]:
                 "product": product.strip().lower() if product else vendor.strip().lower(),
                 "has_bound": bool(p.get("ee") or p.get("ei") or p.get("si") or p.get("se") or p.get("v")),
             })
+        # v2 镜像（4.x P5）自带 weaknesses 投影：cve↔cwe 边（顺序=NVD 宣告序，首个为主弱点）
+        for cw in e.get("cwes") or []:
+            cwenorm = str(cw).upper().strip()
+            if cwenorm:
+                cwe_edges.append({"cve": cve, "cwe": cwenorm})
     kb_cve = pd.DataFrame(cve_rows)
     kb_cve_product = pd.DataFrame(edges)
+    kb_cve_cwe = pd.DataFrame(cwe_edges).drop_duplicates() if cwe_edges else pd.DataFrame(
+        columns=["cve", "cwe"])
+    cwe_stats = (kb_cve_cwe.groupby("cwe").size().rename("n_cves").reset_index()
+                 .sort_values("n_cves", ascending=False))
     prod_stats = (kb_cve_product.groupby(["vendor", "product"]).size()
                   .rename("n_cves").reset_index()
                   .sort_values("n_cves", ascending=False))
@@ -118,6 +128,8 @@ def build_kb_tables(paths: config.Paths) -> dict[str, pd.DataFrame]:
     return {
         "kb_cve": kb_cve,
         "kb_cve_product": kb_cve_product,
+        "kb_cve_cwe": kb_cve_cwe,
+        "kb_cwe_stats": cwe_stats,
         "kb_product_stats": kb_product_stats,
         "kb_template": kb_template,
         "kb_template_cve": kb_template_cve,
@@ -146,6 +158,12 @@ def kb_stats(tables: dict[str, pd.DataFrame], paths: config.Paths) -> dict:
             "products_ge100": int((tables["kb_product_stats"]["n_cves"] >= 100).sum()),
             "top10": tables["kb_product_stats"].head(10).to_dict("records"),
         },
+        "kb_cve_cwe": {
+            "edges": int(len(tables["kb_cve_cwe"])),
+            "unique_cwe": int(tables["kb_cve_cwe"]["cwe"].nunique()) if len(tables["kb_cve_cwe"]) else 0,
+            "cves_with_cwe": int(tables["kb_cve_cwe"]["cve"].nunique()) if len(tables["kb_cve_cwe"]) else 0,
+            "top10": tables["kb_cwe_stats"].head(10).to_dict("records"),
+        },
         "kb_template": {
             "records": int(len(tpl)),
             "unique_yaml_id": int(tpl["yaml_id"].nunique()),
@@ -162,8 +180,8 @@ def kb_stats(tables: dict[str, pd.DataFrame], paths: config.Paths) -> dict:
 
 
 def write_kb(paths: config.Paths, tables: dict[str, pd.DataFrame], stats: dict,
-             version: str = "kb-5.0.0") -> Path:
-    out = paths.out_root / "dataset" / "kb"
+             version: str = "kb-5.0.0", subdir: str = "kb") -> Path:
+    out = paths.out_root / "dataset" / subdir
     out.mkdir(parents=True, exist_ok=True)
     files = []
     for name, df in tables.items():
