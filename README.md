@@ -4,9 +4,7 @@
 
 <br>
 
-<div align="center">
-  <img src="assets/banner-4.0-attackchain.png" width="100%" alt="SiteLens 4.0 攻击链 — 从单点突破，到攻击链分析。Attack Chain Analysis">
-</div>
+
 
 <div align="center">
 
