@@ -15,7 +15,8 @@
   ],
   "scripts": {
     "build": "esbuild src/app.jsx --bundle --format=esm --platform=node --jsx=automatic --external:ink --external:react --external:ink-text-input --external:ink-select-input --outfile=dist/app.mjs",
-    "build:engines": "node scripts/build-engines.mjs"
+    "build:engines": "node scripts/build-engines.mjs",
+    "prepublishOnly": "npm run build"
   },
   "engines": {
     "node": ">=18"

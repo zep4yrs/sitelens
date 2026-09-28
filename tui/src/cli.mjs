@@ -6,6 +6,8 @@ import { scan, LEVELS } from "./client.mjs";
 const SEV_COLOR = { critical: "\x1b[31;1m", high: "\x1b[31m", medium: "\x1b[33m", low: "\x1b[36m", info: "\x1b[90m" };
 const C = { dim: "\x1b[2m", red: "\x1b[31m", amber: "\x1b[33m", cyan: "\x1b[36m", reset: "\x1b[0m", bold: "\x1b[1m" };
 const colorOf = (kind) => (kind === "hit" ? C.red : kind === "bypass" ? C.amber : kind === "auth" ? C.cyan : C.dim);
+// 模块级：summarize 与 main 共用（曾有局部定义导致 summarize 引用未定义）
+const dim = (s) => (process.stderr.isTTY ? C.dim + s + C.reset : s);
 
 export async function main(args) {
   let url = null;
@@ -29,7 +31,6 @@ export async function main(args) {
     console.error(`未知 level：${level}（可选：${LEVELS.join(" / ")}）`);
     return 2;
   }
-  const dim = process.stderr.isTTY ? (s) => C.dim + s + C.reset : (s) => "";
   const err = (s) => process.stderr.write(s + "\n");
 
   let srv;

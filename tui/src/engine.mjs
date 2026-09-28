@@ -34,9 +34,10 @@ function enginePkgName() {
 
 export function resolveEngine() {
   const errs = [];
-  if (process.env.SITLENS_ENGINE) {
-    if (fs.existsSync(process.env.SITLENS_ENGINE)) return { bin: process.env.SITLENS_ENGINE, from: "SITLENS_ENGINE" };
-    errs.push(`SITLENS_ENGINE 指向的文件不存在：${process.env.SITLENS_ENGINE}`);
+  const envBin = (process.env.SITLENS_ENGINE || "").trim();
+  if (envBin) {
+    if (fs.existsSync(envBin)) return { bin: envBin, from: "SITLENS_ENGINE" };
+    errs.push(`SITLENS_ENGINE 指向的文件不存在：${envBin}`);
   }
   try {
     const req = createRequire(import.meta.url);
@@ -96,7 +97,24 @@ export async function startServe(log = () => {}, { allowPrivate = false } = {}) 
   const cfgPath = path.join(profile, `tui-${port}.yml`);
   const lines = ["web:", `  listen: 127.0.0.1:${port}`, "store:", `  data_dir: ${dataDir.replace(/\\/g, "/")}`];
   if (allowPrivate) lines.push("target:", "  allow_private: true");
+  // ML 模型资产就位时自动启用 5.0 融合（cve-tech 先验提权 + 预测富化）；
+  // 未设置则引擎按既有语义静默跳过，主流程零影响。
+  // env 一律 trim：cmd 的 `set VAR=v &&` 链会把尾随空格塞进值里
+  const mlDir = (process.env.SITLENS_ML_ASSETS || "").trim();
+  if (mlDir && fs.existsSync(mlDir)) {
+    lines.push("ml:", `  assets_dir: ${mlDir.replace(/\\/g, "/")}`, "  predict: true");
+  }
   fs.writeFileSync(cfgPath, lines.join("\n") + "\n");
+  // SITLENS_DEBUG=1：落一份 serve 装配现场（引擎路径 + 生效配置），
+  // 排查"ML 没挂/allow_private 没生效"类问题的第一现场
+  if ((process.env.SITLENS_DEBUG || "").trim() === "1") {
+    try {
+      fs.writeFileSync(
+        path.join(profile, "last-serve-debug.txt"),
+        [`# ${new Date().toISOString()}`, `engine: ${bin} (${from})`, `cfg: ${cfgPath}`, fs.readFileSync(cfgPath, "utf8")].join("\n"),
+      );
+    } catch {}
+  }
   const child = spawn(bin, ["-config", cfgPath, "serve"], {
     cwd: path.dirname(bin),
     stdio: ["ignore", "ignore", "pipe"],

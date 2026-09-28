@@ -75,3 +75,5 @@ tui/node_modules/
 tui/packages/
 # tui 包源码豁免（bin/ 规则误伤；dist 与 packages 产物仍忽略）
 !tui/bin/
+# TUI 本地启动器（含本机路径，不入库）
+tui/demo.cmd
