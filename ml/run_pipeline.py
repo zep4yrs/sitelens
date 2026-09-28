@@ -57,7 +57,8 @@ def main() -> int:
           f"candidate={len(cand_cols)}")
 
     # ---- P4 Label ----
-    l1_rows, l1_pole = labels.build_l1(tables["verified"], tables["candidates"])
+    l1_rows, l1_pole = labels.build_l1(tables["verified"], tables["candidates"],
+                                       tables.get("executions"))
     l5 = labels.build_l5(tables["verified"])
     print(f"[P4] L1 positive={l1_pole['counts']['positive']} "
           f"unknown={l1_pole['counts']['unknown']} negative={l1_pole['negative_count']}; "
@@ -88,7 +89,7 @@ def main() -> int:
     (out_metrics / "data_quality_report.json").write_text(
         json.dumps(qrep, ensure_ascii=False, indent=2, default=str), encoding="utf-8")
     grep_ = quality.gate_report(scans, tables["intel"], tables["verified"],
-                                tables["candidates"])
+                                tables["candidates"], tables.get("executions"))
     (out_metrics / "gate_report.json").write_text(
         json.dumps(grep_, ensure_ascii=False, indent=2, default=str), encoding="utf-8")
     print(f"[P5] leakage passed={leak_report['blacklist']['passed'] and inj['passed']} "

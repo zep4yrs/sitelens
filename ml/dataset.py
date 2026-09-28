@@ -33,6 +33,7 @@ TABLE_FILES = {
     "scans": "d1_scans.jsonl.gz", "techs": "d2_techs.jsonl.gz",
     "intel": "d3_intel.jsonl.gz", "verified": "d4_verified.jsonl.gz",
     "candidates": "d4b_candidates.jsonl.gz", "cve_features": "d5_cve_features.jsonl.gz",
+    "executions": "d4c_executions.jsonl.gz",
     "tech_catalog": "d5_tech_catalog.jsonl.gz",
 }
 
@@ -70,7 +71,7 @@ def build_from_records(
     checks = {c["id"]: c for c in catalog["checks"]}
     cms_checks = catalog["cms_checks"]
 
-    scans, techs, intel, verified, candidates = [], [], [], [], []
+    scans, techs, intel, verified, candidates, executions = [], [], [], [], [], []
     excl = {EXCL_LEVEL_NONE: 0, EXCL_LEVEL_UNKNOWN: 0, EXCL_UNREACHABLE: 0}
 
     for rec in records:
@@ -147,6 +148,23 @@ def build_from_records(
                 "execution_basis": "verified 命中落库即执行证明",
             })
 
+        # ---- 执行日志（5.0：引擎 check_runs，T1/T2 可靠负样本的唯一合法来源）----
+        # executed+hit=正样本；executed+未命中=negative；not_executed=unknown
+        # （请求失败不作负样本）。旧记录无此字段 → 不产生任何 execution 行。
+        run_status: dict[str, tuple[str, bool]] = {}
+        for cr in r.get("check_runs") or []:
+            cid = (cr.get("check") or "").strip()
+            st = cr.get("status") or config.EXEC_UNKNOWN
+            if not cid:
+                continue
+            hit_v = bool(cr.get("hit")) if st == config.EXEC_EXECUTED else False
+            run_status[cid] = (st, hit_v)
+            executions.append({
+                "scan_uid": uid, "host": host, "scanned_at_dt": sat, "era": era,
+                "check_id": cid, "execution_status": st, "hit": hit_v,
+                "reason": (cr.get("reason") or ""),
+            })
+
         # ---- 内置 check 候选集（T2 evaluation target，开发文档 §5）----
         if r.get("error"):
             excl[EXCL_UNREACHABLE] += 1
@@ -168,12 +186,20 @@ def build_from_records(
             selected = c["lv"] == 0 or level == "all" or cid in linked
             if not selected:
                 continue
+            if cid in run_status:
+                st_e, _hit_v = run_status[cid]
+                exec_status = st_e
+                exec_basis = ("引擎 check_runs 执行证据" if exec_status == config.EXEC_EXECUTED
+                              else "引擎 check_runs：请求失败未执行")
+            else:
+                exec_status = config.EXEC_UNKNOWN
+                exec_basis = "options.checks 档位仅证明被选择；单请求成败无日志"
             candidates.append({
                 "scan_uid": uid, "host": host, "scanned_at_dt": sat, "era": era,
                 "check_id": cid, "check_lv": c["lv"], "check_severity": c["severity"],
                 "level": level, "cms_linked": cid in linked,
-                "execution_status": config.EXEC_UNKNOWN,
-                "execution_basis": "options.checks 档位仅证明被选择；单请求成败无日志",
+                "execution_status": exec_status,
+                "execution_basis": exec_basis,
             })
 
     tables = {
@@ -182,6 +208,7 @@ def build_from_records(
         "intel": pd.DataFrame(intel),
         "verified": pd.DataFrame(verified),
         "candidates": pd.DataFrame(candidates),
+        "executions": pd.DataFrame(executions),
         "cve_features": cve_features if cve_features is not None else pd.DataFrame(),
         "tech_catalog": tech_catalog if tech_catalog is not None else pd.DataFrame(),
     }

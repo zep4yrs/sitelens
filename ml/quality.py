@@ -58,8 +58,9 @@ def quality_report(scans: pd.DataFrame, techs: pd.DataFrame, intel: pd.DataFrame
 
 
 def gate_report(scans: pd.DataFrame, intel: pd.DataFrame, verified: pd.DataFrame,
-                candidates: pd.DataFrame) -> dict:
-    l1_rows, l1_pole = labels.build_l1(verified, candidates)
+                candidates: pd.DataFrame,
+                executions: pd.DataFrame | None = None) -> dict:
+    l1_rows, l1_pole = labels.build_l1(verified, candidates, executions)
     n_neg = l1_pole["negative_count"]
     n_pos = l1_pole["counts"]["positive"]
     cand_n = int(len(candidates))
@@ -70,24 +71,32 @@ def gate_report(scans: pd.DataFrame, intel: pd.DataFrame, verified: pd.DataFrame
         hit_in_candidates = int(sum(
             1 for uid, cid in zip(candidates["scan_uid"], candidates["check_id"])
             if (uid, cid) in hit_keys))
+    exec_n = int(len(executions)) if executions is not None else 0
     l3_df, _ = labels.build_l3(intel)
     n_scored = int(scans["security_score"].notna().sum()) if len(scans) else 0
 
+    # T1/T2 闸门：可靠负样本>0（check_runs 执行日志）方放行监督训练
+    sup_ok = n_neg > 0
+    sup_reason = (
+        f"可靠负样本（check_runs executed∧未命中）={n_neg}，"
+        f"执行事件={exec_n}；正样本={n_pos}"
+        if sup_ok else
+        f"可靠负样本（executed∧未命中实证）={n_neg}；"
+        f"无执行日志，unknown={cand_n - hit_in_candidates} 不得作负样本")
+
     return {
-        "T1_train": {"verdict": "BLOCKED",
-                     "reason": f"可靠负样本（executed∧未命中实证）={n_neg}；"
-                               f"无执行日志，unknown={cand_n - hit_in_candidates} 不得作负样本",
-                     "positive": n_pos},
-        "T2_train_supervised": {"verdict": "BLOCKED",
-                                "reason": "同 T1：无 executed 证据不得构造负样本；"
-                                          "正例排序训练亦需不可伪造的反例校准"},
+        "T1_train": {"verdict": "ALLOWED" if sup_ok else "BLOCKED",
+                     "reason": sup_reason,
+                     "positive": n_pos, "negative": n_neg},
+        "T2_train_supervised": {"verdict": "ALLOWED" if sup_ok else "BLOCKED",
+                                "reason": sup_reason,
+                                "positive": n_pos, "negative": n_neg},
         "T2_baseline_ranking_eval": {
             "verdict": "ALLOWED" if hit_in_candidates > 0 and cand_n > 0 else "BLOCKED",
             "candidates": cand_n,
             "observed_positives_in_candidates": hit_in_candidates,
-            "note": "T2 evaluation target=内置 check 候选集；nuclei 候选不可复原"
-                    "（LRU 选取无日志）、CVE 候选联接不可行（nuclei_index 无模板"
-                    " yaml id 字段），均如实排除"},
+            "note": "T2 evaluation target=内置 check 候选集；nuclei 候选自 5.0 起"
+                    "由 check_runs 执行日志复原（executions 表）"},
         "L3_sanity": {"verdict": "ALLOWED" if len(l3_df) > 0 else "BLOCKED",
                       "rows": int(len(l3_df)),
                       "note": "仅 sanity / pipeline validation"},
