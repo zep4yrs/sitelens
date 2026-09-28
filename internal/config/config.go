@@ -40,8 +40,12 @@ type Config struct {
 // 扫描收尾对含 CVE 的发现做先验富化；模型只提供先验参考，
 // 不改变扫描行为与判定结果（开发文档-5.0-ML预训练.md §10.0）。
 type MLConfig struct {
-	Predict   bool   `yaml:"predict"`    // 扫描收尾 ML 推理总闸（默认开）
+	Predict   bool   `yaml:"predict"`    // ML 总闸：前置产品先验调度 + 收尾预测富化（默认开）
 	AssetsDir string `yaml:"assets_dir"` // 模型资产目录（缺失/损坏静默跳过预测）
+	// SevONNX sev-prior v3.1 严重度模型推理开关（默认关）：需 -tags onnx
+	// 构建与 onnxruntime 共享库；关闭或失败回退 NVD CVSS 先验（§10.8）
+	SevONNX   bool   `yaml:"sev_onnx"`
+	OnnxrtDLL string `yaml:"onnxrt_dll"` // 共享库路径（空 = data/onnxruntime/onnxruntime.dll）
 }
 
 // AuthConfig 登录流认证：扫描前以配置凭证登录，会话 Cookie 全扫描复用。
@@ -290,6 +294,7 @@ func Default() *Config {
 		ML: MLConfig{
 			Predict:   true, // 默认开：预测是附加产物，失败静默跳过
 			AssetsDir: "data/go/ml_assets",
+			SevONNX:   false, // 默认关：ONNX 构建属桌面安装器形态（§10.8）
 		},
 	}
 }

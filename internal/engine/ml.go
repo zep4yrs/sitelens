@@ -63,6 +63,39 @@ func (e *Engine) mlFor() *ml.Assets {
 	return a
 }
 
+// mlSevScorer 惰性取 sev-prior ONNX 打分器（阶段 B，§10.8）。一次尝试：
+// 未启用/无 onnx 构建标签/资产或共享库缺失，返回 nil 并带降级原因
+// （引擎回退 NVD CVSS 先验；原因落 extras["ml_sev"] 可解释）。
+func (e *Engine) mlSevScorer() *ml.SevScorer {
+	e.mlMu.Lock()
+	defer e.mlMu.Unlock()
+	if e.mlSevTried {
+		return e.mlSev
+	}
+	e.mlSevTried = true
+	if !e.cfg.ML.SevONNX {
+		e.mlSevReason = "sev_onnx 未启用"
+		return nil
+	}
+	assets := e.cfg.ML.AssetsDir
+	onnx := filepath.Join(assets, "sev-prior-v3.1.onnx")
+	if _, err := os.Stat(onnx); err != nil { // fp32 缺失退 int8（低配形态）
+		onnx = filepath.Join(assets, "sev-prior-v3.1-int8.onnx")
+	}
+	vocab := filepath.Join(assets, "sev-prior-v3.1.vocab.txt")
+	dll := e.cfg.ML.OnnxrtDLL
+	if dll == "" {
+		dll = filepath.Join("data", "onnxruntime", "onnxruntime.dll")
+	}
+	s, err := ml.NewSevScorer(onnx, vocab, dll)
+	if err != nil {
+		e.mlSevReason = err.Error()
+		return nil
+	}
+	e.mlSev = s
+	return s
+}
+
 // mlEnrich 扫描收尾的 ML 富化：对 res.Vulnerabilities 中出现过的
 // 不重复 CVE id——从 NVD 镜像取描述 → 双模型推理 → 组装 Prediction
 // （tech_top5 含与检出技术的 relevance 交集标记；sev_score 以 NVD
@@ -93,6 +126,11 @@ func (e *Engine) mlEnrich(res *Result, kb *intel.KB) {
 		return
 	}
 	techKeys := mlTechKeys(res.Technologies)
+	// sev-prior 模型分（阶段 B）：nil = 回退 NVD 先验；首次推理失败后
+	// 本次扫描余下 CVE 全走回退（模型级故障不会因重试自愈）
+	sevScorer := e.mlSevScorer()
+	sevBroken := false
+	sevFallback := 0
 	preds := make([]ml.Prediction, 0, len(cves))
 	for _, cve := range cves {
 		descr, sev := mlDescr(kb, res.Vulnerabilities, cve)
@@ -109,12 +147,37 @@ func (e *Engine) mlEnrich(res *Result, kb *intel.KB) {
 			}
 		}
 		cweType, _ := assets.Cwe.ArgMax(descr)
+		sevSrc := ""
+		if sevScorer != nil && !sevBroken {
+			if s, serr := sevScorer.Score(descr); serr == nil {
+				sev, sevSrc = s, "onnx"
+			} else {
+				sevBroken = true
+			}
+		}
+		if sevSrc == "" {
+			sevSrc = "nvd"
+			sevFallback++
+		}
 		preds = append(preds, ml.Prediction{
-			CVE:      cve,
-			TechTop5: tp,
-			CWEType:  cweType,
-			SevScore: sev,
+			CVE:       cve,
+			TechTop5:  tp,
+			CWEType:   cweType,
+			SevScore:  sev,
+			SevSource: sevSrc,
 		})
+	}
+	if e.cfg.ML.SevONNX {
+		info := map[string]any{"active": sevScorer != nil && !sevBroken}
+		if sevScorer == nil {
+			info["reason"] = e.mlSevReason
+		} else if sevBroken {
+			info["reason"] = "推理失败，回退 NVD 先验"
+		}
+		if sevFallback > 0 {
+			info["nvd_fallback"] = sevFallback
+		}
+		res.Extras["ml_sev"] = info
 	}
 	if len(preds) > 0 {
 		res.Predictions = preds
