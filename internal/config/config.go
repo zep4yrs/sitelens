@@ -33,6 +33,15 @@ type Config struct {
 	Auth       AuthConfig       `yaml:"auth"`
 	Ssrf       SsrfConfig       `yaml:"ssrf"`
 	Exploit    ExploitConfig    `yaml:"exploit"`
+	ML         MLConfig         `yaml:"ml"`
+}
+
+// MLConfig 5.0 内嵌 ML 线性模型推理（L3 阶段 A：cve-tech + cwe-type）。
+// 扫描收尾对含 CVE 的发现做先验富化；模型只提供先验参考，
+// 不改变扫描行为与判定结果（开发文档-5.0-ML预训练.md §10.0）。
+type MLConfig struct {
+	Predict   bool   `yaml:"predict"`    // 扫描收尾 ML 推理总闸（默认开）
+	AssetsDir string `yaml:"assets_dir"` // 模型资产目录（缺失/损坏静默跳过预测）
 }
 
 // AuthConfig 登录流认证：扫描前以配置凭证登录，会话 Cookie 全扫描复用。
@@ -278,6 +287,10 @@ func Default() *Config {
 			ProbeTimeoutMS: 2500, ProbeWorkers: 10,
 			WordlistDir: "data/wordlists",
 		},
+		ML: MLConfig{
+			Predict:   true, // 默认开：预测是附加产物，失败静默跳过
+			AssetsDir: "data/go/ml_assets",
+		},
 	}
 }
 
@@ -328,7 +341,7 @@ var knownTopKeys = map[string]bool{
 	"scan": true, "checks": true, "crawler": true, "dast": true,
 	"intel": true, "netsec": true, "loginbrute": true, "audit": true,
 	"batch": true, "web": true, "store": true, "active": true, "modules": true,
-	"auth": true, "ssrf": true, "exploit": true,
+	"auth": true, "ssrf": true, "exploit": true, "ml": true,
 }
 
 // LoadOrDefault 加载配置；出错时 stderr 告警并使用默认值
@@ -444,6 +457,12 @@ func (c *Config) fillDefaults() {
 	if c.Active.WordlistDir == "" {
 		c.Active.WordlistDir = d.Active.WordlistDir
 	}
+
+	if c.ML.AssetsDir == "" {
+		c.ML.AssetsDir = d.ML.AssetsDir
+	}
+	// c.ML.Predict 为布尔项，不回退（false 是合法的"关"）；
+	// 默认值 true 由 Default() 基底带入，用户显式写 predict: false 即关。
 }
 
 func fillInt(v *int, def int) {
