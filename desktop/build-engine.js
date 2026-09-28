@@ -152,14 +152,25 @@ cp('README.md', 'README.md');
 //      onnxruntime.dll 不在 data/go 下，须在此显式装箱：引擎按
 //      ml.onnxrt_dll（桌面默认 data/onnxruntime/onnxruntime.dll，相对引擎
 //      cwd）加载共享库，缺库等同 sev_onnx 永远不生效。
-const STAGED_SEV_ONNX = path.join(OUT, 'data', 'go', 'ml_assets', 'sev-prior-v3.1.onnx');
-if (!fs.existsSync(STAGED_SEV_ONNX)) {
-  throw new Error('ML 资产缺失：data/go/ml_assets/sev-prior-v3.1.onnx 未随 data/go 进箱。' +
+// v3.1 部署形态 = 双种子 fp32 对（a/b，各约 268MB，引擎双 session 取平均）；
+// 兼容旧单文件资产布局（sev-prior-v3.1.onnx）。
+const STAGED_SEV_DIR = path.join(OUT, 'data', 'go', 'ml_assets');
+const SEV_PAIR = ['sev-prior-v3.1-a.onnx', 'sev-prior-v3.1-b.onnx']
+  .map((f) => path.join(STAGED_SEV_DIR, f));
+const SEV_SINGLE = path.join(STAGED_SEV_DIR, 'sev-prior-v3.1.onnx');
+const sevOk = SEV_PAIR.every((f) => fs.existsSync(f))
+  || fs.existsSync(SEV_SINGLE);
+if (!sevOk) {
+  throw new Error('ML 资产缺失：data/go/ml_assets/ 缺 sev-prior 双种子对' +
+    '（sev-prior-v3.1-a/b.onnx）或旧单文件 sev-prior-v3.1.onnx。' +
     '方案 Aa 要求桌面版全量内嵌 ML 资产（sev-prior v3.1 / 线性模型 / 词表 / fixtures），' +
     '请先在仓库根补齐 data/go/ml_assets 再出包。');
 }
-if (fs.statSync(STAGED_SEV_ONNX).size < 200 * 1024 * 1024) {
-  throw new Error('ML 资产残缺：' + STAGED_SEV_ONNX + ' 小于 200MB（fp32 模型应约 268MB），疑似截断。');
+const sevBig = SEV_PAIR.filter(fs.existsSync);
+for (const f of (sevBig.length ? sevBig : [SEV_SINGLE])) {
+  if (fs.statSync(f).size < 200 * 1024 * 1024) {
+    throw new Error('ML 资产残缺：' + f + ' 小于 200MB（fp32 模型应约 268MB），疑似截断。');
+  }
 }
 const ORT_DLL_SRC = path.join(ROOT, 'data', 'onnxruntime', 'onnxruntime.dll');
 if (!fs.existsSync(ORT_DLL_SRC)) {
