@@ -8,6 +8,7 @@ package engine
 import (
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 
 	"cnb.cool/feng-qiao/sitelens/internal/intel"
@@ -18,8 +19,8 @@ import (
 // 相对路径相对进程 cwd（与 data/ 其他默认路径同约定）。
 //
 // 两种静默出口语义不同：
-//   - 目录/关键文件不存在 → 返回 nil 不置死标记（资产可能随后补齐，
-//     每次扫描只付一次 stat 的代价）；
+//   - 目录/任一关键文件不存在 → 返回 nil 不置死标记（资产可能随后补齐
+//     或分步部署，每次扫描只付一次 stat 的代价）；
 //   - 加载失败（文件损坏/维度不符）→ 置 mlDead 本进程永久禁用：
 //     损坏不会自愈，重试只会每次扫描反复重读 94MB。
 func (e *Engine) mlFor() *ml.Assets {
@@ -33,11 +34,21 @@ func (e *Engine) mlFor() *ml.Assets {
 	}
 	dir := e.cfg.ML.AssetsDir
 	if dir == "" {
+		// 未配置资产目录：配置在本进程内不会变，置死避免反复空转
+		//（区别于「配置了但尚未就绪」——那种情况绝不置死）。
 		e.mlDead = true
 		return nil
 	}
-	if _, err := os.Stat(filepath.Join(dir, "cve-tech.coef.f32")); err != nil {
-		return nil
+	// 关键文件存在性全量预检（双模型 × meta/vocab/idf/coef）：任何一件
+	// 缺失都算「资产未就绪」，返回 nil 不置死。此前只 Stat cve-tech.coef.f32
+	// 一件，其余文件缺失会落进 LoadAssets 的报错分支被当作「损坏」永久
+	// 禁用——资产分步部署/更新窗口内一次扫描就把 ML 打死到进程重启。
+	for _, name := range []string{"cve-tech", "cwe-type"} {
+		for _, ext := range []string{".meta.json", ".vocab.txt", ".idf.f32", ".coef.f32"} {
+			if _, err := os.Stat(filepath.Join(dir, name+ext)); err != nil {
+				return nil
+			}
+		}
 	}
 	a, err := ml.LoadAssets(dir)
 	if err != nil {
@@ -54,21 +65,27 @@ func (e *Engine) mlFor() *ml.Assets {
 // CVSS 先验填充，sev-prior ONNX 回归头为阶段 B）。无描述的 CVE 跳过
 // （模型输入是英文描述，不臆造）；一条预测都组不出来时不挂字段。
 func (e *Engine) mlEnrich(res *Result, kb *intel.KB) {
-	assets := e.mlFor()
-	if assets == nil {
-		return
-	}
+	// 先收集 CVE：无 CVE 的结果在此即返回，连资产目录都不触碰——
+	// cve-tech coef（94MB）读入后没有任何卸载路径，不能为空结果白付常驻。
 	var cves []string
 	seen := map[string]bool{}
 	for _, f := range res.Vulnerabilities {
-		c := strings.ToUpper(strings.TrimSpace(f.CVE))
-		if !strings.HasPrefix(c, "CVE-") || seen[c] {
+		c := strings.TrimSpace(f.CVE)
+		if !cveIDRe.MatchString(strings.ToUpper(c)) {
+			continue // 整体形态校验：只认 CVE-年份-序号，拒收带尾巴等杂质形态
+		}
+		key := strings.ToUpper(c)
+		if seen[key] {
 			continue
 		}
-		seen[c] = true
-		cves = append(cves, c)
+		seen[key] = true
+		cves = append(cves, c) // 保留原始形态：与 vulnerabilities.cve 一致，消费方按 cve 精确关联不 miss
 	}
 	if len(cves) == 0 {
+		return
+	}
+	assets := e.mlFor()
+	if assets == nil {
 		return
 	}
 	techKeys := mlTechKeys(res.Technologies)
@@ -100,13 +117,22 @@ func (e *Engine) mlEnrich(res *Result, kb *intel.KB) {
 	}
 }
 
-// mlDescr CVE 描述与 CVSS 先验。NVD 镜像优先（复用 intel 既有入口：
-// KB.NVD() 触发惰性解码 + NVDStore.ByCVE 精确查询）；镜像未挂载或
-// 未知 CVE 时，回退到扫描结果中该 CVE 情报行自带的英文描述与 CVSS
-// 分（数据已在结果里，不新增数据源）。
+// cveIDRe CVE 编号整体形态（年份 4 位 + 序号 >= 4 位）。收集时只认整体
+// 合法形态：此前仅 strings.HasPrefix(c, "CVE-")，"CVE-2021-1002 (PoC)"
+// 这类带尾杂质会通过收集并原样进 predictions，fallback 通道还会与之
+// 相互命中。
+var cveIDRe = regexp.MustCompile(`^CVE-\d{4,}-\d{4,}$`)
+
+// mlDescr CVE 描述与 CVSS 先验。NVD 镜像**仅在索引已解码常驻时**顺带
+// 查询（NVDLoaded 不触发加载）：cveMs-only 等未拉起场景若在此首次拉起
+// 全量索引（实测 3.46s / 37 万条 / ≈1.7GB 常驻），会同步阻塞扫描收尾、
+// 抬高常驻内存并让后续 overBudget 更易降档——违背「模型不改变扫描
+// 行为」原则，与 cwe.Relate 的 A3 惰性纪律（engine.go「只判断是否配置，
+// 不拉起索引」）对齐。镜像未拉起或未知 CVE 时，回退到扫描结果中该 CVE
+// 情报行自带的英文描述与 CVSS 分（数据已在结果里，不新增数据源）。
 func mlDescr(kb *intel.KB, findings []intel.Finding, cve string) (string, float64) {
-	if kb != nil {
-		// kb/NVDStore 为 nil（未挂载 NVD）时 ByCVE 返回 false，安全
+	if kb.NVDLoaded() {
+		// 索引已常驻：ByCVE 精确查询（NVDStore 为 nil 安全）
 		if e, ok := kb.NVD().ByCVE(cve); ok {
 			return e.Descr, e.Score
 		}

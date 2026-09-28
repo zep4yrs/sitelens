@@ -869,9 +869,19 @@ func (s *Server) hExport(w http.ResponseWriter, r *http.Request) {
 			fmt.Sprintf("attachment; filename=sitelens-%d.json", id))
 		_, _ = w.Write(data)
 	case "csv":
+		if rec.Result == nil {
+			// result 为 null 的历史记录（导入迁移/写库中断都可能产生）：
+			// 与 hReplay 同口径 404，不能解引用 nil panic 炸掉该连接
+			writeJSON(w, 404, map[string]any{"error": "记录不存在（无详细结果数据）"})
+			return
+		}
 		csvText := detailCSV(rec, s.techIDs)
 		csvResponse(w, csvText, fmt.Sprintf("sitelens-%d.csv", id))
 	case "wide":
+		if rec.Result == nil {
+			writeJSON(w, 404, map[string]any{"error": "记录不存在（无详细结果数据）"})
+			return
+		}
 		csvText := wideCSV([]*store.ScanRecord{rec}, s.techIDs)
 		csvResponse(w, csvText, fmt.Sprintf("sitelens-wide-%d.csv", id))
 	case "html":

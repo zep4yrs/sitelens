@@ -119,6 +119,19 @@ func LoadModel(dir, name string) (*Model, error) {
 	if err != nil {
 		return nil, fmt.Errorf("ml: %s coef: %w", name, err)
 	}
+	// idf 全 0 在平滑 idf（sklearn 默认 smooth_idf，idf >= 1）下不可能出现，
+	// 只能是等长覆盖写之类的损坏：命中特征权重全 0 会让 Vectorize 除以
+	// 零范数产出 NaN。必须在加载期拦下（契约：损坏 → 加载失败 → 静默跳过）。
+	var idfHasPositive bool
+	for _, v := range idf {
+		if v > 0 {
+			idfHasPositive = true
+			break
+		}
+	}
+	if !idfHasPositive {
+		return nil, fmt.Errorf("ml: %s idf 全 0：平滑 idf 不可能全零，资产疑似同长度损坏", name)
+	}
 
 	return &Model{
 		name:      name,
@@ -156,7 +169,10 @@ func loadVocab(path string, nFeatures int) (map[string]int32, error) {
 	return vocab, nil
 }
 
-// readF32 读小端 float32 数组并校验长度恰为 want。
+// readF32 读小端 float32 数组并校验：长度恰为 want，且每个值有限。
+// NaN/±Inf 位型（0x7F80_0000 掩码内）字节数完全正常，截断型校验拦不住
+// 等长损坏（比特翻转/等长覆盖写）；不拦的话 NaN 会静默通过加载、经
+// 推理透传进 Prediction，最终让整份扫描输出 JSON 序列化失败。
 func readF32(path string, want int) ([]float32, error) {
 	raw, err := os.ReadFile(path)
 	if err != nil {
@@ -168,6 +184,9 @@ func readF32(path string, want int) ([]float32, error) {
 	out := make([]float32, want)
 	for i := range out {
 		out[i] = math.Float32frombits(binary.LittleEndian.Uint32(raw[i*4:]))
+		if f := float64(out[i]); math.IsNaN(f) || math.IsInf(f, 0) {
+			return nil, fmt.Errorf("%s 第 %d 个值非有限（%v）：资产疑似同长度损坏", path, i, f)
+		}
 	}
 	return out, nil
 }

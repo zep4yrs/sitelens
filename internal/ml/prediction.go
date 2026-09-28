@@ -53,7 +53,10 @@ func sigmoid(s float64) float64 {
 // probaNormalized 与 sklearn 实测口径一致：逐类 sigmoid 后按行归一
 // （cve-tech 的 OneVsRestClassifier.predict_proba 与 cwe-type 多类
 // SGDClassifier(loss="log_loss").predict_proba 均为此形态，已用
-// fixtures.json 数值验证）。分母为 0（全饱和负分）时退回均匀分布。
+// fixtures.json 数值验证）。分母非正或非有限时退回均匀分布——
+// NaN 对任何比较都判 false，必须写成 !(sum > 0) 才能一并拦住：
+// 上游分数若含 NaN，归一结果再透传进 Prediction 会让整份扫描输出
+// JSON 序列化失败（json: unsupported value: NaN）。
 func probaNormalized(scores []float64) []float64 {
 	out := make([]float64, len(scores))
 	var sum float64
@@ -61,7 +64,7 @@ func probaNormalized(scores []float64) []float64 {
 		out[i] = sigmoid(s)
 		sum += out[i]
 	}
-	if sum <= 0 {
+	if !(sum > 0) {
 		for i := range out {
 			out[i] = 1.0 / float64(len(out))
 		}
@@ -77,6 +80,9 @@ func probaNormalized(scores []float64) []float64 {
 // predict_proba 口径概率。排序依据仍是原始得分（概率单调于 sigmoid，
 // 排序与 Python 侧 proba.argsort 一致）。
 func (m *Model) ProbaTopK(text string, k int) []Pred {
+	if k <= 0 { // 与 TopK 同口径：负/零 k 返回空而非 panic
+		return nil
+	}
 	scores := m.DecisionFunction(text)
 	probs := probaNormalized(scores)
 	if k > len(scores) {

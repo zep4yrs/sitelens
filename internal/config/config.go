@@ -338,7 +338,7 @@ func unknownTopKeys(data []byte) []string {
 
 // knownTopKeys 合法顶层配置段（与 Config 字段 yaml 标签一一对应）。
 var knownTopKeys = map[string]bool{
-	"scan": true, "checks": true, "crawler": true, "dast": true,
+	"scan": true, "target": true, "checks": true, "crawler": true, "dast": true,
 	"intel": true, "netsec": true, "loginbrute": true, "audit": true,
 	"batch": true, "web": true, "store": true, "active": true, "modules": true,
 	"auth": true, "ssrf": true, "exploit": true, "ml": true,

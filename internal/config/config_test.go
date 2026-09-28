@@ -106,6 +106,31 @@ func TestUnknownTopKeyWarn(t *testing.T) {
 	}
 }
 
+// TestTargetTopKeyKnownAndEffective 回归：knownTopKeys 缺 "target" 曾把
+// 合法顶层段误报为「未知配置键（将被忽略）」，而该段实际正常加载生效——
+// allow_private 是安全相关开关，「提示被忽略、实际已生效」是误导方向最差
+// 的组合。
+func TestTargetTopKeyKnownAndEffective(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "cfg.yml")
+	cfgYAML := "target:\n  allow_private: true\n"
+	if err := os.WriteFile(path, []byte(cfgYAML), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if unknown := unknownTopKeys([]byte(cfgYAML)); len(unknown) != 0 {
+		t.Fatalf("target 是合法顶层键，不应报未知: %v", unknown)
+	}
+	cfg := LoadOrDefault(path)
+	if !cfg.Target.AllowPrivate {
+		t.Fatal("target.allow_private=true 应真实生效")
+	}
+	// ml 段（5.0 新增）同样不报警且生效
+	cfgYAML2 := "ml:\n  predict: false\n  assets_dir: D:/x\n"
+	if unknown := unknownTopKeys([]byte(cfgYAML2)); len(unknown) != 0 {
+		t.Fatalf("ml 是合法顶层键，不应报未知: %v", unknown)
+	}
+}
+
 // TestUpsertYAMLTypes upsert 写回的值必须保留类型（int/bool），
 // 否则重新解析时 int 字段失败并整体回退默认。
 func TestUpsertYAMLTypes(t *testing.T) {

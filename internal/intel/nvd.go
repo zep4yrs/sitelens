@@ -127,6 +127,17 @@ func (k *KB) HasNVD() bool {
 	return k.nvd != nil || k.nvdPath != ""
 }
 
+// NVDLoaded 报告 NVD 索引是否**已经**在本进程解码常驻（**不触发加载**）。
+// 供收尾富化这类「索引现成才顺带查一下」的消费方使用：扫描收尾绝不能
+// 首次拉起全量索引（30 万+ 条 ≈1.7GB 常驻、秒级同步阻塞），只需查询的
+// 动作不该付出拉起的代价——那是确实需要数据的消费方（nvdFill 等）的事。
+func (k *KB) NVDLoaded() bool {
+	if k == nil {
+		return false
+	}
+	return k.nvd != nil
+}
+
 // nvdStore 取 NVD 索引；未挂载时按需惰性加载（线程安全）。
 // Release 复位 nvdTried 后可再次加载；所有内部读取都应经此函数；对外用 NVD()。
 func (k *KB) nvdStore() *NVDStore {

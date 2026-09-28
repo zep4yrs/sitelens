@@ -109,9 +109,11 @@ go build -o sitelens.exe ./cmd/sitelens
 
 配置文件从示例复制：把 [`.sitelens.example.yml`](.sitelens.example.yml) 复制为 `.sitelens.yml`，放在工作目录即可被自动加载；不改也能跑，默认零外部依赖。
 
-- **完整键位语义见该示例文件内的注释**（`scan` / `checks` / `crawler` / `dast` / `auth` 等段）；
+- **完整键位语义见该示例文件内的注释**（`scan` / `target` / `checks` / `crawler` / `dast` / `auth` 等段）；
 - **监听非 localhost 时必须配 API Token**：`serve --addr 0.0.0.0:5000` 需要一个 token 才允许启动，否则进程直接退出（见 `internal/server/server.go`）。这是硬校验，不是可选项；
-- 主动验证能力默认关闭，只有显式开启才会发包（且带硬上限）。
+- 主动验证能力默认关闭，只有显式开启才会发包（且带硬上限）；
+- `target.allow_private` 是私网/本机扫描的安全闸，默认关，仅授权靶场开启；
+- 5.0 ML 预测由 `ml.predict`（默认开）控制总闸、`ml.assets_dir`（默认 `data/go/ml_assets`）指定模型资产目录：资产缺失静默跳过预测，损坏则本进程禁用——预测是先验参考字段（结果 JSON 的 `predictions`），不改变任何扫描判定。
 
 ## 七种扫描模式
 
