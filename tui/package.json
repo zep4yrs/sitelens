@@ -1,0 +1,54 @@
+{
+  "name": "@fengqiao666/sitelens-cli",
+  "version": "1.0.0",
+  "description": "SiteLens 站点透视 TUI/CLI —— 终端里的网站安全扫描台（引擎随包自动分发）",
+  "type": "module",
+  "license": "GPL-3.0",
+  "bin": {
+    "sitelens": "bin/sitelens.mjs"
+  },
+  "files": [
+    "bin/",
+    "src/",
+    "dist/",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "esbuild src/app.jsx --bundle --format=esm --platform=node --jsx=automatic --external:ink --external:react --external:ink-text-input --external:ink-select-input --outfile=dist/app.mjs",
+    "build:engines": "node scripts/build-engines.mjs"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "ink": "^7.1.1",
+    "ink-select-input": "^6.2.0",
+    "ink-text-input": "^6.0.0",
+    "react": "^19.1.0"
+  },
+  "optionalDependencies": {
+    "@fengqiao666/sitelens-darwin-arm64-engine": "1.0.0",
+    "@fengqiao666/sitelens-darwin-x64-engine": "1.0.0",
+    "@fengqiao666/sitelens-linux-arm64-engine": "1.0.0",
+    "@fengqiao666/sitelens-linux-x64-engine": "1.0.0",
+    "@fengqiao666/sitelens-win32-x64-engine": "1.0.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://cnb.cool/feng-qiao/sitelens.git",
+    "directory": "tui"
+  },
+  "homepage": "https://cnb.cool/feng-qiao/sitelens",
+  "keywords": [
+    "security",
+    "scanner",
+    "sitelens",
+    "tui",
+    "cli",
+    "fingerprint",
+    "vulnerability"
+  ],
+  "devDependencies": {
+    "esbuild": "^0.28.2"
+  }
+}
