@@ -56,16 +56,16 @@ func TestMLForSilentSemantics(t *testing.T) {
 "intercept":[0],"sublinear_tf":true,"lowercase":true,
 "token_pattern":"(?u)\\b\\w\\w+\\b","l2_norm":true}`
 	for fn, b := range map[string][]byte{
-		"cve-tech.meta.json":  []byte(meta),
-		"cve-tech.vocab.txt":  []byte("aa\nbb\ncc"),
-		"cve-tech.idf.f32":    make([]byte, 12),
-		"cve-tech.coef.f32":   make([]byte, 4), // 期望 1×3×4=12 字节，故意短
-		"cwe-type.meta.json":  []byte(`{"name":"cwe-type","classes":["CWE-79"],"n_features":3,"n_classes":1,
+		"cve-tech.meta.json": []byte(meta),
+		"cve-tech.vocab.txt": []byte("aa\nbb\ncc"),
+		"cve-tech.idf.f32":   make([]byte, 12),
+		"cve-tech.coef.f32":  make([]byte, 4), // 期望 1×3×4=12 字节，故意短
+		"cwe-type.meta.json": []byte(`{"name":"cwe-type","classes":["CWE-79"],"n_features":3,"n_classes":1,
 "intercept":[0],"sublinear_tf":true,"lowercase":true,
 "token_pattern":"(?u)\\b\\w\\w+\\b","l2_norm":true}`),
-		"cwe-type.vocab.txt":  []byte("aa\nbb\ncc"),
-		"cwe-type.idf.f32":    make([]byte, 12),
-		"cwe-type.coef.f32":   make([]byte, 12),
+		"cwe-type.vocab.txt": []byte("aa\nbb\ncc"),
+		"cwe-type.idf.f32":   make([]byte, 12),
+		"cwe-type.coef.f32":  make([]byte, 12),
 	} {
 		if err := os.WriteFile(filepath.Join(bad, fn), b, 0o644); err != nil {
 			t.Fatalf("写 %s: %v", fn, err)
@@ -221,14 +221,14 @@ func TestMLEnrichCVEShape(t *testing.T) {
 	e.cfg.ML.AssetsDir = dir
 	descr := "alpha bravo charlie delta echo" // 命中词表，走 fallback 描述
 	res := &Result{Vulnerabilities: []intel.Finding{
-		{CVE: "cve-2021-1001", Desc: descr},                              // 小写：收集并保留原始形态
-		{CVE: "CVE-2021-1001", Desc: descr},                              // 大小写重复：按归一键去重
-		{CVE: "CVE-2021-1002 (PoC)", Desc: descr},                        // 带尾巴：拒收
-		{CVE: "GHSA-xxxx-xxxx-xxxx", Desc: descr},                        // 非 CVE 前缀：拒收
-		{CVE: "MS17-010", Desc: descr},                                   // 非 CVE 前缀：拒收
-		{CVE: "  CVE-2021-1003  ", Desc: descr},                          // 首尾空白：Trim 后合法
-		{CVE: "CVE-21-1", Desc: descr},                                   // 位数不足：拒收
-		{CVE: "CVE-2021-1004", Desc: ""},                                 // 无描述：跳过（不臆造）
+		{CVE: "cve-2021-1001", Desc: descr},       // 小写：收集并保留原始形态
+		{CVE: "CVE-2021-1001", Desc: descr},       // 大小写重复：按归一键去重
+		{CVE: "CVE-2021-1002 (PoC)", Desc: descr}, // 带尾巴：拒收
+		{CVE: "GHSA-xxxx-xxxx-xxxx", Desc: descr}, // 非 CVE 前缀：拒收
+		{CVE: "MS17-010", Desc: descr},            // 非 CVE 前缀：拒收
+		{CVE: "  CVE-2021-1003  ", Desc: descr},   // 首尾空白：Trim 后合法
+		{CVE: "CVE-21-1", Desc: descr},            // 位数不足：拒收
+		{CVE: "CVE-2021-1004", Desc: ""},          // 无描述：跳过（不臆造）
 	}}
 	e.mlEnrich(res, nil)
 	if len(res.Predictions) != 2 {

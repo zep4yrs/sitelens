@@ -99,7 +99,7 @@ func TestFamilyBumpOnHit(t *testing.T) {
 }
 
 // TestFamilyBumpSingleShot 每家族至多联动一次：多条姊妹命中不叠加加分
-//（第二个家族成员命中时家族已 bump，其余 check 顺序不受再次扰动）。
+// （第二个家族成员命中时家族已 bump，其余 check 顺序不受再次扰动）。
 func TestFamilyBumpSingleShot(t *testing.T) {
 	list := priorTestList("wp-readme", "wp-users", "c-x", "c-y")
 	prior := &Prior{Boost: map[string]float64{}}
