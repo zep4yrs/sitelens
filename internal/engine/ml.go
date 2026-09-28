@@ -38,21 +38,32 @@ func (e *Engine) mlFor() *ml.Assets {
 	}
 	dir := e.cfg.ML.AssetsDir
 	if dir == "" {
-		// 未配置资产目录：配置在本进程内不会变，置死避免反复空转
-		//（区别于「配置了但尚未就绪」——那种情况绝不置死）。
-		e.mlDead = true
-		return nil
+		dir = "data/go/ml_assets"
 	}
-	// 关键文件存在性全量预检（双模型 × meta/vocab/idf/coef）：任何一件
-	// 缺失都算「资产未就绪」，返回 nil 不置死。此前只 Stat cve-tech.coef.f32
-	// 一件，其余文件缺失会落进 LoadAssets 的报错分支被当作「损坏」永久
-	// 禁用——资产分步部署/更新窗口内一次扫描就把 ML 打死到进程重启。
-	for _, name := range []string{"cve-tech", "cwe-type"} {
-		for _, ext := range []string{".meta.json", ".vocab.txt", ".idf.f32", ".coef.f32"} {
-			if _, err := os.Stat(filepath.Join(dir, name+ext)); err != nil {
-				return nil
+	// 资产目录候选：配置优先 → 运行时常规路径 → 仓库内建 models/（克隆
+	// 即用，免配置零拷贝）。
+	candidates := []string{dir, "data/go/ml_assets", "models/go/ml_assets"}
+	dir = ""
+	for _, cand := range candidates {
+		ok := true
+		for _, name := range []string{"cve-tech", "cwe-type"} {
+			for _, ext := range []string{".meta.json", ".vocab.txt", ".idf.f32", ".coef.f32"} {
+				if _, err := os.Stat(filepath.Join(cand, name+ext)); err != nil {
+					ok = false
+					break
+				}
+			}
+			if !ok {
+				break
 			}
 		}
+		if ok {
+			dir = cand
+			break
+		}
+	}
+	if dir == "" {
+		return nil
 	}
 	a, err := ml.LoadAssets(dir)
 	if err != nil {
@@ -78,16 +89,41 @@ func (e *Engine) mlSevScorer() *ml.SevScorer {
 		return nil
 	}
 	assets := e.cfg.ML.AssetsDir
-	onnx := filepath.Join(assets, "sev-prior-v3.1.onnx")
-	if _, err := os.Stat(onnx); err != nil { // fp32 缺失退 int8（低配形态）
-		onnx = filepath.Join(assets, "sev-prior-v3.1-int8.onnx")
+	// 集成清单：双种子 fp32 对 → int8 对 → 旧单文件（兼容既往资产布局）
+	var onnx []string
+	for _, pat := range []string{"sev-prior-v3.1-[ab].onnx", "sev-prior-v3.1-[ab]-int8.onnx"} {
+		if m, _ := filepath.Glob(filepath.Join(assets, pat)); len(m) > 0 {
+			onnx = m
+			break
+		}
+	}
+	if len(onnx) == 0 {
+		single := filepath.Join(assets, "sev-prior-v3.1.onnx")
+		if _, err := os.Stat(single); err == nil {
+			onnx = []string{single}
+		} else {
+			onnx = []string{filepath.Join(assets, "sev-prior-v3.1-int8.onnx")}
+		}
 	}
 	vocab := filepath.Join(assets, "sev-prior-v3.1.vocab.txt")
+	// 共享库候选：配置 → 运行时路径 → 仓库内建 models/（克隆即用）
 	dll := e.cfg.ML.OnnxrtDLL
-	if dll == "" {
-		dll = filepath.Join("data", "onnxruntime", "onnxruntime.dll")
+	dllCands := []string{dll, filepath.Join("data", "onnxruntime", "onnxruntime.dll"),
+		filepath.Join("models", "onnxruntime", "onnxruntime.dll")}
+	dll = ""
+	for _, cand := range dllCands {
+		if cand != "" {
+			if _, err := os.Stat(cand); err == nil {
+				dll = cand
+				break
+			}
+		}
 	}
-	s, err := ml.NewSevScorer(onnx, vocab, dll)
+	if dll == "" {
+		e.mlSevReason = "onnxruntime 共享库缺失"
+		return nil
+	}
+	s, err := ml.NewSevScorer(vocab, dll, onnx)
 	if err != nil {
 		e.mlSevReason = err.Error()
 		return nil
