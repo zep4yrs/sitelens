@@ -27,6 +27,7 @@ export async function scan(base, url, { level = "standard", timeoutSec = 1800, s
   const { job_id } = await api(base, "/api/scan", "POST", { url, level });
   const seenEvents = new Set();
   const start = Date.now();
+  let dead = 0; // serve 连续失联计数（进程意外退出时快速失败，不无限轮询）
   while (true) {
     if (signal?.aborted) {
       try {
@@ -42,6 +43,12 @@ export async function scan(base, url, { level = "standard", timeoutSec = 1800, s
       j = await api(base, `/api/job/${job_id}`);
     } catch (e) {
       if (String(e).includes("任务不存在")) throw e;
+      if (/fetch failed|ECONNREFUSED|ECONNRESET/i.test(String(e))) {
+        dead++;
+        if (dead >= 6) throw new Error("引擎 serve 失联（进程意外退出）——请重试并将此现象反馈到项目 Issue");
+      } else {
+        dead = 0;
+      }
       await new Promise((r) => setTimeout(r, POLL_MS)); // serve 瞬断容忍
       continue;
     }
