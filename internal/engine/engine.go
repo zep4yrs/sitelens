@@ -24,6 +24,7 @@ import (
 	"cnb.cool/feng-qiao/sitelens/internal/intel"
 	"cnb.cool/feng-qiao/sitelens/internal/jsmap"
 	"cnb.cool/feng-qiao/sitelens/internal/loginbrute"
+	"cnb.cool/feng-qiao/sitelens/internal/ml"
 	"cnb.cool/feng-qiao/sitelens/internal/modules"
 	"cnb.cool/feng-qiao/sitelens/internal/netsec"
 	"cnb.cool/feng-qiao/sitelens/internal/nuclei"
@@ -79,6 +80,12 @@ type Engine struct {
 	kb          *intel.KB
 	activeScans int              // 活跃扫描计数（>0 时 ReleaseIntel 跳过释放，避免与快照 Match 竞争）
 	nucleiLRU   map[string]int64 // Nuclei 模板 LRU 调度表（持久化，重启不丢轮转进度）
+
+	// 5.0 ML 资产惰性加载（首次预测才读 coef，cve-tech 94MB）。
+	// 独立于 dataMu：模型资产不参与换枪一致性语义。
+	mlMu     sync.Mutex
+	mlAssets *ml.Assets
+	mlDead   bool // 加载失败标记：本进程内静默禁用（防反复重读 94MB）
 }
 
 // New 创建引擎。matcher / kb 可为 nil（对应能力降级跳过，不阻塞扫描）。
@@ -701,6 +708,14 @@ func (e *Engine) Scan(rawURL string, opts Options, onProgress progress, cancel f
 		if err := res.Graph.Validate(); err != nil {
 			emit("graph", "结构化事实图校验异常："+err.Error())
 		}
+	}
+
+	// 12) 5.0 ML 推理富化（L3 阶段 A，cfg.ML.Predict 默认开）：对发现中的
+	// CVE 做受影响产品 Top-5 + CWE 弱点类型先验预测，附加 predictions
+	// 字段。模型只提供先验参考，不改变任何判定；资产缺失/加载失败/
+	// 推理异常一律静默跳过（字段缺席，主流程零影响）。
+	if !cancelled() && e.cfg.ML.Predict && len(res.Vulnerabilities) > 0 {
+		e.mlEnrich(res, kb)
 	}
 
 	onProgress(100, fmt.Sprintf("完成，识别 %d 项技术，%d 条已验证发现",

@@ -8,6 +8,7 @@ import (
 
 	"cnb.cool/feng-qiao/sitelens/internal/checks"
 	"cnb.cool/feng-qiao/sitelens/internal/intel"
+	"cnb.cool/feng-qiao/sitelens/internal/ml"
 	"cnb.cool/feng-qiao/sitelens/internal/model"
 	"cnb.cool/feng-qiao/sitelens/internal/security"
 )
@@ -39,6 +40,10 @@ type PageInfo struct {
 // CheckRuns（5.0）：验证型 check 的逐条执行证据——executed+hit=正样本、
 // executed+未命中=可靠负样本、not_executed 永远不作负样本。旧记录无此
 // 字段（unknown），ml 线据此区分，不回填、不假设。
+//
+// Predictions（5.0 L3 阶段 A）：扫描收尾对发现中 CVE 的 ML 先验预测
+// （受影响产品 Top-5 + CWE 弱点类型）。纯增量：预测失败/资产缺失时
+// 字段缺席，其余键位与既有版本逐字节一致。
 type Result struct {
 	URL             string            `json:"url"`
 	Host            string            `json:"host"`
@@ -54,6 +59,7 @@ type Result struct {
 	Vulnerabilities []intel.Finding   `json:"vulnerabilities"`
 	Verified        []map[string]any  `json:"verified"`
 	CheckRuns       []checks.CheckRun `json:"check_runs,omitempty"`
+	Predictions     []ml.Prediction   `json:"predictions,omitempty"`
 	Extras          map[string]any    `json:"extras"`
 	Pages           []PageInfo        `json:"pages"`
 	Graph           *model.ScanGraph  `json:"graph,omitempty"`
