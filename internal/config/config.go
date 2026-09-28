@@ -17,6 +17,7 @@ import (
 // Config 用户可配置项（.sitelens.yml 或默认值）。
 type Config struct {
 	Scan       ScanConfig       `yaml:"scan"`
+	Target     TargetConfig     `yaml:"target"`
 	Checks     ChecksConfig     `yaml:"checks"`
 	Crawler    CrawlerConfig    `yaml:"crawler"`
 	DAST       DASTConfig       `yaml:"dast"`
@@ -86,6 +87,15 @@ type ScanConfig struct {
 	Graph          bool   `yaml:"graph"`            // 收集结构化事实图（4.0 P2，默认关）
 	MaxMemoryMB    int    `yaml:"max_memory_mb"`    // A7 内存预算（MB）：超限逐级降档；0=默认 768
 	PagesRetained  int    `yaml:"pages_retained"`   // A8 页面清单驻留上限：超出省略并计数；0=默认 2000
+}
+
+// TargetConfig 目标安全闸配置。
+// allow_private：本机靶场/授权内网目标开关（默认 false，行为与既往版本
+// 一致）。开启后放宽私网/保留地址与本地主机名校验，供本机靶场、授权内网
+// 测试等操作者自担合规责任的场景使用；gov.cn 硬保护与云 metadata 端点
+// 永久阻断不受本开关影响。
+type TargetConfig struct {
+	AllowPrivate bool `yaml:"allow_private"`
 }
 
 // ChecksConfig 验证型 check 引擎。
