@@ -224,6 +224,15 @@ async function ensureConfig(prefPort) {
       nvd_path: underRoot(userDir, 'data', 'nvd_cves.json.gz'),
       tpl_intel_path: underRoot(userDir, 'data', 'tpl_intel.json.gz'),
       technologies_path: underRoot(userDir, 'data', 'go', 'technologies.json')
+    },
+    // 方案 Aa（5.0 桌面全量内嵌）：桌面引擎带 -tags onnx，sev-prior 模型与
+    // onnxruntime.dll 随包（engine/data），故 sev_onnx 桌面默认开。onnxrt_dll
+    // 用相对引擎 cwd 的安装目录内路径（引擎 spawn 时 cwd=ENGINE_DIR，与引擎
+    // 自身空值默认 data/onnxruntime/onnxruntime.dll 同点位）；布尔必须落成
+    // YAML 裸字面量 true，带引号会被引擎当字符串、整份配置回退默认。
+    ml: {
+      sev_onnx: true,
+      onnxrt_dll: 'data/onnxruntime/onnxruntime.dll'
     }
   };
   const source = cur ? cur.text : CONFIG_MARKER + '\n';

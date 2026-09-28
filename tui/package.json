@@ -1,6 +1,6 @@
 {
   "name": "@fengqiao666/sitelens-cli",
-  "version": "1.0.0",
+  "version": "0.0.1-rc",
   "description": "SiteLens 站点透视 TUI/CLI —— 终端里的网站安全扫描台（引擎随包自动分发）",
   "type": "module",
   "license": "GPL-3.0",
@@ -28,11 +28,11 @@
     "react": "^19.1.0"
   },
   "optionalDependencies": {
-    "@fengqiao666/sitelens-darwin-arm64-engine": "1.0.0",
-    "@fengqiao666/sitelens-darwin-x64-engine": "1.0.0",
-    "@fengqiao666/sitelens-linux-arm64-engine": "1.0.0",
-    "@fengqiao666/sitelens-linux-x64-engine": "1.0.0",
-    "@fengqiao666/sitelens-win32-x64-engine": "1.0.0"
+    "@fengqiao666/sitelens-darwin-arm64-engine": "0.0.1-rc",
+    "@fengqiao666/sitelens-darwin-x64-engine": "0.0.1-rc",
+    "@fengqiao666/sitelens-linux-arm64-engine": "0.0.1-rc",
+    "@fengqiao666/sitelens-linux-x64-engine": "0.0.1-rc",
+    "@fengqiao666/sitelens-win32-x64-engine": "0.0.1-rc"
   },
   "repository": {
     "type": "git",

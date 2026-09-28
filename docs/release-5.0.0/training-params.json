@@ -1,0 +1,350 @@
+{
+  "_meta": {
+    "release": "ml-models-v1",
+    "generated_for": "SiteLens 5.0",
+    "principle": "参数随模型开源：所有值摘自训练代码与 metrics 文件，source 字段给出相对 sitelens-ml5 仓库根的出处；代码中没有的参数不写，多处不一致的参数在 inconsistencies 中如实记录。",
+    "companion_doc": "TRAINING_PARAMS.md",
+    "release_published_at": "2026-09-28T17:04:14Z",
+    "download_url_prefix": "https://cnb.cool/feng-qiao/sitelens/-/releases/download/ml-models-v1/"
+  },
+  "models": {
+    "cve-tech": {
+      "public_name": "cve-tech",
+      "chinese_name": "产品关系先验",
+      "version": "v1",
+      "trace_id": "EXP-1002-product-relation-model",
+      "task": "CVE 描述 → 受影响产品/技术 Top-K（top-200 高频产品宇宙）",
+      "algorithm": "TF-IDF(word 1-2gram) + OneVsRest 线性分类器（SGDClassifier, log_loss）按概率排序取 Top-K",
+      "training_script": "ml/train_kb.py (exp1002_product_relation)",
+      "data_version": "kb-5.0.0",
+      "seed": 20260914,
+      "hyperparams": {
+        "tfidf": {
+          "analyzer": "word",
+          "ngram_range": [1, 2],
+          "min_df": 3,
+          "max_features": 120000,
+          "sublinear_tf": true,
+          "lowercase": true,
+          "input_field": "descr",
+          "source": "ml/train_kb.py:215-216"
+        },
+        "classifier": {
+          "wrapper": "OneVsRestClassifier(n_jobs=8)",
+          "base": "SGDClassifier",
+          "loss": "log_loss",
+          "alpha": 1e-5,
+          "max_iter": 20,
+          "class_weight": null,
+          "random_state": 20260914,
+          "source": "ml/train_kb.py:221-223"
+        },
+        "class_universe": {
+          "top_n": 200,
+          "selection": "kb_product_stats 按 n_cves 降序 head(200)",
+          "classes_in_trained_model": 196,
+          "source": "ml/train_kb.py:199,204; data/ml/metrics/EXP-1014-cve-tech-v2.json; ml/export_go_assets.py docstring"
+        },
+        "train_sample_dedup": {
+          "rule": "drop_duplicates(cve, vendor_product)",
+          "source": "ml/train_kb.py:217-218"
+        }
+      },
+      "train_data": {
+        "corpus": "本地 NVD 镜像 371,755 CVE / CPE 产品约束 3,038,966 条（kb-5.0.0 KB 表）",
+        "source_tables": ["kb_cve_product", "kb_cve", "kb_product_stats"],
+        "label_provenance": {
+          "source": "NVD CPE product constraints (vendor/product)",
+          "label_type": "weak / relation",
+          "label_confidence": "medium"
+        },
+        "split": "train pub<2024-01-01 / test pub>=2024-01-01",
+        "train_edges": 1066892,
+        "test_cves": 31130,
+        "source": "ml/train_kb.py:212-213; data/ml/metrics/EXP-1002-product-relation.json"
+      },
+      "eval_protocol": {
+        "primary": "时间切分测试段全量：P@K（top-K 与真实类集合有交集的 CVE 占比）与 MRR（首个命中类排名倒数均值），对照随机 P@5=5/200",
+        "metric_implementation": "ml/train_kb.py:227-266",
+        "preregistered_eval_sets": {
+          "e2_product": {
+            "n": 800,
+            "sampling": "top-200 宇宙内 pub>=2024 按 CVE 分组抽样，seed=20260928",
+            "source": "ml/bench/build_eval_sets.py:25-29; ml/bench/PRE_REGISTRATION.md"
+          }
+        },
+        "challenge_gate": "EXP-1014（DistilBERT 多标签）同测试集同截断协议挑战现役，未晋升（data/ml/metrics/EXP-1014-cve-tech-v2.json）"
+      },
+      "metrics": {
+        "P@5_registered": 0.9085,
+        "P@10": 0.9425,
+        "MRR_registered": 0.864,
+        "random_P@5": 0.025,
+        "P@5_reproduction": 0.9083,
+        "MRR@5_reproduction": 0.8563,
+        "e2_same_set_baseline": {"P@5": 0.905, "MRR@5": 0.8585, "rows": 800},
+        "source": ["data/ml/metrics/EXP-1002-product-relation.json", "data/ml/metrics/EXP-1014-cve-tech-v2.json", "data/ml/bench/results/baseline_on_same_sets.json"]
+      },
+      "artifacts": {
+        "training_output": "data/ml/experiments/EXP-1002-product-relation-model/model.joblib",
+        "release_asset": "cve-tech-v1.joblib",
+        "format": "joblib (dict: vectorizer / clf / classes / feature)",
+        "size_bytes": 193406291,
+        "sha256": "2f8bdf549bec0a77972d23effcc01a8e427345e7ca367528cb28dcd52dce1d58",
+        "hash_verified_identical_to_training_output": true,
+        "go_assets": ["cve-tech.vocab.txt", "cve-tech.idf.f32", "cve-tech.coef.f32 (196x120k f32)", "cve-tech.meta.json", "fixtures.json (500 条对拍，一致率>=99.5%)"],
+        "go_export_script": "ml/export_go_assets.py"
+      }
+    },
+    "cwe-type": {
+      "public_name": "cwe-type",
+      "chinese_name": "弱点类型分类",
+      "version": "v1",
+      "trace_id": "EXP-1005-cwe-model",
+      "task": "CVE 描述 → CWE 弱点类型（top-25 主弱点单标签）",
+      "algorithm": "TF-IDF(word 1-2gram) + SGDClassifier 多类线性（log_loss, balanced 类权重）",
+      "training_script": "ml/train_cwe.py (EXP-1005, exp1005_cwe_relation)",
+      "data_version": "kb-5.0.1",
+      "seed": 20260914,
+      "hyperparams": {
+        "tfidf": {
+          "analyzer": "word",
+          "ngram_range": [1, 2],
+          "min_df": 3,
+          "max_features": 120000,
+          "sublinear_tf": true,
+          "lowercase": true,
+          "input_field": "descr",
+          "source": "ml/train_cwe.py:95-96"
+        },
+        "classifier": {
+          "base": "SGDClassifier",
+          "loss": "log_loss",
+          "alpha": 1e-5,
+          "max_iter": 30,
+          "class_weight": "balanced",
+          "random_state": 20260914,
+          "source": "ml/train_cwe.py:101-103"
+        },
+        "top_n_classes": {
+          "value": 25,
+          "selection": "仅训练期频率 value_counts().head(25)，避免测试期频率参与选类",
+          "source": "ml/train_cwe.py:28,88-93"
+        },
+        "label_definition": {
+          "rule": "主弱点 = 每 CVE 首个 cwe（NVD 宣告序，drop_duplicates keep=first）",
+          "source": "ml/train_cwe.py:80-82"
+        }
+      },
+      "train_data": {
+        "corpus": "kb-5.0.1：kb_cve_cwe（NVD weaknesses，4.x P5 v2 镜像自带）",
+        "label_provenance": {
+          "source": "NVD weaknesses（主弱点=宣告序首个）",
+          "label_type": "supervised",
+          "label_confidence": "medium",
+          "note": "CWE 分配有噪声且多值，取主弱点为保守近似"
+        },
+        "split": "train pub<2024-01-01 / test pub>=2024-01-01（与 EXP-1001/1002 同口径）",
+        "train_rows": 129860,
+        "test_rows": 84507,
+        "test_excluded_longtail": 57808,
+        "classes": ["CWE-79", "CWE-119", "CWE-89", "CWE-20", "CWE-200", "CWE-787", "CWE-125", "CWE-22", "CWE-352", "CWE-264", "CWE-416", "CWE-94", "CWE-287", "CWE-78", "CWE-399", "CWE-310", "CWE-476", "CWE-190", "CWE-120", "CWE-284", "CWE-434", "CWE-862", "CWE-400", "CWE-269", "CWE-77"],
+        "source": "ml/train_cwe.py:32-34,88; data/ml/metrics/EXP-1005-cwe-relation.json"
+      },
+      "eval_protocol": {
+        "primary": "时间切分测试段（仅 top-25 宇宙内）accuracy 与 macro-F1，对照多数类基线（恒预测训练期多数类 CWE-79）",
+        "preregistered_eval_sets": "cwe-type 无对应 E1/E2/E3 评测行；E1（严重度 N=1500）/E2（产品 N=800）/E3（候选 1582 行、19 正例查询），seed=20260928，见 ml/bench/PRE_REGISTRATION.md（commit a062d10）"
+      },
+      "metrics": {
+        "accuracy": 0.7709,
+        "macro_f1": 0.5899,
+        "majority_baseline_accuracy": 0.2489,
+        "source": "data/ml/metrics/EXP-1005-cwe-relation.json"
+      },
+      "artifacts": {
+        "training_output": "data/ml/experiments/EXP-1005-cwe-model/model.joblib",
+        "release_asset": "cwe-type-v1.joblib",
+        "format": "joblib (dict: vectorizer / model / classes / feature)",
+        "size_bytes": 28904894,
+        "sha256": "7820b34c375dd5b9e7b7ba2e18be02436fc6e561e0fa500dfb31e63f3930abea",
+        "hash_verified_identical_to_training_output": true,
+        "go_assets": "与 cve-tech 同构（25 类），ml/export_go_assets.py"
+      }
+    },
+    "sev-prior": {
+      "public_name": "sev-prior",
+      "chinese_name": "严重度先验",
+      "chinese_note": "双版本并存：v3.1 分数输出为主呈现【分数±MAE】，v2.2 档位集成为辅助档位标注（ml/model_registry.json）",
+      "versions": {
+        "v3.1": {
+          "trace_id": "EXP-1017",
+          "task": "CVE 描述 → CVSS 分数回归（0-10）",
+          "algorithm": "DistilBERT-base-uncased + 线性回归头（num_labels=1），部署变体 D_max_huber2_tr24_ensemble2：Huber 损失 + tr24 全量 + 双种子分数平均",
+          "training_script": "ml/train_sev_mae.py",
+          "data_version": "kb-5.0.2",
+          "seed": [20260928, 20260929],
+          "hyperparams": {
+            "base_model": {
+              "name": "distilbert-base-uncased",
+              "params_m": 66,
+              "provenance": "hf-mirror 本地文件，通用英文预训练（非安全数据）",
+              "local_path_default": "data/bench/models/distilbert-base-uncased",
+              "source": "ml/train_sev_bert.py:171-173; ml/train_sev_mae.py:86-88"
+            },
+            "head": {"num_labels": 1, "source": "ml/train_sev_mae.py:138-139"},
+            "target_transform": {"train": "score / 10.0 (0-1 归一化)", "infer": "logits * 10.0", "source": "ml/train_sev_mae.py:131,68"},
+            "optimizer": {"name": "AdamW", "lr": 2e-5, "weight_decay": 0.01, "source": "ml/train_sev_mae.py:140"},
+            "lr_scheduler": {"name": "OneCycleLR", "max_lr": 2e-5, "pct_start": 0.1, "source": "ml/train_sev_mae.py:141-143"},
+            "loss": {"name": "HuberLoss", "delta": 0.1, "note": "0-1 归一化尺度；严格协议对照变体 a_mse2 用 MSELoss", "source": "ml/train_sev_mae.py:144-145"},
+            "epochs": 2,
+            "batch_size": 32,
+            "max_seq_length": 192,
+            "precision": "bf16 autocast (CUDA)",
+            "tokenization": "truncation=true, padding=max_length",
+            "ensemble": "双种子 (20260928, 20260929) 各训一模型，测试分数取平均",
+            "band_edges": [4.0, 7.0, 9.0],
+            "source_refs": "ml/train_sev_mae.py:26-32,111-113,126-129,140-145,151-152,177-188"
+          },
+          "train_data": {
+            "deployment_split": "tr24 = pub<2024-01-01 全量（约 148k 行；同切分 sev 四类在 EXP-1009 记录 148,356 行；EXP-1017 tr24 另要求 score 非空且 descr 非空，精确行数未单独记录）",
+            "selection_protocol_split": "严格三段：train<2022 (94,485) / val 2022-2023 (53,871) / test>=2024 只碰一次；选型数字仅出自该协议",
+            "test_split": "pub>=2024-01-01（143,680 行，同 EXP-1009/EXP-1015 切分）",
+            "source": "ml/train_sev_mae.py:100-107; data/ml/metrics/EXP-1015-sev-prior-v3.json; data/ml/metrics/EXP-1009-sev-prior-v2.2.json"
+          },
+          "eval_protocol": {
+            "primary_metric": "分数 MAE（0-10 尺度）",
+            "secondary": "相邻带容忍 acc（|Δband|<=1，切带边界 4/7/9）",
+            "strict_selection_variants": {"a_mse2_tr22": {"test_mae": 1.283}, "b_huber2_tr22": {"test_mae": 1.301}},
+            "promotion": "promoted=true, promoted_as='sev-prior v3.1（分数输出版部署升级）'",
+            "source": "data/ml/metrics/EXP-1017-sev-prior-mae.json"
+          },
+          "metrics": {
+            "test_mae": 1.07,
+            "adjacent_acc": 0.9654,
+            "prev_v3_mae": 1.283,
+            "source": "data/ml/metrics/EXP-1017-sev-prior-mae.json"
+          },
+          "artifacts": {
+            "weights_persisted_by_training_script": false,
+            "release_asset": "sev-prior-v3.1.pt",
+            "size_bytes": 535716895,
+            "sha256": "9d34cca731789be54e94701afb7283795c903d7021d4a329dd4c41b06f5e0fb1",
+            "fact_check": "实测 SHA256 与 data/ml/experiments/EXP-1015-sev-prior-v3/model.pt 完全一致；该 checkpoint 内容为 {reg, edge, base, edges}（ml/train_sev_score.py:208-209），reg 对应 EXP-1015 严格协议 v3（MSE、train<2022、test MAE 1.283），D_max（MAE 1.07）权重未单独持久化",
+            "onnx": {
+              "files": ["sev-prior-v3.1.onnx (fp32)", "sev-prior-v3.1-int8.onnx"],
+              "export_script": "ml/export_sev_onnx.py",
+              "opset": 17,
+              "seq_len": 192,
+              "inputs": ["input_ids (dynamic batch)", "attention_mask"],
+              "quantization": "onnxruntime quantize_dynamic, weight_type=QInt8, per_channel=True, pre_classifier/classifier 节点排除量化保持 fp32",
+              "parity_protocol": "200 条真实 CVE 描述（测试段 pub>=2024，seed=20260928 采样），torch fp32 vs ONNX fp32 vs ONNX int8；通过闸门 logits(0-1) 尺度 fp32 MAE<0.02 且 int8 MAE<0.05",
+              "source": "ml/export_sev_onnx.py:27-37,96-99,200-203"
+            }
+          }
+        },
+        "v2.2": {
+          "trace_id": "EXP-1009",
+          "task": "CVE 描述 → 严重度四类档位（low/medium/high/critical，辅助档位标注）",
+          "algorithm": "TF-IDF(word 1-2gram) 三路软投票集成：base(SGD log_loss) + A(TruncatedSVD300+HistGB) + B(自训练 16,917 伪标注)，胜者 C_ensemble",
+          "training_script": "ml/train_sev_big.py",
+          "data_version": "kb-5.0.2",
+          "seed": 20260928,
+          "hyperparams": {
+            "tfidf": {"ngram_range": [1, 2], "min_df": 3, "max_features": 120000, "sublinear_tf": true, "source": "ml/train_sev_big.py:101-103"},
+            "base_lr": {"loss": "log_loss", "alpha": 1e-5, "max_iter": 30, "class_weight": "balanced", "random_state": 20260928, "source": "ml/train_sev_big.py:111-112"},
+            "A_capacity": {"svd_n_components": 300, "histgb_max_iter": 200, "histgb_learning_rate": 0.1, "source": "ml/train_sev_big.py:119-123"},
+            "B_selftrain": {"pseudo_pool": 80496, "pseudo_conf_threshold": 0.8, "pseudo_used": 16917, "note": "伪标注来自无标注 NVD 记录（descr>30 字符，与测试无交集 CVE）", "source": "ml/train_sev_big.py:36,97,129-141"},
+            "C_ensemble": {"rule": "三路概率平均 (base+A+B)/3", "source": "ml/train_sev_big.py:149-152"}
+          },
+          "train_data": {
+            "split": "train pub<2024-01-01 (148,356 行) / test pub>=2024-01-01 (143,680 行)",
+            "source": "ml/train_sev_big.py:93-96; data/ml/metrics/EXP-1009-sev-prior-v2.2.json"
+          },
+          "eval_protocol": {
+            "promotion_gate": "变体 test acc 与 macro-F1 均不低于 base 且至少一项严格提升才晋升；C_ensemble 胜出",
+            "source": "ml/train_sev_big.py:154-159"
+          },
+          "metrics": {
+            "accuracy": 0.6024,
+            "macro_f1": 0.5047,
+            "adjacent_acc": 0.952,
+            "macro_auc": 0.8463,
+            "source": "data/ml/metrics/EXP-1009-sev-prior-v2.2.json"
+          },
+          "artifacts": {
+            "training_output": "data/ml/experiments/EXP-1009-sev-prior-v2.2/model.joblib (304,132,769 字节，含 vec/base/svd/hgb/selftrain/classes)",
+            "release_asset": null,
+            "note": "未包含在 ml-models-v1 发布资产中"
+          }
+        }
+      },
+      "hardware": "RTX 5060 Laptop 8GB，bf16（ml/train_sev_bert.py 文件头，BERT 系列训练环境）；脚本在 CUDA 不可用时拒绝运行",
+      "repro_commands": [
+        "python -m ml.train_sev_mae",
+        "python -m ml.train_sev_big",
+        "python -m ml.export_sev_onnx",
+        "python -m ml.export_go_assets"
+      ]
+    }
+  },
+  "shared": {
+    "corpus": {
+      "nvd_cves": 371755,
+      "cpe_product_constraints": 3038966,
+      "cwe_edges": 349291,
+      "note": "无合成数据、无 LLM 生成内容",
+      "source": "ml/knowledge.py 文件头; data/ml/dist/MODEL_CARD.md"
+    },
+    "preregistered_eval_sets": {
+      "builder": "ml/bench/build_eval_sets.py",
+      "seed": 20260928,
+      "cut": "2024-01-01",
+      "e1_severity": {"n": 1500, "sampling": "按类分层等比例", "metric": "accuracy, macro_f1"},
+      "e2_product": {"n": 800, "sampling": "top-200 宇宙按 CVE 分组", "metric": "P@5, MRR@5（截断协议）"},
+      "e3_candidates": {"rows": 1582, "positive_queries": 19, "metric": "P@5/P@10/R@K/nDCG@K（仅观测正例，诚实分母）"},
+      "pre_registration": "ml/bench/PRE_REGISTRATION.md (commit a062d10)，LM 挑战者采纳闸门：>=2/3 任务严格优于基线、峰值 RSS<=800MB、批量 p95<=2000ms"
+    },
+    "dependencies": {
+      "pinned": "numpy>=2.0, pandas>=2.2, scikit-learn>=1.5 (ml/requirements.txt)",
+      "unpinned_note": "torch / transformers / onnxruntime 未锁版本"
+    },
+    "license": "GPL-3.0（随仓库整体，data/ml/dist/MODEL_CARD.md）"
+  },
+  "inconsistencies": [
+    {
+      "id": 1,
+      "topic": "cve-tech P@5 两个记录值",
+      "detail": "登记值 0.9085 / MRR 0.864（31,130 测试 CVE，data/ml/metrics/EXP-1002-product-relation.json）；复现值 0.9083 / MRR@5 0.8563（31,141 测试 CVE，EXP-1014 同集重算，data/ml/metrics/EXP-1014-cve-tech-v2.json）。ml/model_registry.json 记 0.9085；发布物（MODEL_CARD/RELEASE_NOTES/rel_check.json）用 0.9083。差异源于两次评估测试行集合不同。"
+    },
+    {
+      "id": 2,
+      "topic": "cve-tech 类宇宙 200 vs 196",
+      "detail": "实验登记 n_classes=200（目标宇宙，ml/train_kb.py:204）；训练后模型 clf.classes_ 实为 196 类（EXP-1014 class_universe、baseline_on_same_sets.json、export_go_assets.py docstring 196x120k）。"
+    },
+    {
+      "id": 3,
+      "topic": "发布 sev-prior-v3.1.pt 实为 EXP-1015 checkpoint",
+      "detail": "SHA256（9d34cca7...）与 experiments/EXP-1015-sev-prior-v3/model.pt 完全一致，内含 reg（严格协议 v3：MSE、train<2022、test MAE 1.283）+ edge 边界专精模型；v3.1 名义指标 MAE 1.07 对应 EXP-1017 D_max（Huber/148k/双种子），其权重未单独持久化（EXP-1017 metrics conclusion：'产品接入时持久化'）。按 3.1 超参可复现 D_max；随发布 .pt 加载的模型对应 EXP-1015 配置。ONNX 亦从 EXP-1015 reg 导出。"
+    },
+    {
+      "id": 4,
+      "topic": "c_huber3 变体未实现",
+      "detail": "ml/train_sev_mae.py docstring 列出 c_huber3，实际仅运行 a/b/D 三变体（EXP-1017 metrics conclusion 如实记录）。"
+    },
+    {
+      "id": 5,
+      "topic": "v2.2 集成模型未随 release 发布",
+      "detail": "ml-models-v1 发布资产仅 4 个（cve-tech-v1.joblib / cwe-type-v1.joblib / sev-prior-v3.1.pt / verify-rank-v0.1.joblib，SHA256SUMS.txt）；EXP-1009 model.joblib 留存于 data/ml/experiments/EXP-1009-sev-prior-v2.2/。"
+    },
+    {
+      "id": 6,
+      "topic": "sev 部署版训练行数 148k 为约数",
+      "detail": "EXP-1017 conclusion 记 148k；同切分 sev 四类在 EXP-1009 记录 148,356 行；EXP-1017 tr24 另要求 score 非空且 descr 非空，精确行数 metrics 未单独记录。"
+    },
+    {
+      "id": 7,
+      "topic": "深度学习依赖未锁版本",
+      "detail": "ml/requirements.txt 仅含 numpy/pandas/scikit-learn/pytest；torch、transformers、onnxruntime 版本未在仓库内固定。"
+    }
+  ]
+}

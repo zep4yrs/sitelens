@@ -40,9 +40,9 @@ func TestProbaNormalizedSigmoidRowNorm(t *testing.T) {
 // 否则 NaN 透传进 Prediction 后整份扫描输出 JSON 序列化失败。
 func TestProbaNormalizedNaNFallback(t *testing.T) {
 	for name, scores := range map[string][]float64{
-		"首类NaN":    {math.NaN(), 5},
-		"全NaN":      {math.NaN(), math.NaN()},
-		"Inf":       {math.Inf(1), 0},
+		"首类NaN":   {math.NaN(), 5},
+		"全NaN":    {math.NaN(), math.NaN()},
+		"Inf":     {math.Inf(1), 0},
 		"NaN加负无穷": {math.NaN(), math.Inf(-1)},
 	} {
 		out := probaNormalized(scores)

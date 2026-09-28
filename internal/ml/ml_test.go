@@ -19,10 +19,10 @@ func TestTokenize(t *testing.T) {
 		// 长度>=2 的词字符 run；单字符 run 丢弃（\b\w\w+\b 语义）
 		{"The debug command in Sendmail is enabled", []string{"the", "debug", "command", "in", "sendmail", "is", "enabled"}},
 		{"CVE-2024-1234", []string{"cve", "2024", "1234"}},
-		{"don't", []string{"don"}},                     // ' 断词，t 单字符丢弃
-		{"a b c 1 2", nil},                             // 全部单字符
-		{"2.4 v1.2.3", []string{"v1"}},                 // 版本号切出 v1；2/4/1/2/3 单字符
-		{"foo_bar", []string{"foo_bar"}},               // 下划线是词字符，不断词
+		{"don't", []string{"don"}},       // ' 断词，t 单字符丢弃
+		{"a b c 1 2", nil},               // 全部单字符
+		{"2.4 v1.2.3", []string{"v1"}},   // 版本号切出 v1；2/4/1/2/3 单字符
+		{"foo_bar", []string{"foo_bar"}}, // 下划线是词字符，不断词
 		{"", nil},
 		{"über café 跨站脚本攻击", []string{"über", "café", "跨站脚本攻击"}}, // Unicode \w
 		{"rate limiting (429) via X-Forwarded-For", []string{"rate", "limiting", "429", "via", "forwarded", "for"}},
@@ -78,7 +78,7 @@ func TestVectorizeTFIDF(t *testing.T) {
 func TestVectorizeSublinearVsRaw(t *testing.T) {
 	// 子线性 tf：词出现两次的权重应高于一次，但低于线性翻倍（1+ln2≈1.693 < 2）
 	m := newTinyModel()
-	_, once := m.Vectorize("bb aa")   // once[0] = aa 出现 1 次
+	_, once := m.Vectorize("bb aa")     // once[0] = aa 出现 1 次
 	_, twice := m.Vectorize("aa aa bb") // twice[0] = aa 出现 2 次
 	if !(twice[0] > once[0] && twice[0] < 2*once[0]) {
 		t.Errorf("子线性 tf 未生效: aa 一次权重 %v, 两次权重 %v（应在 (%v, %v) 区间）",
@@ -157,10 +157,10 @@ func writeTinyAssets(t *testing.T, dir, name string, coefBytes []byte) {
 "intercept":[0.5,-0.5],"sublinear_tf":true,"lowercase":true,
 "token_pattern":"(?u)\\b\\w\\w+\\b","l2_norm":true}`, name)
 	files := map[string][]byte{
-		name + ".meta.json":  []byte(meta),
-		name + ".vocab.txt":  []byte("aa\nbb\ncc"),
-		name + ".idf.f32":    f32le([]float32{1, 2, 3}),
-		name + ".coef.f32":   coefBytes,
+		name + ".meta.json": []byte(meta),
+		name + ".vocab.txt": []byte("aa\nbb\ncc"),
+		name + ".idf.f32":   f32le([]float32{1, 2, 3}),
+		name + ".coef.f32":  coefBytes,
 	}
 	for fn, b := range files {
 		if err := os.WriteFile(filepath.Join(dir, fn), b, 0o644); err != nil {
@@ -230,8 +230,9 @@ func TestTopKNonPositiveK(t *testing.T) {
 // TestTokenizePythonLowerSpecialCasing 回归：lowercase 步骤对齐 CPython
 // str.lower()（sklearn lowercase=True 的口径），而非 Go 的逐 rune 简单映射。
 // Python 3.10.10 实测基准：
-//   re.findall(r'(?u)\b\w\w+\b', 'İstanbul'.lower()) == ['stanbul']
-//   re.findall(r'(?u)\b\w\w+\b', 'ΝΙΚΟΣ'.lower())     == ['νικος']（末字符 0x3C2 ς）
+//
+//	re.findall(r'(?u)\b\w\w+\b', 'İstanbul'.lower()) == ['stanbul']
+//	re.findall(r'(?u)\b\w\w+\b', 'ΝΙΚΟΣ'.lower())     == ['νικος']（末字符 0x3C2 ς）
 func TestTokenizePythonLowerSpecialCasing(t *testing.T) {
 	// İ → "i"+U+0307（组合点上点非 \w，断词，单字符 i 被丢弃）
 	if got := Tokenize("İstanbul"); !reflect.DeepEqual(got, []string{"stanbul"}) {

@@ -13,6 +13,12 @@
 //   - 否则若有 WSL（含 mingw-w64 交叉工具链）→ 走 WSL 交叉编译（见下）；
 //   - 两者皆无 → 回退 CGO_ENABLED=0 纯 Go 构建（AST 自动降级，不报错），
 //     并在日志中**明确告警**（不静默丢失能力）。
+//
+// 方案 Aa（5.0 桌面全量内嵌）：CGO 构建带 `-tags onnx`（sev-prior v3.1
+// ONNX 推理），ML 资产（data/go/ml_assets）与 onnxruntime.dll 随包进
+// engine/data；桌面壳默认配置 ml.sev_onnx: true。纯 Go 回退构建**不带**
+// onnx 标签（yalue/onnxruntime_go 依赖 cgo，CGO_ENABLED=0 编不过），
+// 该形态 sev_onnx 自动回退 NVD 先验。
 const { execFileSync } = require('child_process');
 const fs = require('fs');
 const path = require('path');
@@ -42,13 +48,13 @@ function buildCGO() {
   // (a) 本机可原生 CGO（Windows 有 gcc）：直接构建。
   if (process.platform === 'win32' && hasCmd('gcc')) {
     try {
-      execFileSync('go', ['build', '-ldflags', LDFLAGS, '-o', EXE, './cmd/sitelens'], {
+      execFileSync('go', ['build', '-tags', 'onnx', '-ldflags', LDFLAGS, '-o', EXE, './cmd/sitelens'], {
         cwd: ROOT, stdio: 'inherit',
         env: Object.assign({}, process.env, {
           GOOS: 'windows', GOARCH: 'amd64', CGO_ENABLED: '1'
         })
       });
-      console.log('[engine] CGO 构建成功（本机 gcc）——含白盒 AST');
+      console.log('[engine] CGO 构建成功（本机 gcc）——含白盒 AST + sev ONNX');
       return true;
     } catch (e) {
       console.warn('[engine] 本机 CGO 构建失败，尝试 WSL 交叉编译：' + e.message);
@@ -60,13 +66,13 @@ function buildCGO() {
     'cd "$(wslpath -u ' + JSON.stringify(ROOT) + ')" 2>/dev/null || cd ' + JSON.stringify(toWSLPath(ROOT)),
     'GOTOOLCHAIN=local CGO_ENABLED=1 GOOS=windows GOARCH=amd64 ' +
       'CC=x86_64-w64-mingw32-gcc GOFLAGS=-mod=vendor ' +
-      'go build -ldflags ' + JSON.stringify(LDFLAGS) + ' -o ' + JSON.stringify(toWSLPath(EXE)) + ' ./cmd/sitelens'
+      'go build -tags onnx -ldflags ' + JSON.stringify(LDFLAGS) + ' -o ' + JSON.stringify(toWSLPath(EXE)) + ' ./cmd/sitelens'
   ].join(' && ');
   try {
     execFileSync('wsl.exe', ['-d', process.env.SITLENS_WSL_DISTRO || 'archlinux',
       '--', 'bash', '-lc', script], { stdio: 'inherit' });
     if (fs.existsSync(EXE)) {
-      console.log('[engine] CGO 构建成功（WSL + mingw 交叉编译）——含白盒 AST');
+      console.log('[engine] CGO 构建成功（WSL + mingw 交叉编译）——含白盒 AST + sev ONNX');
       return true;
     }
   } catch (e) {
@@ -136,6 +142,33 @@ cp('data/intel_dump.json.gz', 'data/intel_dump.json.gz');
 cp('data/tpl_intel.json.gz', 'data/tpl_intel.json.gz');
 cpOptional('data/nvd_cves.json.gz', 'data/nvd_cves.json.gz');
 cp('README.md', 'README.md');
+
+// 2.5) ML 资产与 ONNX Runtime（方案 Aa：桌面全量内嵌，sev_onnx 桌面默认开）。
+//      ml_assets 在 data/go 下，随上面的 data/go 递归拷贝进箱（引擎以相对
+//      cwd 的 ml.assets_dir=data/go/ml_assets 解析，桌面引擎 cwd=engine 目录，
+//      路径恰好命中）。这里做**硬闸**而非静默跳过：方案 Aa 的桌面形态承诺
+//      「带 onnx 标签 + 模型随包」，资产缺失/残缺时出残包只会把降级藏到
+//      用户机器上（引擎静默回退 NVD 先验），必须在打包现场拦下。
+//      onnxruntime.dll 不在 data/go 下，须在此显式装箱：引擎按
+//      ml.onnxrt_dll（桌面默认 data/onnxruntime/onnxruntime.dll，相对引擎
+//      cwd）加载共享库，缺库等同 sev_onnx 永远不生效。
+const STAGED_SEV_ONNX = path.join(OUT, 'data', 'go', 'ml_assets', 'sev-prior-v3.1.onnx');
+if (!fs.existsSync(STAGED_SEV_ONNX)) {
+  throw new Error('ML 资产缺失：data/go/ml_assets/sev-prior-v3.1.onnx 未随 data/go 进箱。' +
+    '方案 Aa 要求桌面版全量内嵌 ML 资产（sev-prior v3.1 / 线性模型 / 词表 / fixtures），' +
+    '请先在仓库根补齐 data/go/ml_assets 再出包。');
+}
+if (fs.statSync(STAGED_SEV_ONNX).size < 200 * 1024 * 1024) {
+  throw new Error('ML 资产残缺：' + STAGED_SEV_ONNX + ' 小于 200MB（fp32 模型应约 268MB），疑似截断。');
+}
+const ORT_DLL_SRC = path.join(ROOT, 'data', 'onnxruntime', 'onnxruntime.dll');
+if (!fs.existsSync(ORT_DLL_SRC)) {
+  throw new Error('缺少 data/onnxruntime/onnxruntime.dll：sev_onnx 运行时库未就位' +
+    '（可从 .t/onnx-probe/ort/onnxruntime-win-x64-1.30.0/lib/onnxruntime.dll 拷入仓库 data/onnxruntime/）。');
+}
+fs.mkdirSync(path.join(OUT, 'data', 'onnxruntime'), { recursive: true });
+fs.copyFileSync(ORT_DLL_SRC, path.join(OUT, 'data', 'onnxruntime', 'onnxruntime.dll'));
+console.log('[engine] ML 资产已装箱：ml_assets（含 sev-prior-v3.1.onnx）+ onnxruntime.dll');
 
 // 3) 体量报告
 let files = 0;

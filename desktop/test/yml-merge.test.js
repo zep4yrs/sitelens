@@ -84,6 +84,24 @@ test("路径含空格与反斜杠：双引号 + 正斜杠，YAML 安全", () => 
   assert.ok(out.includes('data_dir: "C:/Users/feng qiao/AppData/Roaming/SiteLens/state"'));
 });
 
+test("布尔受管键落 YAML 裸字面量（ml.sev_onnx 回归）", () => {
+  // 带引号的 "true" 是 YAML 字符串，引擎 bool 键 unmarshal 报错、整份配置
+  // 回退默认——开关静默失效，故布尔必须不带引号。
+  const out = mergeManaged("", {
+    ml: { sev_onnx: true, onnxrt_dll: "data/onnxruntime/onnxruntime.dll" }
+  });
+  assert.ok(out.includes("sev_onnx: true"), out);
+  assert.ok(!out.includes('sev_onnx: "true"'), "布尔不得带引号: " + out);
+  assert.ok(out.includes('onnxrt_dll: "data/onnxruntime/onnxruntime.dll"'), out);
+  // 已有 ml 段：受管布尔原位替换（含用户误设 false 的回写语义与键更新一致）
+  const replaced = mergeManaged("ml:\n  sev_onnx: false\n  predict: true\n", {
+    ml: { sev_onnx: true }
+  });
+  assert.ok(replaced.includes("sev_onnx: true"), replaced);
+  assert.ok(!replaced.includes("sev_onnx: false"), replaced);
+  assert.ok(replaced.includes("predict: true"), "未受管键保留: " + replaced);
+});
+
 test("readListenValue：引号/无引号/非 loopback/缺失四种形态", () => {
   const q = readListenValue('web:\n  listen: "127.0.0.1:5087"\n');
   assert.ok(q && q.host === "127.0.0.1" && q.port === 5087);
