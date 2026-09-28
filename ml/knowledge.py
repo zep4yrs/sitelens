@@ -60,7 +60,7 @@ def build_kb_tables(paths: config.Paths) -> dict[str, pd.DataFrame]:
         cve_rows.append({
             "cve": cve, "pub": e.get("pub"), "mod": e.get("mod"),
             "sev": (e.get("sev") or "").lower() or None,
-            "score": e.get("score"), "vector": e.get("vector"),
+            "score": e.get("score"), "vector": e.get("vec"),
             "descr_len": len(e.get("descr") or ""),
             "descr": e.get("descr") or "",
             "n_prods": len(e.get("prods") or []),
