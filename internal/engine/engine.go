@@ -391,7 +391,22 @@ func (e *Engine) Scan(rawURL string, opts Options, onProgress progress, cancel f
 		if len(cmsIDs) > 0 {
 			onProgress(75, "CMS 联动专项 check…")
 		}
-		hits, checkRuns := checks.RunChecksWithLog(client, baseURL, opts.Checks, cmsIDs, e.cfg.Checks.Workers, cancelled,
+		// 5.0 深度融合·前置：cve-tech 产品先验 → 相关 check 提权排序 +
+		// 核心档位扩展集增量纳入（只增不删）；中段家族联动在 runner 内由
+		// 命中触发；收尾富化见步骤 12。任一环节失败静默跳过。
+		var prior *checks.Prior
+		if e.cfg.ML.Predict && !cancelled() {
+			if p, promoted, info := e.mlPrior(res, home, opts.Checks, cmsIDs); p != nil {
+				prior = p
+				cmsIDs = append(cmsIDs, promoted...)
+				res.Extras["ml_prior"] = info
+				if prods := info["products"].([]map[string]any); len(prods) > 0 {
+					emit("ml", fmt.Sprintf("产品先验 %s（%.2f）：提权 %d 项、增量纳入 %d 项",
+						prods[0]["product"], prods[0]["prob"], info["boosted"], len(promoted)))
+				}
+			}
+		}
+		hits, checkRuns := checks.RunChecksWithPrior(client, baseURL, opts.Checks, cmsIDs, prior, e.cfg.Checks.Workers, cancelled,
 			func(done, total int, msg string) {
 				if total > 0 {
 					onProgress(75+done*10/total, "check："+msg)

@@ -91,13 +91,24 @@ func RunChecks(client *httpx.Client, targetURL string, level string,
 			selected = append(selected, c)
 		}
 	}
-	hits, _ := runList(client, targetURL, selected, workers, cancelCheck, onProgress, onHit)
+	hits, _ := runList(client, targetURL, selected, workers, cancelCheck, onProgress, onHit, nil)
 	return hits
 }
 
 // RunChecksWithLog = RunChecks + 每条 check 的执行证据（引擎落库用）。
 func RunChecksWithLog(client *httpx.Client, targetURL string, level string,
 	includeIDs []string, workers int, cancelCheck func() bool,
+	onProgress func(done, total int, msg string), onHit func(Hit)) ([]Hit, []CheckRun) {
+	return RunChecksWithPrior(client, targetURL, level, includeIDs, nil, workers,
+		cancelCheck, onProgress, onHit)
+}
+
+// RunChecksWithPrior = RunChecksWithLog + ML 先验调度（5.0 深度融合前置
+// 通道）：prior 把相关 check 提到队列前段、命中后同家族联动提前；prior
+// 为 nil 时与 RunChecksWithLog 行为逐字节一致（严格清单序）。先验只调序，
+// 绝不改变执行集（见 prior.go 铁律）。
+func RunChecksWithPrior(client *httpx.Client, targetURL string, level string,
+	includeIDs []string, prior *Prior, workers int, cancelCheck func() bool,
 	onProgress func(done, total int, msg string), onHit func(Hit)) ([]Hit, []CheckRun) {
 	if onProgress == nil {
 		onProgress = func(int, int, string) {}
@@ -112,7 +123,7 @@ func RunChecksWithLog(client *httpx.Client, targetURL string, level string,
 			selected = append(selected, c)
 		}
 	}
-	return runList(client, targetURL, selected, workers, cancelCheck, onProgress, onHit)
+	return runList(client, targetURL, selected, workers, cancelCheck, onProgress, onHit, prior)
 }
 
 // RunList 执行给定 check 集（Nuclei 子集等外部规则装载入口）。
@@ -120,7 +131,7 @@ func RunChecksWithLog(client *httpx.Client, targetURL string, level string,
 func RunList(client *httpx.Client, targetURL string, list []Check,
 	workers int, cancelCheck func() bool, onProgress func(done, total int, msg string),
 	onHit func(Hit)) []Hit {
-	hits, _ := runList(client, targetURL, list, workers, cancelCheck, onProgress, onHit)
+	hits, _ := runList(client, targetURL, list, workers, cancelCheck, onProgress, onHit, nil)
 	return hits
 }
 
@@ -128,13 +139,13 @@ func RunList(client *httpx.Client, targetURL string, list []Check,
 func RunListWithLog(client *httpx.Client, targetURL string, list []Check,
 	workers int, cancelCheck func() bool, onProgress func(done, total int, msg string),
 	onHit func(Hit)) ([]Hit, []CheckRun) {
-	return runList(client, targetURL, list, workers, cancelCheck, onProgress, onHit)
+	return runList(client, targetURL, list, workers, cancelCheck, onProgress, onHit, nil)
 }
 
 // runList 共同实现：返回命中与逐条执行证据。
 func runList(client *httpx.Client, targetURL string, list []Check,
 	workers int, cancelCheck func() bool, onProgress func(done, total int, msg string),
-	onHit func(Hit)) ([]Hit, []CheckRun) {
+	onHit func(Hit), prio *Prior) ([]Hit, []CheckRun) {
 	if onProgress == nil {
 		onProgress = func(int, int, string) {}
 	}
@@ -159,6 +170,63 @@ func runList(client *httpx.Client, targetURL string, list []Check,
 			order = append(order, k)
 		}
 		groups[k].idx = append(groups[k].idx, i)
+	}
+
+	// 组调度（5.0 深度融合）：默认严格清单序（与 4.0 逐字节一致）；
+	// 带先验时按得分调度——基础分 = 清单序（早者高），boost 与家族
+	// 联动以 2×规模基数放大，保证任意提权都压过原始顺序。
+	gN := float64(len(order))
+	type gstate struct {
+		key   string
+		score float64
+		done  bool
+	}
+	states := make([]*gstate, 0, len(order))
+	for i, k := range order {
+		st := &gstate{key: k, score: gN - float64(i)}
+		if prio != nil {
+			for _, ci := range groups[k].idx {
+				if b := prio.Boost[selected[ci].ID]; b > 0 {
+					st.score += b * 2 * gN
+					break // 组分取首个有先验成员即可（同组共享一次请求）
+				}
+			}
+		}
+		states = append(states, st)
+	}
+	bumped := map[string]bool{}
+	// bumpFamily 同家族未执行组统一提权（调用方须持 mu；每家族至多一次，
+	// 防连环命中反复加分）。
+	bumpFamily := func(family string) {
+		if family == "" || bumped[family] {
+			return
+		}
+		bumped[family] = true
+		for _, st := range states {
+			if st.done {
+				continue
+			}
+			for _, ci := range groups[st.key].idx {
+				if familyOf(selected[ci].ID) == family {
+					st.score += 2 * gN
+					break
+				}
+			}
+		}
+	}
+	// pickNext 取得分最高（同分取清单序最早——states 按序遍历保序）
+	// 的未执行组；调用方须持 mu。无剩余返回 nil。
+	pickNext := func() *gstate {
+		var best *gstate
+		for _, st := range states {
+			if st.done {
+				continue
+			}
+			if best == nil || st.score > best.score {
+				best = st
+			}
+		}
+		return best
 	}
 
 	fetch := func(u string, m Match) (*httpx.Response, error) {
@@ -226,6 +294,7 @@ func runList(client *httpx.Client, targetURL string, list []Check,
 		// 组内首轮判定
 		var pending []int
 		reasons := map[int]string{}
+		var groupHits []string // 本组命中 id（中段家族联动的触发源）
 		groupChecks := make([]Check, 0, len(g.idx))
 		for _, ci := range g.idx {
 			groupChecks = append(groupChecks, selected[ci])
@@ -269,11 +338,19 @@ func runList(client *httpx.Client, targetURL string, list []Check,
 						onHit(h)
 					}
 					hits = append(hits, h)
+					groupHits = append(groupHits, h.Check)
 					mu.Unlock()
 				}
 			}
 		}
 		mu.Lock()
+		// 中段家族联动（深度融合）：本组有命中时，同家族未执行组统一
+		// 提前——证据确认后姊妹 check 的命中先验更高。只调序不增删。
+		if len(groupHits) > 0 && prio != nil {
+			for _, id := range groupHits {
+				bumpFamily(familyOf(id))
+			}
+		}
 		ids := make([]string, 0, len(g.idx))
 		for _, ci := range g.idx {
 			ids = append(ids, selected[ci].ID)
@@ -283,22 +360,29 @@ func runList(client *httpx.Client, targetURL string, list []Check,
 		onProgress(done, total, chk0.Path)
 		mu.Unlock()
 	}
-	// worker 池
+	// worker 池：每轮持 mu 领取当前最优组（先验/联动提权即时生效）
 	var wg sync.WaitGroup
-	taskCh := make(chan string, len(order))
 	for w := 0; w < workers; w++ {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			for k := range taskCh {
-				processGroup(k)
+			for {
+				mu.Lock()
+				if cancelCheck != nil && cancelCheck() {
+					mu.Unlock()
+					return
+				}
+				st := pickNext()
+				if st == nil {
+					mu.Unlock()
+					return
+				}
+				st.done = true
+				mu.Unlock()
+				processGroup(st.key)
 			}
 		}()
 	}
-	for _, k := range order {
-		taskCh <- k
-	}
-	close(taskCh)
 	wg.Wait()
 	// 执行证据组装：命中集合 × 组执行结果 → 逐条 CheckRun
 	hitIDs := map[string]bool{}
