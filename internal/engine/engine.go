@@ -383,7 +383,7 @@ func (e *Engine) Scan(rawURL string, opts Options, onProgress progress, cancel f
 		if len(cmsIDs) > 0 {
 			onProgress(75, "CMS 联动专项 check…")
 		}
-		hits := checks.RunChecks(client, baseURL, opts.Checks, cmsIDs, e.cfg.Checks.Workers, cancelled,
+		hits, checkRuns := checks.RunChecksWithLog(client, baseURL, opts.Checks, cmsIDs, e.cfg.Checks.Workers, cancelled,
 			func(done, total int, msg string) {
 				if total > 0 {
 					onProgress(75+done*10/total, "check："+msg)
@@ -391,6 +391,7 @@ func (e *Engine) Scan(rawURL string, opts Options, onProgress progress, cancel f
 			}, func(h checks.Hit) {
 				emit("hit", h.Severity+" · "+h.Title+" — "+h.URL)
 			})
+		res.CheckRuns = append(res.CheckRuns, checkRuns...)
 		for _, h := range hits {
 			res.Verified = append(res.Verified, verifiedMap(map[string]any{
 				"check": h.Check, "title": h.Title, "severity": h.Severity,
@@ -428,14 +429,16 @@ func (e *Engine) Scan(rawURL string, opts Options, onProgress progress, cancel f
 			noteBudget("Nuclei 模板上限减半（" + fmt.Sprint(opts.NucleiCap) + "）")
 		}
 		if nl := e.nucleiSubset(res.Technologies, res.Title, opts.NucleiCap); len(nl) > 0 {
-			for _, h := range checks.RunList(client, baseURL, nl, e.cfg.Checks.Workers, cancelled,
+			nHits, nRuns := checks.RunListWithLog(client, baseURL, nl, e.cfg.Checks.Workers, cancelled,
 				func(done, total int, msg string) {
 					if total > 0 {
 						onProgress(84, fmt.Sprintf("nuclei %d/%d", done, total))
 					}
 				}, func(h checks.Hit) {
 					emit("hit", h.Severity+" · "+h.Title+" — "+h.URL)
-				}) {
+				})
+			res.CheckRuns = append(res.CheckRuns, nRuns...)
+			for _, h := range nHits {
 				res.Verified = append(res.Verified, verifiedMap(map[string]any{
 					"check": h.Check, "title": h.Title, "severity": h.Severity,
 					"url": h.URL, "evidence": h.Evidence, "advice": h.Advice,
