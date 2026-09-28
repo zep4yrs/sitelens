@@ -1,75 +1,71 @@
-# Python（历史版本存档于 python 分支）
-__pycache__/
-*.pyc
-
-# 本机环境与运行时产物
-.env
-server.log
-.mimosa/
-
-# 可再生的大型数据（sitelens update-nuclei 可重新拉取官方模板库）
-data/nuclei/
-docs/build/
 
 # Go
-*.exe
-/sitelens
-
-# 本地临时文件
-_issue_*.md
-_review_*.md
-data/intel_dump.json.gz.orig
-
 # Go 运行时产物
-/data/state/
-
+# OSV 同步产物（可再生成，不入库）
+# Python 运行时
+# Python（历史版本存档于 python 分支）
+# SiteLens 5.0 ML 预训练分支（ml-5.0-docs）
+# UI 评审截图（本地产物，不入仓）
+# 主仓运行时产物残留在工作树时一律忽略
+# 可再生的大型数据（sitelens update-nuclei 可重新拉取官方模板库）
+# 夜间靶场矩阵/取证临时产物
+# 工具本地缓存目录
 # 扫描临时产物
+# 本分支只承载 ML 流水线代码（ml/）与文档（docs/）；
+# 本地临时文件
+# 本地产物（安装器构建）
+# 本机环境与运行时产物
+# 构建产物与本地运行时文件（2026-09-09 清理后防回流）
+# 桌面版（Electron 壳）本地产物
+# 真实数据与 ML 运行产物（含主仓的 data/ 与本分支产出的 data/ml/）
+# 真实数据与运行产物一律不入仓（docs/审计报告 §16 红线）。
+*.exe
 *.json.tmp
+*.pyc
+*.tmp
+.coverage
+.env
+.mimosa/
+.pytest_cache/
+.venv/
+/alljob.json
+/build/
+/data/state/
+/dist/
 /full*.json
+/hd*.json
+/hj*.json
+/makensis.log
+/real_*.json
+/sitelens
 /tj*.json
 /tools_*.json
-/real_*.json
-/alljob.json
-/hj*.json
-/hd*.json
-
-# 夜间靶场矩阵/取证临时产物
-tmp_matrix*
-tmp_fixture*
-tmp_sitelens_linux
-tmp_at.log
-
-# OSV 同步产物（可再生成，不入库）
+__pycache__/
+_issue_*.md
+_review_*.md
+bin/
+data/
+data/.nuclei_cursor
+data/import-report.txt
+data/intel_dump.json.gz.orig
 data/intel_overrides.json
-
-# 构建产物与本地运行时文件（2026-09-09 清理后防回流）
+data/nuclei/
+data/nuclei_checks.json
+desktop/*.yml
+desktop/engine/
+desktop/feed/
+desktop/node_modules/
+desktop/release/
+docs/build/
+engine.test.exe
+server.log
+shots/
 sitelens-linux
 sitelens.exe
 sitelens.exe~
-engine.test.exe
-server.log
 sltest.yml
-data/.nuclei_cursor
-data/import-report.txt
-data/nuclei_checks.json
-__pycache__/
-
-# 本地产物（安装器构建）
-/dist/
-/build/
-/makensis.log
-
-# 工具本地缓存目录
-.mimosa/
-bin/
-data/intel_dump.json.gz.orig
-
-# 桌面版（Electron 壳）本地产物
-desktop/node_modules/
-desktop/release/
-desktop/engine/
-desktop/*.yml
-desktop/feed/
-
-# UI 评审截图（本地产物，不入仓）
-shots/
+tmp_at.log
+tmp_fixture*
+tmp_matrix*
+tmp_sitelens_linux
+venv/
