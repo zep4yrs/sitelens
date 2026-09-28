@@ -6,6 +6,7 @@ package engine
 import (
 	"strings"
 
+	"cnb.cool/feng-qiao/sitelens/internal/checks"
 	"cnb.cool/feng-qiao/sitelens/internal/intel"
 	"cnb.cool/feng-qiao/sitelens/internal/model"
 	"cnb.cool/feng-qiao/sitelens/internal/security"
@@ -34,23 +35,28 @@ type PageInfo struct {
 // 4.0 P2：Graph 为可选的结构化事实图（黑盒入口/发现/证据/影响）。
 // 默认 nil（omitempty），此时 JSON 输出与 3.0 逐字节一致；仅在
 // engine.Options.Graph 开启时填充。verified 键位不受其影响。
+//
+// CheckRuns（5.0）：验证型 check 的逐条执行证据——executed+hit=正样本、
+// executed+未命中=可靠负样本、not_executed 永远不作负样本。旧记录无此
+// 字段（unknown），ml 线据此区分，不回填、不假设。
 type Result struct {
-	URL             string           `json:"url"`
-	Host            string           `json:"host"`
-	Title           string           `json:"title"`
-	Status          int              `json:"status"`
-	IP              string           `json:"ip"`
-	ResponseTimeMS  int              `json:"response_time_ms"`
-	ScannedAt       string           `json:"scanned_at"`
-	Duration        float64          `json:"duration"`
-	Error           string           `json:"error"`
-	Security        *security.Report `json:"security"`
-	Technologies    []Tech           `json:"technologies"`
-	Vulnerabilities []intel.Finding  `json:"vulnerabilities"`
-	Verified        []map[string]any `json:"verified"`
-	Extras          map[string]any   `json:"extras"`
-	Pages           []PageInfo       `json:"pages"`
-	Graph           *model.ScanGraph `json:"graph,omitempty"`
+	URL             string            `json:"url"`
+	Host            string            `json:"host"`
+	Title           string            `json:"title"`
+	Status          int               `json:"status"`
+	IP              string            `json:"ip"`
+	ResponseTimeMS  int               `json:"response_time_ms"`
+	ScannedAt       string            `json:"scanned_at"`
+	Duration        float64           `json:"duration"`
+	Error           string            `json:"error"`
+	Security        *security.Report  `json:"security"`
+	Technologies    []Tech            `json:"technologies"`
+	Vulnerabilities []intel.Finding   `json:"vulnerabilities"`
+	Verified        []map[string]any  `json:"verified"`
+	CheckRuns       []checks.CheckRun `json:"check_runs,omitempty"`
+	Extras          map[string]any    `json:"extras"`
+	Pages           []PageInfo        `json:"pages"`
+	Graph           *model.ScanGraph  `json:"graph,omitempty"`
 }
 
 // techAcc 技术聚合器：同名合并、证据累加、每次独立命中置信 +5（上限 100）。

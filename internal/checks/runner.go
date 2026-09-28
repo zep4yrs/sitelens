@@ -63,6 +63,16 @@ func sortHits(hits []Hit) {
 	})
 }
 
+// CheckRun 单条 check 的执行证据（T1/T2 监督标签的地基）：
+// executed+hit=正样本；executed+未命中=可靠负样本；not_executed（请求失败）
+// 永远不作负样本——三值语义与 5.0 ML 线的标签纪律严格对齐。
+type CheckRun struct {
+	Check  string `json:"check"`
+	Status string `json:"status"`           // executed | not_executed
+	Hit    bool   `json:"hit"`              // status=executed 时有效
+	Reason string `json:"reason,omitempty"` // not_executed 原因
+}
+
 // RunChecks 执行 check 集（core = 核心集，all = 核心+扩展+联动）。
 // onHit 在每条命中产生时即时回调（nil = 不回调），供上层实时事件流使用。
 func RunChecks(client *httpx.Client, targetURL string, level string,
@@ -81,7 +91,28 @@ func RunChecks(client *httpx.Client, targetURL string, level string,
 			selected = append(selected, c)
 		}
 	}
-	return RunList(client, targetURL, selected, workers, cancelCheck, onProgress, onHit)
+	hits, _ := runList(client, targetURL, selected, workers, cancelCheck, onProgress, onHit)
+	return hits
+}
+
+// RunChecksWithLog = RunChecks + 每条 check 的执行证据（引擎落库用）。
+func RunChecksWithLog(client *httpx.Client, targetURL string, level string,
+	includeIDs []string, workers int, cancelCheck func() bool,
+	onProgress func(done, total int, msg string), onHit func(Hit)) ([]Hit, []CheckRun) {
+	if onProgress == nil {
+		onProgress = func(int, int, string) {}
+	}
+	inc := map[string]bool{}
+	for _, id := range includeIDs {
+		inc[id] = true
+	}
+	var selected []Check
+	for _, c := range AllChecks() {
+		if level == "all" || c.Lv == 0 || inc[c.ID] {
+			selected = append(selected, c)
+		}
+	}
+	return runList(client, targetURL, selected, workers, cancelCheck, onProgress, onHit)
 }
 
 // RunList 执行给定 check 集（Nuclei 子集等外部规则装载入口）。
@@ -89,6 +120,21 @@ func RunChecks(client *httpx.Client, targetURL string, level string,
 func RunList(client *httpx.Client, targetURL string, list []Check,
 	workers int, cancelCheck func() bool, onProgress func(done, total int, msg string),
 	onHit func(Hit)) []Hit {
+	hits, _ := runList(client, targetURL, list, workers, cancelCheck, onProgress, onHit)
+	return hits
+}
+
+// RunListWithLog = RunList + 每条 check 的执行证据（引擎落库用）。
+func RunListWithLog(client *httpx.Client, targetURL string, list []Check,
+	workers int, cancelCheck func() bool, onProgress func(done, total int, msg string),
+	onHit func(Hit)) ([]Hit, []CheckRun) {
+	return runList(client, targetURL, list, workers, cancelCheck, onProgress, onHit)
+}
+
+// runList 共同实现：返回命中与逐条执行证据。
+func runList(client *httpx.Client, targetURL string, list []Check,
+	workers int, cancelCheck func() bool, onProgress func(done, total int, msg string),
+	onHit func(Hit)) ([]Hit, []CheckRun) {
 	if onProgress == nil {
 		onProgress = func(int, int, string) {}
 	}
@@ -127,6 +173,13 @@ func RunList(client *httpx.Client, targetURL string, list []Check,
 	}
 
 	hits := []Hit{}
+	// 执行证据：按组收集（fetch 成败决定 executed/not_executed；命中集合决定 hit）
+	type groupOutcome struct {
+		ids      []string
+		executed bool
+		reason   string
+	}
+	var outcomes []groupOutcome
 	done := 0
 	total := len(selected)
 	// 组级并行：路径组之间相互独立，worker 池并发执行（默认 12）。
@@ -147,6 +200,15 @@ func RunList(client *httpx.Client, targetURL string, list []Check,
 		resp, gerr := fetch(u, chk0.Match)
 		if gerr != nil || resp == nil {
 			mu.Lock()
+			ids := make([]string, 0, len(g.idx))
+			for _, ci := range g.idx {
+				ids = append(ids, selected[ci].ID)
+			}
+			reason := "empty response"
+			if gerr != nil {
+				reason = "request failed: " + gerr.Error()
+			}
+			outcomes = append(outcomes, groupOutcome{ids: ids, executed: false, reason: reason})
 			done += len(g.idx)
 			onProgress(done, total, chk0.Path)
 			mu.Unlock()
@@ -212,6 +274,11 @@ func RunList(client *httpx.Client, targetURL string, list []Check,
 			}
 		}
 		mu.Lock()
+		ids := make([]string, 0, len(g.idx))
+		for _, ci := range g.idx {
+			ids = append(ids, selected[ci].ID)
+		}
+		outcomes = append(outcomes, groupOutcome{ids: ids, executed: true})
 		done += len(g.idx)
 		onProgress(done, total, chk0.Path)
 		mu.Unlock()
@@ -233,8 +300,24 @@ func RunList(client *httpx.Client, targetURL string, list []Check,
 	}
 	close(taskCh)
 	wg.Wait()
+	// 执行证据组装：命中集合 × 组执行结果 → 逐条 CheckRun
+	hitIDs := map[string]bool{}
+	for _, h := range hits {
+		hitIDs[h.Check] = true
+	}
+	runs := make([]CheckRun, 0, len(selected))
+	for _, oc := range outcomes {
+		status, reason := "executed", ""
+		if !oc.executed {
+			status, reason = "not_executed", oc.reason
+		}
+		for _, id := range oc.ids {
+			runs = append(runs, CheckRun{Check: id, Status: status,
+				Hit: hitIDs[id], Reason: reason})
+		}
+	}
 	sortHits(hits)
-	return hits
+	return hits, runs
 }
 
 // matchBody 判定：状态码（等值或任一列表）+ 正文包含 + 正则 + 响应头包含
