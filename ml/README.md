@@ -32,7 +32,21 @@ Experiment 五级 Manifest + git 提交链），全部数字来自真实执行�
 | EXP-1004 | 本地小决策模型 vs 传统 ML 基线（预注册对比） | 完成 | 不采纳，见 `docs/5.0-总报告.md` |
 | EXP-1005 | CVE→CWE 弱点类型（kb-5.0.1，balanced 权重） | 完成 | acc 0.7709 / macro-F1 0.5899 |
 | EXP-1006 | 严重度 v2（过拟合诊断修正，alpha=1e-5，严格三段切分） | 完成 | test acc 0.5221 / F1 0.3941 |
+| EXP-1007 | 严重度堆叠冲击 0.75（sev-prior-v3） | 完成 | 0.5058 未达标未晋升，负结果入档 |
 | EXP-1101/1102 | T1/T2 首次监督训练（执行日志标签，靶场） | 机制实证 | 正例=1，指标待积累 |
+
+## 模型命名
+
+对外一律用**公开名**（见名知义），EXP 追溯 id 只活在 manifest 链——
+全量映射与命名规则见 [`ml/model_registry.json`](model_registry.json)：
+
+| 公开名 | 中文名 | 现役版本 | 质量 |
+|---|---|---|---|
+| `sev-prior` | 严重度先验 | sev-prior-v2（EXP-1006） | test acc 0.5221，相邻带 0.94 |
+| `cve-tech` | 产品关系先验 | EXP-1002 | P@5 0.9085 |
+| `cwe-type` | 弱点类型分类 | EXP-1005 | acc 0.7709 |
+| `verify-rank` | 验证优先级（T1） | EXP-1101 | 待正例积累 |
+| `find-rank` | 候选发现排序（T2） | EXP-1102 | 待正例积累 |
 
 ## 目录
 
