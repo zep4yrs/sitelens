@@ -279,6 +279,20 @@ sev-prior 采用双版本并存（`ml/model_registry.json` 第 23 行）：v3.1 
 
 ---
 
+## 3.9 sev-prior v3.1 部署重训记录（2026-09-29，权重持久化）
+
+EXP-1017 的 D_max 权重当时未持久化。2026-09-29 按 EXP-1017 记录配方完整
+复现并落盘（ml/train_sev_v31_deploy.py）：
+
+- 配方逐项一致：tr24 全量 + HuberLoss(delta=0.1) + 2 epochs + batch 32 +
+  seq 192 + bf16 + AdamW/OneCycleLR，双种子 20260928/20260929
+- 实测（test>=2024）：seed 20260929 单模 MAE 1.0722；双种子平均集成
+  **MAE 1.0699**——±1.07 呈现口径自此与随发布权重一致
+- 导出：双种子各出 fp32（opset 17）与 int8（per_channel，分类头排除量化）
+  四件 ONNX；集成 fp32 vs 集成 int8 对拍 MAE 0.0127 < 0.05
+- 部署形态：引擎双 session 预测平均（internal/ml/sev_onnx.go）
+- 训练脚本：ml/train_sev_v31_deploy.py；导出脚本：ml/export_sev_v31_pair.py
+
 ## 4. 一致性核对记录（多处记录不一致，如实列出）
 
 1. **cve-tech P@5 存在两个记录值**：登记值 0.9085（MRR 0.864，31,130 测试 CVE，`data/ml/metrics/EXP-1002-product-relation.json`）与复现值 0.9083（MRR@5 0.8563，31,141 测试 CVE，EXP-1014 同集重算，`data/ml/metrics/EXP-1014-cve-tech-v2.json`）。`ml/model_registry.json` 记 0.9085；发布物（`data/ml/dist/MODEL_CARD.md`、`RELEASE_NOTES.md`、rel_check.json）采用 0.9083。差异来自两次评估的测试行集合不同，非数据错误。
