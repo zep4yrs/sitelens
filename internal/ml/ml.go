@@ -26,10 +26,11 @@ import (
 // expectedTokenPattern 与导出侧 sklearn token_pattern 一致（见 meta.json）。
 const expectedTokenPattern = `(?u)\b\w\w+\b`
 
-// Tokenize 做 sklearn 兼容切词：先 lowercase，再按 Unicode 词字符
-// （字母/数字/数字符号/下划线，对应 Python re 的 \w）切连续 run，
-// 仅保留长度 >= 2 的 run（对齐 token_pattern r"(?u)\b\w\w+\b"，
-// 贪量词 \w\w+ 匹配的正是完整 run，\b 只出现在 run 边界）。
+// Tokenize 做 sklearn 兼容切词：先 lowercase（CPython str.lower() 全小写
+// 映射，见 pyLower），再按 Unicode 词字符（字母/数字/数字符号/下划线，
+// 对应 Python re 的 \w）切连续 run，仅保留长度 >= 2 的 run（对齐
+// token_pattern r"(?u)\b\w\w+\b"，贪量词 \w\w+ 匹配的正是完整 run，
+// \b 只出现在 run 边界）。
 func Tokenize(s string) []string {
 	var toks []string
 	var run []rune
@@ -39,7 +40,7 @@ func Tokenize(s string) []string {
 		}
 		run = run[:0]
 	}
-	for _, r := range strings.ToLower(s) {
+	for _, r := range pyLower(s) {
 		if isWordRune(r) {
 			run = append(run, r)
 		} else {
@@ -54,6 +55,49 @@ func Tokenize(s string) []string {
 // 字母（L*）、数字（Nd）与数字符号（Nl/No，即 str.isalnum() 口径）加下划线。
 func isWordRune(r rune) bool {
 	return r == '_' || unicode.IsLetter(r) || unicode.IsDigit(r) || unicode.IsNumber(r)
+}
+
+// pyLower 对齐 CPython str.lower() 的小写归一（sklearn lowercase=True 用的
+// 正是它）。Go strings.ToLower 只做逐 rune 简单映射，缺 Unicode
+// SpecialCasing 的两条无条件全映射特例，词元字符串会与 Python 分歧：
+//   - 'İ'(U+0130) → "i" + U+0307（组合点上点）。U+0307 不是 \w，会把词
+//     断开：Python 'İstanbul' → 词元 ["stanbul"]，简单映射则产出多余的
+//     首词元 "istanbul"；
+//   - 希腊大写 Σ(U+03A3) 的 Final_Sigma 规则：前邻是 cased 字母且后邻
+//     不是（含文本末尾）时 → ς(U+03C2)，否则 → σ(U+03C3)。
+//
+// 词元不同 → 词表命中不同 → 与 Python 侧推理偏差，故必须对齐。
+func pyLower(s string) string {
+	// 快路径：不含两个特例字符时与 strings.ToLower 完全等价
+	if !strings.ContainsAny(s, "İΣ") {
+		return strings.ToLower(s)
+	}
+	rs := []rune(s)
+	var b strings.Builder
+	b.Grow(len(s) + len(rs)) // İ 展开成 2 rune，预留增量
+	for i, r := range rs {
+		switch r {
+		case 0x0130:
+			b.WriteString("i\u0307")
+		case 0x03A3:
+			prev := i > 0 && isCasedRune(rs[i-1])
+			next := i+1 < len(rs) && isCasedRune(rs[i+1])
+			if prev && !next {
+				b.WriteRune(0x03C2)
+			} else {
+				b.WriteRune(0x03C3)
+			}
+		default:
+			b.WriteString(strings.ToLower(string(r)))
+		}
+	}
+	return b.String()
+}
+
+// isCasedRune Final_Sigma 判定用的 cased 字符近似（CPython 的
+// PY_UNICODE_ISCASED = lower | title | upper）。
+func isCasedRune(r rune) bool {
+	return unicode.IsLower(r) || unicode.IsTitle(r) || unicode.IsUpper(r)
 }
 
 // Vectorize 把文本转成与 sklearn TfidfVectorizer(ngram_range=(1,2)) 一致的
@@ -94,6 +138,11 @@ func (m *Model) Vectorize(text string) (ids []int32, vals []float64) {
 		norm += v * v
 	}
 	norm = math.Sqrt(norm)
+	if norm == 0 {
+		// 命中特征的 idf 权重全 0：按零向量语义返回（sklearn 中即零向量），
+		// 不做 0/0 除法——那会产出 NaN 并一路透传进预测分数。
+		return nil, nil
+	}
 	for i := range vals {
 		vals[i] /= norm
 	}
@@ -124,7 +173,12 @@ type Pred struct {
 }
 
 // TopK 返回按得分降序的前 k 个类别（同分时按类别表下标升序，保证确定性）。
+// k <= 0 返回空（本包导出 API，不能假设调用方传常量正数——负 k 曾直接
+// make 负长度切片 panic 打死整个进程）。
 func (m *Model) TopK(text string, k int) []Pred {
+	if k <= 0 {
+		return nil
+	}
 	scores := m.DecisionFunction(text)
 	if k > len(scores) {
 		k = len(scores)

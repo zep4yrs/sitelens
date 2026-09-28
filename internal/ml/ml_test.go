@@ -1,6 +1,7 @@
 package ml
 
 import (
+	"bytes"
 	"encoding/binary"
 	"fmt"
 	"math"
@@ -204,5 +205,127 @@ func TestLoadModelAndAssets(t *testing.T) {
 	// LoadAssets 需要 cve-tech/cwe-type 双模型，缺任一应报错
 	if _, err := LoadAssets(dir); err == nil {
 		t.Error("缺 cve-tech/cwe-type 时 LoadAssets 应报错")
+	}
+}
+
+// TestTopKNonPositiveK 回归：负数/零 k 返回空而不是 panic。
+// 此前 TopK("aa", -1) 直接 make([]Pred, -1) → makeslice panic；
+// 导出 API 不能假设调用方只传常量正数（如配置化 Top-N）。
+func TestTopKNonPositiveK(t *testing.T) {
+	m := newTinyModel()
+	for _, k := range []int{-1, -99, 0} {
+		if got := m.TopK("aa", k); len(got) != 0 {
+			t.Errorf("TopK(k=%d) 应返回空, got %v", k, got)
+		}
+		if got := m.ProbaTopK("aa", k); len(got) != 0 {
+			t.Errorf("ProbaTopK(k=%d) 应返回空, got %v", k, got)
+		}
+	}
+	// 正数 k 行为不回归：超类数截断
+	if got := m.ProbaTopK("aa", 99); len(got) != 2 {
+		t.Errorf("ProbaTopK k=99 应截断为 2, got %d", len(got))
+	}
+}
+
+// TestTokenizePythonLowerSpecialCasing 回归：lowercase 步骤对齐 CPython
+// str.lower()（sklearn lowercase=True 的口径），而非 Go 的逐 rune 简单映射。
+// Python 3.10.10 实测基准：
+//   re.findall(r'(?u)\b\w\w+\b', 'İstanbul'.lower()) == ['stanbul']
+//   re.findall(r'(?u)\b\w\w+\b', 'ΝΙΚΟΣ'.lower())     == ['νικος']（末字符 0x3C2 ς）
+func TestTokenizePythonLowerSpecialCasing(t *testing.T) {
+	// İ → "i"+U+0307（组合点上点非 \w，断词，单字符 i 被丢弃）
+	if got := Tokenize("İstanbul"); !reflect.DeepEqual(got, []string{"stanbul"}) {
+		t.Errorf("Tokenize(İstanbul) = %v, 期望 [stanbul]", got)
+	}
+	// 词尾 Σ → ς(U+03C2)；非词尾 Σ → σ(U+03C3)
+	if got := Tokenize("ΝΙΚΟΣ"); !reflect.DeepEqual(got, []string{"νικος"}) {
+		t.Errorf("Tokenize(ΝΙΚΟΣ) = %q, 期望 [νικος]（末字符应为 U+03C2 ς）", got)
+	}
+	// 词中 Σ（后邻 cased）→ σ；词尾 Σ（后邻非 cased，含空格/串尾）→ ς。
+	// 'ΚΟΣΜΟΣ'.lower() = 'κοσμος'（U+03C3 词中 / U+03C2 词尾）。
+	if got := Tokenize("ΚΟΣΜΟΣ"); len(got) != 1 || got[0] != "κοσμο"+string(rune(0x3C2)) {
+		t.Errorf("Tokenize(ΚΟΣΜΟΣ) = %q, 期望 [κοσμος]（词中 σ/词尾 ς）", got)
+	}
+	got := Tokenize("ΟΔΟΣ ΟΔΟΣ") // 两处 Σ 后邻都是空格/串尾 → 均为 ς
+	if len(got) != 2 || got[0] != "οδο"+string(rune(0x3C2)) || got[1] != "οδο"+string(rune(0x3C2)) {
+		t.Errorf("Tokenize(ΟΔΟΣ ΟΔΟΣ) = %q, 期望两处词尾均为 ς", got)
+	}
+	// 单独的 Σ 前无 cased 字母 → σ
+	if pyLower("Σ") != "σ" {
+		t.Errorf("pyLower(Σ) = %q, 期望 σ", pyLower("Σ"))
+	}
+	// ASCII 常规文本不受影响（快路径与 strings.ToLower 等价）
+	if got := Tokenize("The DEBUG Command"); !reflect.DeepEqual(got,
+		[]string{"the", "debug", "command"}) {
+		t.Errorf("ASCII 文本应不受影响, got %v", got)
+	}
+}
+
+// TestVectorizeZeroIDFNoNaN 回归：命中特征的 idf 权重全 0 时按零向量
+// 语义返回，而不是 0/0 产出 NaN。
+func TestVectorizeZeroIDFNoNaN(t *testing.T) {
+	m := &Model{
+		name:      "zeroidf",
+		classes:   []string{"z"},
+		vocab:     map[string]int32{"aa": 0},
+		idf:       []float32{0},
+		coef:      []float32{1},
+		intercept: []float64{0},
+		nFeatures: 1,
+		nClasses:  1,
+	}
+	ids, vals := m.Vectorize("aa aa")
+	if ids != nil || vals != nil {
+		t.Errorf("idf 全 0 的命中特征应返回零向量, got %v %v", ids, vals)
+	}
+	for _, s := range m.DecisionFunction("aa aa") {
+		if math.IsNaN(s) || math.IsInf(s, 0) {
+			t.Errorf("得分出现非有限值 %v", s)
+		}
+	}
+}
+
+// TestLoadModelRejectsCorruptF32 回归：同长度损坏（字节数正常、内容是
+// NaN/Inf 位型或 idf 全零）必须在加载期报错——此前静默通过加载，NaN
+// 一路透传进 Prediction 后 json.Marshal 直接失败，整份扫描输出丢失。
+func TestLoadModelRejectsCorruptF32(t *testing.T) {
+	all := func(n int, b byte) []byte { return bytes.Repeat([]byte{b}, n) }
+
+	// ① coef 全 0xFF（NaN 位型，长度恰为 2 类×3 特征×4B）
+	corruptCoef := t.TempDir()
+	writeTinyAssets(t, corruptCoef, "tiny", all(24, 0xFF))
+	if _, err := LoadModel(corruptCoef, "tiny"); err == nil {
+		t.Error("coef 为 NaN 位型应报错")
+	}
+
+	// ② idf 全 0xFF（NaN 位型）
+	corruptIDF := t.TempDir()
+	writeTinyAssets(t, corruptIDF, "tiny", all(24, 0))
+	if err := os.WriteFile(filepath.Join(corruptIDF, "tiny.idf.f32"), all(12, 0xFF), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := LoadModel(corruptIDF, "tiny"); err == nil {
+		t.Error("idf 为 NaN 位型应报错")
+	}
+
+	// ③ idf 全 0（有限值但平滑 idf 不可能全零 → 损坏）：命中后 0/0 产 NaN
+	zeroIDF := t.TempDir()
+	writeTinyAssets(t, zeroIDF, "tiny", all(24, 0))
+	if err := os.WriteFile(filepath.Join(zeroIDF, "tiny.idf.f32"), all(12, 0), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := LoadModel(zeroIDF, "tiny"); err == nil {
+		t.Error("idf 全 0 应报错")
+	}
+
+	// ④ Inf 位型（0x7F800000 = +Inf）
+	infIDF := t.TempDir()
+	writeTinyAssets(t, infIDF, "tiny", all(24, 0))
+	if err := os.WriteFile(filepath.Join(infIDF, "tiny.idf.f32"),
+		[]byte{0x00, 0x00, 0x80, 0x7F, 0, 0, 0, 0, 0, 0, 0, 0}, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := LoadModel(infIDF, "tiny"); err == nil {
+		t.Error("idf 为 Inf 位型应报错")
 	}
 }

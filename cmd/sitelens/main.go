@@ -189,11 +189,20 @@ func runScan(cfg *config.Config, rawURL string) {
 	res := eng.Scan(rawURL, opts, nil, nil)
 	// 4.0 Track A / A4：扫描结束把堆归还 OS（任务管理器可见回落）。
 	// 放在序列化之前——JSON 编码仍需内存，归还发生在扫描峰值之后即可。
-	out, _ := json.MarshalIndent(res, "", "  ")
+	out, merr := json.MarshalIndent(res, "", "  ")
+	if merr != nil {
+		// 序列化失败绝不能静默：旧行为忽略错误后 out=nil，扫描以退出码 0
+		// 打印空输出，下游管道消费方拿到的是"成功 + 空结果"。
+		fmt.Fprintf(os.Stderr, "错误：结果 JSON 序列化失败：%v\n", merr)
+		out, _ = json.MarshalIndent(map[string]any{
+			"url":   rawURL,
+			"error": "结果序列化失败：" + merr.Error(),
+		}, "", "  ")
+	}
 	resource.ReleaseToOS()
 	fmt.Println(string(out))
 
-	if res.Error != "" {
+	if res.Error != "" || merr != nil {
 		os.Exit(1)
 	}
 	// 摘要输出到 stderr（JSON 走 stdout 可直接管道消费）

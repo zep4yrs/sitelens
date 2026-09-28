@@ -12,6 +12,9 @@ scan:
   resolve: true              # SSRF DNS 校验（内网授权靶场可关）
   max_concurrent: 3          # 并发扫描任务数
 
+target:
+  allow_private: false       # 允许扫描私网/本机地址（授权靶场才开，安全闸默认关）
+
 checks:
   level: all                 # none | core | all
   plugin_dir: data/plugins   # 用户自定义 check（JSON 数组，热加载）
@@ -85,4 +88,8 @@ active:                      # 主动模块阈值（模块本身默认关，扫�
   probe_timeout_ms: 2500
   probe_workers: 10
   wordlist_dir: data/wordlists
+
+ml:                          # 5.0 内嵌 ML 推理（cve-tech/cwe-type，先验参考不改变判定）
+  predict: true              # 扫描收尾对含 CVE 的发现做产品 Top-5 + CWE 类型预测（总闸）
+  assets_dir: data/go/ml_assets  # 模型资产目录；缺失静默跳过预测，损坏本进程禁用
 

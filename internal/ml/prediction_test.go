@@ -35,6 +35,41 @@ func TestProbaNormalizedSigmoidRowNorm(t *testing.T) {
 	}
 }
 
+// TestProbaNormalizedNaNFallback 回归：分数含 NaN 时（此前 `sum <= 0` 对
+// NaN 判 false 不生效）必须退回均匀分布，保证 Prob 全为有限值——
+// 否则 NaN 透传进 Prediction 后整份扫描输出 JSON 序列化失败。
+func TestProbaNormalizedNaNFallback(t *testing.T) {
+	for name, scores := range map[string][]float64{
+		"首类NaN":    {math.NaN(), 5},
+		"全NaN":      {math.NaN(), math.NaN()},
+		"Inf":       {math.Inf(1), 0},
+		"NaN加负无穷": {math.NaN(), math.Inf(-1)},
+	} {
+		out := probaNormalized(scores)
+		var sum float64
+		for _, v := range out {
+			if math.IsNaN(v) || math.IsInf(v, 0) {
+				t.Errorf("%s: 概率出现非有限值 %v（输入 %v）", name, v, scores)
+			}
+			sum += v
+		}
+		if math.Abs(sum-1) > 1e-9 {
+			t.Errorf("%s: 概率和 = %v, 期望 1（输入 %v）", name, sum, scores)
+		}
+	}
+	// 端到端：即便上游模型给出 NaN 分数，ProbaTopK 输出也必须可 JSON 序列化
+	m := newTinyModel()
+	m.intercept = []float64{math.NaN(), math.NaN()} // 全 NaN 截距 → 分数全 NaN
+	top := m.ProbaTopK("aa cc", 2)
+	raw, err := json.Marshal(top)
+	if err != nil {
+		t.Fatalf("NaN 分数经 ProbaTopK 后仍应可序列化: %v（%v）", err, top)
+	}
+	if !strings.Contains(string(raw), "0.5") {
+		t.Errorf("NaN 兜底应产出均匀分布 0.5, got %s", raw)
+	}
+}
+
 // TestProbaTopK 验证 ProbaTopK：排序同 TopK，Score 为 sigmoid 行归一概率。
 func TestProbaTopK(t *testing.T) {
 	m := newTinyModel() // "aa cc" 得分 x=3.6623 > y=0.1325
