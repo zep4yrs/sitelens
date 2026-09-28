@@ -236,6 +236,20 @@
     </div>
 
     <div class="sec">
+      <div class="sec-title">AI / 模型（ml）</div>
+      <div class="row">
+        <label>AI 总闸（predict）</label>
+        <input type="checkbox" id="ml_predict">
+        <span class="hint inline">开启后：cve-tech 产品先验实时调度检测项（提权+核心档位增量纳入，只增不删）、扫描收尾输出 AI 预测。关闭即回到 4.0 扫描行为。</span>
+      </div>
+      <div class="row">
+        <label>严重度模型推理（sev_onnx）</label>
+        <input type="checkbox" id="ml_sev_onnx">
+        <span class="hint inline">sev-prior 双种子集成模型直接给出 sev_score（±1.07 区间呈现，来源徽章「模型推理」）。需桌面版（模型与 onnxruntime 已内嵌）；关闭或推理失败自动回退 NVD 先验并在结果中标注。</span>
+      </div>
+    </div>
+
+    <div class="sec">
       <div class="sec-title">利用级验证（exploit）</div>
       <div class="row" style="border:1px solid color-mix(in srgb,var(--danger) 40%,transparent);background:color-mix(in srgb,var(--danger) 6%,transparent);border-radius:8px;padding:10px 12px">
         <label>利用级验证</label>
@@ -833,6 +847,8 @@
     setv("crawl_timeout", c.crawler.timeout_sec);
     $("respect_robots").checked = !!c.crawler.respect_robots;
     $("exploit_enabled").checked = !!(c.exploit && c.exploit.enabled);
+    $("ml_predict").checked = !!(c.ml && c.ml.predict);
+    $("ml_sev_onnx").checked = !!(c.ml && c.ml.sev_onnx);
     setv("rate_interval_ms", c.scan.rate_interval_ms);
     setv("scan_timeout", c.scan.timeout_sec);
     setv("nuclei_cap", c.checks.nuclei_cap);
@@ -853,6 +869,7 @@
       scan: { rate_interval_ms: num("rate_interval_ms"), timeout_sec: num("scan_timeout") },
       checks: { nuclei_cap: num("nuclei_cap") },
       exploit: { enabled: $("exploit_enabled").checked },
+      ml: { predict: $("ml_predict").checked, sev_onnx: $("ml_sev_onnx").checked },
       intel: { overrides_path: getv("overrides_path") }
     }).then(function () {
       b.disabled = false;
