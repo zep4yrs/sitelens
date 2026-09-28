@@ -144,6 +144,19 @@
     长尾 57,808 条测试行如实排除不硬凑；模型持久化 + registry 登记
     （EXP-1005-cwe-model，上游 kb-5.0.1 MANIFEST）
 
+## T1/T2 解锁（2026-09-28：用户拍板同意）
+
+[x] 71. T1/T2 监督训练解锁（用户拍板）：引擎落执行日志 check_runs（主仓 main
+    72524bf，executed+hit/未命中/not_executed 三值，纯增量字段）；新增
+    target.allow_private 显式开关（main 8ed701e，默认 false 行为不变，gov.cn
+    与云 metadata 永久阻断不随开关）；修复靶场 rng-* 容器旧路径 bind（改挂
+    ranges-lab 新路径，8092-8095 恢复 200）；靶场 5 目标 full 档实扫 →
+    5,642 条执行记录/16 命中；ml 侧 d4c_executions 表 + L1 可靠负样本 +
+    gate 条件翻转（负样本>0 方放行）+ EXP-1101/1102 首次监督训练：
+    **机制端到端实证，正例=1（内置 check 宇宙）致指标 insufficient_labels
+    如实记录**——下一阶段瓶颈=正例积累（卫生类 check 命中需要真实
+    部署失当目标持续扫描）；36 测试全绿
+
 ## 决策模型对比（2026-09-28 凌晨：EXP-1004，预注册）
 
 [x] 69. EXP-1004 本地小决策模型 vs 传统 ML 基线：预注册协议与闸门先于任何被测系统
