@@ -63,7 +63,7 @@ deep 档那 5 条（wp-json / wp-login / wp-readme / wp-users / wp-xmlrpc），
 ## 下载
 
 - 桌面安装器（推荐，全能力）：SiteLens-Setup-5.0.0.exe（约 552MB）
-  SHA256：9f4965cabb50be73bd5654ad3fc2523bd9577b8c3ca206fe2fd84e6632edb556
+  SHA256：ed148a90e01a532bcc2059ef7b5feb17bef934240d8f69472bfac9d5724e759e
 - npm 地基版：`npm install -g @fengqiao666/sitelens-cli`（0.0.1-rc，五平台）
 - 模型资产（含评测集与训练参数）：GitHub / CNB 仓库 Release ml-models-v1
 - 问题反馈：仓库 Issue
