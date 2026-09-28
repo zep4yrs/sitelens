@@ -69,3 +69,9 @@ tmp_fixture*
 tmp_matrix*
 tmp_sitelens_linux
 venv/
+
+# TUI（npm 包）：依赖与引擎二进制为构建产物，不入库
+tui/node_modules/
+tui/packages/
+# tui 包源码豁免（bin/ 规则误伤；dist 与 packages 产物仍忽略）
+!tui/bin/
