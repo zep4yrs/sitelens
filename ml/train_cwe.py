@@ -99,6 +99,7 @@ def exp1005_cwe_relation(kb: dict[str, pd.DataFrame], kb_man: Path,
     ytr, yte = train["cwe"].to_numpy(), test["cwe"].to_numpy()
 
     clf = SGDClassifier(loss="log_loss", alpha=1e-5, max_iter=30,
+                        class_weight="balanced",
                         random_state=SEED)
     clf.fit(Xtr, ytr)
     pred = clf.predict(Xte)

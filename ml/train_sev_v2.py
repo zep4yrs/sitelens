@@ -106,8 +106,10 @@ def main() -> int:
     results = []
     art_best, best_name, best_val = None, None, -1.0
 
-    for name in ("v0", "v1", "v2", "v3", "v4"):
-        if name == "v0":
+    # v0a/v0b：正则扫描（diag 实证 alpha=1e-6 过拟合——train/test F1 差 0.54）
+    ALPHA = {"v0a": 1e-4, "v0b": 1e-5, "v0": 1e-6, "v1": 1e-6, "v2": 1e-6}
+    for name in ("v0a", "v0b", "v0", "v1", "v2", "v3", "v4"):
+        if name in ("v0", "v0a", "v0b"):
             vec = _vec("word")
         elif name == "v1":
             vec = _vec("char")
@@ -135,14 +137,16 @@ def main() -> int:
             va_eval["score_mae"] = round(mae_va, 3)
             art = {"vec": vec, "model": reg, "kind": "regression"}
         else:
-            clf = SGDClassifier(loss="log_loss", alpha=1e-6, max_iter=30,
+            clf = SGDClassifier(loss="log_loss", alpha=ALPHA[name], max_iter=30,
                                 class_weight="balanced", random_state=SEED)
             clf.fit(Xtr, tr["sev"])
             va_eval = _eval(va["sev"].to_numpy(),
                             clf.predict(vec.transform(va["descr"])))
             Xte = vec.transform(te["descr"])
             te_eval = _eval(te["sev"].to_numpy(), clf.predict(Xte))
-            art = {"vec": vec, "model": clf, "kind": "classification"}
+            te_eval["alpha"] = ALPHA[name]
+            art = {"vec": vec, "model": clf, "kind": "classification",
+                   "alpha": ALPHA[name]}
 
         results.append({"variant": name, "kind": art["kind"],
                         "val": va_eval, "test": te_eval,
