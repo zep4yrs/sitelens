@@ -183,6 +183,12 @@ body{animation:sl-fadeIn var(--t-fast) var(--ease)}
 .url-input,.tb,.sel{border-radius:8px}
 table.list tbody tr{transition:background .15s}
 
+/* ============ AI 预测（5.0 L3）：来源徽章 ============
+   onnx 模型推理用强调色（--primary，随偏好主题色联动），形态对齐
+   既有 .badge.ok/.warn/.danger/.info 的 color-mix 三件套；
+   nvd 回退直接用无修饰 .badge 的灰。 */
+.badge.acc{color:var(--primary);border-color:color-mix(in srgb,var(--primary) 35%,transparent);background:color-mix(in srgb,var(--primary) 8%,transparent)}
+
 /* ============ 同款侧边栏（单一来源）：工作台与被动页共用同一左列/模式行 ============ */
 .tw-left{width:302px;flex:none;display:flex;flex-direction:column;overflow-y:auto;
   border-right:1px solid var(--border);background:var(--card);padding-bottom:18px;

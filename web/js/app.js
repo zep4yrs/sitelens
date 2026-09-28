@@ -405,12 +405,33 @@ function renderResult(r, scanId) {
   var sec = r.security || {};
   var grade = sec.grade || "-";
   var gradeCls = (grade === "F" || grade === "D") ? "danger" : (grade === "C" ? "warn" : "ok");
+  /* extras 提前取出：摘要区 ml_prior 与 ml_sev 说明都要读（下方通用 extras 循环同用） */
+  var ex = r.extras || {};
+  /* AI 产品先验（extras.ml_prior）：摘要区一行——top 产品（概率）→ 提权 N 项、增量纳入 M 项。
+     字段缺席（未配置资产/无有效先验）时整块隐藏，不留空壳。 */
+  var priorCell = "";
+  var prior = ex.ml_prior;
+  if (prior && prior.products && prior.products.length) {
+    var pTop = prior.products[0] || {};
+    var pProm = Array.isArray(prior.promoted) ? prior.promoted.length : 0;
+    priorCell = '<div class="cell" style="grid-column:1/-1"><span>AI 产品先验</span><b>' +
+      esc(pTop.product || "-") + "（" + Number(pTop.prob || 0).toFixed(3) + "）→ 提权 " +
+      esc(String(prior.boosted || 0)) + " 项、增量纳入 " + pProm + " 项</b></div>";
+  }
   html += '<div class="summary">' +
     cell("Host", r.host) + cell("标题", r.title || "-") +
     cell("IP", r.ip || "-") + cell("响应", (r.response_time_ms || 0) + " ms") +
     cell("耗时", (r.duration || 0) + " s") +
     '<div class="cell"><span>安全响应头</span><b><span class="badge ' + gradeCls + '">' +
-    esc(grade) + " " + (sec.score || 0) + "分</span></b></div></div>";
+    esc(grade) + " " + (sec.score || 0) + "分</span></b></div>" + priorCell + "</div>";
+  /* ml_sev 非正常态：一行降级说明（sev_score 已回退 NVD CVSS 先验）。
+     正常 active 不占版面；ml_sev 缺席 = sev_onnx 总闸未开，同样不占。 */
+  var mlSev = ex.ml_sev;
+  if (mlSev && mlSev.active === false) {
+    var fbN = Number(mlSev.nvd_fallback || 0);
+    html += '<p class="hint">AI 预测说明：严重度模型未生效（' + esc(String(mlSev.reason || "未知原因")) +
+      "），sev_score 以 NVD CVSS 先验填充" + (fbN > 0 ? "（" + fbN + " 条）" : "") + "。</p>";
+  }
 
   var techs = r.technologies || [];
   html += '<div class="sec-title">指纹识别 <span class="count">' + techs.length + " 项</span>" +
@@ -485,13 +506,48 @@ function renderResult(r, scanId) {
     html += '<p class="muted" style="font-size:13px">未命中已知漏洞情报。</p>';
   }
 
-  var ex = r.extras || {};
+  /* AI 预测（Result.Predictions，5.0 L3）：逐 CVE 模型先验——受影响产品 Top-3、
+     CWE 弱点类型、严重度区间（sev_score ± 1.07，替代硬档位）、来源徽章
+     （onnx = 模型推理用强调色；nvd = NVD 先验回退用灰）。先验参考，
+     不参与扫描判定；无预测时整块不渲染。 */
+  var preds = r.predictions || [];
+  if (preds.length) {
+    html += '<div class="sec-title">AI 预测 <span class="count">' + preds.length +
+      " 条（先验参考，不参与扫描判定）</span></div>";
+    html += '<div class="tbl-wrap"><table class="vulns"><tr><th>CVE</th><th>受影响产品 Top 3</th><th>弱点类型</th><th>严重度区间</th><th>来源</th></tr>';
+    preds.slice(0, 40).forEach(function (p) {
+      var tp = p.tech_top5 || [];
+      var t3 = tp.length
+        ? tp.slice(0, 3).map(function (t) {
+            return esc(t.product) + " " + Number(t.prob || 0).toFixed(3);
+          }).join(" · ")
+        : "-";
+      var sevTxt = "-";
+      if (p.sev_score > 0) {
+        var lo = Math.max(0, p.sev_score - 1.07), hi = Math.min(10, p.sev_score + 1.07);
+        sevTxt = Number(p.sev_score).toFixed(1) + " ± 1.07（" + lo.toFixed(1) + " – " + hi.toFixed(1) + "）";
+      }
+      var src = p.sev_source === "onnx"
+        ? '<span class="badge acc">模型推理</span>'
+        : '<span class="badge">NVD 先验</span>';
+      html += '<tr><td class="mono">' + esc(p.cve) + "</td>" +
+        '<td class="mono" style="font-size:12.5px">' + t3 + "</td>" +
+        '<td class="mono">' + esc(p.cwe_type || "-") + "</td>" +
+        "<td>" + sevTxt + "</td><td>" + src + "</td></tr>";
+    });
+    html += "</table></div>";
+    if (preds.length > 40)
+      html += '<p class="hint">… 其余 ' + (preds.length - 40) + " 条见 JSON 导出</p>";
+  }
+
   var titles = { active_fp: "主动路径指纹", dir_scan: "目录探测", subdomain: "子域名",
                  service: "端口服务", netsec: "TLS / DNS 安全", weak_audit: "登录爆破结果",
                  webshell: "WebShell 路径探测", jsmap: "JS 攻击面", dast: "DAST 检测",
                  passive: "被动安全检测", bypass: "403 绕过探测", dir: "目录探测",
                  netproto: "协议模板检测（tcp/dns/ssl）", exploit: "利用级无害验证" };
   Object.keys(ex).forEach(function (key) {
+    // ml_prior / ml_sev 已在摘要区与降级说明呈现，不进通用 extras 列表
+    if (key === "ml_prior" || key === "ml_sev") return;
     var items = ex[key] || [];
     var cnt = Array.isArray(items) ? items.length : null;
     html += '<div class="sec-title">' + esc(titles[key] || key) +

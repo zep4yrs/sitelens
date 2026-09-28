@@ -81,6 +81,10 @@ function lastLineOfSection(lines, section) {
 }
 
 function formatValue(v) {
+  // 布尔/数字不加引号：YAML 双引号会把 true 变成字符串，引擎侧 bool 键
+  // （ml.sev_onnx）unmarshal 直接报错，整个配置回退默认（Load 出错即用
+  // 默认值），开关等于没打开。字符串（路径/端口）仍走双引号 + 正斜杠。
+  if (typeof v === 'boolean' || typeof v === 'number') return String(v);
   return quoteIfNeeded(String(v));
 }
 

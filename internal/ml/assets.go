@@ -14,14 +14,14 @@ import (
 // Model 是一个导出的线性模型（词表 + idf + 系数 + 元信息）。
 // coef 为行主序：coef[c*nFeatures+i] 是第 c 类在第 i 特征上的权重。
 type Model struct {
-	name       string
-	classes    []string
-	vocab      map[string]int32
-	idf        []float32
-	coef       []float32
-	intercept  []float64
-	nFeatures  int
-	nClasses   int
+	name      string
+	classes   []string
+	vocab     map[string]int32
+	idf       []float32
+	coef      []float32
+	intercept []float64
+	nFeatures int
+	nClasses  int
 }
 
 // Name 返回模型名（cve-tech / cwe-type）。
