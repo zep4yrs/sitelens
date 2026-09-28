@@ -28,14 +28,17 @@ type TechPred struct {
 }
 
 // Prediction 一条 CVE 的 ML 推理结果（先验参考，不参与扫描判定）。
-// SevScore 量级为 CVSS 0-10；阶段 A（纯 Go 线性模型）以 NVD CVSS 先验
-// 填充，sev-prior（阶段 B DistilBERT ONNX 回归头，文档 §10.0）接入后
-// 替换为模型分数。无先验（NVD 缺该 CVE）时为 0，omitempty 不输出。
+// SevScore 量级为 CVSS 0-10：sev-prior ONNX 启用时为模型推理分
+// （SevSource=onnx），否则以 NVD CVSS 先验填充（SevSource=nvd）。
+// 无先验（NVD 缺该 CVE）时为 0，omitempty 不输出。
 type Prediction struct {
 	CVE      string     `json:"cve"`
 	TechTop5 []TechPred `json:"tech_top5"`
 	CWEType  string     `json:"cwe_type,omitempty"`
 	SevScore float64    `json:"sev_score,omitempty"`
+	// SevSource 分数来源：onnx = sev-prior 模型推理；nvd = NVD CVSS 先验
+	// 回退。空 = 旧记录（阶段 A 无此字段）。
+	SevSource string `json:"sev_source,omitempty"`
 }
 
 // sigmoid 逐类逻辑斯蒂：p = 1/(1+e^-s)。

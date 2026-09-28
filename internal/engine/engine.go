@@ -86,6 +86,12 @@ type Engine struct {
 	mlMu     sync.Mutex
 	mlAssets *ml.Assets
 	mlDead   bool // 加载失败标记：本进程内静默禁用（防反复重读 94MB）
+
+	// sev-prior ONNX 打分器（L3 阶段 B，§10.8）：一次尝试，失败（未启用/
+	// 无 onnx 构建标签/资产或 DLL 缺失）后带原因降级 NVD 先验，不再重试。
+	mlSev       *ml.SevScorer
+	mlSevTried  bool
+	mlSevReason string
 }
 
 // New 创建引擎。matcher / kb 可为 nil（对应能力降级跳过，不阻塞扫描）。
