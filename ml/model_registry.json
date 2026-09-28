@@ -11,14 +11,15 @@
     "sev-prior": {
       "中文名": "严重度先验",
       "功能": "CVE 描述 → 严重度四类（low/medium/high/critical）",
-      "现役": "EXP-1009-sev-prior-v2.2",
+      "现役": "EXP-1015-sev-prior-v3（分数输出版，现役呈现方式）",
       "前版本": [
+        "EXP-1009-sev-prior-v2.2 (档位集成，acc 0.6024)",
         "EXP-1008-sev-prior-v2.1 (v2.1)",
         "EXP-1006-severity-v2-model (v2)",
         "EXP-1001-severity-model (v1)",
         "EXP-1006-severity-v2-model (v2)"
       ],
-      "质量": "部署口径 acc 0.6024 / macro-F1 0.5047 / 相邻带 0.9520 / macro-AUC 0.8463（三模型软投票集成：LR + SVD300-HistGB + 自训练）；口径：描述文本单一信息源，0.75 exact-band 不可达已三重验证"
+      "质量": "双版本并存：v3 分数输出版 MAE 1.283/10（val 1.084）、相邻带 0.9549；v2.2 档位集成 acc 0.6024。呈现=【分数±区间】，档位为辅助标注（用户 2026-09-28 拍板的呈现变更）；口径：描述文本单一信息源"
     },
     "cve-tech": {
       "中文名": "产品关系先验",
