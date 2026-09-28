@@ -86,6 +86,7 @@ func New(cfg *config.Config, matcher *sitelens.Matcher, kb *intel.KB) *Engine {
 	if cfg == nil {
 		cfg = config.Default()
 	}
+	target.SetAllowPrivate(cfg.Target.AllowPrivate) // 本机靶场/授权内网开关（默认 false）
 	e := &Engine{cfg: cfg}
 	e.SetMatcher(matcher)
 	e.SetKB(kb)

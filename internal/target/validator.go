@@ -14,11 +14,31 @@ type Error struct{ Msg string }
 
 func (e *Error) Error() string { return e.Msg }
 
-var blockedHosts = map[string]bool{
-	"localhost":                true,
-	"localhost.localdomain":    true,
-	"ip6-localhost":            true,
+// alwaysBlockedHosts 永久阻断主机名（任何开关都不放宽）：云厂商 metadata
+// 端点等 SSRF 关键攻击面。
+var alwaysBlockedHosts = map[string]bool{
 	"metadata.google.internal": true,
+}
+
+// blockedHosts 本地/保留主机名（target.allow_private 开启时放宽——
+// 本机靶场/授权内网场景由操作者显式担责）。
+var blockedHosts = map[string]bool{
+	"localhost":             true,
+	"localhost.localdomain": true,
+	"ip6-localhost":         true,
+}
+
+// hostBlocked 主机名闸：永久阻断名单优先；allow_private 开启时放宽
+// 本地/保留主机名。
+func hostBlocked(host string) bool {
+	if alwaysBlockedHosts[host] {
+		return true
+	}
+	if allowPrivate {
+		return false
+	}
+	return blockedHosts[host] || strings.HasSuffix(host, ".local") ||
+		strings.HasSuffix(host, ".internal")
 }
 
 // isGovCn gov.cn 政府网站代码级硬保护：本工具禁止被用于对政府网站
@@ -27,6 +47,15 @@ var blockedHosts = map[string]bool{
 func isGovCn(host string) bool {
 	return host == "gov.cn" || strings.HasSuffix(host, ".gov.cn")
 }
+
+// allowPrivate 本机靶场/授权内网目标开关（默认 false = 拒绝私网/保留地址，
+// 行为与既往版本一致）。由引擎装配层按 target.allow_private 配置置位；
+// 开启后仅放宽私网/保留地址与本地主机名校验——云厂商 metadata 端点与
+// gov.cn 硬保护不受本开关影响、永不放宽。
+var allowPrivate bool
+
+// SetAllowPrivate 装配层接线（engine.New / server 装配按配置调用）。
+func SetAllowPrivate(v bool) { allowPrivate = v }
 
 // Validate 校验并规范化 URL，返回 (scheme, host, port)。
 // resolve=true 时做 DNS 解析并逐 IP 校验私网/保留地址。
@@ -58,7 +87,7 @@ func Validate(rawURL string, resolve bool) (string, string, int, error) {
 	if host == "" {
 		return "", "", 0, &Error{"URL 缺少主机名"}
 	}
-	if blockedHosts[host] || strings.HasSuffix(host, ".local") || strings.HasSuffix(host, ".internal") {
+	if hostBlocked(host) {
 		return "", "", 0, &Error{"不允许扫描内网或保留主机名"}
 	}
 	if isGovCn(host) {
@@ -97,7 +126,7 @@ func ValidateHostPort(scheme, host string, port int, resolve bool) error {
 	if host == "" {
 		return &Error{"目标缺少主机名"}
 	}
-	if blockedHosts[host] || strings.HasSuffix(host, ".local") || strings.HasSuffix(host, ".internal") {
+	if hostBlocked(host) {
 		return &Error{"不允许扫描内网或保留主机名"}
 	}
 	if isGovCn(host) {
@@ -108,9 +137,10 @@ func ValidateHostPort(scheme, host string, port int, resolve bool) error {
 			return &Error{"端口号不合法"}
 		}
 	}
-	// 字面 IP 无条件校验（零成本）；域名才受 resolve 开关控制
+	// 字面 IP 无条件校验（零成本）；域名才受 resolve 开关控制。
+	// allow_private 开启时放宽私网/保留地址（本机靶场/授权内网）。
 	if addr, aerr := netip.ParseAddr(host); aerr == nil {
-		if isBlockedIP(addr) {
+		if !allowPrivate && isBlockedIP(addr) {
 			return &Error{"目标是内网/保留地址，已拦截"}
 		}
 		return nil
@@ -134,7 +164,7 @@ func ensurePublicHost(host string) error {
 		if aerr != nil {
 			continue
 		}
-		if isBlockedIP(addr) {
+		if !allowPrivate && isBlockedIP(addr) {
 			return &Error{"目标解析到内网/保留地址，已拦截"}
 		}
 	}
