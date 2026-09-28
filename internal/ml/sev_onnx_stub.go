@@ -15,7 +15,7 @@ var ErrNoONNX = errors.New("ml: 本构建未启用 onnx（需 -tags onnx 与 onn
 type SevScorer struct{}
 
 // NewSevScorer 恒返回 ErrNoONNX。
-func NewSevScorer(_, _, _ string) (*SevScorer, error) { return nil, ErrNoONNX }
+func NewSevScorer(_, _ string, _ []string) (*SevScorer, error) { return nil, ErrNoONNX }
 
 // Score 恒返回 ErrNoONNX。
 func (*SevScorer) Score(string) (float64, error) { return 0, ErrNoONNX }

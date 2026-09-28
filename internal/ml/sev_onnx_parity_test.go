@@ -19,12 +19,13 @@ func TestSevOnnxParity(t *testing.T) {
 	assets := filepath.Join(root, "data", "go", "ml_assets")
 	fixPath := filepath.Join(assets, "sev-fixtures.json")
 	vocabPath := filepath.Join(assets, "sev-prior-v3.1.vocab.txt")
-	onnxPath := filepath.Join(assets, "sev-prior-v3.1.onnx")
+	onnxA := filepath.Join(assets, "sev-prior-v3.1-a.onnx")
+	onnxB := filepath.Join(assets, "sev-prior-v3.1-b.onnx")
 	dll := os.Getenv("SITLENS_ORT_DLL")
 	if dll == "" {
 		dll = filepath.Join(root, "data", "onnxruntime", "onnxruntime.dll")
 	}
-	for _, p := range []string{fixPath, vocabPath, onnxPath, dll} {
+	for _, p := range []string{fixPath, vocabPath, onnxA, onnxB, dll} {
 		if _, err := os.Stat(p); err != nil {
 			t.Skipf("onnx 对拍资产缺失（%s），跳过", p)
 		}
@@ -43,7 +44,7 @@ func TestSevOnnxParity(t *testing.T) {
 	if err := json.Unmarshal(raw, &fix); err != nil {
 		t.Fatal(err)
 	}
-	scorer, err := NewSevScorer(onnxPath, vocabPath, dll)
+	scorer, err := NewSevScorer(vocabPath, dll, []string{onnxA, onnxB})
 	if err != nil {
 		t.Fatalf("scorer 初始化: %v", err)
 	}
