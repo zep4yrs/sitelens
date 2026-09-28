@@ -46,6 +46,10 @@ type settingsConfig struct {
 	Batch struct {
 		MaxURLs int `json:"max_urls"`
 	} `json:"batch"`
+	ML struct {
+		Predict bool `json:"predict"`  // AI 总闸：先验调度 + 预测富化
+		SevONNX bool `json:"sev_onnx"` // 严重度模型推理（需 onnx 构建）
+	} `json:"ml"`
 }
 
 func (s *Server) settingsCfg() settingsConfig {
@@ -64,6 +68,8 @@ func (s *Server) settingsCfg() settingsConfig {
 	v.Exploit.Enabled = s.cfg.Exploit.Enabled
 	v.Intel.OverridesPath = s.cfg.Intel.OverridesPath
 	v.Batch.MaxURLs = s.cfg.Batch.MaxURLs
+	v.ML.Predict = s.cfg.ML.Predict
+	v.ML.SevONNX = s.cfg.ML.SevONNX
 	return v
 }
 
@@ -97,6 +103,13 @@ func (s *Server) applySettings(v settingsConfig) {
 	if v.Batch.MaxURLs > 0 {
 		s.cfg.Batch.MaxURLs = v.Batch.MaxURLs
 	}
+	// ML 开关热生效：predict 引擎每次扫描现读；sev_onnx 翻转时作废
+	// 打分器的一次性尝试缓存（下次扫描按新开关重建/跳过）
+	if s.cfg.ML.SevONNX != v.ML.SevONNX {
+		s.eng.InvalidateMLSev()
+	}
+	s.cfg.ML.Predict = v.ML.Predict
+	s.cfg.ML.SevONNX = v.ML.SevONNX
 }
 
 // persistSettings 把设置写回用户 yml（Node 读改写：保留注释与未纳管键）。
@@ -124,6 +137,7 @@ func (s *Server) persistSettings(v settingsConfig) error {
 		"exploit": {"enabled": v.Exploit.Enabled},
 		"intel":   {"overrides_path": v.Intel.OverridesPath},
 		"batch":   {"max_urls": v.Batch.MaxURLs},
+		"ml":      {"predict": v.ML.Predict, "sev_onnx": v.ML.SevONNX},
 	}
 	if v.Web.APIToken != "" {
 		updates["web"]["api_token"] = v.Web.APIToken

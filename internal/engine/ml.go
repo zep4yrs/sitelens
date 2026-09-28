@@ -132,6 +132,16 @@ func (e *Engine) mlSevScorer() *ml.SevScorer {
 	return s
 }
 
+// InvalidateMLSev 作废 sev 打分器的一次性尝试缓存（设置页翻转
+// sev_onnx 后调用）：下次扫描按新开关重建或跳过。
+func (e *Engine) InvalidateMLSev() {
+	e.mlMu.Lock()
+	e.mlSevTried = false
+	e.mlSev = nil
+	e.mlSevReason = ""
+	e.mlMu.Unlock()
+}
+
 // mlEnrich 扫描收尾的 ML 富化：对 res.Vulnerabilities 中出现过的
 // 不重复 CVE id——从 NVD 镜像取描述 → 双模型推理 → 组装 Prediction
 // （tech_top5 含与检出技术的 relevance 交集标记；sev_score 以 NVD
