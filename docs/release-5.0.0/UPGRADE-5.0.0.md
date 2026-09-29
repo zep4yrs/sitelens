@@ -12,7 +12,7 @@
 ## 升级步骤
 
 1. 下载 SiteLens-Setup-5.0.0.exe，核对 SHA256：
-   `ed148a90e01a532bcc2059ef7b5feb17bef934240d8f69472bfac9d5724e759e`
+   `ded395365aa2172824d470b33bb9aa047aec3c29c89e64eb3c81d5c24ddcad08`
 2. 直接运行安装器（自动覆盖升级，无需卸载 4.x；用户配置与历史记录保留于
    `%APPDATA%`，不受影响）。
 3. 启动后确认版本：工作台关于页 / 引擎命令行 `-version` 应显示 5.0.0。
