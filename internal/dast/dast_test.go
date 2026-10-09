@@ -220,11 +220,19 @@ func TestMaxParamsCap(t *testing.T) {
 	f := &fakeFetch{}
 	opts := DefaultOptions()
 	opts.MaxParams = 1
+	opts.TimeBlind = false
+	opts.BoolBlind = false
 	hits := New(f, opts).Run([]string{
 		"https://a.com/a?x=1", "https://a.com/b?y=1",
 	})
-	if f.request > 20 { // 1 目标 × 8 请求上限，余量给取消检查
-		t.Fatalf("MaxParams=1 应只探测 1 个参数，实际请求 %d", f.request)
+	// 1 目标 × （基线 1 + 四类探针序列 + 反序列化 1）；探针序列条数受
+	// 常量控制，这里只断言「上限生效」而非写死数值
+	capN := 1 + len(xssProbes) + len(sqliErrorProbes) + len(redirProbes) + len(traversalProbes) + 1
+	if f.request > capN {
+		t.Fatalf("MaxParams=1 应只探测 1 个参数（≤%d 请求），实际 %d", capN, f.request)
+	}
+	if f.request <= 1 {
+		t.Fatalf("应至少发出探测请求，实际 %d", f.request)
 	}
 	_ = hits
 }
@@ -255,12 +263,14 @@ func TestRunFormsBudget(t *testing.T) {
 	opts := DefaultOptions()
 	opts.MaxParams = 1
 	opts.TimeBlind = false
+	opts.BoolBlind = false
 	hits := New(f, opts).RunForms([]FormTarget{
 		{Action: "https://a.com/reg", Fields: []string{"u", "e", "n"}},
 	})
-	// 1 字段 × 5 请求（基线 + 4 探测）；预算生效即不超过 5
-	if f.request > 5 {
-		t.Fatalf("MaxParams=1 应只探测 1 字段（5 请求），实际 %d", f.request)
+	// 1 字段 × （基线 1 + 四类探针序列）；预算生效即不超过该上限
+	capN := 1 + len(xssProbes) + len(sqliErrorProbes) + len(redirProbes) + len(traversalProbes)
+	if f.request > capN {
+		t.Fatalf("MaxParams=1 应只探测 1 字段（≤%d 请求），实际 %d", capN, f.request)
 	}
 	_ = hits
 }

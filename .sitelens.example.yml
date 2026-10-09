@@ -33,8 +33,10 @@ crawler:
 dast:
   max_params: 24
   time_blind: true
+  bool_blind: true
   blind_threshold_ms: 3500
   sleep_seconds: 4
+  max_url_len: 2048
 
 intel:
   dump_path: data/intel_dump.json.gz

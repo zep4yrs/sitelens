@@ -218,3 +218,82 @@ func mustJSON(t *testing.T, v any) string {
 	}
 	return string(b)
 }
+
+// TestHomepageFormFeedsDAST 首页表单必须喂给 DAST（任何档位）。
+// 回归：表单采集此前困在 deep 分支内，quick/standard 档位下 DVWA 这类
+// 「首页就是登录/注入表单入口」的站点攻击面完全不可见。
+func TestHomepageFormFeedsDAST(t *testing.T) {
+	// 首页含 GET 注入表单（仿 DVWA 的 id 参数表单）
+	page := `<html><body>
+<form action="/vuln/sqli/" method="get">
+<input name="id"><input type="submit" value="Submit">
+</form></body></html>`
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/vuln/sqli/" && r.URL.Query().Get("id") != "" {
+			// 字符串型注入：引号闭合的真/假分支尺寸差 7%
+			v := r.URL.Query().Get("id")
+			if strings.Contains(v, "'2") || strings.Contains(v, "'1'='2") {
+				w.Write([]byte(strings.Repeat("x", 670)))
+			} else {
+				w.Write([]byte(strings.Repeat("x", 721)))
+			}
+			return
+		}
+		w.Write([]byte(page))
+	}))
+	defer srv.Close()
+
+	cfg := config.Default()
+	cfg.Scan.RateIntervalMS = 0
+	cfg.Target.AllowPrivate = true
+	eng := New(cfg, nil, nil)
+	opts := Options{Deep: false, DAST: true, Exploit: false}
+	res := eng.Scan(srv.URL, opts, nil, nil)
+
+	found := false
+	for _, v := range res.Verified {
+		if v["check"] == "bool-blind-sqli" && v["param"] == "id" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("首页 GET 表单应喂给 DAST 并命中盲注；verified=%d 条", len(res.Verified))
+	}
+}
+
+// TestHygieneSeparatedFromVerified 配置卫生项不得混进 verified。
+func TestHygieneSeparatedFromVerified(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// 无 HttpOnly/Secure/SameSite 的会话 cookie：典型配置卫生项
+		w.Header().Add("Set-Cookie", "PHPSESSID=1; Path=/")
+		w.Write([]byte(`<html><body><form action="/login" method="post">
+<input name="user"><input type="password" name="pass"></form></body></html>`))
+	}))
+	defer srv.Close()
+
+	cfg := config.Default()
+	cfg.Scan.RateIntervalMS = 0
+	cfg.Target.AllowPrivate = true
+	eng := New(cfg, nil, nil)
+	res := eng.Scan(srv.URL, Options{Deep: true, Passive: true}, nil, nil)
+
+	for _, v := range res.Verified {
+		if v["check"] == "cookie-attrs" || v["check"] == "csrf-form" {
+			t.Fatalf("配置卫生项不得出现在 verified: %+v", v)
+		}
+	}
+	hyg, _ := res.Extras["hygiene"].([]map[string]any)
+	if len(hyg) == 0 {
+		t.Fatal("配置卫生应落到 extras.hygiene")
+	}
+	// 同一 cookie 在首页与爬取页重复出现：去重后只应剩 1 条 cookie-attrs
+	n := 0
+	for _, h := range hyg {
+		if h["check"] == "cookie-attrs" {
+			n++
+		}
+	}
+	if n != 1 {
+		t.Fatalf("cookie-attrs 跨页应去重为 1 条，实际 %d", n)
+	}
+}
