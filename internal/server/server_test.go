@@ -108,9 +108,13 @@ func TestScanJobFlow(t *testing.T) {
 		t.Fatalf("缺 job_id: %v", body)
 	}
 
-	// 轮询直到完成（最长 30s）
+	// 轮询直到完成。上限由 scanDeadline() 给出（非 race 60s / race 5min）：
+	// 扫描末段（步骤 11「关联漏洞情报」）要冷加载情报库（模板情报 2.9w 行 +
+	// 惰性 NVD 索引），成本既随 Runner 冷启动放大（同批 Runner 整包 18s/145s
+	// 波动），又在 -race 构建下再乘 ~10 倍（实测同一扫描 5.7s→57.7s）。原 30s
+	// 上限把「机器快慢」当成「任务是否卡死」，两条路径都会假红。
 	var job map[string]any
-	deadline := time.Now().Add(30 * time.Second)
+	deadline := time.Now().Add(scanDeadline())
 	for {
 		_, job = getJSON(t, api.URL+"/api/job/"+jobID)
 		if job["status"] == "done" || job["status"] == "error" || job["status"] == "cancelled" {
@@ -196,7 +200,12 @@ func TestBatchFlow(t *testing.T) {
 	if jobID == "" {
 		t.Fatalf("缺 job_id: %v", resp)
 	}
-	deadline := time.Now().Add(60 * time.Second)
+	// 轮询直到完成。上限由 scanDeadline() 给出（非 race 60s / race 5min），
+	// 与 TestScanJobFlow 同源：本用例两条目标各跑一次完整扫描，末尾同样
+	// 要冷加载情报库（模板情报 2.9w 行 + 惰性 NVD 索引），成本既随 Runner
+	// 冷启动放大，又在 -race 下再乘 ~10 倍。判据与断言（done==2、入库 1 条）
+	// 未放宽。
+	deadline := time.Now().Add(scanDeadline())
 	var job map[string]any
 	for {
 		_, job = getJSON(t, api.URL+"/api/job/"+jobID+"/results")
