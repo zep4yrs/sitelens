@@ -108,9 +108,13 @@ func TestScanJobFlow(t *testing.T) {
 		t.Fatalf("缺 job_id: %v", body)
 	}
 
-	// 轮询直到完成（最长 30s）
+	// 轮询直到完成。上限 120s：扫描末段（步骤 11「关联漏洞情报」）要冷加载
+	// 情报库（模板情报 2.9w 行 + 惰性 NVD 索引），成本随 Runner 冷启动放大
+	// ——实测同一分支在同一批 Runner 上 internal/server 整包 18s / 145s 波动。
+	// 原 30s 上限把「机器快慢」当成了「任务是否卡死」，在慢 Runner 上假红；
+	// 120s 仍能兜住真挂死，且与同文件批量用例（60s）量级一致。
 	var job map[string]any
-	deadline := time.Now().Add(30 * time.Second)
+	deadline := time.Now().Add(120 * time.Second)
 	for {
 		_, job = getJSON(t, api.URL+"/api/job/"+jobID)
 		if job["status"] == "done" || job["status"] == "error" || job["status"] == "cancelled" {
