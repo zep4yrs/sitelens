@@ -200,7 +200,12 @@ func TestBatchFlow(t *testing.T) {
 	if jobID == "" {
 		t.Fatalf("缺 job_id: %v", resp)
 	}
-	deadline := time.Now().Add(60 * time.Second)
+	// 轮询直到完成。上限 120s，与 TestScanJobFlow 同源：本用例的两条目标
+	// 各跑一次完整扫描，末尾同样要冷加载情报库（模板情报 2.9w 行），
+	// 成本随 Runner 冷启动放大——原 60s 在慢 Runner 上被击穿（进度卡在
+	// 50%「关联漏洞情报…」），同批次 TestScanJobFlow 已由 30s 提到 120s
+	// 并记录过该波动。这里统一量级，判据与断言（done==2、入库 1 条）未放宽。
+	deadline := time.Now().Add(120 * time.Second)
 	var job map[string]any
 	for {
 		_, job = getJSON(t, api.URL+"/api/job/"+jobID+"/results")
