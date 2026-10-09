@@ -249,11 +249,14 @@ func (e *Engine) Scan(rawURL string, opts Options, onProgress progress, cancel f
 	matcher, kb := e.snapshot()
 
 	acc := newTechAcc()
-	dastLinks := []string{}                // 爬取阶段收集的带参链接（DAST 探测点）
-	var dastFormTargets []dast.FormTarget  // 爬取阶段收集的表单（DAST 表单探测点）
-	type loginFormRef struct{ URL string } // 含密码框的表单页（弱口令审计入口）
-	var loginForms []loginFormRef
+	dastLinks := []string{}               // 爬取阶段收集的带参链接（DAST 探测点）
+	var dastFormTargets []dast.FormTarget // 爬取阶段收集的表单（DAST 表单探测点）
+	var loginForms []loginFormEntry       // 含密码框的表单页（弱口令审计入口）
 	pages := []crawlPage{{resp: home, doc: doc}}
+
+	// 首页表单/链接即刻采集（任何档位都做）：首页就是 DVWA 登录页与
+	// SQLi/XSS 模块入口，deep=false 时不采集则整站攻击面不可见。
+	collectHomeFormTargets(doc, home.FinalURL, &dastLinks, &dastFormTargets, &loginForms)
 
 	// 3) 同域浅爬取（DAST 或 JS 端点开启时 jsmap 前置：API 端点回灌爬虫种子）
 	var jsEndpoints []jsmap.Endpoint
@@ -335,30 +338,7 @@ func (e *Engine) Scan(rawURL string, opts Options, onProgress progress, cancel f
 				onProgress(45, "自动发现登录表单并登录："+msg)
 			}
 		}
-		for _, f := range cr.Forms {
-			// 含密码框的表单页：登记为弱口令审计入口（表单弱口令此前零覆盖）
-			if f.HasPwd && f.Action != "" {
-				loginForms = append(loginForms, loginFormRef{URL: f.Action})
-			}
-			if f.Action != "" && len(f.Names) > 0 {
-				// GET 表单：字段合成 query URL 喂给 URL 参数探测——
-				// DVWA 类靶场的 SQLi/XSS 漏洞页菜单链接不带参数，
-				// 参数在 GET 表单里，不合成则 DAST 永远探不到
-				if strings.EqualFold(f.Method, "get") {
-					if u, err := url.Parse(f.Action); err == nil {
-						q := u.Query()
-						for _, n := range f.Names {
-							if n != "" {
-								q.Set(n, "1")
-							}
-						}
-						u.RawQuery = q.Encode()
-						dastLinks = append(dastLinks, u.String())
-					}
-				}
-				dastFormTargets = append(dastFormTargets, dast.FormTarget{Action: f.Action, Fields: f.Names})
-			}
-		}
+		collectForms(cr.Forms, &dastLinks, &dastFormTargets, &loginForms)
 		// 爬取面入图：带参链接与表单是无证据的攻击面事实，不喂 collector
 		// 则图内 entry_points 少报（命中时才补建），与设计意图不符
 		if col != nil {
@@ -1038,4 +1018,85 @@ func (p postFormPoster) PostJSON(rawURL, body string) (int, string, error) {
 		return 0, "", err
 	}
 	return r.Status, r.Body, nil
+}
+
+// collectHomeFormTargets 采集首页表单/带参链接（任何档位都执行）。
+// 与爬取期的 collectForms 同语义，只差数据源是首页解析结果。
+func collectHomeFormTargets(doc *htmlx.Doc, pageURL string,
+	links *[]string, forms *[]dast.FormTarget, loginForms *[]loginFormEntry) {
+	collectFormSignals(doc, pageURL, links, forms, loginForms)
+}
+
+// loginFormEntry 含密码框的表单页（弱口令审计入口）。
+type loginFormEntry struct{ URL string }
+
+// collectForms 采集爬取页的表单/带参链接。
+func collectForms(crForms []crawler.Form,
+	links *[]string, forms *[]dast.FormTarget, loginForms *[]loginFormEntry) {
+	for _, f := range crForms {
+		// 含密码框的表单页：登记为弱口令审计入口（表单弱口令此前零覆盖）
+		if f.HasPwd && f.Action != "" {
+			*loginForms = append(*loginForms, loginFormEntry{URL: f.Action})
+		}
+		if f.Action == "" || len(f.Names) == 0 {
+			continue
+		}
+		addFormTarget(f.Action, f.Names, f.Method, links, forms)
+	}
+}
+
+// collectFormSignals 从 htmlx 文档采集表单信号（首页路径）。
+func collectFormSignals(doc *htmlx.Doc, pageURL string,
+	links *[]string, forms *[]dast.FormTarget, loginForms *[]loginFormEntry) {
+	for _, f := range doc.Forms {
+		action := resolveAction(pageURL, f.Action)
+		if f.HasPassword && action != "" {
+			*loginForms = append(*loginForms, loginFormEntry{URL: action})
+		}
+		names := make([]string, 0, len(f.Inputs))
+		for _, in := range f.Inputs {
+			if in.Name != "" && len(names) < 16 {
+				names = append(names, in.Name)
+			}
+		}
+		if action == "" || len(names) == 0 {
+			continue
+		}
+		addFormTarget(action, names, f.Method, links, forms)
+	}
+}
+
+// addFormTarget 登记一个表单探测目标；GET 表单额外合成带参 URL——
+// DVWA 类靶场的 SQLi/XSS 模块菜单链接不带参数、参数在 GET 表单里，
+// 不合成则 URL 参数探测永远探不到。
+func addFormTarget(action string, names []string, method string, links *[]string, forms *[]dast.FormTarget) {
+	if strings.EqualFold(method, "get") {
+		if u, err := url.Parse(action); err == nil {
+			q := u.Query()
+			for _, n := range names {
+				if n != "" {
+					q.Set(n, "1")
+				}
+			}
+			u.RawQuery = q.Encode()
+			*links = append(*links, u.String())
+		}
+	}
+	*forms = append(*forms, dast.FormTarget{Action: action, Fields: names})
+}
+
+// resolveAction 解析表单相对 action（空 action 按页面自身）。
+func resolveAction(pageURL, action string) string {
+	base, err := url.Parse(pageURL)
+	if err != nil {
+		return action
+	}
+	if action == "" {
+		return pageURL
+	}
+	ref, err := url.Parse(action)
+	if err != nil {
+		return action
+	}
+	return base.ResolveReference(ref).String()
 }

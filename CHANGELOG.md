@@ -20,8 +20,12 @@
 - 每次布尔探测改用 `chainEvidence()` 补齐 Request/Response/Signals，
   证据链与其余通道同规格。
 
-### 表单 POST 探测加深（DVWA / pikachu 的 id 类参数）
+### 表单探测加深（DVWA / pikachu 的 id 类参数）
 
+- **首页表单即刻采集**：表单/链接采集此前困在 `deep` 分支内，quick /
+  standard 档位下「首页就是注入表单入口」的站点（DVWA 登录页与
+  SQLi/XSS 模块）攻击面完全不可见。现抽出 `collectFormSignals`，
+  首页在任何档位都采集。
 - 新增表单字段布尔盲注通道（`internal/dast/formblind.go`）：报错不回显的
   POST 表单此前零产出，现在走真/假尺寸差分 + 双确认，共用同一阈值语义。
 - 表单探针从「单探针 × 4 类」扩到探针序列（XSS 3 条 / 报错 SQLi 4 条 /
