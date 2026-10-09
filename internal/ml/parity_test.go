@@ -8,8 +8,21 @@ import (
 	"time"
 )
 
-// fixturesDir：internal/ml 相对主仓 data/go/ml_assets（export_go_assets.py 导出物）。
-const fixturesDir = ".." + string(filepath.Separator) + ".." + string(filepath.Separator) + "data" + string(filepath.Separator) + "go" + string(filepath.Separator) + "ml_assets"
+// assetsDir 解析模型资产目录，与 engine.mlFor 同一套候选顺序：
+// data/go/ml_assets（export_go_assets.py 导出物）→ models/go/ml_assets
+//（模型进仓库本体后克隆即得的常规位置）。返回空串表示两处都没有。
+func assetsDir() string {
+	root := filepath.Join("..", "..")
+	for _, cand := range []string{
+		filepath.Join(root, "data", "go", "ml_assets"),
+		filepath.Join(root, "models", "go", "ml_assets"),
+	} {
+		if _, err := os.Stat(filepath.Join(cand, "fixtures.json")); err == nil {
+			return cand
+		}
+	}
+	return ""
+}
 
 type fixtureProduct struct {
 	Product string  `json:"product"`
@@ -30,9 +43,13 @@ type fixture struct {
 //   - 产品 Top-5 平均重叠 >= 4.5/5
 //   - CWE 类型一致率 >= 99.5%
 func TestParityWithPythonFixtures(t *testing.T) {
-	raw, err := os.ReadFile(filepath.Join(fixturesDir, "fixtures.json"))
+	dir := assetsDir()
+	if dir == "" {
+		t.Skip("ml 资产缺失（data/go/ml_assets 与 models/go/ml_assets 均无 fixtures.json），跳过对拍")
+	}
+	raw, err := os.ReadFile(filepath.Join(dir, "fixtures.json"))
 	if err != nil {
-		t.Fatalf("读取 fixtures.json 失败（%s）: %v", fixturesDir, err)
+		t.Fatalf("读取 fixtures.json 失败（%s）: %v", dir, err)
 	}
 	var fx []fixture
 	if err := json.Unmarshal(raw, &fx); err != nil {
@@ -42,7 +59,7 @@ func TestParityWithPythonFixtures(t *testing.T) {
 		t.Fatalf("期望 500 条 fixtures, 实际 %d 条", len(fx))
 	}
 
-	assets, err := LoadAssets(fixturesDir)
+	assets, err := LoadAssets(dir)
 	if err != nil {
 		t.Fatalf("加载模型资产: %v", err)
 	}
