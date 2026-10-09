@@ -143,7 +143,8 @@ func TestPredictionJSON(t *testing.T) {
 // （排序一致性由 parity_test.go 承担，这里只验概率口径——sigmoid 行归一。）
 // 资产目录缺失时跳过（不阻塞无资产环境的单测）。
 func TestProbaAgainstPythonFixtures(t *testing.T) {
-	raw, err := os.ReadFile(filepath.Join(fixturesDir, "fixtures.json"))
+	dir := testAssetsDir(t)
+	raw, err := os.ReadFile(filepath.Join(dir, "fixtures.json"))
 	if err != nil {
 		t.Skipf("fixtures.json 不可读（未导出资产）: %v", err)
 	}
@@ -151,7 +152,7 @@ func TestProbaAgainstPythonFixtures(t *testing.T) {
 	if err := json.Unmarshal(raw, &fx); err != nil {
 		t.Fatalf("解析 fixtures.json: %v", err)
 	}
-	assets, err := LoadAssets(fixturesDir)
+	assets, err := LoadAssets(dir)
 	if err != nil {
 		t.Skipf("模型资产不可加载: %v", err)
 	}

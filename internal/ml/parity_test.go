@@ -8,20 +8,21 @@ import (
 	"time"
 )
 
-// assetsDir 解析模型资产目录，与 engine.mlFor 同一套候选顺序：
-// data/go/ml_assets（export_go_assets.py 导出物）→ models/go/ml_assets
-//（模型进仓库本体后克隆即得的常规位置）。返回空串表示两处都没有。
-func assetsDir() string {
+// testAssetsDir 解析模型资产目录，候选顺序与运行时（engine.mlFor 经
+// ml.LocateAssetsDir）一致：data/go/ml_assets（export_go_assets.py 旧导出
+// 位置）→ models/go/ml_assets（模型进仓库本体后克隆即得的常规位置）。
+// 两处都无全套资产时 t.Skip，不阻塞无资产环境的单测。
+func testAssetsDir(t *testing.T) string {
+	t.Helper()
 	root := filepath.Join("..", "..")
-	for _, cand := range []string{
+	dir := LocateAssetsDir(
 		filepath.Join(root, "data", "go", "ml_assets"),
 		filepath.Join(root, "models", "go", "ml_assets"),
-	} {
-		if _, err := os.Stat(filepath.Join(cand, "fixtures.json")); err == nil {
-			return cand
-		}
+	)
+	if dir == "" {
+		t.Skip("ml 资产缺失（models/go/ml_assets 与 data/go/ml_assets 均无全套文件），跳过对拍")
 	}
-	return ""
+	return dir
 }
 
 type fixtureProduct struct {
@@ -43,10 +44,7 @@ type fixture struct {
 //   - 产品 Top-5 平均重叠 >= 4.5/5
 //   - CWE 类型一致率 >= 99.5%
 func TestParityWithPythonFixtures(t *testing.T) {
-	dir := assetsDir()
-	if dir == "" {
-		t.Skip("ml 资产缺失（data/go/ml_assets 与 models/go/ml_assets 均无 fixtures.json），跳过对拍")
-	}
+	dir := testAssetsDir(t)
 	raw, err := os.ReadFile(filepath.Join(dir, "fixtures.json"))
 	if err != nil {
 		t.Fatalf("读取 fixtures.json 失败（%s）: %v", dir, err)

@@ -36,32 +36,10 @@ func (e *Engine) mlFor() *ml.Assets {
 	if e.mlAssets != nil {
 		return e.mlAssets
 	}
-	dir := e.cfg.ML.AssetsDir
-	if dir == "" {
-		dir = "data/go/ml_assets"
-	}
 	// 资产目录候选：配置优先 → 运行时常规路径 → 仓库内建 models/（克隆
-	// 即用，免配置零拷贝）。
-	candidates := []string{dir, "data/go/ml_assets", "models/go/ml_assets"}
-	dir = ""
-	for _, cand := range candidates {
-		ok := true
-		for _, name := range []string{"cve-tech", "cwe-type"} {
-			for _, ext := range []string{".meta.json", ".vocab.txt", ".idf.f32", ".coef.f32"} {
-				if _, err := os.Stat(filepath.Join(cand, name+ext)); err != nil {
-					ok = false
-					break
-				}
-			}
-			if !ok {
-				break
-			}
-		}
-		if ok {
-			dir = cand
-			break
-		}
-	}
+	// 即用，免配置零拷贝）。候选表收敛在 ml.LocateAssetsDir，对拍测试同源
+	// 引用——曾因两处各自维护、测试漏跟迁移而恒读不到资产。
+	dir := ml.LocateAssetsDir(e.cfg.ML.AssetsDir, "data/go/ml_assets", "models/go/ml_assets")
 	if dir == "" {
 		return nil
 	}
