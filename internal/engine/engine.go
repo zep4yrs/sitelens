@@ -514,15 +514,20 @@ func (e *Engine) Scan(rawURL string, opts Options, onProgress progress, cancel f
 		if e.cfg.Ssrf.BeaconEnabled && e.cfg.Ssrf.BeaconBase != "" {
 			beaconBase = strings.TrimRight(e.cfg.Ssrf.BeaconBase, "/")
 		}
+		deepOn := e.cfg.DAST.DeepProbes
 		r := dast.New(dastFetcher{client}, dast.Options{
-			MaxParams:        e.cfg.DAST.MaxParams,
-			TimeBlind:        e.cfg.DAST.TimeBlind,
-			BoolBlind:        e.cfg.DAST.BoolBlind,
-			BlindThresholdMS: e.cfg.DAST.BlindThresholdMS,
-			SleepSeconds:     e.cfg.DAST.SleepSeconds,
-			MaxURLLen:        e.cfg.DAST.MaxURLLen,
-			BeaconBase:       beaconBase,
-			MaxProbes:        e.cfg.Ssrf.MaxProbes,
+			MaxParams:         e.cfg.DAST.MaxParams,
+			TimeBlind:         e.cfg.DAST.TimeBlind,
+			BoolBlind:         e.cfg.DAST.BoolBlind,
+			BlindThresholdMS:  e.cfg.DAST.BlindThresholdMS,
+			SleepSeconds:      e.cfg.DAST.SleepSeconds,
+			MaxURLLen:         e.cfg.DAST.MaxURLLen,
+			BeaconBase:        beaconBase,
+			MaxProbes:         e.cfg.Ssrf.MaxProbes,
+			DeepProbes:        &deepOn,
+			CmdInject:         e.cfg.DAST.CmdInject && deepOn,
+			CRLF:              e.cfg.DAST.CRLF && deepOn,
+			MaxProbesPerClass: e.cfg.DAST.MaxProbesPerClass,
 			OnHit: func(f dast.Finding) {
 				emit("hit", f.Severity+" · "+f.Title+" — "+f.Param)
 			},
@@ -980,6 +985,33 @@ func (d dastFetcher) GetSmall(rawURL string) *dast.Resp {
 	return &dast.Resp{Status: r.Status, Headers: r.Headers, Body: r.Body}
 }
 
+// GetWithHeaders 带自定义请求头的 GET（Cookie/头注入通道）。
+func (d dastFetcher) GetWithHeaders(rawURL string, headers map[string]string) *dast.Resp {
+	r, err := d.c.GetWithHeaders(rawURL, headers)
+	if err != nil || r == nil {
+		return nil
+	}
+	return &dast.Resp{Status: r.Status, Headers: r.Headers, Body: r.Body}
+}
+
+// PostRawSmall 原始体 POST（XXE 的 XML 探测用）。
+func (d dastFetcher) PostRawSmall(rawURL, contentType, body string) *dast.Resp {
+	r, err := d.c.PostRaw(rawURL, contentType, body)
+	if err != nil || r == nil {
+		return nil
+	}
+	return &dast.Resp{Status: r.Status, Headers: r.Headers, Body: r.Body}
+}
+
+// PostMultipartSmall 多段上传（上传受理面探测用）。
+func (d dastFetcher) PostMultipartSmall(rawURL, fileField, fileName, content string, extra map[string]string) *dast.Resp {
+	r, err := d.c.PostMultipart(rawURL, fileField, fileName, content, extra)
+	if err != nil || r == nil {
+		return nil
+	}
+	return &dast.Resp{Status: r.Status, Headers: r.Headers, Body: r.Body}
+}
+
 // cveMsFindings 把微软公告关联转为统一 Finding 形态。
 func cveMsFindings(ms []intel.CVEMsFinding) []intel.Finding {
 	out := make([]intel.Finding, 0, len(ms))
@@ -1038,10 +1070,11 @@ func collectForms(crForms []crawler.Form,
 		if f.HasPwd && f.Action != "" {
 			*loginForms = append(*loginForms, loginFormEntry{URL: f.Action})
 		}
-		if f.Action == "" || len(f.Names) == 0 {
+		// 文件型表单：无文本字段也要登记（上传面探测入口）
+		if f.Action == "" || (len(f.Names) == 0 && len(f.FileFields) == 0) {
 			continue
 		}
-		addFormTarget(f.Action, f.Names, f.Method, links, forms)
+		addFormTarget(f.Action, f.Names, f.Method, f.FileFields, links, forms)
 	}
 }
 
@@ -1054,22 +1087,33 @@ func collectFormSignals(doc *htmlx.Doc, pageURL string,
 			*loginForms = append(*loginForms, loginFormEntry{URL: action})
 		}
 		names := make([]string, 0, len(f.Inputs))
+		var files []string
 		for _, in := range f.Inputs {
-			if in.Name != "" && len(names) < 16 {
+			if in.Name == "" {
+				continue
+			}
+			if in.Type == "file" {
+				if len(files) < 4 {
+					files = append(files, in.Name)
+				}
+				continue
+			}
+			if len(names) < 16 {
 				names = append(names, in.Name)
 			}
 		}
-		if action == "" || len(names) == 0 {
+		if action == "" || (len(names) == 0 && len(files) == 0) {
 			continue
 		}
-		addFormTarget(action, names, f.Method, links, forms)
+		addFormTarget(action, names, f.Method, files, links, forms)
 	}
 }
 
 // addFormTarget 登记一个表单探测目标；GET 表单额外合成带参 URL——
 // DVWA 类靶场的 SQLi/XSS 模块菜单链接不带参数、参数在 GET 表单里，
 // 不合成则 URL 参数探测永远探不到。
-func addFormTarget(action string, names []string, method string, links *[]string, forms *[]dast.FormTarget) {
+func addFormTarget(action string, names []string, method string, files []string,
+	links *[]string, forms *[]dast.FormTarget) {
 	if strings.EqualFold(method, "get") {
 		if u, err := url.Parse(action); err == nil {
 			q := u.Query()
@@ -1082,7 +1126,7 @@ func addFormTarget(action string, names []string, method string, links *[]string
 			*links = append(*links, u.String())
 		}
 	}
-	*forms = append(*forms, dast.FormTarget{Action: action, Fields: names})
+	*forms = append(*forms, dast.FormTarget{Action: action, Fields: names, FileFields: files})
 }
 
 // resolveAction 解析表单相对 action（空 action 按页面自身）。

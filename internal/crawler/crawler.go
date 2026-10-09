@@ -41,11 +41,12 @@ type Page struct {
 
 // Form 暴露给引擎的表单（与 htmlx.Form 解耦，避免引擎依赖解析细节）。
 type Form struct {
-	Names  []string `json:"names,omitempty"` // 可注入字段名（DAST 表单探测用，截取前 16 个）
-	Action string
-	Method string
-	HasPwd bool
-	Fields int
+	Names      []string `json:"names,omitempty"`       // 可注入字段名（DAST 表单探测用，截取前 16 个）
+	FileFields []string `json:"file_fields,omitempty"` // input[type=file] 字段名（上传面探测用）
+	Action     string
+	Method     string
+	HasPwd     bool
+	Fields     int
 }
 
 // Result 爬取汇总。
@@ -208,15 +209,25 @@ func (c *Crawler) Crawl(home *httpx.Response, extraSeeds []string) *Result {
 				}
 			}
 			names := make([]string, 0, len(f.Inputs))
+			var files []string
 			for _, in := range f.Inputs {
-				if in.Name != "" && len(names) < 16 {
+				if in.Name == "" {
+					continue
+				}
+				if in.Type == "file" {
+					if len(files) < 4 {
+						files = append(files, in.Name)
+					}
+					continue
+				}
+				if len(names) < 16 {
 					names = append(names, in.Name)
 				}
 			}
 			res.Forms = append(res.Forms, Form{
 				Action: act, Method: f.Method,
 				HasPwd: f.HasPassword, Fields: len(f.Inputs),
-				Names: names,
+				Names: names, FileFields: files,
 			})
 		}
 

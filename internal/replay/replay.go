@@ -53,6 +53,16 @@ func (c noRedirectClient) PostFormSmall(rawURL string, data map[string]string) *
 	return c.GetSmall(rawURL)
 }
 
+// PostRawSmall 重放层不做原始体 POST（XXE 通道在此层不适用）。
+func (c noRedirectClient) PostRawSmall(rawURL, contentType, body string) *dast.Resp {
+	return nil
+}
+
+// PostMultipartSmall 重放层不做多段上传（上传通道在此层不适用）。
+func (c noRedirectClient) PostMultipartSmall(rawURL, fileField, fileName, content string, extra map[string]string) *dast.Resp {
+	return nil
+}
+
 // Status 单条重放结论。
 type Status string
 

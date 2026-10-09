@@ -22,7 +22,7 @@ checks:
   nuclei_dir: data/nuclei    # 模板库目录（不存在自动跳过）
 
 crawler:
-  max_pages: 4
+  max_pages: 40
   respect_robots: true
   max_links_per_page: 80
   timeout_sec: 60
@@ -37,6 +37,12 @@ dast:
   blind_threshold_ms: 3500
   sleep_seconds: 4
   max_url_len: 2048
+  # 深度探测面（默认全开）：SSTI / 命令注入 / CRLF / NoSQL / XPath /
+  # LDAP / 表达式注入 / JNDI(Log4Shell) / XXE / 上传受理面 / Cookie-头注入
+  deep_probes: true          # 总闸（关则只跑核心四类）
+  cmd_inject: true           # 命令注入时间差分（重类，单列可关）
+  crlf: true                 # CRLF 响应头注入
+  max_probes_per_class: 12   # 单类探针上限（防重类吃满预算）
 
 intel:
   dump_path: data/intel_dump.json.gz

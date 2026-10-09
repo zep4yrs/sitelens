@@ -230,3 +230,25 @@ func TestSqliLabsBlindCoverage(t *testing.T) {
 		}
 	}
 }
+
+// PostRawSmall 测试桩：不支持原始体 POST（XXE 通道测试单独定义）。
+func (f *routeFetcher) PostRawSmall(u, ct, b string) *Resp     { return nil }
+func (f *randomFetcher) PostRawSmall(u, ct, b string) *Resp    { return nil }
+func (f *sqliFetcher) PostRawSmall(u, ct, b string) *Resp      { return nil }
+func (f *formBlindFetcher) PostRawSmall(u, ct, b string) *Resp { return nil }
+func (f *sqliLabsFetcher) PostRawSmall(u, ct, b string) *Resp  { return nil }
+
+// PostMultipartSmall 测试桩：不支持多段上传。
+func (f *routeFetcher) PostMultipartSmall(u, ff, fn, c string, ex map[string]string) *Resp {
+	return nil
+}
+func (f *randomFetcher) PostMultipartSmall(u, ff, fn, c string, ex map[string]string) *Resp {
+	return nil
+}
+func (f *sqliFetcher) PostMultipartSmall(u, ff, fn, c string, ex map[string]string) *Resp { return nil }
+func (f *formBlindFetcher) PostMultipartSmall(u, ff, fn, c string, ex map[string]string) *Resp {
+	return nil
+}
+func (f *sqliLabsFetcher) PostMultipartSmall(u, ff, fn, c string, ex map[string]string) *Resp {
+	return nil
+}

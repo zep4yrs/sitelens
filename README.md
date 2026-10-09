@@ -43,7 +43,7 @@ internal/
   intel             漏洞情报库：CVE/CVSS/KEV 三级判定
   checks/nuclei     验证型 check 与 Nuclei 模板漏斗
   modules           可选模块：目录/子域/接管/端口/WebShell
-  dast              参数级主动探测（XSS/SQLi/重定向/穿越/盲注）
+  dast              参数级主动探测（XSS/SQLi/重定向/穿越/盲注 + 深度面）
   audit             白盒污点分析
   security          安全响应头评分
   store             扫描历史持久化 + 异步作业管理
@@ -155,6 +155,7 @@ go build -o sitelens.exe ./cmd/sitelens
 - **指纹识别**：372 条精编规则（响应头 / Cookie / Meta / HTML / 脚本 / icon_hash favicon 哈希）+ 主动路径指纹
 - **模板漏斗三前端**：nuclei path 形态、raw 请求形态（官方库大量模板 / 新版 afrog / TscanPlus）、afrog 经典 rules+expression——保守转换，不能诚实映射的整条拒收
 - **DAST 主动探测**：反射 XSS、报错 SQLi、开放重定向、路径穿越、时间型 + 布尔差分盲注（双向差分、双确认）
+- **DAST 深度探测面**（v5.1）：SSTI（模板表达式求值回显）、表达式注入（EL/SpEL/OGNL）、命令注入（时间差分 + 双确认）、CRLF 响应头注入、NoSQL / XPath / LDAP 注入（数据层报错回显）、JNDI（Log4Shell）特征、XXE（XML 外部实体）、文件上传受理面（无害文本文件，非绕过验证）、Cookie/头注入通道——全部走同一套探针序列、类内短路与证据链，均可在 `[dast] deep_probes` 总闸关闭
 - **SSRF 出带确认**：自托管 beacon（`/b/<128 位随机 token>`），目标回连即出带确认，不依赖外部服务，默认关闭
 - **403 绕过探测**：路径变异 × 信任头 × 改写头 × HEAD/OPTIONS 变体表，命中即报"访问控制可被绕过"
 - **漏洞情报关联**：11024 条情报 + CVSS v3.1 评分 + OSV 在线同步 + KEV 在野利用，三级判定（确认 / 可能 / 不受影响）

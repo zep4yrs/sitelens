@@ -38,6 +38,12 @@ func (f noRedirect) PostFormSmall(rawURL string, data map[string]string) *dast.R
 	return f.GetSmall(rawURL)
 }
 
+func (f noRedirect) PostRawSmall(rawURL, contentType, body string) *dast.Resp { return nil }
+
+func (f noRedirect) PostMultipartSmall(rawURL, fileField, fileName, content string, extra map[string]string) *dast.Resp {
+	return nil
+}
+
 func TestOnePresentAndGone(t *testing.T) {
 	mode := "vuln"
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
