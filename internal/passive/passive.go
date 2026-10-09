@@ -125,9 +125,64 @@ func checkCSRF(doc *htmlx.Doc, pageURL string) []Hit {
 	return hits
 }
 
-// Run 对一页已采集响应执行全部被动检查。
+// Deduper 跨页去重器：一次扫描内同一 cookie / 同一表单只报一次。
+//
+// 为什么需要：cookie-attrs 是站点级属性，每个爬到的页面都带着同一个
+// Set-Cookie，逐页上报会在 24 页站点上产出 48 条重复（实测 DVWA 48 条、
+// 靶场评测 59 条 cookie 重复）——不是误报，是脏数据：同一条结论被计数几十次，
+// 拉低准确率口径、淹没真实发现。CSRF 同理：同一 action 的表单是同一个坑。
+type Deduper struct {
+	cookies map[string]bool // Cookie 名 + 缺失属性集合 → 已报
+	forms   map[string]bool // 表单 action + 缺失事实 → 已报
+}
+
+// NewDeduper 创建去重器。
+func NewDeduper() *Deduper {
+	return &Deduper{cookies: map[string]bool{}, forms: map[string]bool{}}
+}
+
+// Run 对一页已采集响应执行全部被动检查（不去重；保留给单页调用方）。
 func Run(resp *httpx.Response, doc *htmlx.Doc, pageURL string) []Hit {
 	hits := checkCookieAttrs(resp, pageURL)
 	hits = append(hits, checkCSRF(doc, pageURL)...)
 	return hits
+}
+
+// RunDedup 带跨页去重的被动检查：站内重复的 cookie 与表单只保留首条。
+// d 为 nil 时退化为无去重（兼容旧调用）。
+func RunDedup(resp *httpx.Response, doc *htmlx.Doc, pageURL string, d *Deduper) []Hit {
+	all := Run(resp, doc, pageURL)
+	if d == nil {
+		return all
+	}
+	out := make([]Hit, 0, len(all))
+	for _, h := range all {
+		switch h.Check {
+		case "cookie-attrs":
+			if d.cookies[h.Evidence] {
+				continue
+			}
+			d.cookies[h.Evidence] = true
+		case "csrf-form":
+			// 去重键只认同一表单（action + 缺失事实），不带所在页面——
+			// 同一登录表单在多个页面回显是同一个坑，按页面去重会重复上报
+			key := h.Evidence
+			if d.forms[key] {
+				continue
+			}
+			d.forms[key] = true
+		}
+		out = append(out, h)
+	}
+	return out
+}
+
+// Hygiene 标记该检查项是否属于「配置卫生」而非漏洞验证。
+//
+// 判定依据：这两类检查读的是响应头/表单结构这类配置事实（Cookie 缺
+// HttpOnly、表单缺 CSRF token），它们在本机 PHP 内置服务器上确实存在，
+// 但不在靶场官方埋的漏洞清单里——混进 verified 会同时拉低严格口径的
+// 准确率（把配置项当误报）与召回口径（分母被稀释）。因此单独成列。
+func Hygiene() map[string]bool {
+	return map[string]bool{"cookie-attrs": true, "csrf-form": true}
 }

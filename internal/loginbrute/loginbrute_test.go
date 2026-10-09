@@ -118,3 +118,67 @@ func TestIsSuccessBaseline(t *testing.T) {
 		t.Fatal("4xx 不应命中")
 	}
 }
+
+// dvwaPoster 模拟 DVWA 登录行为：成功 302 + 空正文，失败 200 + 登录页。
+type dvwaPoster struct{ posts int }
+
+func (f *dvwaPoster) GetSmall(rawURL string) (int, string, error) {
+	return 200, `<html><form action="login.php" method="post">
+<input type="text" name="username"><input type="password" name="password">
+<input type="hidden" name="user_token" value="t"><input type="submit" name="Login" value="Login"></form></html>`, nil
+}
+
+func (f *dvwaPoster) PostJSON(rawURL, body string) (int, string, error) {
+	return f.PostForm(rawURL, map[string]string{"__raw__": body})
+}
+
+func (f *dvwaPoster) PostForm(rawURL string, fields map[string]string) (int, string, error) {
+	f.posts++
+	if fields["username"] == "admin" && fields["password"] == "password" {
+		return 302, "", nil // 成功：重定向 + 空正文（DVWA 真实行为）
+	}
+	return 200, `<html><div class="message">Login failed</div>
+<form action="login.php" method="post"><input type="password" name="password"></form></html>`, nil
+}
+
+func TestBruteDVWA302Success(t *testing.T) {
+	f := &dvwaPoster{}
+	hits, err := Brute(f, Options{PageURL: "http://dvwa/login.php",
+		Users: []string{"admin"}, Passwords: []string{"password"}, MaxTries: 10}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(hits) != 1 || hits[0].User != "admin" {
+		t.Fatalf("DVWA 302 成功应命中: %+v", hits)
+	}
+}
+
+func TestBruteComboBudgetRespected(t *testing.T) {
+	// 组合总数必须严格受 MaxTries 约束：3 用户 × 3 口令 = 9 组合，
+	// MaxTries=4 → 最多 3 次尝试 + 1 次基线 = 4 次提交
+	f := &dvwaPoster{}
+	_, err := Brute(f, Options{PageURL: "http://dvwa/login.php",
+		Users: []string{"a", "b", "c"}, Passwords: []string{"1", "2", "3"}, MaxTries: 4}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if f.posts > 4 {
+		t.Fatalf("MaxTries=4 应最多 4 次提交，实际 %d", f.posts)
+	}
+}
+
+func TestIsSuccessRedirectToLoginRejected(t *testing.T) {
+	// 302 但正文提示跳回登录页：不算命中
+	body := `<html><script>location.href="login.php?error=1"</script></html>`
+	if isSuccess(302, body, 200, 500) {
+		t.Fatal("跳回登录页不应判定成功")
+	}
+	// 302 空正文：命中
+	if !isSuccess(302, "", 200, 500) {
+		t.Fatal("302 空正文应判定成功")
+	}
+	// 200 且含密码框：不命中
+	if isSuccess(200, `<input type="password">`, 200, 500) {
+		t.Fatal("仍含密码框不应判定成功")
+	}
+}

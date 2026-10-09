@@ -249,8 +249,10 @@ func (e *Engine) Scan(rawURL string, opts Options, onProgress progress, cancel f
 	matcher, kb := e.snapshot()
 
 	acc := newTechAcc()
-	dastLinks := []string{}               // 爬取阶段收集的带参链接（DAST 探测点）
-	var dastFormTargets []dast.FormTarget // 爬取阶段收集的表单（DAST 表单探测点）
+	dastLinks := []string{}                // 爬取阶段收集的带参链接（DAST 探测点）
+	var dastFormTargets []dast.FormTarget  // 爬取阶段收集的表单（DAST 表单探测点）
+	type loginFormRef struct{ URL string } // 含密码框的表单页（弱口令审计入口）
+	var loginForms []loginFormRef
 	pages := []crawlPage{{resp: home, doc: doc}}
 
 	// 3) 同域浅爬取（DAST 或 JS 端点开启时 jsmap 前置：API 端点回灌爬虫种子）
@@ -334,6 +336,10 @@ func (e *Engine) Scan(rawURL string, opts Options, onProgress progress, cancel f
 			}
 		}
 		for _, f := range cr.Forms {
+			// 含密码框的表单页：登记为弱口令审计入口（表单弱口令此前零覆盖）
+			if f.HasPwd && f.Action != "" {
+				loginForms = append(loginForms, loginFormRef{URL: f.Action})
+			}
 			if f.Action != "" && len(f.Names) > 0 {
 				// GET 表单：字段合成 query URL 喂给 URL 参数探测——
 				// DVWA 类靶场的 SQLi/XSS 漏洞页菜单链接不带参数，
@@ -486,17 +492,33 @@ func (e *Engine) Scan(rawURL string, opts Options, onProgress progress, cancel f
 	// 7) 被动安全检测（零额外请求）
 	if opts.Passive {
 		onProgress(80, "被动安全检测…")
+		// 配置卫生项跨页去重：同一 cookie / 同一表单只报一次（逐页上报会在
+		// 20+ 页站点上产出几十条重复，是脏数据而非误报）
+		dedup := passive.NewDeduper()
+		hygieneChecks := passive.Hygiene()
+		var hygiene []map[string]any
 		for _, p := range pages {
-			for _, h := range passive.Run(p.resp, p.doc, p.resp.FinalURL) {
-				res.Verified = append(res.Verified, verifiedMap(map[string]any{
+			for _, h := range passive.RunDedup(p.resp, p.doc, p.resp.FinalURL, dedup) {
+				m := verifiedMap(map[string]any{
 					"check": h.Check, "title": h.Title, "severity": h.Severity,
 					"url": h.URL, "evidence": h.Evidence, "advice": h.Advice,
 					"src": "passive",
-				}))
+				})
+				if hygieneChecks[h.Check] {
+					// 配置卫生项单独成列（Extras["hygiene"]）：不混进
+					// verified 漏洞列表，避免拉低严格口径准确率
+					m["kind"] = "hygiene"
+					hygiene = append(hygiene, m)
+				} else {
+					res.Verified = append(res.Verified, m)
+				}
 				if col != nil {
 					col.addPassiveHit(h)
 				}
 			}
+		}
+		if len(hygiene) > 0 {
+			res.Extras["hygiene"] = hygiene
 		}
 	}
 
@@ -647,7 +669,46 @@ func (e *Engine) Scan(rawURL string, opts Options, onProgress progress, cancel f
 			}
 		}
 		if opts.WeakAudit {
-			// 基础认证弱口令：目录探测发现的 401 路径（表单弱口令走登录爆破端点）
+			users := loginbrute.LoadList(
+				wordlistPath(e.cfg, "weak_users.txt"), e.cfg.LoginBrute.MaxUsers)
+			pwds := loginbrute.LoadList(
+				wordlistPath(e.cfg, "weak_passwords.txt"), e.cfg.LoginBrute.MaxPasswords)
+			// 表单弱口令：爬取阶段发现的登录表单（DVWA/pikachu 这类弱口令
+			// 靶场的入口就在表单里）。此前只做 HTTP Basic 401 审计，
+			// 表单口令完全没覆盖——这是「登录爆破未识别 DVWA 表单」的根因。
+			if len(loginForms) > 0 {
+				onProgress(89, "登录表单弱口令审计…")
+				for _, lf := range loginForms {
+					if cancelled() {
+						break
+					}
+					hits, lerr := loginbrute.Brute(postFormPoster{client}, loginbrute.Options{
+						PageURL:     lf.URL,
+						Users:       users,
+						Passwords:   pwds,
+						MaxTries:    e.cfg.LoginBrute.MaxTries,
+						IntervalMS:  e.cfg.LoginBrute.IntervalMS,
+						CaptchaType: "none",
+					}, nil)
+					if lerr != nil {
+						continue // 无表单 / 验证码页：跳过，不中断其余审计
+					}
+					for _, h := range hits {
+						res.Verified = append(res.Verified, verifiedMap(map[string]any{
+							"check": "weak-login-form", "title": "登录表单弱口令",
+							"severity": "high", "url": h.URL,
+							"evidence": "用户 " + h.User + " / 口令 " + strings.Repeat("*", len(h.Password)) + " 登录成功",
+							"advice":   "改用强口令并启用登录失败限制 / 多因素认证",
+							"src":      "weak", "type": "login-form",
+						}))
+						if col != nil {
+							col.addWeakCredential(loginbrute.Hit{Type: "login-form",
+								User: h.User, Password: h.Password, URL: h.URL})
+						}
+					}
+				}
+			}
+			// 基础认证弱口令：目录探测发现的 401 路径
 			var urls401 []string
 			for _, h := range dirHits {
 				if h.Status == 401 {
@@ -659,10 +720,6 @@ func (e *Engine) Scan(rawURL string, opts Options, onProgress progress, cancel f
 			}
 			if len(urls401) > 0 {
 				onProgress(89, "基础认证弱口令审计…")
-				users := loginbrute.LoadList(
-					wordlistPath(e.cfg, "weak_users.txt"), e.cfg.LoginBrute.MaxUsers)
-				pwds := loginbrute.LoadList(
-					wordlistPath(e.cfg, "weak_passwords.txt"), e.cfg.LoginBrute.MaxPasswords)
 				for _, h := range loginbrute.BasicAuthBrute(client, urls401, users, pwds,
 					e.cfg.LoginBrute.MaxTries, e.cfg.LoginBrute.IntervalMS, nil) {
 					res.Verified = append(res.Verified, verifiedMap(map[string]any{
@@ -953,4 +1010,32 @@ func cveMsFindings(ms []intel.CVEMsFinding) []intel.Finding {
 		})
 	}
 	return out
+}
+
+// postFormPoster 表单弱口令审计的 loginbrute.Poster 适配（引擎侧）。
+// 与 server 侧 httpPoster 同语义：单请求不跟重定向，让 302 成功信号可见。
+type postFormPoster struct{ c *httpx.Client }
+
+func (p postFormPoster) GetSmall(rawURL string) (int, string, error) {
+	r, err := p.c.GetDirect(rawURL)
+	if err != nil || r == nil {
+		return 0, "", err
+	}
+	return r.Status, r.Body, nil
+}
+
+func (p postFormPoster) PostForm(rawURL string, fields map[string]string) (int, string, error) {
+	r, err := p.c.PostForm(rawURL, fields)
+	if err != nil || r == nil {
+		return 0, "", err
+	}
+	return r.Status, r.Body, nil
+}
+
+func (p postFormPoster) PostJSON(rawURL, body string) (int, string, error) {
+	r, err := p.c.PostJSON(rawURL, body)
+	if err != nil || r == nil {
+		return 0, "", err
+	}
+	return r.Status, r.Body, nil
 }

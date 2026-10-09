@@ -354,13 +354,22 @@ func Brute(p Poster, opts Options, onProgress func(done, total int, msg string))
 		form.HasCaptcha = true
 	}
 
+	// 组合生成：MaxTries-1 为基线预留 1 次；两层循环都要看总预算——
+	// 只在内层 break 会让外层继续叠加，实际请求数超出硬上限（安全护栏失效）。
 	combos := []struct{ u, pw string }{}
+	budget := opts.MaxTries - 1
+	if budget <= 0 {
+		budget = 1
+	}
 	for _, u := range opts.Users {
 		for _, pw := range opts.Passwords {
-			if len(combos) >= opts.MaxTries-1 {
+			if len(combos) >= budget {
 				break
 			}
 			combos = append(combos, struct{ u, pw string }{u, pw})
+		}
+		if len(combos) >= budget {
+			break
 		}
 	}
 	total := len(combos) + 1
@@ -418,13 +427,25 @@ func Brute(p Poster, opts Options, onProgress func(done, total int, msg string))
 }
 
 // isSuccess 命中判定：不在登录页（无密码框回显）且状态/内容偏离失败基线。
+//
+// DVWA / pikachu 这类靶场成功登录返回 302 + 空正文，失败返回 200 + 登录页：
+// 只看正文会把成功误判成"空页面"。因此重定向状态优先判定为成功，
+// 但保留一条反例——重定向回登录页本身（Location 含 login/signin）不算命中。
 func isSuccess(status int, body string, baseStatus, baseSize int) bool {
 	if status == 0 || status >= 400 {
 		return false
 	}
-	if strings.Contains(strings.ToLower(body), `type="password"`) ||
-		strings.Contains(strings.ToLower(body), "type='password'") {
+	low := strings.ToLower(body)
+	if strings.Contains(low, `type="password"`) ||
+		strings.Contains(low, "type='password'") {
 		return false // 仍在登录页
+	}
+	// 重定向到非登录页 = 会话已建立（表单登录最可靠的信号）
+	if status == 302 || status == 303 || status == 307 || status == 308 {
+		if loc := redirectTarget(body); loc != "" && isLoginPath(loc) {
+			return false
+		}
+		return true
 	}
 	if baseStatus != 0 {
 		thresh := baseSize * 15 / 100
@@ -440,6 +461,33 @@ func isSuccess(status int, body string, baseStatus, baseSize int) bool {
 		}
 	}
 	return true
+}
+
+// redirectTarget 从 302 正文里的 <a href> / Location 提示中取跳转目标。
+// PostForm 不跟重定向且不保留响应头，正文里的 meta refresh / 链接是
+// 唯一可读线索；取不到就返回空（调用方按"非登录页"处理）。
+func redirectTarget(body string) string {
+	low := strings.ToLower(body)
+	for _, key := range []string{"location.href", "location.replace", "url="} {
+		if i := strings.Index(low, key); i >= 0 {
+			seg := body[i+len(key):]
+			seg = strings.TrimLeft(seg, "= (\"'")
+			if j := strings.IndexAny(seg, "\"' )\n"); j > 0 {
+				return strings.ToLower(seg[:j])
+			}
+		}
+	}
+	return ""
+}
+
+// isLoginPath 跳转目标是否仍在登录页（login.php / signin 等）。
+func isLoginPath(u string) bool {
+	for _, k := range []string{"login", "signin", "sign-in", "auth", "session/new"} {
+		if strings.Contains(u, k) {
+			return true
+		}
+	}
+	return false
 }
 
 // ---- helpers ----

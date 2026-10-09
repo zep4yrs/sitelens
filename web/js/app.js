@@ -479,6 +479,23 @@ function renderResult(r, scanId) {
     html += '<p class="muted" style="font-size:13px">无（本轮等级未运行验证检测或未命中）。</p>';
   }
 
+  /* 配置卫生发现（extras.hygiene）：Cookie 安全属性 / CSRF token 这类
+     配置事实。真实存在但不属于漏洞验证，与「已验证漏洞」分列呈现——
+     混在一起会同时拉低准确率与召回口径（v5.0.1 起引擎侧已分离）。 */
+  var hyg = (r.extras && r.extras.hygiene) || [];
+  if (hyg.length) {
+    html += '<div class="sec-title">配置卫生 <span class="count">' + hyg.length +
+      " 条（配置事实，非漏洞验证）</span></div>";
+    html += '<div class="tbl-wrap"><table class="vulns"><tr><th>严重度</th><th>检测项</th><th>命中地址</th><th>建议</th></tr>';
+    hyg.forEach(function (v) {
+      html += "<tr><td>" + sevBadge(v.severity) + "</td>" +
+        '<td class="mono">' + esc(v.check) + " " + esc(v.title) + "</td>" +
+        '<td class="mono" style="font-size:12px;word-break:break-all">' + esc(v.url) +
+        "（" + esc(v.evidence) + "）</td><td>" + esc(v.advice) + "</td></tr>";
+    });
+    html += "</table></div>";
+  }
+
   var vulns = r.vulnerabilities || [];
   html += '<div class="sec-title">漏洞情报关联 <span class="count">' + vulns.length +
     " 条（按组件关联的历史漏洞，非漏洞验证）</span></div>";

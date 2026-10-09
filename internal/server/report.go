@@ -170,6 +170,21 @@ func markdownReport(rec *store.ScanRecord) string {
 		b.WriteString("\n")
 	}
 
+	// 配置卫生（extras.hygiene）：配置事实，与漏洞验证分列
+	if hyg, ok := rec.Result.Extras["hygiene"].([]map[string]any); ok && len(hyg) > 0 {
+		b.WriteString("## 配置卫生（" + strconv.Itoa(len(hyg)) + "，非漏洞验证）\n\n")
+		b.WriteString("| 严重度 | 检测项 | URL | 证据 | 建议 |\n|---|---|---|---|---|\n")
+		for _, v := range hyg {
+			sev, _ := v["severity"].(string)
+			tit, _ := v["title"].(string)
+			u, _ := v["url"].(string)
+			ev, _ := v["evidence"].(string)
+			ad, _ := v["advice"].(string)
+			b.WriteString("| " + sevClass(sev) + " | " + mdCell(tit) + " | " + mdCell(u) + " | " + mdCell(ev) + " | " + mdCell(ad) + " |\n")
+		}
+		b.WriteString("\n")
+	}
+
 	// 漏洞情报
 	vulns := rec.Result.Vulnerabilities
 	b.WriteString("## 漏洞情报关联（" + strconv.Itoa(len(vulns)) + "）\n\n")

@@ -16,19 +16,63 @@ import (
 
 // 探测标记与判定特征。标记含随机段，正常页面不可能天然含有。
 const (
-	xssMark   = "slq9z7\"><svg/onload=slq9z7>"
-	xssRaw    = "slq9z7\"><svg"
-	traversal = "../../../../../../../../etc/passwd"
-	travHit   = "root:x:0:0:"
-	redirMark = "//sitelens-dt.example.com"
+	xssMark = "slq9z7\"><svg/onload=slq9z7>"
+	xssRaw  = "slq9z7\"><svg"
+	// redirHost 开放重定向的标记域名（Location 含它即说明参数可控跳转目标）
+	redirHost = "sitelens-dt.example.com"
 )
 
 // sqlErrors 报错型 SQLi 特征（与基线求差后判定）。
+// 覆盖 MySQL / MariaDB / PostgreSQL / Oracle / SQLite / MSSQL / PHP 警告
+// 七族：sqli-labs 这类靶场只回显 PHP 警告或 SQL 片段，特征表窄了就是漏报。
 var sqlErrors = []string{
-	"sql syntax", "mysql_fetch", "ora-", "postgresql", "sqlite",
+	"sql syntax", "mysql_fetch", "mysql_num_rows", "mysql_query",
+	"mysql_result", "ora-", "postgresql", "sqlite",
 	"unclosed quotation", "jdbc", "pg_query", "odbc", "sqlstate",
 	"sqlite3.", "sqlcmd", "syntax error at or near",
-	"unterminated quoted string", "mysql_num_rows",
+	"unterminated quoted string", "you have an error in your sql",
+	"warning: mysqli", "warning: mysql", "supplied argument is not a valid mysql",
+	"quoted string not properly terminated", "microsoft ole db provider for sql server",
+	"odbc sql server driver", "unclosed quotation mark after the character string",
+	"java.sql.sqlsyntaxerrorexception", "pg::syntaxerror", "invalid query",
+	"error based", "check the manual that corresponds to your",
+}
+
+// traversalMarks 目录遍历命中内容特征（多文件多形态）。
+// 只认 /etc/passwd 会漏 Windows 目标与 CVE 根路径变体；
+// 全部与基线求差后判定（页面本来就有的不算）。
+var traversalMarks = []string{
+	"root:x:0:0:", "root:x:0:0", "[boot loader]", // Linux passwd / win.ini
+	"daemon:x:", "for 16-bit app support",
+}
+
+// traversalProbes 目录遍历探针序列（按优先级）。多编码多深度：
+// 原生 ../ / URL 编码 %2e%2e%2f / 双写 ....// / 绝对路径，覆盖过滤器绕过。
+var traversalProbes = []string{
+	"../../../../../../../../etc/passwd",
+	"....//....//....//....//....//....//etc/passwd",
+	"%2e%2e%2f%2e%2e%2f%2e%2e%2f%2e%2e%2f%2e%2e%2fetc%2fpasswd",
+	"/etc/passwd",
+	"..%2f..%2f..%2f..%2f..%2fetc%2fpasswd",
+}
+
+// redirProbes 开放重定向探针序列：协议相对 / 绝对 / 反斜杠变体。
+var redirProbes = []string{
+	"//sitelens-dt.example.com",
+	"https://sitelens-dt.example.com/",
+	`\/\/sitelens-dt.example.com`,
+}
+
+// sqliErrorProbes 报错型 SQLi 探针序列：单引号 / 双引号 / 括号闭合 /
+// 数字型尾随——不同上下文触发报错的位置不同。
+var sqliErrorProbes = []string{"'", "\"", "')", "1'"}
+
+// xssProbes 反射型 XSS 探针序列：标签突破 + 属性突破 + 纯文本标记。
+// 判定统一看未转义标记是否原样回显（与基线求差）。
+var xssProbes = []string{
+	xssMark,
+	"\"><script>slq9z7</script>",
+	"javascript:slq9z7",
 }
 
 // Options 探测阈值（.sitelens.yml [dast] 节可覆盖）。
@@ -114,14 +158,18 @@ func (r *Runner) SetProgress(fn func(done, total int, msg string)) { r.prog = fn
 func (r *Runner) stopped() bool { return r.cancel != nil && r.cancel() }
 
 // Run 对全部探测目标执行注入检测，返回命中的发现。
+//
+// 每参数探测预算：基线 1 + XSS/报错SQLi/重定向/遍历 各自的探针序列 +
+// 时间盲注 3 + 布尔通道 2N + 反序列化 1。探针序列按优先级短路
+// （首个命中即停），未命中才继续下一个探针。
 func (r *Runner) Run(links []string) []Finding {
 	targets := collectParams(links, r.opts.MaxParams)
 	if len(targets) == 0 {
 		return nil
 	}
-	perTarget := 5 // 基线 + xss / sqli / redirect / traversal
+	perTarget := 1 + len(xssProbes) + len(sqliErrorProbes) + len(redirProbes) + len(traversalProbes) + 1
 	if r.opts.TimeBlind {
-		perTarget += 3 // 基线 + 注入 + 复测
+		perTarget += 3 // 基线计时 + 注入 + 复测
 	}
 	total := len(targets) * perTarget
 	done := 0
@@ -144,39 +192,7 @@ func (r *Runner) Run(links []string) []Finding {
 		}
 		tick(shortLabel(tgt))
 
-		for _, probe := range []struct {
-			kind  string
-			value string
-		}{
-			{"xss", xssMark},
-			{"sqli", "'"},
-			{"redirect", redirMark},
-			{"traversal", traversal},
-		} {
-			if r.stopped() {
-				return hits
-			}
-			probeURL := setParam(tgt.URL, tgt.Param, probe.value)
-			if len(probeURL) > r.opts.MaxURLLen {
-				tick(shortLabel(tgt))
-				continue
-			}
-			resp := r.fetch.GetSmall(probeURL)
-			tick(shortLabel(tgt))
-			if resp == nil {
-				continue
-			}
-			if hit := judge(probe.kind, resp, baseBody, tgt); hit != nil {
-				hit.Payload = probe.value
-				hit.Replay = curlReplay(probeURL)
-				hit.Signals = []string{probe.kind + " 探针命中"}
-				chainEvidence(hit, probeURL, resp)
-				if r.opts.OnHit != nil {
-					r.opts.OnHit(*hit)
-				}
-				hits = append(hits, *hit)
-			}
-		}
+		hits = append(hits, r.probeSequences(tgt, baseBody, &done, total)...)
 
 		if r.opts.TimeBlind && !r.stopped() {
 			if f := r.timeBlind(tgt, &done, total); f != nil {
@@ -200,6 +216,58 @@ func (r *Runner) Run(links []string) []Finding {
 	// SSRF 出带回调：目标侧回连本服务 beacon 即确认可达
 	if r.opts.BeaconBase != "" && !r.stopped() {
 		hits = append(hits, r.ssrfProbe(targets)...)
+	}
+	return hits
+}
+
+// probeSequences 对单个目标跑四类探针序列（XSS / 报错 SQLi /
+// 开放重定向 / 目录遍历），每类按优先级短路，命中即停该类。
+func (r *Runner) probeSequences(tgt Target, baseBody string, done *int, total int) []Finding {
+	label := shortLabel(tgt)
+	var hits []Finding
+	type probeCase struct {
+		kind   string
+		values []string
+	}
+	for _, pc := range []probeCase{
+		{"xss", xssProbes},
+		{"sqli", sqliErrorProbes},
+		{"redirect", redirProbes},
+		{"traversal", traversalProbes},
+	} {
+		for _, value := range pc.values {
+			if r.stopped() {
+				return hits
+			}
+			probeURL := setParam(tgt.URL, tgt.Param, value)
+			if len(probeURL) > r.opts.MaxURLLen {
+				*done++
+				if r.prog != nil {
+					r.prog(*done, total, label)
+				}
+				continue
+			}
+			resp := r.fetch.GetSmall(probeURL)
+			*done++
+			if r.prog != nil {
+				r.prog(*done, total, label)
+			}
+			if resp == nil {
+				continue
+			}
+			hit := judge(pc.kind, resp, baseBody, tgt)
+			if hit == nil {
+				continue
+			}
+			hit.Payload = value
+			chainEvidence(hit, probeURL, resp)
+			hit.Signals = []string{pc.kind + " 探针命中"}
+			if r.opts.OnHit != nil {
+				r.opts.OnHit(*hit)
+			}
+			hits = append(hits, *hit)
+			break // 该类命中即停，省预算给其余类别
+		}
 	}
 	return hits
 }
@@ -272,35 +340,46 @@ func (r *Runner) RunForms(targets []FormTarget) []Finding {
 		}
 		tick(label)
 
-		for _, probe := range []struct {
-			kind  string
-			value string
+		for _, pc := range []struct {
+			kind   string
+			values []string
 		}{
-			{"xss", xssMark},
-			{"sqli", "'"},
-			{"redirect", redirMark},
-			{"traversal", traversal},
+			{"xss", xssProbes},
+			{"sqli", sqliErrorProbes},
+			{"redirect", redirProbes},
+			{"traversal", traversalProbes},
 		} {
-			if r.stopped() {
-				return hits
-			}
-			data := map[string]string{}
-			for f := range baseData {
-				data[f] = "sl-dast-base"
-			}
-			data[p.field] = probe.value
-			resp := r.fetch.PostFormSmall(p.ft.Action, data)
-			tick(label)
-			if resp == nil {
-				continue
-			}
-			if hit := judge(probe.kind, resp, baseBody, Target{URL: p.ft.Action, Param: p.field}); hit != nil {
-				probeURL := p.ft.Action + "?" + p.field + "=" + probe.value
-				hit.Payload = probe.value
-				hit.Replay = "curl -sk --path-as-is -d '" + p.field + "=" + strings.ReplaceAll(probe.value, "'", `'\''`) + "' '" + p.ft.Action + "'"
+			for _, value := range pc.values {
+				if r.stopped() {
+					return hits
+				}
+				data := map[string]string{}
+				for f := range baseData {
+					data[f] = "sl-dast-base"
+				}
+				data[p.field] = value
+				resp := r.fetch.PostFormSmall(p.ft.Action, data)
+				tick(label)
+				if resp == nil {
+					continue
+				}
+				hit := judge(pc.kind, resp, baseBody, Target{URL: p.ft.Action, Param: p.field})
+				if hit == nil {
+					continue
+				}
+				probeURL := p.ft.Action + "?" + p.field + "=" + value
+				hit.Payload = value
+				hit.Replay = formReplay(p.ft.Action, p.field, value)
 				chainEvidence(hit, probeURL, resp)
+				hit.Signals = []string{pc.kind + " 表单探针命中"}
 				hits = append(hits, *hit)
+				break // 该类命中即停
 			}
+		}
+		// 布尔差分盲注：表单字段专有通道（报错不回显时的唯一出路）
+		if r.opts.BoolBlind && !r.stopped() {
+			plan := []FormTarget{{Action: p.ft.Action, Fields: []string{p.field}}}
+			hits = append(hits, r.runFormBoolBlind(plan, &done, total)...)
 		}
 	}
 	return hits
@@ -532,7 +611,7 @@ func judge(kind string, resp *Resp, baseline string, tgt Target) *Finding {
 		}
 	case "redirect":
 		loc := strings.ToLower(resp.Header("Location"))
-		if redirectStatus(resp.Status) && strings.Contains(loc, redirMark) {
+		if redirectStatus(resp.Status) && strings.Contains(loc, "sitelens-dt.example.com") {
 			return &Finding{
 				Check: "open-redirect", Title: "开放重定向",
 				Severity: "medium", URL: tgt.URL, Param: tgt.Param,
@@ -542,12 +621,14 @@ func judge(kind string, resp *Resp, baseline string, tgt Target) *Finding {
 			}
 		}
 	case "traversal":
-		if strings.Contains(body, travHit) && !strings.Contains(baseline, travHit) {
-			return &Finding{
-				Check: "lfi-passwd", Title: "目录遍历读取 /etc/passwd",
-				Severity: "high", URL: tgt.URL, Param: tgt.Param,
-				Evidence: "参数 " + tgt.Param + " 注入 ../ 序列读到系统文件",
-				Advice:   "路径白名单校验，禁止 .. 序列",
+		for _, mark := range traversalMarks {
+			if strings.Contains(body, mark) && !strings.Contains(baseline, mark) {
+				return &Finding{
+					Check: "lfi-passwd", Title: "目录遍历读取系统文件",
+					Severity: "high", URL: tgt.URL, Param: tgt.Param,
+					Evidence: "参数 " + tgt.Param + " 注入 ../ 序列读到系统文件（命中特征 " + mark + "）",
+					Advice:   "路径白名单校验，禁止 .. 序列与绝对路径",
+				}
 			}
 		}
 	}
