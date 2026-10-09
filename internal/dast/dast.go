@@ -77,26 +77,33 @@ var xssProbes = []string{
 
 // Options 探测阈值（.sitelens.yml [dast] 节可覆盖）。
 type Options struct {
-	MaxParams        int           // 最多探测的参数个数
-	TimeBlind        bool          // 是否做时间盲注（每参数多 2 个请求）
-	BoolBlind        bool          // 是否做布尔差分盲注（每参数 5 个请求）
-	BlindThresholdMS int64         // 时间盲注延迟判定阈值（毫秒）
-	SleepSeconds     int           // 注入的 SLEEP 秒数
-	MaxURLLen        int           // 探测 URL 长度上限，超过则跳过
-	BeaconBase       string        // SSRF 出带回调基地址（空 = 禁用）
-	MaxProbes        int           // 出带探测参数上限
-	OnHit            func(Finding) // 命中即时回调（实时事件流，nil = 不回调）
+	MaxParams         int           // 最多探测的参数个数
+	TimeBlind         bool          // 是否做时间盲注（每参数多 2 个请求）
+	BoolBlind         bool          // 是否做布尔差分盲注（每参数 5 个请求）
+	BlindThresholdMS  int64         // 时间盲注延迟判定阈值（毫秒）
+	SleepSeconds      int           // 注入的 SLEEP 秒数
+	MaxURLLen         int           // 探测 URL 长度上限，超过则跳过
+	BeaconBase        string        // SSRF 出带回调基地址（空 = 禁用）
+	MaxProbes         int           // 出带探测参数上限
+	DeepProbes        *bool         // 深度探测面总闸（nil = 默认开）
+	CmdInject         bool          // 命令注入时间差分（重类，默认开）
+	CRLF              bool          // CRLF 响应头注入
+	MaxProbesPerClass int           // 单类探针上限（防重类吃满预算，默认 12）
+	OnHit             func(Finding) // 命中即时回调（实时事件流，nil = 不回调）
 }
 
 // DefaultOptions 最佳实践默认值。
 func DefaultOptions() Options {
 	return Options{
-		MaxParams:        24,
-		TimeBlind:        true,
-		BoolBlind:        true,
-		BlindThresholdMS: 3500,
-		SleepSeconds:     4,
-		MaxURLLen:        2048,
+		MaxParams:         24,
+		TimeBlind:         true,
+		BoolBlind:         true,
+		BlindThresholdMS:  3500,
+		SleepSeconds:      4,
+		MaxURLLen:         2048,
+		CmdInject:         true,
+		CRLF:              true,
+		MaxProbesPerClass: 12,
 	}
 }
 
@@ -122,6 +129,17 @@ type Fetcher interface {
 	GetSmall(rawURL string) *Resp
 	// PostFormSmall 表单 POST（表单探测用；同不跟随重定向）。
 	PostFormSmall(rawURL string, data map[string]string) *Resp
+	// PostRawSmall 原始体 POST（XXE 的 XML 体探测用；同不跟随重定向）。
+	// 可选实现：返回 nil 表示不支持，XXE 通道自动跳过（不误报）。
+	PostRawSmall(rawURL, contentType, body string) *Resp
+	// PostMultipartSmall 多段上传（上传面探测用；同不跟随重定向）。
+	// 可选实现：返回 nil 表示不支持，上传通道自动跳过（不误报）。
+	PostMultipartSmall(rawURL, fileField, fileName, content string, extra map[string]string) *Resp
+}
+
+// HeaderFetcher 可选扩展：支持带自定义请求头的单请求（Cookie/头注入通道）。
+type HeaderFetcher interface {
+	GetWithHeaders(rawURL string, headers map[string]string) *Resp
 }
 
 // Target 带参数的探测目标。
@@ -146,6 +164,9 @@ func New(f Fetcher, opts Options) *Runner {
 	if opts.MaxURLLen <= 0 {
 		opts.MaxURLLen = 2048
 	}
+	if opts.MaxProbesPerClass <= 0 {
+		opts.MaxProbesPerClass = 12
+	}
 	return &Runner{fetch: f, opts: opts}
 }
 
@@ -168,6 +189,7 @@ func (r *Runner) Run(links []string) []Finding {
 		return nil
 	}
 	perTarget := 1 + len(xssProbes) + len(sqliErrorProbes) + len(redirProbes) + len(traversalProbes) + 1
+	perTarget += r.deepBudget()
 	if r.opts.TimeBlind {
 		perTarget += 3 // 基线计时 + 注入 + 复测
 	}
@@ -193,6 +215,25 @@ func (r *Runner) Run(links []string) []Finding {
 		tick(shortLabel(tgt))
 
 		hits = append(hits, r.probeSequences(tgt, baseBody, &done, total)...)
+
+		// 深度探测面（SSTI/命令注入/CRLF/NoSQL/XPath/LDAP/表达式/Log4j）：
+		// 需要响应头基线（CRLF 判定），故在此单独取一次基线响应。
+		if r.deepEnabled() && !r.stopped() {
+			var baseHeaders map[string]bool
+			if base := r.fetch.GetSmall(tgt.URL); base != nil {
+				baseHeaders = headerNameSet(base)
+			}
+			done++
+			if r.prog != nil {
+				r.prog(done, total, shortLabel(tgt))
+			}
+			hits = append(hits, r.deepSequences(tgt, baseBody, baseHeaders, &done, total)...)
+		}
+
+		// Cookie / 头注入通道（sqli-labs Less-24/42~45 类入口；需扩展接口）
+		if r.deepEnabled() && !r.stopped() {
+			hits = append(hits, r.cookieHeaderProbe(tgt, baseBody, &done, total)...)
+		}
 
 		if r.opts.TimeBlind && !r.stopped() {
 			if f := r.timeBlind(tgt, &done, total); f != nil {
@@ -231,7 +272,7 @@ func (r *Runner) probeSequences(tgt Target, baseBody string, done *int, total in
 	}
 	for _, pc := range []probeCase{
 		{"xss", xssProbes},
-		{"sqli", sqliErrorProbes},
+		{"sqli", sqliErrorAll()},
 		{"redirect", redirProbes},
 		{"traversal", traversalProbes},
 	} {
@@ -274,8 +315,9 @@ func (r *Runner) probeSequences(tgt Target, baseBody string, done *int, total in
 
 // FormTarget POST 表单探测目标（来自爬虫的表单采集）。
 type FormTarget struct {
-	Action string   // 绝对 URL
-	Fields []string // 可注入字段名
+	Action     string   // 绝对 URL
+	Fields     []string // 可注入字段名
+	FileFields []string // 文件型字段名（上传面探测用）
 }
 
 // RunForms 对表单字段执行与 URL 参数相同的四类无害探测。
@@ -308,10 +350,6 @@ func (r *Runner) RunForms(targets []FormTarget) []Finding {
 			plan = append(plan, planItem{ft, f})
 		}
 	}
-	if len(plan) == 0 {
-		return nil
-	}
-
 	total := len(plan) * 5 // 基线 + xss / sqli / redirect / traversal
 	done := 0
 	tick := func(label string) {
@@ -322,6 +360,47 @@ func (r *Runner) RunForms(targets []FormTarget) []Finding {
 	}
 
 	var hits []Finding
+	xxeDone := map[string]bool{}
+	uploadDone := map[string]bool{}
+
+	// 上传受理面探测：对含 input[type=file] 的表单提交一次无害文本文件。
+	// 与字段注入 plan 分开——上传表单（upload-labs 类）往往没有可注入的
+	// 文本字段、不进 plan，此行在其之前，plan 为空也照样探。
+	if r.deepEnabled() {
+		for _, ft := range targets {
+			if r.stopped() {
+				break
+			}
+			if ft.Action == "" || len(ft.FileFields) == 0 || uploadDone[ft.Action] {
+				continue
+			}
+			uploadDone[ft.Action] = true
+			for _, ff := range ft.FileFields {
+				if r.stopped() || ff == "" {
+					break
+				}
+				extra := map[string]string{}
+				for _, f := range ft.Fields {
+					if f != "" {
+						extra[f] = "sl-upload-probe"
+					}
+				}
+				if f := r.uploadProbe(ft.Action, ff, extra, &done, total); f != nil {
+					if r.opts.OnHit != nil {
+						r.opts.OnHit(*f)
+					}
+					hits = append(hits, *f)
+				}
+				break // 每表单只探第一个文件字段
+			}
+		}
+	}
+
+	// 无文本可注入字段时，上传探测已跑完，无需再做字段注入循环。
+	if len(plan) == 0 {
+		return hits
+	}
+
 	for _, p := range plan {
 		if r.stopped() {
 			break
@@ -345,7 +424,7 @@ func (r *Runner) RunForms(targets []FormTarget) []Finding {
 			values []string
 		}{
 			{"xss", xssProbes},
-			{"sqli", sqliErrorProbes},
+			{"sqli", sqliErrorAll()},
 			{"redirect", redirProbes},
 			{"traversal", traversalProbes},
 		} {
@@ -380,6 +459,16 @@ func (r *Runner) RunForms(targets []FormTarget) []Finding {
 		if r.opts.BoolBlind && !r.stopped() {
 			plan := []FormTarget{{Action: p.ft.Action, Fields: []string{p.field}}}
 			hits = append(hits, r.runFormBoolBlind(plan, &done, total)...)
+		}
+		// XXE：XML 体探测（POST 端点，每端点一次；解析器禁用实体则无回显）
+		if r.deepEnabled() && !r.stopped() && !xxeDone[p.ft.Action] {
+			xxeDone[p.ft.Action] = true
+			if f := r.xxeProbe(p.ft.Action, &done, total); f != nil {
+				if r.opts.OnHit != nil {
+					r.opts.OnHit(*f)
+				}
+				hits = append(hits, *f)
+			}
 		}
 	}
 	return hits

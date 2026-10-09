@@ -183,6 +183,11 @@ func runScan(cfg *config.Config, rawURL string) {
 		Checks:  cfg.Checks.Level,
 		Netsec:  cfg.Modules.Netsec,
 		Passive: true,
+		// DAST 主动注入探测：CLI scan 此前漏开（只有 serve 的 scanOptions 开了），
+		// 导致命令行扫描永远拿不到参数级注入发现——与"deep 档含 DAST"的
+		// 档位语义不符。此处按配置总闸打开（[dast] 段可关）。
+		DAST:    true,
+		JSMap:   true,                // JS 攻击面提取（bundle 端点 / SourceMap，只读）
 		Exploit: cfg.Exploit.Enabled, // 利用级验证：配置总闸
 		Graph:   cfg.Scan.Graph,      // 4.0 P2：结构化事实图（默认关）
 	}

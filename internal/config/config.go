@@ -135,12 +135,16 @@ type CrawlerConfig struct {
 
 // DASTConfig 参数级注入探测。
 type DASTConfig struct {
-	MaxParams        int   `yaml:"max_params"`         // 最多探测的参数个数
-	TimeBlind        bool  `yaml:"time_blind"`         // 时间盲注开关
-	BoolBlind        bool  `yaml:"bool_blind"`         // 布尔差分盲注开关
-	BlindThresholdMS int64 `yaml:"blind_threshold_ms"` // 延迟判定阈值（毫秒）
-	SleepSeconds     int   `yaml:"sleep_seconds"`      // 注入的 SLEEP 秒数
-	MaxURLLen        int   `yaml:"max_url_len"`        // 探测 URL 长度上限
+	MaxParams         int   `yaml:"max_params"`           // 最多探测的参数个数
+	TimeBlind         bool  `yaml:"time_blind"`           // 时间盲注开关
+	BoolBlind         bool  `yaml:"bool_blind"`           // 布尔差分盲注开关
+	BlindThresholdMS  int64 `yaml:"blind_threshold_ms"`   // 延迟判定阈值（毫秒）
+	SleepSeconds      int   `yaml:"sleep_seconds"`        // 注入的 SLEEP 秒数
+	MaxURLLen         int   `yaml:"max_url_len"`          // 探测 URL 长度上限
+	DeepProbes        bool  `yaml:"deep_probes"`          // 深度探测面总闸（SSTI/命令注入/CRLF/NoSQL/XPath/LDAP/表达式/JNDI/XXE）
+	CmdInject         bool  `yaml:"cmd_inject"`           // 命令注入时间差分（重类，深度面内单独可关）
+	CRLF              bool  `yaml:"crlf"`                 // CRLF 响应头注入
+	MaxProbesPerClass int   `yaml:"max_probes_per_class"` // 单类探针上限（防重类吃满预算）
 }
 
 // IntelConfig 漏洞情报知识库。
@@ -248,12 +252,16 @@ func Default() *Config {
 			HeadlessTimeoutSec: 20,
 		},
 		DAST: DASTConfig{
-			MaxParams:        24,
-			TimeBlind:        true,
-			BoolBlind:        true,
-			BlindThresholdMS: 3500,
-			SleepSeconds:     4,
-			MaxURLLen:        2048,
+			MaxParams:         24,
+			TimeBlind:         true,
+			BoolBlind:         true,
+			BlindThresholdMS:  3500,
+			SleepSeconds:      4,
+			MaxURLLen:         2048,
+			DeepProbes:        true, // 深度探测面默认开：覆盖面是评测的核心诉求
+			CmdInject:         true,
+			CRLF:              true,
+			MaxProbesPerClass: 12,
 		},
 		Exploit: ExploitConfig{
 			Enabled:          false, // 总闸默认关：设置页「利用级验证」可开
@@ -395,6 +403,7 @@ func (c *Config) fillDefaults() {
 	fillInt64(&c.DAST.BlindThresholdMS, d.DAST.BlindThresholdMS)
 	fillInt(&c.DAST.SleepSeconds, d.DAST.SleepSeconds)
 	fillInt(&c.DAST.MaxURLLen, d.DAST.MaxURLLen)
+	fillInt(&c.DAST.MaxProbesPerClass, d.DAST.MaxProbesPerClass)
 
 	if c.Intel.DumpPath == "" {
 		c.Intel.DumpPath = d.Intel.DumpPath

@@ -207,6 +207,23 @@ func (c *Client) GetDirect(rawURL string) (*Response, error) {
 	return toResponseCap(resp, rawURL, 1_000_000), nil
 }
 
+// GetWithHeaders 带自定义请求头的 GET（单请求，不跟随重定向；Cookie/头注入探测用）。
+func (c *Client) GetWithHeaders(rawURL string, headers map[string]string) (*Response, error) {
+	c.wait()
+	req, err := c.newRequest(http.MethodGet, rawURL)
+	if err != nil {
+		return nil, err
+	}
+	for k, v := range headers {
+		req.Header.Set(k, v)
+	}
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	return toResponseCap(resp, rawURL, 512_000), nil
+}
+
 // PostForm POST 表单提交（单请求，不跟随重定向；登录爆破用）。
 func (c *Client) PostForm(rawURL string, fields map[string]string) (*Response, error) {
 	c.wait()
@@ -239,6 +256,39 @@ func (c *Client) PostRaw(rawURL, contentType, body string) (*Response, error) {
 	req.Header.Set("Content-Type", contentType)
 	req.Body = io.NopCloser(strings.NewReader(body))
 	req.ContentLength = int64(len(body))
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	return toResponseCap(resp, rawURL, 512_000), nil
+}
+
+// PostMultipart 多段表单上传（单请求，不跟随重定向；上传面探测用）。
+// fileField 为文件字段名，fileName 为文件名，content 为文件内容。
+func (c *Client) PostMultipart(rawURL, fileField, fileName, content string,
+	extra map[string]string) (*Response, error) {
+	c.wait()
+	const boundary = "----sitelensUploadBoundary7e3a9f"
+	var b strings.Builder
+	for k, v := range extra {
+		b.WriteString("--" + boundary + "\r\n")
+		b.WriteString(`Content-Disposition: form-data; name="` + k + `"\r\n\r\n`)
+		b.WriteString(v + "\r\n")
+	}
+	b.WriteString("--" + boundary + "\r\n")
+	b.WriteString(`Content-Disposition: form-data; name="` + fileField + `"; filename="` + fileName + `"` + "\r\n")
+	b.WriteString("Content-Type: application/octet-stream\r\n\r\n")
+	b.WriteString(content + "\r\n")
+	b.WriteString("--" + boundary + "--\r\n")
+
+	req, err := c.newRequest(http.MethodPost, rawURL)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "multipart/form-data; boundary="+boundary)
+	payload := b.String()
+	req.Body = io.NopCloser(strings.NewReader(payload))
+	req.ContentLength = int64(len(payload))
 	resp, err := c.http.Do(req)
 	if err != nil {
 		return nil, err

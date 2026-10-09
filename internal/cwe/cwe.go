@@ -42,6 +42,22 @@ var checkCWE = map[string][]string{
 	"ssrf-oob":        {"CWE-918"},
 	"deser-surface":   {"CWE-502"},
 
+	// dast 深度探测面（v5.1）
+	"ssti":               {"CWE-1336"}, // 服务端模板注入
+	"expression-inject":  {"CWE-917"},  // 表达式语言注入（EL/SpEL/OGNL）
+	"cmd-inject":         {"CWE-78"},   // OS 命令注入
+	"crlf-inject":        {"CWE-113"},  // HTTP 响应拆分（CRLF）
+	"nosql-inject":       {"CWE-943"},  // NoSQL 查询注入
+	"xpath-inject":       {"CWE-643"},  // XPath 注入
+	"ldap-inject":        {"CWE-90"},   // LDAP 注入
+	"log4j-inject":       {"CWE-502"},  // JNDI 注入 / 不可信反序列化
+	"xxe":                {"CWE-611"},  // XML 外部实体
+	"upload-surface":     {"CWE-434"},  // 不受限文件上传（受理面）
+	"sqli-error-cookie":  {"CWE-89"},   // Cookie 通道注入
+	"sqli-error-header":  {"CWE-89"},   // 头通道注入
+	"xss-reflect-cookie": {"CWE-79"},
+	"xss-reflect-header": {"CWE-79"},
+
 	// passive（被动检测）
 	"cookie-attrs": {"CWE-1004"},
 	"csrf-form":    {"CWE-352"},

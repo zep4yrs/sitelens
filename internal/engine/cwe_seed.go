@@ -15,17 +15,24 @@ func CWEForCheck(checkID string) []string { return cwe.ForCheck(checkID) }
 // 仅用于把 exploit 已验证的影响归类，不作为建链依据。
 func impactKindForCheck(checkID string) string {
 	switch checkID {
-	case "xss-reflect":
+	case "xss-reflect", "xss-reflect-cookie", "xss-reflect-header":
 		return "execution"
-	case "sqli-error", "sqli-blind-time", "bool-blind-sqli":
+	case "sqli-error", "sqli-blind-time", "bool-blind-sqli",
+		"sqli-error-cookie", "sqli-error-header",
+		"nosql-inject", "xpath-inject", "ldap-inject",
+		"ssti", "expression-inject":
 		return "modification"
 	case "lfi-passwd", "sourcemap-leak":
 		return "disclosure"
-	case "open-redirect":
+	case "open-redirect", "crlf-inject":
 		return "redirect"
 	case "ssrf-oob":
 		return "ssrf"
-	case "deser-surface":
+	case "deser-surface", "log4j-inject", "cmd-inject":
+		return "execution"
+	case "xxe":
+		return "disclosure"
+	case "upload-surface":
 		return "execution"
 	}
 	return "unknown"
