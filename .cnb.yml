@@ -2,7 +2,10 @@
 
 .main: &regression
   docker:
-    image: golang:1.26.8
+    # 镜像版本跟随 go.mod 的 toolchain 行（单一来源）：重装工具链时不必
+    # 两处改。语言补丁版落后于 toolchain 时，构建会自动下载 toolchain，
+    # 也保证「本地构建」与「CI 扫描」用的是同一个 go 版本。
+    image: golang:1.26.9
   stages:
     - name: gofmt 格式检查
       script:
@@ -21,7 +24,9 @@
         # 4.0 graph 断言（P10）：事实图 schema/契约/链边证据驱动 + 性能验收，
         # 单列一步便于失败定位（含 ID 稳定性、无证据不成边、graph 增量 <1%）
         - go test -count=1 -run 'Graph|Contract|Inspect|Chain|Evidence' -v ./internal/model/ ./internal/chain/ ./internal/engine/ ./internal/store/ || { echo "× 4.0 graph 断言失败（schema 契约 / 链边证据驱动 / 性能验收）"; exit 1; }
-        - go install golang.org/x/vuln/cmd/govulncheck@latest && govulncheck ./...
+        # -tags onnx：sev_onnx.go 等文件挂在 onnx 构建标签下，不带标签时
+        # 不会被分析，扫描覆盖与发布构建不一致。
+        - go install golang.org/x/vuln/cmd/govulncheck@latest && govulncheck -tags onnx ./...
     - name: 前端转义回归
       script:
         - apt-get update -qq && apt-get install -y -qq nodejs >/dev/null
