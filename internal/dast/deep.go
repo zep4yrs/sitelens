@@ -89,6 +89,28 @@ var log4jMarkers = []string{
 	"javax.naming.ldapexception", "lookup failed for", "javax.naming.name",
 }
 
+// expressionProbes 表达式注入探针（SpEL / OGNL / EL 常见定界符）。
+var expressionProbes = []string{"${7393*8453}", "*{7393*8453}", "%{7393*8453}", "#{7393*8453}"}
+
+// nosqlProbes NoSQL 操作符注入探针（对象形态 + 数组形态 + 逻辑恒真）。
+var nosqlProbes = []string{
+	`{"$ne":""}`, `[$ne]=1`, `' || '1'=='1`,
+	`{"$gt":""}`, `[$gt]=`, `{"$where":"1"}`,
+}
+
+// xpathProbes XPath 注入探针（引号闭合 / 谓词恒真）。
+var xpathProbes = []string{"'", `"`, "']", "1' or '1'='1", `x' or 'x'='x`}
+
+// ldapProbes LDAP 注入探针（通配符 / 括号闭合）。
+var ldapProbes = []string{"*", "*)(", "*))%00", ")(cn=*", `\*`}
+
+// log4jProbes Log4Shell 探针（JNDI lookup 三形态）。
+var log4jProbes = []string{
+	"${jndi:ldap://127.0.0.1/sl}",
+	"${jndi:rmi://127.0.0.1/sl}",
+	"${${lower:j}ndi:ldap://127.0.0.1/a}",
+}
+
 // sqliErrorExtra 报错 SQLi 的上下文变体探针（堆叠/排序/注释闭合）。
 // 与核心 sqliErrorProbes 合并使用，覆盖不同 DBMS 与拼接上下文。
 var sqliErrorExtra = []string{
@@ -100,9 +122,15 @@ var sqliErrorExtra = []string{
 	"' UNION SELECT 1,2,3--",
 }
 
-// deepSequences 对单个目标跑深度探测面各家族（类内首个命中即短路）。
-func (r *Runner) deepSequences(tgt Target, baseBody string, baseHeaders map[string]bool, done *int, total int) []Finding {
-	if r.opts.DeepProbes != nil && !*r.opts.DeepProbes {
+// deepResidual 深度面里探针序列循环覆盖不到的两件（每目标一次）：
+//   - CRLF 头注入：判定要看响应头集合与基线求差，不是单纯回显匹配；
+//   - 命令注入：时间差分 + 双确认，一次判定要发多个请求。
+//
+// 其余深度家族（SSTI / 表达式 / NoSQL / XPath / LDAP / Log4j）都是标准
+// 「单发探针 + 类内短路」形态，统一由 probeSequences 的类表跑，
+// 这里不再重复发请求。
+func (r *Runner) deepResidual(tgt Target, baseHeaders map[string]bool, done *int, total int) []Finding {
+	if !r.deepEnabled() {
 		return nil
 	}
 	label := shortLabel(tgt)
@@ -113,206 +141,29 @@ func (r *Runner) deepSequences(tgt Target, baseBody string, baseHeaders map[stri
 		}
 		hits = append(hits, f)
 	}
-	budget := r.opts.MaxProbesPerClass
-	if budget <= 0 {
-		budget = 12
-	}
-	// 单类探针上限：防遍历/命令这类重类吃满预算
-	capProbes := func(list []string) []string {
-		if len(list) > budget {
-			return list[:budget]
-		}
-		return list
-	}
 
-	// 1) SSTI：唯一算术乘积回显
-	for _, v := range capProbes(sstiProbes) {
-		if r.stopped() {
-			return hits
-		}
-		u := setParam(tgt.URL, tgt.Param, v)
-		if len(u) > r.opts.MaxURLLen {
-			continue
-		}
-		resp := probeGet(r, u, label, done, total)
-		if resp == nil {
-			continue
-		}
-		if strings.Contains(resp.Body, sstiResult) && !strings.Contains(baseBody, sstiResult) {
-			f := Finding{
-				Check: "ssti", Title: "服务端模板注入（SSTI）",
-				Severity: "high", URL: tgt.URL, Param: tgt.Param, Payload: v,
-				Evidence: "参数 " + tgt.Param + " 注入模板表达式后回显求值结果 " + sstiResult +
-					"（" + sstiExpr + "）",
-				Advice: "不要将用户输入拼接进模板；使用沙箱/白名单上下文变量",
-			}
-			chainEvidence(&f, u, resp)
-			f.Signals = []string{"模板表达式求值回显", "乘积 " + sstiExpr + " → " + sstiResult}
-			emit(f)
-			break
-		}
-	}
-
-	// 2) 表达式注入（SpEL/OGNL/EL）：报错特征
-	for _, v := range capProbes([]string{"${7393*8453}", "*{7393*8453}", "%{7393*8453}", "#{7393*8453}"}) {
-		if r.stopped() {
-			return hits
-		}
-		u := setParam(tgt.URL, tgt.Param, v)
-		resp := probeGet(r, u, label, done, total)
-		if resp == nil {
-			continue
-		}
-		if strings.Contains(resp.Body, sstiResult) && !strings.Contains(baseBody, sstiResult) {
-			f := Finding{
-				Check: "expression-inject", Title: "表达式注入（EL/SpEL/OGNL）",
-				Severity: "high", URL: tgt.URL, Param: tgt.Param, Payload: v,
-				Evidence: "参数注入表达式后回显求值结果 " + sstiResult,
-				Advice:   "禁止对用户输入做表达式求值",
-			}
-			chainEvidence(&f, u, resp)
-			f.Signals = []string{"表达式求值回显"}
-			emit(f)
-			break
-		}
-		if m := matchMarkerNotIn(resp.Body, baseBody, v, spelMarkers); m != "" {
-			f := Finding{
-				Check: "expression-inject", Title: "表达式注入（解析报错特征）",
-				Severity: "medium", URL: tgt.URL, Param: tgt.Param, Payload: v,
-				Evidence: "参数注入表达式触发解析异常：" + m,
-				Advice:   "禁止对用户输入做表达式求值",
-			}
-			chainEvidence(&f, u, resp)
-			f.Signals = []string{"表达式解析报错：" + m}
-			emit(f)
-			break
-		}
-	}
-
-	// 3) 命令注入：分隔符 + sleep 时间差分 + 双确认
-	if r.opts.CmdInject {
-		if f := r.cmdInject(tgt, label, done, total); f != nil {
-			emit(*f)
-		}
-	}
-
-	// 4) CRLF 头注入：注入 \r\n 后响应头集合新增
+	// 1) CRLF 头注入：注入 \r\n 后响应头集合新增
 	if r.opts.CRLF {
 		u := setParam(tgt.URL, tgt.Param, crlfInject)
 		if len(u) <= r.opts.MaxURLLen {
 			resp := probeGet(r, u, label, done, total)
 			if resp != nil {
-				if resp.Header(crlfHeaderName) != "" && !baseHeaders[strings.ToLower(crlfHeaderName)] {
-					f := Finding{
-						Check: "crlf-inject", Title: "CRLF 响应头注入",
-						Severity: "medium", URL: tgt.URL, Param: tgt.Param, Payload: crlfInject,
-						Evidence: "参数注入 %0d%0a 后响应出现注入头 " + crlfHeaderName + "（头注入可控）",
-						Advice:   "对进入响应头/重定向头的用户输入做 CR/LF 过滤",
-					}
-					chainEvidence(&f, u, resp)
+				if f := judgeDeep("crlf", resp, "", Target{URL: tgt.URL, Param: tgt.Param}); f != nil {
+					f.Payload = crlfInject
+					chainEvidence(f, u, resp)
 					f.Signals = []string{"响应头新增 " + crlfHeaderName}
-					emit(f)
+					emit(*f)
 				}
 			}
 		}
 	}
 
-	// 5) NoSQL 注入：操作符注入触发数据层报错
-	for _, v := range capProbes([]string{`{"$ne":""}`, `[$ne]=1`, `' || '1'=='1`, `{"$gt":""}`, `[$gt]=`, `{"$where":"1"}`}) {
-		if r.stopped() {
-			return hits
-		}
-		u := setParam(tgt.URL, tgt.Param, v)
-		resp := probeGet(r, u, label, done, total)
-		if resp == nil {
-			continue
-		}
-		if m := matchMarkerNotIn(resp.Body, baseBody, v, nosqlMarkers); m != "" {
-			f := Finding{
-				Check: "nosql-inject", Title: "NoSQL 注入（数据层报错特征）",
-				Severity: "high", URL: tgt.URL, Param: tgt.Param, Payload: v,
-				Evidence: "参数注入 NoSQL 操作符触发数据层报错：" + m,
-				Advice:   "对查询参数做类型校验；拒绝以对象/数组形态传入的操作符",
-			}
-			chainEvidence(&f, u, resp)
-			f.Signals = []string{"数据层报错：" + m}
-			emit(f)
-			break
+	// 2) 命令注入：分隔符 + sleep 时间差分 + 双确认
+	if r.opts.CmdInject {
+		if f := r.cmdInject(tgt, label, done, total); f != nil {
+			emit(*f)
 		}
 	}
-
-	// 6) XPath 注入：引号闭合触发解析报错
-	for _, v := range capProbes([]string{"'", `"`, "']", "1' or '1'='1", `x' or 'x'='x`}) {
-		if r.stopped() {
-			return hits
-		}
-		u := setParam(tgt.URL, tgt.Param, v)
-		resp := probeGet(r, u, label, done, total)
-		if resp == nil {
-			continue
-		}
-		if m := matchMarkerNotIn(resp.Body, baseBody, v, xpathMarkers); m != "" {
-			f := Finding{
-				Check: "xpath-inject", Title: "XPath 注入（解析报错特征）",
-				Severity: "high", URL: tgt.URL, Param: tgt.Param, Payload: v,
-				Evidence: "参数注入引号触发 XPath 解析异常：" + m,
-				Advice:   "参数化 XPath 查询；过滤引号与谓词字符",
-			}
-			chainEvidence(&f, u, resp)
-			f.Signals = []string{"XPath 解析报错：" + m}
-			emit(f)
-			break
-		}
-	}
-
-	// 7) LDAP 注入：通配/括号注入触发解析报错
-	for _, v := range capProbes([]string{"*", "*)(", "*))%00", ")(cn=*", `\*`}) {
-		if r.stopped() {
-			return hits
-		}
-		u := setParam(tgt.URL, tgt.Param, v)
-		resp := probeGet(r, u, label, done, total)
-		if resp == nil {
-			continue
-		}
-		if m := matchMarkerNotIn(resp.Body, baseBody, v, ldapMarkers); m != "" {
-			f := Finding{
-				Check: "ldap-inject", Title: "LDAP 注入（解析报错特征）",
-				Severity: "high", URL: tgt.URL, Param: tgt.Param, Payload: v,
-				Evidence: "参数注入 LDAP 通配/括号触发解析异常：" + m,
-				Advice:   "使用参数化 LDAP 查询；转义 * ( ) \\ 等元字符",
-			}
-			chainEvidence(&f, u, resp)
-			f.Signals = []string{"LDAP 解析报错：" + m}
-			emit(f)
-			break
-		}
-	}
-
-	// 8) Log4Shell：JNDI 注入触发的解析特征（回显型误用）
-	for _, v := range capProbes([]string{"${jndi:ldap://127.0.0.1/sl}", "${jndi:rmi://127.0.0.1/sl}", "${${lower:j}ndi:ldap://127.0.0.1/a}"}) {
-		if r.stopped() {
-			return hits
-		}
-		u := setParam(tgt.URL, tgt.Param, v)
-		resp := probeGet(r, u, label, done, total)
-		if resp == nil {
-			continue
-		}
-		if m := matchMarkerNotIn(resp.Body, baseBody, v, log4jMarkers); m != "" {
-			f := Finding{
-				Check: "log4j-inject", Title: "疑似 Log4Shell / JNDI 注入特征",
-				Severity: "critical", URL: tgt.URL, Param: tgt.Param, Payload: v,
-				Evidence: "参数注入 ${jndi:} 后响应出现 JNDI 解析特征：" + m,
-				Advice:   "升级 log4j 至安全版本；过滤 ${jndi:} 等 lookup 语法",
-			}
-			chainEvidence(&f, u, resp)
-			f.Signals = []string{"JNDI 解析特征：" + m}
-			emit(f)
-			break
-		}
-	}
-
 	return hits
 }
 
@@ -453,38 +304,6 @@ func itoa(n int) string {
 // deepEnabled 深度探测面总闸（nil = 默认开，兼容旧调用方）。
 func (r *Runner) deepEnabled() bool {
 	return r.opts.DeepProbes == nil || *r.opts.DeepProbes
-}
-
-// deepBudget 单目标深度探测面的请求数上界（进度条总长估算用）。
-// 各家族探针数均受 MaxProbesPerClass 约束，此处按其上界累计。
-func (r *Runner) deepBudget() int {
-	if !r.deepEnabled() {
-		return 0
-	}
-	c := r.opts.MaxProbesPerClass
-	if c <= 0 {
-		c = 12
-	}
-	n := 1 // CRLF 基线响应
-	n += min(len(sstiProbes), c)
-	n += min(4, c)                   // 表达式
-	n += min(len(sqliErrorExtra), c) // 报错 SQLi 扩展（在核心序列里用）
-	n += min(6, c)                   // NoSQL
-	n += min(5, c)                   // XPath
-	n += min(5, c)                   // LDAP
-	n += min(3, c)                   // Log4j
-	if r.opts.CmdInject {
-		n += 1 + min(len(cmdProbes), c) + 1 // 基线 + 注入 + 复测
-	}
-	n += 1 // CRLF 探针
-	return n
-}
-
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
 }
 
 // sqliErrorAll 核心报错 SQLi 探针 + 上下文变体扩展（堆叠/排序/注释闭合）。
@@ -727,4 +546,247 @@ func probeGetH(r *Runner, hf HeaderFetcher, rawURL string, headers map[string]st
 		r.prog(*done, total, label)
 	}
 	return resp
+}
+
+// ---- 表单侧深度面插件（PR #29 增量层） -----------------------------------
+//
+// 与 URL 侧的 deepSequences 分开：表单通道没有响应头基线（CRLF 语义弱），
+// 命令注入在 POST 上没有携带 sleep 的形态，故表单侧只接可判定的子集。
+
+// formDeepProbeClasses 表单侧深度面探针类（类名 → 探针序列）。
+// 与 deepProbeClasses 同源：SSTI / CRLF 在 POST 体里同样成立；
+// NoSQL / XPath 的表单判定与 URL 判定共用 judgeDeep，一并接入。
+func formDeepProbeClasses() []struct {
+	Kind   string
+	Values []string
+} {
+	return []struct {
+		Kind   string
+		Values []string
+	}{
+		{"ssti", sstiProbes},
+		{"crlf", []string{crlfInject}},
+		{"nosql", nosqlFormProbes},
+		{"xpath", xpathFormProbes},
+	}
+}
+
+// nosqlFormProbes 表单侧 NoSQL 探针（POST 体不做操作符数组形态）。
+var nosqlFormProbes = []string{`{"$ne":""}`, `' || '1'=='1`, `{"$where":"1"}`}
+
+// xpathFormProbes 表单侧 XPath 探针（引号闭合形态）。
+var xpathFormProbes = []string{"'", `"`, "1' or '1'='1"}
+
+// judgeDeep 深度面判定（SSTI / CRLF / NoSQL / XPath）。
+// 与 judge 分开维护：核心四类走 judge，新增面走这里，文件边界清晰。
+func judgeDeep(kind string, resp *Resp, baseline string, tgt Target) *Finding {
+	if resp == nil {
+		return nil
+	}
+	switch kind {
+	case "ssti":
+		if strings.Contains(resp.Body, sstiResult) && !strings.Contains(baseline, sstiResult) {
+			return &Finding{
+				Check: "ssti", Title: "服务端模板注入（表达式求值回显）",
+				Severity: "high", URL: tgt.URL, Param: tgt.Param,
+				Evidence: "参数 " + tgt.Param + " 注入模板表达式后回显算术乘积 " + sstiResult,
+				Advice:   "模板表达式与用户输入隔离；禁止用户输入直接进模板引擎求值",
+			}
+		}
+	case "crlf":
+		for k := range resp.Headers {
+			if strings.EqualFold(k, crlfHeaderName) {
+				return &Finding{
+					Check: "crlf-inject", Title: "CRLF 响应头注入",
+					Severity: "medium", URL: tgt.URL, Param: tgt.Param,
+					Evidence: "参数 " + tgt.Param + " 注入 CRLF 序列后响应头新增 " + crlfHeaderName,
+					Advice:   "过滤输入中的 CR/LF；响应头输出做编码",
+				}
+			}
+		}
+	case "expression":
+		// 表达式求值回显优先，其次解析报错特征。
+		if strings.Contains(resp.Body, sstiResult) && !strings.Contains(baseline, sstiResult) {
+			return &Finding{
+				Check: "expression-inject", Title: "表达式注入（EL/SpEL/OGNL 求值回显）",
+				Severity: "high", URL: tgt.URL, Param: tgt.Param,
+				Evidence: "参数 " + tgt.Param + " 注入表达式后回显求值结果 " + sstiResult,
+				Advice:   "禁止对用户输入做表达式求值",
+			}
+		}
+		if m := matchMarkerNotIn(resp.Body, baseline, "", spelMarkers); m != "" {
+			return &Finding{
+				Check: "expression-inject", Title: "表达式注入（解析报错特征）",
+				Severity: "medium", URL: tgt.URL, Param: tgt.Param,
+				Evidence: "参数注入表达式触发解析异常：" + m,
+				Advice:   "禁止对用户输入做表达式求值",
+			}
+		}
+	case "nosql":
+		if m := matchMarkerNotIn(resp.Body, baseline, "", nosqlMarkers); m != "" {
+			return &Finding{
+				Check: "nosql-inject", Title: "NoSQL 注入（数据层报错特征）",
+				Severity: "high", URL: tgt.URL, Param: tgt.Param,
+				Evidence: "参数注入 NoSQL 操作符触发数据层报错：" + m,
+				Advice:   "对 NoSQL 查询输入做强类型校验，拒绝对象/操作符形态输入",
+			}
+		}
+	case "xpath":
+		if m := matchMarkerNotIn(resp.Body, baseline, "", xpathMarkers); m != "" {
+			return &Finding{
+				Check: "xpath-inject", Title: "XPath 注入（解析报错特征）",
+				Severity: "high", URL: tgt.URL, Param: tgt.Param,
+				Evidence: "参数注入引号触发 XPath 解析异常：" + m,
+				Advice:   "参数化 XPath 查询；过滤引号与谓词字符",
+			}
+		}
+	case "ldap":
+		if m := matchMarkerNotIn(resp.Body, baseline, "", ldapMarkers); m != "" {
+			return &Finding{
+				Check: "ldap-inject", Title: "LDAP 注入（解析报错特征）",
+				Severity: "high", URL: tgt.URL, Param: tgt.Param,
+				Evidence: "参数注入 LDAP 通配/括号触发解析异常：" + m,
+				Advice:   "使用参数化 LDAP 查询；转义 * ( ) \\ 等元字符",
+			}
+		}
+	case "log4j":
+		if m := matchMarkerNotIn(resp.Body, baseline, "", log4jMarkers); m != "" {
+			return &Finding{
+				Check: "log4j-inject", Title: "疑似 Log4Shell / JNDI 注入特征",
+				Severity: "critical", URL: tgt.URL, Param: tgt.Param,
+				Evidence: "参数注入 ${jndi:} 后响应出现 JNDI 解析特征：" + m,
+				Advice:   "升级 log4j 至安全版本；过滤 ${jndi:} 等 lookup 语法",
+			}
+		}
+	}
+	return nil
+}
+
+// probeJudge 探针判定分发。
+//
+// 深度面的家族名各自有专属判定（expression / nosql / xpath / ldap / log4j），
+// 直接走 judgeDeep，不要落回核心 judge——否则类名语义被折叠，
+// 比如 expression 会被当成 ssti 判、ldap/log4j 干脆判不出来。
+func probeJudge(kind string, resp *Resp, baseline string, tgt Target) *Finding {
+	if hit := judgeDeep(kind, resp, baseline, tgt); hit != nil {
+		return hit
+	}
+	return judge(kind, resp, baseline, tgt)
+}
+
+// ---- 请求预算口径（生产与测试共用，单一来源） ---------------------------
+//
+// 历史上进度条估算与测试上界各写一份，改探针数就得两处同改、极易漂移。
+// 这里统一成 maxURLRequestsPerParam / maxFormRequestsPerField 两个口径函数，
+// 进度条与测试都调它们。
+
+// maxURLRequestsPerParam URL 参数单参数请求数上界。
+//
+// 口径与 Runner.Run 的实际请求序列严格对齐，共四段：
+//
+//  1. 基线响应 1
+//  2. probeSequences：四类核心 4.0 + 深度面各家族（都走同一个探针序列循环，
+//     逐类受 MaxProbesPerClass 约束）
+//  3. 深度面专属：CRLF 响应头基线 1 + 命令注入（基线 + 探针 + 复测）
+//  4. 时间盲注 3 + 布尔盲注 5 + 反序列化 1
+//
+// 这个函数是生产（进度条总长）与测试（上界断言）的单一来源——探针表一变，
+// 两边同时跟着变，不会再出现「改了探针数、预算没跟」的漂移。
+func maxURLRequestsPerParam(o Options) int {
+	n := 1 // 基线响应
+	n += probeSequenceBudget(o)
+	if deepEnabled(o) {
+		n += 1 // CRLF 响应头基线
+		if o.CmdInject {
+			n += 1 + capOpt(len(cmdProbes), o) + 1 // 基线 + 注入 + 复测
+		}
+	}
+	if o.TimeBlind {
+		n += 3
+	}
+	if o.BoolBlind {
+		n += 5
+	}
+	n += 1 // 反序列化探针
+	return n
+}
+
+// probeSequenceBudget probeSequences 的请求数上界：四类核心 + 深度面各家族，
+// 每类按 MaxProbesPerClass 截断。
+func probeSequenceBudget(o Options) int {
+	n := capOpt(len(xssProbes), o) + capOpt(len(sqliErrorAll()), o) +
+		capOpt(len(redirProbes), o) + capOpt(len(traversalProbes), o)
+	if deepEnabled(o) {
+		for _, dc := range probeSequenceDeepClasses() {
+			n += capOpt(len(dc.Values), o)
+		}
+	}
+	return n
+}
+
+// maxFormRequestsPerField 表单字段单字段请求数上界：
+// 基线 1 + 四类核心探针序列 + 表单侧深度面 + 布尔盲注 5。
+func maxFormRequestsPerField(o Options) int {
+	n := 1 + capOpt(len(xssProbes), o) + capOpt(len(sqliErrorAll()), o) +
+		capOpt(len(redirProbes), o) + capOpt(len(traversalProbes), o)
+	if deepEnabled(o) {
+		for _, dc := range formDeepProbeClasses() {
+			n += capOpt(len(dc.Values), o)
+		}
+	}
+	if o.BoolBlind {
+		n += 5
+	}
+	return n
+}
+
+// deepEnabled Options 口径的深度面总闸（nil = 默认开）。
+func deepEnabled(o Options) bool { return o.DeepProbes == nil || *o.DeepProbes }
+
+// capOpt 单类上限口径（0 = 不限）。
+func capOpt(n int, o Options) int {
+	if o.MaxProbesPerClass > 0 && n > o.MaxProbesPerClass {
+		return o.MaxProbesPerClass
+	}
+	return n
+}
+
+// probeSequenceDeepClasses 能走「单发探针 + 类内短路」的深度面家族。
+// 排除 crlf：它要响应头基线与集合求差，归 deepResidual。
+func probeSequenceDeepClasses() []struct {
+	Kind   string
+	Values []string
+} {
+	out := []struct {
+		Kind   string
+		Values []string
+	}{}
+	for _, dc := range deepProbeClasses() {
+		if dc.Kind == "crlf" {
+			continue
+		}
+		out = append(out, dc)
+	}
+	return out
+}
+
+// deepProbeClasses 深度面探针类（类名 → 探针序列）。
+// 必须与 deepSequences 实际跑的家族一一对应——预算口径从这里累计，
+// 漏一类（如表达式/LDAP/Log4j）就会让进度条总长与测试上界同时算少。
+func deepProbeClasses() []struct {
+	Kind   string
+	Values []string
+} {
+	return []struct {
+		Kind   string
+		Values []string
+	}{
+		{"ssti", sstiProbes},
+		{"expression", expressionProbes},
+		{"crlf", []string{crlfInject}},
+		{"nosql", nosqlProbes},
+		{"xpath", xpathProbes},
+		{"ldap", ldapProbes},
+		{"log4j", log4jProbes},
+	}
 }

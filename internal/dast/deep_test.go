@@ -86,6 +86,9 @@ func (f *deepFetcher) PostFormSmall(u string, data map[string]string) *Resp {
 
 func (f *deepFetcher) PostRawSmall(u, ct, body string) *Resp { return f.xxeResp }
 
+// PostMultipartSmall deepFetcher 桩：默认不支持，upload 测试单独定义。
+func (f *deepFetcher) PostMultipartSmall(u, ff, fn, c string, ex map[string]string) *Resp { return nil }
+
 // TestDeepSSTI SSTI：模板表达式回显求值结果即命中。
 func TestDeepSSTI(t *testing.T) {
 	f := &deepFetcher{}
@@ -238,9 +241,6 @@ func hasCheck(hits []Finding, id string) bool {
 	return false
 }
 
-// PostMultipartSmall deepFetcher 桩：默认不支持，upload 测试单独定义。
-func (f *deepFetcher) PostMultipartSmall(u, ff, fn, c string, ex map[string]string) *Resp { return nil }
-
 // uploadFetcher 上传面桩：按路径决定受理/拒绝/无信号。
 type uploadFetcher struct {
 	deepFetcher
@@ -371,3 +371,149 @@ func TestCookieHeaderNoFP(t *testing.T) {
 		}
 	}
 }
+
+// --- PR #29 增量层：判定单测、预算口径、遍历多形态 ------------------------
+
+// countingFetcher 计数桩（恒定干净响应，不命中）。
+type countingFetcher struct{ n int }
+
+func (f *countingFetcher) GetSmall(string) *Resp { f.n++; return &Resp{Status: 200, Body: "ok"} }
+func (f *countingFetcher) PostFormSmall(string, map[string]string) *Resp {
+	f.n++
+	return &Resp{Status: 200, Body: "ok"}
+}
+func (f *countingFetcher) PostRawSmall(string, string, string) *Resp { return nil }
+func (f *countingFetcher) PostMultipartSmall(string, string, string, string, map[string]string) *Resp {
+	return nil
+}
+
+// TestSSTIJudge 直接打 judgeDeep：乘积回显即命中。
+func TestSSTIJudge(t *testing.T) {
+	hit := judgeDeep("ssti", &Resp{Status: 200, Body: "calc=" + sstiResult}, "",
+		Target{URL: "https://a.com/p?t=1", Param: "t"})
+	if hit == nil || hit.Check != "ssti" {
+		t.Fatalf("SSTI 乘积回显应命中: %+v", hit)
+	}
+}
+
+// TestSSTIProbesMultiEngine 四族模板语法均注册。
+func TestSSTIProbesMultiEngine(t *testing.T) {
+	if len(sstiProbes) < 4 {
+		t.Fatalf("SSTI 探针应覆盖 ≥4 语法族，实际 %d", len(sstiProbes))
+	}
+}
+
+// TestCRLFJudge 响应头新增即命中。
+func TestCRLFJudge(t *testing.T) {
+	resp := &Resp{Status: 200, Headers: map[string]string{crlfHeaderName: "sl9z7"}}
+	hit := judgeDeep("crlf", resp, "", Target{URL: "https://a.com/p?u=1", Param: "u"})
+	if hit == nil || hit.Check != "crlf-inject" {
+		t.Fatalf("CRLF 响应头注入应命中: %+v", hit)
+	}
+}
+
+// TestNoSQLJudge 数据层报错命中；只回显操作符不命中。
+func TestNoSQLJudge(t *testing.T) {
+	resp := &Resp{Status: 500, Body: "MongoError: unexpected token $ne"}
+	if hit := judgeDeep("nosql", resp, "", Target{URL: "https://a.com/p?q=1", Param: "q"}); hit == nil {
+		t.Fatal("NoSQL 操作符注入应命中")
+	}
+	resp2 := &Resp{Status: 200, Body: "search: $ne"}
+	if hit := judgeDeep("nosql", resp2, "", Target{URL: "https://a.com/p?q=1", Param: "q"}); hit != nil {
+		t.Fatalf("无数据层特征不应命中: %+v", hit)
+	}
+}
+
+// TestXPathJudge 解析报错命中。
+func TestXPathJudge(t *testing.T) {
+	resp := &Resp{Status: 500, Body: "XPathException: invalid expression"}
+	hit := judgeDeep("xpath", resp, "", Target{URL: "https://a.com/p?n=1", Param: "n"})
+	if hit == nil || hit.Check != "xpath-inject" {
+		t.Fatalf("XPath 注入应命中: %+v", hit)
+	}
+}
+
+// TestCmdTimeDiffHit 时间差分命中 critical。
+func TestCmdTimeDiffHit(t *testing.T) {
+	f := &fakeFetch{rules: []func(u string) *Resp{
+		func(u string) *Resp {
+			if strings.Contains(u, "sleep") {
+				time.Sleep(25 * time.Millisecond)
+			}
+			return &Resp{Status: 200, Body: "ok"}
+		},
+	}}
+	opts := DefaultOptions()
+	opts.BlindThresholdMS = 10
+	hit := New(f, opts).cmdInject(Target{URL: "https://a.com/p?ip=1.1.1.1", Param: "ip"}, "ip", new(int), 0)
+	if hit == nil || hit.Check != "cmd-inject" || hit.Severity != "critical" {
+		t.Fatalf("命令注入时间差分应命 critical: %+v", hit)
+	}
+}
+
+// TestCmdTimeNoDiffNoHit 无延迟差不命中。
+func TestCmdTimeNoDiffNoHit(t *testing.T) {
+	opts := DefaultOptions()
+	opts.BlindThresholdMS = 100
+	if hit := New(&fakeFetch{}, opts).cmdInject(
+		Target{URL: "https://a.com/p?ip=1", Param: "ip"}, "ip", new(int), 0); hit != nil {
+		t.Fatalf("无延迟差不应命中: %+v", hit)
+	}
+}
+
+// TestTraversalCoversMultiFileMultiEncoding 遍历探针 = 文件数 × 编码数。
+func TestTraversalCoversMultiFileMultiEncoding(t *testing.T) {
+	if len(traversalProbes) != len(traversalFiles)*len(traversalEncodings) {
+		t.Fatalf("遍历探针应 %d 条，实际 %d", len(traversalFiles)*len(traversalEncodings), len(traversalProbes))
+	}
+	if len(traversalEncodings) < 6 {
+		t.Fatalf("编码形态应 ≥6，实际 %d", len(traversalEncodings))
+	}
+	joined := strings.Join(traversalProbes, "\n")
+	for _, want := range []string{"/etc/passwd", "win.ini", "%2e%2e%2f", "....//", "%252e%252e"} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("遍历探针缺形态 %q", want)
+		}
+	}
+}
+
+// TestTraversalJudgeWinINI Windows win.ini 内容命中遍历。
+func TestTraversalJudgeWinINI(t *testing.T) {
+	resp := &Resp{Status: 200, Body: "[fonts]\r\n[extensions]\r\n"}
+	if hit := judge("traversal", resp, "", Target{URL: "https://a.com/f?p=1", Param: "p"}); hit == nil {
+		t.Fatal("win.ini 内容应命中")
+	}
+}
+
+// TestMaxProbesPerClassCap 单类上限生效（无命中时不超过上界）。
+func TestMaxProbesPerClassCap(t *testing.T) {
+	f := &countingFetcher{}
+	opts := DefaultOptions()
+	opts.TimeBlind = false
+	opts.BoolBlind = false
+	opts.CmdInject = false
+	opts.CRLF = false
+	r := New(f, opts)
+	r.probeSequences(Target{URL: "https://a.com/p?q=1", Param: "q"}, "", new(int), 0)
+	maxReq := maxURLRequestsPerParam(opts)
+	if f.n > maxReq {
+		t.Fatalf("请求数应不超过预算口径上界 %d，实际 %d", maxReq, f.n)
+	}
+}
+
+// TestDeepProbesOffGate 关闭深度面：仅核心四类请求。
+func TestDeepProbesOffGate(t *testing.T) {
+	f := &countingFetcher{}
+	off := false
+	opts := DefaultOptions()
+	opts.TimeBlind = false
+	opts.BoolBlind = false
+	opts.DeepProbes = &off
+	r := New(f, opts)
+	r.probeSequences(Target{URL: "https://a.com/p?q=1", Param: "q"}, "", new(int), 0)
+	if f.n > 1+len(xssProbes)+len(sqliErrorAll())+len(redirProbes)+len(traversalProbes) {
+		t.Fatalf("关闭深度面后请求应只剩核心四类，实际 %d", f.n)
+	}
+}
+
+var _ = url.Parse
