@@ -31,7 +31,7 @@ func TestGraphAPIEndToEnd(t *testing.T) {
 		t.Fatalf("缺 job_id: %v", body)
 	}
 	var job map[string]any
-	deadline := time.Now().Add(scanDeadline())
+	deadline := time.Now().Add(scanFlowTimeout())
 	for {
 		_, job = getJSON(t, api.URL+"/api/job/"+jobID)
 		if st, _ := job["status"].(string); st == "done" || st == "error" || st == "cancelled" {
@@ -104,7 +104,7 @@ func TestGraphAPINotCollected(t *testing.T) {
 	}
 	jobID, _ := body["job_id"].(string)
 	var job map[string]any
-	deadline := time.Now().Add(scanDeadline())
+	deadline := time.Now().Add(scanFlowTimeout())
 	for {
 		_, job = getJSON(t, api.URL+"/api/job/"+jobID)
 		if st, _ := job["status"].(string); st == "done" || st == "error" || st == "cancelled" {

@@ -358,10 +358,35 @@ func Keywords(product string, indexSide bool) map[string]bool {
 	return out
 }
 
+// nvdIntent 决定 Match 的 NVD 富化是否允许**首次拉起**全量索引。
+//
+// 背景（A3 惰性纪律的漏洞）：NVD 全量镜像（37 万条 / gz 40MB / 解压 290MB，
+// 实测解码 5s、-race 下 50s、常驻 ≈1.7GB）在 Match 里被 nvdFill/nvdPossible
+// 无条件拉起。这既让「指纹类扫描收尾」付出一次同步解码（违背 mlDescr 里
+// 「扫描收尾绝不首拉索引」的既定纪律），也在 -race 的门禁下把扫描推过
+// 测试超时线。真实修订：只有确实以 NVD 为主数据的消费方才允许拉起——
+// cwe.Relate 走 KB.NVD()，此处默认 false（只填索引已常驻的缺口）。
+type nvdIntent bool
+
+const (
+	// intentLazy：索引未常驻就跳过富化（宁可少 CVSS/CWE 字段，不阻塞扫描）。
+	intentLazy nvdIntent = false
+	// intentLoad：允许为富化首次解码全量索引（显式以 NVD 为数据源的消费方）。
+	intentLoad nvdIntent = true
+)
+
 // Match 漏洞情报三级判定（移植 vuln.py match）：
 // confirmed（版本落在受影响区间）/ possible（同名提示）/
 // excluded（有版本但不在区间，直接跳过不输出）。
+//
+// NVD 富化（CVSS/CWE 补空 + CPE 通道）按 intentLazy 口径：索引已常驻才顺带
+// 查，未常驻不拉起（与 engine.mlDescr / cwe.Relate 的 A3 纪律一致）。
 func (k *KB) Match(techs []TechHit) []Finding {
+	return k.MatchWithNVD(techs, intentLazy)
+}
+
+// MatchWithNVD 同 Match，但显式指定 NVD 富化是否可拉起索引（见 nvdIntent）。
+func (k *KB) MatchWithNVD(techs []TechHit, intent nvdIntent) []Finding {
 	k.ensureDecoded()
 	if k.index == nil {
 		k.buildIndex()
@@ -380,7 +405,7 @@ func (k *KB) Match(techs []TechHit) []Finding {
 						Verdict: "confirmed", Src: "intel-range",
 						Product: tech.Name,
 					})
-					k.nvdFill(&out[len(out)-1])
+					k.nvdFill(&out[len(out)-1], intent)
 				}
 			}
 			continue
@@ -424,10 +449,10 @@ func (k *KB) Match(techs []TechHit) []Finding {
 				Desc: v.Descr, Verdict: verdict, Affected: affected,
 				KEV: k.kev[strings.ToUpper(v.CVE)],
 			})
-			k.nvdFill(&out[len(out)-1])
+			k.nvdFill(&out[len(out)-1], intent)
 		}
 		// NVD 字典 CPE 通道：possible 级（区间判定 3.1 接入）
-		k.nvdPossible(tech.Name, seen, &out)
+		k.nvdPossible(tech.Name, seen, &out, intent)
 	}
 	sort.Slice(out, func(i, j int) bool {
 		return severityOrder[out[i].Severity] < severityOrder[out[j].Severity]
