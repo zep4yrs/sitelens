@@ -1,6 +1,81 @@
 # 更新日志
 
-## 未发布（弱会话/存储型 XSS/缓存/命令注入回显：判定通道补齐）
+## 未发布（验证码识别重放 / 越权 / 加密实现 / 开放 API：四条判定通道）
+
+> 承接上一轮「判定通道补齐」的思路，这一轮把 Issue 里点名的四个模块
+> 逐个落地：captcha（识别接线 + 侧信道重放）、authbypass（越权）、
+> cryptography（加密实现）、api（开放 API）。四类都不是「参数注入」，
+> 判定依据与既有注入通道正交，各自单列通道。
+
+### captcha：OCR 接线 + 侧信道重放
+
+- **OCR sidecar 接进生产路径**。`internal/captcha`（ddddocr 客户端）与
+  `loginbrute` 的验证码逻辑都在，但引擎侧构造爆破参数时把 `CaptchaType`
+  写死为 `"none"`、既不传 `OCRURL` 也不传图片拉取通道——**验证码表单
+  的口令爆破从未真正启用过**。现在按 `loginbrute.captcha_ocr_url` 接线：
+  配了地址才启用识别，每次尝试前重取验证码图（旧码提交后即失效）。
+- **验证码重放/校验缺失**（`captcha-missing` / `captcha-replay`，侧信道，
+  不需要 OCR）。DVWA Insecure CAPTCHA 的真正缺陷不是「图认不出来」，而是
+  **校验结果可被跳过或重放**：前置步骤校验一次后，后续步骤不再校验。
+  新增两条判定——同一步骤下同一份明显错误的验证码被稳定受理
+  （`captcha-missing`，校验恒真）；后置步骤不提交有效验证码即被受理
+  （`captcha-replay`，跨步骤绕过）。都做双确认。
+
+### authbypass：越权（标识可控 + 无访问控制）
+
+- 此前只有「SQLi 认证绕过」（登录表单注释截断），缺**授权层**的绕过节。
+  DVWA Authorisation Bypass 与 Altoro 的账号枚举同属一类：请求里带
+  客户端可控的身份/资源标识（`user_id` / `account` / `uid` …），服务端
+  不校验当前会话对该资源的访问权。新增 `authz-bypass` 通道，三道误报
+  防护——标识无效（不同取值响应相同）不报、目标本就 403/401/登录页
+  不报、越权响应形态双确认；只在「标识确实决定内容」且「高权标识仍
+  放行」时报。只读 GET，不改状态。
+
+### cryptography：加密实现弱点
+
+- **确定性加密**（`crypto-deterministic`）。同一明文多次加密得到**同一密文**
+  → ECB 模式 / 固定 IV / 硬编码密钥，泄露明文相等性。判定先要求「换明文
+  密文随之变化」（排除静态常量串），再要求两次同明文密文一致，避免把
+  正常随机 IV 的 AEAD 误判。
+- **弱加密/编码实现暴露**（`crypto-weak-algo`）。响应中出现无盐哈希 /
+  可逆编码冒充加密的实现特征（`md5(` / `base64_encode` / `ecb` …）。
+  与基线求差，页面本来就有的不算。
+
+### api：开放 API（未授权读取 / IDOR）
+
+- **未授权/过度暴露**（`api-unauth`）。API 端点无凭证即返回结构化数据，
+  且含敏感字段（`password_hash` / `token` / `email` / `role` …）。
+  判定要求响应是结构化数据（JSON/XML）而且命中**字段名**——单靠
+  「返回 200」会漫天误报，公开 API 返回 200 是正常行为。
+- **API 资源越权**（`api-idor`）。路径中的资源标识可替换，且跨主体
+  仍返回含敏感字段的完整数据。与 `authz-bypass` 的区别：这里针对
+  `/api/` 风格端点，要求同时验证「内容随标识变化」与「另一标识可见」。
+- 配套修复：API 端点通常不带查询串（`/api/v2/user/1`），而 DAST 探测点
+  只从**带参链接**收集——API 通道会永远空跑。现已把爬到的页面 URL
+  一并登记，由通道自行筛出 API 风格路径。
+
+### 配置与登记
+
+- 新增 `[dast] captcha_replay / authz_bypass / api_audit / crypto_probe`
+  四个通道闸（默认开，跟深度探测面总闸）；`[loginbrute] captcha_type`
+  与既有 `captcha_ocr_url` 组成 OCR 接线。
+- 新 check id 全部登记 CWE：`authz-bypass`(CWE-639/862)、
+  `sqli-auth-bypass`(CWE-89)、`captcha-missing`/`captcha-replay`(CWE-804)、
+  `crypto-deterministic`(CWE-329/780)、`crypto-weak-algo`(CWE-327/916)、
+  `api-unauth`(CWE-306/200)、`api-idor`(CWE-639)。
+
+### 验证
+
+- `go test ./internal/...` 全绿；`gofmt` / `go vet` 干净；vendor 未动。
+- 新增回归：验证码字段识别/受理判定/恒真与正常校验两态、越权（可控标识、
+  403 拒绝、静态页三种反例）、确定性加密与随机 IV 反例、API 未授权与
+  IDOR、非结构化响应不误报、受保护 API(401) 不报、总闸关闭不产出。
+- 端到端实跑（本地模拟靶场 + 真引擎 CLI）：9 条 verified，含
+  `captcha-missing` / `authz-bypass` / `crypto-deterministic` /
+  `api-unauth` / `api-idor` 四条新通道；安全站（受保护 API + 正常校验
+  验证码 + 随机 IV）四条新通道**零误报**。
+
+## 上一轮（弱会话/存储型 XSS/缓存/命令注入回显：判定通道补齐）
 
 > 上一轮（PR #35）拓宽了 CSRF / 弱会话 ID / CSP 三个检查类的判定面。
 > 这一轮继续把「底座在、判定面窄」的同类漏报补掉，并补上两处

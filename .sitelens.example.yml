@@ -53,6 +53,15 @@ dast:
   weak_cookie: true          # 状态变更表单下发弱会话 Cookie（值形态判定，
                              # 覆盖 DVWA Weak Session IDs 这类"提交按钮
                              # 生成会话 ID"的模块）
+  captcha_replay: true       # 验证码校验缺失/跨步骤重放（侧信道，不需 OCR；
+                             # 覆盖 DVWA Insecure CAPTCHA 这类"校验只作用于
+                             # 前置步骤、可跳过/重放"的模块）
+  authz_bypass: true         # 越权（授权绕过）：身份/资源标识由客户端指定
+                             # 且未校验访问权（DVWA Authorisation Bypass / IDOR）
+  api_audit: true            # 开放 API 通道：未授权读取（返回敏感字段）与
+                             # API 资源越权（DVWA API 模块 / 公开 JSON 端点）
+  crypto_probe: true         # 加密实现弱点：确定性加密（ECB/固定 IV/硬编码
+                             # 密钥）与弱算法/无盐哈希（DVWA Cryptography 模块）
   upload_bypass: true        # 上传绕过验证：危险扩展名/伪造 MIME/双扩展名
                              # 是否被服务端放行（upload-labs 21 关类）。提交内容
                              # 始终是无害文本标记，只判"收没收"，不落地不执行
@@ -81,7 +90,10 @@ loginbrute:                  # 仅限授权目标；前端需勾选授权确认
   max_users: 8
   max_passwords: 50
   interval_ms: 150
-  captcha_ocr_url: ""        # ddddocr sidecar（python tools/ocr_server.py），空 = 验证码页直接报错
+  captcha_ocr_url: ""        # ddddocr sidecar（python tools/ocr_server.py），
+                             # 空 = 验证码表单不做口令爆破（侧信道通道仍跑）
+  captcha_type: digits       # 验证码形态 digits | calc（配了 OCR 才生效）
+  captcha_replay: true       # 验证码重放/校验缺失（侧信道，独立于 OCR）
   # max_concurrent 为保留键：爆破刻意顺序执行（降低触发账户锁定风险）
 
 audit:

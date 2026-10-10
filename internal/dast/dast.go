@@ -115,6 +115,10 @@ type Options struct {
 	StoredXSS         bool          // 存储型 XSS 探测（写无害标记，跨请求读回）
 	CacheHygiene      bool          // 敏感页缓存卫生（缺 no-store 判定）
 	WeakCookie        bool          // 状态变更表单下发弱会话 Cookie（值形态判定）
+	CaptchaReplay     bool          // 验证码重放/校验缺失（侧信道，不需 OCR）
+	AuthzBypass       bool          // 越权（授权绕过）探测：身份标识可控 + 无访问控制
+	APIAudit          bool          // 开放 API 通道（未授权读取 / IDOR）
+	CryptoProbe       bool          // 加密实现弱点（确定性加密 / 弱算法）
 	UploadBypass      bool          // 上传绕过验证（危险扩展名/类型/双扩展名）
 	OnHit             func(Finding) // 命中即时回调（实时事件流，nil = 不回调）
 }
@@ -134,6 +138,10 @@ func DefaultOptions() Options {
 		StoredXSS:         true,
 		CacheHygiene:      true,
 		WeakCookie:        true,
+		CaptchaReplay:     true,
+		AuthzBypass:       true,
+		APIAudit:          true,
+		CryptoProbe:       true,
 		UploadBypass:      true,
 		MaxProbesPerClass: 12,
 	}
@@ -507,6 +515,56 @@ func (r *Runner) RunForms(targets []FormTarget) []Finding {
 		}
 	}
 
+	// 加密实现弱点（确定性加密 / 弱算法）：提交定值看密文形态。
+	if r.opts.CryptoProbe {
+		cryptoDone := map[string]bool{}
+		for _, ft := range targets {
+			if r.stopped() {
+				break
+			}
+			if ft.Action == "" || len(ft.Fields) == 0 || cryptoDone[ft.Action] {
+				continue
+			}
+			cryptoDone[ft.Action] = true
+			if f := r.cryptoDeterminismProbe(ft, &done, total); f != nil {
+				if r.opts.OnHit != nil {
+					r.opts.OnHit(*f)
+				}
+				hits = append(hits, *f)
+			}
+			if r.stopped() {
+				break
+			}
+			if f := r.cryptoWeakAlgoProbe(ft, "", &done, total); f != nil {
+				if r.opts.OnHit != nil {
+					r.opts.OnHit(*f)
+				}
+				hits = append(hits, *f)
+			}
+		}
+	}
+
+	// 验证码重放/校验缺失（侧信道）：含验证码字段的表单专有通道。
+	// 与字段注入 plan 分开——验证码缺陷看的是「校验被绕过」，不是参数注入。
+	if r.opts.CaptchaReplay {
+		capDone := map[string]bool{}
+		for _, ft := range targets {
+			if r.stopped() {
+				break
+			}
+			if ft.Action == "" || capDone[ft.Action] {
+				continue
+			}
+			capDone[ft.Action] = true
+			if f := r.captchaReplayProbe(ft, &done, total); f != nil {
+				if r.opts.OnHit != nil {
+					r.opts.OnHit(*f)
+				}
+				hits = append(hits, *f)
+			}
+		}
+	}
+
 	// 无文本可注入字段时，上传探测已跑完，无需再做字段注入循环。
 	if len(plan) == 0 {
 		return hits
@@ -768,6 +826,17 @@ func chainEvidence(f *Finding, probeURL string, resp *Resp) {
 	}
 }
 
+// RunAuthz 越权（授权绕过）探测：对带身份标识的 URL 参数做横向/纵向试探。
+// 独立于 Run 的参数注入通道——越权判定看的是「标识可控 + 无访问控制」。
+func (r *Runner) RunAuthz(links []string) []Finding {
+	if !r.authzEnabled() {
+		return nil
+	}
+	done := 0
+	total := len(links) * 4
+	return r.runAuthzBypass(links, &done, total)
+}
+
 // collectParams 从爬取到的链接收集待探测参数：按「主机+路径+参数名」去重，上限 cap。
 func collectParams(links []string, cap int) []Target {
 	seen := map[string]bool{}
@@ -872,4 +941,9 @@ func judge(kind string, resp *Resp, baseline string, tgt Target) *Finding {
 
 func redirectStatus(code int) bool {
 	return code == 301 || code == 302 || code == 303 || code == 307 || code == 308
+}
+
+// authzEnabled 越权通道总闸：跟随深度探测面总闸（默认开）。
+func (r *Runner) authzEnabled() bool {
+	return r.opts.AuthzBypass
 }

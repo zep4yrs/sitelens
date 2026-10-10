@@ -166,6 +166,10 @@ type DASTConfig struct {
 	StoredXSS         bool  `yaml:"stored_xss"`           // 存储型 XSS 探测（写无害标记，别处读回）
 	CacheHygiene      bool  `yaml:"cache_hygiene"`        // 敏感页缓存卫生（缺 no-store 判定）
 	WeakCookie        bool  `yaml:"weak_cookie"`          // 状态变更表单下发弱会话 Cookie（值形态判定）
+	CaptchaReplay     bool  `yaml:"captcha_replay"`       // 验证码重放/校验缺失（侧信道，不需 OCR）
+	AuthzBypass       bool  `yaml:"authz_bypass"`         // 越权探测（身份标识客户端可控）
+	APIAudit          bool  `yaml:"api_audit"`            // 开放 API 通道（未授权读取 / IDOR）
+	CryptoProbe       bool  `yaml:"crypto_probe"`         // 加密实现弱点（确定性加密 / 弱算法）
 	UploadBypass      bool  `yaml:"upload_bypass"`        // 上传绕过验证（危险扩展名/类型/双扩展名）
 }
 
@@ -202,7 +206,12 @@ type LoginBruteConfig struct {
 	MaxUsers      int    `yaml:"max_users"`       // 用户名字典截取上限
 	MaxPasswords  int    `yaml:"max_passwords"`   // 密码字典截取上限
 	IntervalMS    int    `yaml:"interval_ms"`     // 相邻尝试间隔（毫秒）
-	CaptchaOCRURL string `yaml:"captcha_ocr_url"` // ddddocr sidecar 地址（空 = 验证码页直接报错）
+	CaptchaOCRURL string `yaml:"captcha_ocr_url"` // ddddocr sidecar 地址（空 = 无 OCR 能力）
+	CaptchaType   string `yaml:"captcha_type"`    // 验证码形态 digits | calc（空 = digits）
+	// 侧信道重放判定：DVWA Insecure CAPTCHA 这类模块不要求 OCR 成功，
+	// 而是要求「验证码校验结果被跨步骤复用」——同一次提交在「通过校验」
+	// 与「未通过校验」两个步骤间重放同一凭证。此通道默认开（不需要 OCR）。
+	CaptchaReplay bool `yaml:"captcha_replay"` // 验证码重放（侧信道）探测
 	// MaxConcurrent 为保留键：爆破刻意顺序执行（降低触发账户锁定的
 	// 风险），保留键位以兼容历史配置文件，当前版本不消费。
 	MaxConcurrent int `yaml:"max_concurrent"`
@@ -289,6 +298,10 @@ func Default() *Config {
 			StoredXSS:         true,
 			CacheHygiene:      true,
 			WeakCookie:        true,
+			CaptchaReplay:     true,
+			AuthzBypass:       true,
+			APIAudit:          true,
+			CryptoProbe:       true,
 			UploadBypass:      true,
 		},
 		Exploit: ExploitConfig{
@@ -308,7 +321,7 @@ func Default() *Config {
 		Netsec: NetsecConfig{TLSTimeoutSec: 8, MailCheck: true},
 		LoginBrute: LoginBruteConfig{
 			MaxTries: 400, MaxUsers: 8, MaxPasswords: 50,
-			IntervalMS: 150, MaxConcurrent: 2,
+			IntervalMS: 150, MaxConcurrent: 2, CaptchaReplay: true,
 		},
 		Audit: AuditConfig{
 			MaxArchiveMB: 20, MaxFiles: 800, MaxFileKB: 512,
