@@ -190,8 +190,22 @@ func (e *Engine) Scan(rawURL string, opts Options, onProgress progress, cancel f
 	if port > 0 && !(scheme == "http" && port == 80) && !(scheme == "https" && port == 443) {
 		baseURL = fmt.Sprintf("%s://%s:%d", scheme, host, port)
 	}
+	// 种子 URL 的路径与查询串必须保留：靶场入口常是 /Less-1/?id=1 这类
+	// 带参页面，丢弃路径/query 会退化成只扫站点根，参数级攻击面整块丢失。
+	seedURL := baseURL
+	seedHasQuery := false
+	if pu, perr := url.Parse(strings.TrimSpace(rawURL)); perr == nil && pu.Path != "" && pu.Path != "/" {
+		seedURL = baseURL + pu.Path
+		if pu.RawQuery != "" {
+			seedURL += "?" + pu.RawQuery
+			seedHasQuery = true
+		}
+	} else if perr == nil && pu.RawQuery != "" {
+		seedURL = baseURL + "?" + pu.RawQuery
+		seedHasQuery = true
+	}
 	res.URL, res.Host = baseURL, host
-	onProgress(5, "校验目标："+baseURL)
+	onProgress(5, "校验目标："+seedURL)
 
 	client := e.newClient(opts)
 	authDone := false
@@ -218,13 +232,13 @@ func (e *Engine) Scan(rawURL string, opts Options, onProgress progress, cancel f
 		}
 	}
 
-	// 2) 采集首页
+	// 2) 采集首页（带种子路径/query 时采集该页面本身）
 	t0 := time.Now()
-	home, ferr := client.GetFollow(baseURL)
+	home, ferr := client.GetFollow(seedURL)
 	rtMS := time.Since(t0).Milliseconds()
 	if ferr != nil || home == nil {
 		// 底层错误带出（refused/timeout/SSRF 拒绝原因一目了然）
-		res.Error = "连接失败：" + baseURL
+		res.Error = "连接失败：" + seedURL
 		if ferr != nil {
 			res.Error += "（" + ferr.Error() + "）"
 		}
@@ -257,6 +271,11 @@ func (e *Engine) Scan(rawURL string, opts Options, onProgress progress, cancel f
 	// 首页表单/链接即刻采集（任何档位都做）：首页就是 DVWA 登录页与
 	// SQLi/XSS 模块入口，deep=false 时不采集则整站攻击面不可见。
 	collectHomeFormTargets(doc, home.FinalURL, &dastLinks, &dastFormTargets, &loginForms)
+	// 种子带参页面本身即 DAST 探测点：单入口深扫（如 /item?id=1）时
+	// 该参数必须进入探测队列，否则 URL 参数注入整块测不到。
+	if seedHasQuery {
+		dastLinks = append(dastLinks, seedURL)
+	}
 
 	// 3) 同域浅爬取（DAST 或 JS 端点开启时 jsmap 前置：API 端点回灌爬虫种子）
 	var jsEndpoints []jsmap.Endpoint
