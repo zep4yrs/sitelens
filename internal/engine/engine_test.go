@@ -297,3 +297,54 @@ func TestHygieneSeparatedFromVerified(t *testing.T) {
 		t.Fatalf("cookie-attrs 跨页应去重为 1 条，实际 %d", n)
 	}
 }
+
+// TestSeedPathQueryPreserved 种子 URL 的路径与查询串不得被丢弃：
+// 单入口深扫（/item?id=1）时，该页面与其参数必须进入探测面——
+// 否则 DAST 拿不到 id，参数级注入在"带参入口"场景整块测不到。
+func TestSeedPathQueryPreserved(t *testing.T) {
+	var hitSeed, hitDAST bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/vuln.php":
+			hitSeed = true
+			if r.URL.Query().Get("id") == "" {
+				w.Write([]byte(`<html><body>no param</body></html>`))
+				return
+			}
+			hitDAST = true
+			// 布尔盲注：真/假分支尺寸差
+			v := r.URL.Query().Get("id")
+			if strings.Contains(v, "1=2") || strings.Contains(v, "1=12") || strings.Contains(v, "2") {
+				w.Write([]byte(strings.Repeat("x", 300)))
+			} else {
+				w.Write([]byte(strings.Repeat("x", 900)))
+			}
+		default:
+			w.Write([]byte(`<html><body>root</body></html>`))
+		}
+	}))
+	defer srv.Close()
+
+	cfg := config.Default()
+	cfg.Scan.RateIntervalMS = 0
+	cfg.Target.AllowPrivate = true
+	eng := New(cfg, nil, nil)
+	// 带路径 + 查询串的种子入口
+	res := eng.Scan(srv.URL+"/vuln.php?id=1", Options{Deep: false, DAST: true}, nil, nil)
+
+	if !hitSeed {
+		t.Fatalf("种子路径 /vuln.php 未被采集（引擎丢弃了路径）：pages=%v", res.Pages)
+	}
+	if !hitDAST {
+		t.Fatal("种子查询参数 id 未进入 DAST 探测队列")
+	}
+	found := false
+	for _, v := range res.Verified {
+		if v["check"] == "bool-blind-sqli" && v["param"] == "id" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("带参种子入口应命中参数级注入；verified=%d 条", len(res.Verified))
+	}
+}
