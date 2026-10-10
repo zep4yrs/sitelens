@@ -2,6 +2,7 @@ package engine
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net"
 	"net/url"
@@ -264,6 +265,7 @@ func (e *Engine) Scan(rawURL string, opts Options, onProgress progress, cancel f
 
 	acc := newTechAcc()
 	dastLinks := []string{}               // 爬取阶段收集的带参链接（DAST 探测点）
+	apiCandidates := []string{}           // API 风格页面 URL（未授权/IDOR 探测点）
 	var dastFormTargets []dast.FormTarget // 爬取阶段收集的表单（DAST 表单探测点）
 	var loginForms []loginFormEntry       // 含密码框的表单页（弱口令审计入口）
 	pages := []crawlPage{{resp: home, doc: doc}}
@@ -341,6 +343,14 @@ func (e *Engine) Scan(rawURL string, opts Options, onProgress progress, cancel f
 		// 导致 Search.asp?tfSearch 这类「参数藏在 GET 表单里」的入口整块
 		// 测不到（Acunetix testasp 的 Search.asp 就是这么漏的）。
 		dastLinks = append(dastLinks, cr.ParamLinks...)
+		// API 探测点：API 端点通常不带查询串（/api/v2/user/1），拿不到就整块
+		// 测不到——只从带参链接收集会让 API 通道永远空跑。这里把爬到的
+		// 页面 URL 一并登记，由 RunAPI 自行筛出 API 风格路径。
+		for _, pg := range res.Pages {
+			if pg.URL != "" {
+				apiCandidates = append(apiCandidates, pg.URL)
+			}
+		}
 		// 认证深化：未配置 login_url 时，从爬到的表单里自动发现登录表单
 		// （含 password 输入框）并以凭证登录——DAST/目录探测随后带认证态
 		if e.cfg.Auth.LoginURL == "" && opts.AuthCookie == "" &&
@@ -615,6 +625,10 @@ func (e *Engine) Scan(rawURL string, opts Options, onProgress progress, cancel f
 			RandomDiff:        e.cfg.DAST.RandomDiff && deepOn,
 			StoredXSS:         e.cfg.DAST.StoredXSS && deepOn,
 			WeakCookie:        e.cfg.DAST.WeakCookie && deepOn,
+			CaptchaReplay:     e.cfg.LoginBrute.CaptchaReplay && deepOn,
+			AuthzBypass:       e.cfg.DAST.AuthzBypass && deepOn,
+			APIAudit:          e.cfg.DAST.APIAudit && deepOn,
+			CryptoProbe:       e.cfg.DAST.CryptoProbe && deepOn,
 			MaxProbesPerClass: e.cfg.DAST.MaxProbesPerClass,
 			OnHit: func(f dast.Finding) {
 				emit("hit", f.Severity+" · "+f.Title+" — "+f.Param)
@@ -627,6 +641,28 @@ func (e *Engine) Scan(rawURL string, opts Options, onProgress progress, cancel f
 				"url": f.URL, "evidence": f.Evidence, "advice": f.Advice,
 				"src": "dast", "param": f.Param,
 				"payload": f.Payload, "replay": f.Replay, // 重放与证据链输入
+			})
+			res.Verified = append(res.Verified, m)
+			dastMaps = append(dastMaps, m)
+		}
+		for _, f := range r.RunAPI(append(append([]string{}, dastLinks...), apiCandidates...)) {
+			dastAll = append(dastAll, f)
+			m := verifiedMap(map[string]any{
+				"check": f.Check, "title": f.Title, "severity": f.Severity,
+				"url": f.URL, "evidence": f.Evidence, "advice": f.Advice,
+				"src": "dast", "param": f.Param,
+				"payload": f.Payload, "replay": f.Replay,
+			})
+			res.Verified = append(res.Verified, m)
+			dastMaps = append(dastMaps, m)
+		}
+		for _, f := range r.RunAuthz(dastLinks) {
+			dastAll = append(dastAll, f)
+			m := verifiedMap(map[string]any{
+				"check": f.Check, "title": f.Title, "severity": f.Severity,
+				"url": f.URL, "evidence": f.Evidence, "advice": f.Advice,
+				"src": "dast", "param": f.Param,
+				"payload": f.Payload, "replay": f.Replay,
 			})
 			res.Verified = append(res.Verified, m)
 			dastMaps = append(dastMaps, m)
@@ -755,13 +791,27 @@ func (e *Engine) Scan(rawURL string, opts Options, onProgress progress, cancel f
 					if cancelled() {
 						break
 					}
+					// 验证码接线：配了 ddddocr sidecar 地址才启用识别；
+					// 每次尝试前重取验证码图（旧码提交后即失效）。
+					capType, ocrURL := "none", ""
+					fetchImg := func(string) ([]byte, error) { return nil, errNoImageChannel }
+					if e.cfg.LoginBrute.CaptchaOCRURL != "" {
+						capType = e.cfg.LoginBrute.CaptchaType
+						if capType == "" {
+							capType = "digits"
+						}
+						ocrURL = e.cfg.LoginBrute.CaptchaOCRURL
+						fetchImg = imageFetcher(client)
+					}
 					hits, lerr := loginbrute.Brute(postFormPoster{client}, loginbrute.Options{
 						PageURL:     lf.URL,
 						Users:       users,
 						Passwords:   pwds,
 						MaxTries:    e.cfg.LoginBrute.MaxTries,
 						IntervalMS:  e.cfg.LoginBrute.IntervalMS,
-						CaptchaType: "none",
+						CaptchaType: capType,
+						OCRURL:      ocrURL,
+						FetchImage:  fetchImg,
 					}, nil)
 					if lerr != nil {
 						continue // 无表单 / 验证码页：跳过，不中断其余审计
@@ -1110,6 +1160,20 @@ func cveMsFindings(ms []intel.CVEMsFinding) []intel.Finding {
 		})
 	}
 	return out
+}
+
+// errNoImageChannel 未配 OCR 通道时的图片拉取占位错误（爆破侧据此明确报错）。
+var errNoImageChannel = errors.New("未配置验证码图片拉取通道")
+
+// imageFetcher 验证码图片字节拉取（走同一限速客户端，单请求不跟重定向）。
+func imageFetcher(client *httpx.Client) func(string) ([]byte, error) {
+	return func(rawURL string) ([]byte, error) {
+		r, err := client.GetDirect(rawURL)
+		if err != nil || r == nil {
+			return nil, err
+		}
+		return []byte(r.Body), nil
+	}
 }
 
 // postFormPoster 表单弱口令审计的 loginbrute.Poster 适配（引擎侧）。

@@ -63,6 +63,16 @@ var checkCWE = map[string][]string{
 	"cacheable-sensitive": {"CWE-525"}, // 敏感页可缓存（浏览器缓存泄露）
 	"weak-random-id":      {"CWE-330"}, // 弱随机标识（时间戳/低熵形态）
 
+	// dast：授权/加密/API 判定通道（v5.1）
+	"authz-bypass":         {"CWE-639", "CWE-862"}, // 越权（用户可控键 + 缺失授权）
+	"sqli-auth-bypass":     {"CWE-89"},             // SQLi 认证绕过
+	"captcha-missing":      {"CWE-804"},            // 验证码校验缺失（可绕过）
+	"captcha-replay":       {"CWE-804"},            // 验证码跨步骤重放
+	"crypto-deterministic": {"CWE-329", "CWE-780"}, // 固定 IV/ECB + 硬编码密钥
+	"crypto-weak-algo":     {"CWE-327", "CWE-916"}, // 弱加密算法/无盐哈希
+	"api-unauth":           {"CWE-306", "CWE-200"}, // 缺失鉴权 + 信息暴露
+	"api-idor":             {"CWE-639"},            // API 资源越权（IDOR）
+
 	// passive（被动检测）
 	"cookie-attrs": {"CWE-1004"},
 	"csrf-form":    {"CWE-352"},

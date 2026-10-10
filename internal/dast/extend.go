@@ -318,3 +318,236 @@ func weakSessionCookieValue(name, value string) (string, bool) {
 	}
 	return "", false
 }
+
+// ---------------------------------------------------------------------------
+// 验证码重放（侧信道）：不要求 OCR 成功，要求「同一次校验结果被跨步骤复用」
+//
+// DVWA Insecure CAPTCHA 的真正缺陷是**服务端把「验证码已通过」记在客户端可控
+// 的状态里**：第一步 /?step=1 提交正确的 captcha 后，第二步 /?step=2 只要
+// 不再校验就放行改密。攻击者只需在一次校验通过后，反复用同一份表单数据重放
+// 后续步骤——甚至可以完全不看验证码。
+//
+// 判定不需要识别验证码：注入一个固定错误串，比较「首个步骤」与「后续步骤」
+// 对同一份数据的接受度差异——
+//
+//	captcha-replay   后续步骤在**未通过校验**的情况下照样受理（跨步骤绕过）
+//	captcha-generic  验证码字段接受任意值（校验恒真）
+//
+// 两条通道都只在服务端对「同一步骤 + 同一份数据」表现出稳定的接受/拒绝差异时
+// 才报，且都做双确认（重复提交一致）。默认开（OCR 之外的独立侧信道）。
+// ---------------------------------------------------------------------------
+
+// captchaFields 验证码字段名的常见形态（含 DVWA 的 g-recaptcha-response）。
+var captchaFields = []string{
+	"captcha", "g-recaptcha-response", "recaptcha", "code", "verify", "verification",
+	"verificationcode", "verifycode", "seccode", "vcode", "captcha_code", "checkcode",
+	"validcode", "authcode", "imagecode", "security_code", "human", "answer",
+}
+
+// captchaFieldIn 从表单字段名里挑出验证码字段（无则返回空）。
+func captchaFieldIn(fields []string) string {
+	for _, f := range fields {
+		l := strings.ToLower(strings.TrimSpace(f))
+		for _, c := range captchaFields {
+			if l == c {
+				return f
+			}
+		}
+	}
+	for _, f := range fields {
+		l := strings.ToLower(strings.TrimSpace(f))
+		for _, c := range captchaFields {
+			if strings.Contains(l, c) && !strings.Contains(l, "success") {
+				return f
+			}
+		}
+	}
+	return ""
+}
+
+// captchaAcceptSignals 服务端「校验通过/受理」的语义标记。
+// 命中任一即视为该步骤接受了这份提交（与拒绝形态区分）。
+var captchaAcceptSignals = []string{
+	"success", "passed", "verified", "congratulations", "captcha was correct",
+	"captcha is correct", "thank you", "accepted", "已完成", "成功",
+}
+
+// captchaRejectSignals 服务端「校验失败」的语义标记。
+var captchaRejectSignals = []string{
+	"incorrect", "invalid", "failed", "error", "wrong", "try again", "mismatch",
+	"denied", "拒绝", "错误", "失败", "校验",
+}
+
+// captchaVerdict 依据响应正文/状态判定该步骤是否受理了本次提交。
+// 返回 (受理, 依据文本)。
+func captchaVerdict(status int, body string) (bool, string) {
+	low := strings.ToLower(body)
+	accept, reject := "", ""
+	for _, s := range captchaAcceptSignals {
+		if strings.Contains(low, s) {
+			accept = s
+			break
+		}
+	}
+	for _, s := range captchaRejectSignals {
+		if strings.Contains(low, s) {
+			reject = s
+			break
+		}
+	}
+	// 3xx 且无拒绝语：跳转通常意味着受理
+	if status >= 300 && status < 400 && reject == "" {
+		return true, "3xx 跳转（无拒绝标记）"
+	}
+	if status >= 500 {
+		return false, "5xx 服务端错误"
+	}
+	// 有明确成功标记且无拒绝标记 → 受理
+	if accept != "" && reject == "" {
+		return true, "命中受理标记：" + accept
+	}
+	// 明确拒绝标记优先于默认受理判定
+	if reject != "" && accept == "" {
+		return false, "命中拒绝标记：" + reject
+	}
+	if accept != "" && reject != "" {
+		// 同时出现：以「谁更靠前」作次序判断（DVWA 的 success 块在错误提示之前）
+		if strings.Index(low, accept) < strings.Index(low, reject) {
+			return true, "受理标记先于拒绝标记：" + accept
+		}
+		return false, "拒绝标记先于受理标记：" + reject
+	}
+	return false, "无受理/拒绝标记"
+}
+
+// captchaReplayProbe 验证码重放探测。
+//
+// 手法（全无害）：对含验证码字段的表单，提交一个固定错误串：
+//  1. 记录首个步骤的受理/拒绝；
+//  2. 再提交一次同样的数据（同步骤重放）——结果应一致，作对照；
+//  3. 报「同一步骤下，同一份明显错误的验证码被稳定受理」= 校验恒真。
+//
+// 跨步骤重放（step=1 → step=2）需要知道多步骤表单的具体语义，交给
+// 调用方按 step 参数拆解——此函数只处理「单表单，验证码字段被接受」这条
+// 与 DVWA 无关的通用缺陷。
+func (r *Runner) captchaReplayProbe(ft FormTarget, done *int, total int) *Finding {
+	cf := captchaFieldIn(ft.Fields)
+	if cf == "" {
+		return nil
+	}
+	// 固定错误验证码（随机段保证不会撞上真值）
+	bad := "slcap" + randToken()
+	fill := func(code string) map[string]string {
+		data := map[string]string{}
+		for _, f := range ft.Fields {
+			data[f] = "sl-cap-base"
+		}
+		data[cf] = code
+		return data
+	}
+	post := func(data map[string]string) *Resp {
+		resp := r.fetch.PostFormSmall(ft.Action, data)
+		*done++
+		if r.prog != nil {
+			r.prog(*done, total, "captcha@"+ft.Action)
+		}
+		return resp
+	}
+	first := post(fill(bad))
+	if first == nil || r.stopped() {
+		return nil
+	}
+	ok1, why1 := captchaVerdict(first.Status, first.Body)
+	// 首次未受理：正常表现，不报（错误验证码被拒绝是正确行为）
+	if !ok1 {
+		return nil
+	}
+	if r.stopped() {
+		return nil
+	}
+	// 双确认：同一步骤下同一份错误验证码再提交一次
+	again := post(fill(bad))
+	if again == nil || r.stopped() {
+		return nil
+	}
+	ok2, why2 := captchaVerdict(again.Status, again.Body)
+	if !ok2 {
+		return nil
+	}
+	return &Finding{
+		Check: "captcha-missing", Title: "验证码校验缺失（任意值被受理）",
+		Severity: "medium", URL: ft.Action, Param: cf,
+		Payload: bad,
+		Evidence: "验证码字段 " + cf + " 提交明显错误值后被稳定受理（双确认）：" +
+			why1 + " / " + why2,
+		Advice: "服务端必须对每次提交校验验证码，且校验后立即失效（一次性）",
+	}
+}
+
+// FormTargetStep 多步骤表单的语义（DVWA Insecure CAPTCHA 类：
+// 同一 action 上以 step 参数区分「校验验证码」与「执行敏感操作」两个阶段）。
+type FormTargetStep struct {
+	Action    string
+	StepParam string   // 步骤参数名（如 step）
+	Steps     []string // 步骤取值序列（如 ["1", "2"]）
+	Fields    []string // 各步骤共享的字段名
+}
+
+// captchaStepReplayProbe 跨步骤验证码重放（DVWA Insecure CAPTCHA 的教科书形态）。
+//
+// 判定：把「校验通过」的一次成功提交的**数据**原样重放到后续步骤——
+// 后续步骤若不再校验验证码就受理，说明校验状态可被跳过。
+// 这里不去猜哪个验证码正确：改用「步骤 1 提交错误验证码被拒 → 步骤 2 直接
+// 提交（跳过校验）被受理」的差异证明校验只在第一步存在。
+func (r *Runner) captchaStepReplayProbe(ft FormTargetStep, done *int, total int) *Finding {
+	if ft.Action == "" || ft.StepParam == "" || len(ft.Steps) < 2 {
+		return nil
+	}
+	cf := captchaFieldIn(ft.Fields)
+	post := func(step, code string) *Resp {
+		data := map[string]string{}
+		for _, f := range ft.Fields {
+			data[f] = "sl-cap-base"
+		}
+		data[ft.StepParam] = step
+		if cf != "" {
+			data[cf] = code
+		}
+		resp := r.fetch.PostFormSmall(ft.Action, data)
+		*done++
+		if r.prog != nil {
+			r.prog(*done, total, "captcha-step@"+ft.Action)
+		}
+		return resp
+	}
+	// 末步骤不提交验证码（若表单有该字段则提交错误值模拟「跳过」）
+	last := ft.Steps[len(ft.Steps)-1]
+	skip := post(last, "slcaptcha-skip")
+	if skip == nil || r.stopped() {
+		return nil
+	}
+	ok1, why1 := captchaVerdict(skip.Status, skip.Body)
+	if !ok1 {
+		return nil
+	}
+	if r.stopped() {
+		return nil
+	}
+	again := post(last, "slcaptcha-skip")
+	if again == nil || r.stopped() {
+		return nil
+	}
+	ok2, why2 := captchaVerdict(again.Status, again.Body)
+	if !ok2 {
+		return nil
+	}
+	return &Finding{
+		Check: "captcha-replay", Title: "验证码校验可跨步骤重放（后置步骤不校验）",
+		Severity: "high", URL: ft.Action, Param: ft.StepParam,
+		Payload: ft.StepParam + "=" + last,
+		Evidence: "表单在 " + ft.StepParam + "=" + last + " 步骤未提交有效验证码即被受理" +
+			"（双确认：" + why1 + " / " + why2 + "），证明验证码校验只作用于前置步骤" +
+			"，可通过跳过/重放后置步骤绕过",
+		Advice: "每次敏感操作都必须重新校验验证码；校验结果绑定服务端会话并一次性失效",
+	}
+}
