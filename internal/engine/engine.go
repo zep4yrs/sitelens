@@ -397,6 +397,17 @@ func (e *Engine) Scan(rawURL string, opts Options, onProgress progress, cancel f
 	// 5) 安全响应头评分
 	onProgress(70, "评估安全响应头…")
 	res.Security = security.Assess(home.Headers)
+	// 安全头策略弱点（CSP 指令级放宽等）进 verified：
+	// 「头在但策略可绕过」是实打实的漏洞（DVWA CSP Bypass 即此类），
+	// 只挂在 security 评分里不会被覆盖率口径看见。
+	for _, w := range res.Security.Weaknesses {
+		m := verifiedMap(map[string]any{
+			"check": "csp-weak-directive", "title": "CSP 策略可绕过（" + w.Directive + "）",
+			"severity": w.Severity, "url": baseURL,
+			"evidence": w.Evidence, "advice": w.Advice, "src": "security",
+		})
+		res.Verified = append(res.Verified, m)
+	}
 
 	// 6) 验证型 check
 	if opts.Checks != "" && opts.Checks != "none" {

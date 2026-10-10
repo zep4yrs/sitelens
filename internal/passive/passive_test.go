@@ -8,6 +8,17 @@ import (
 	"cnb.cool/feng-qiao/sitelens/internal/httpx"
 )
 
+// onlyCheck 过滤出指定 check 的命中（同一响应可能命中多类检查）。
+func onlyCheck(hits []Hit, check string) []Hit {
+	var out []Hit
+	for _, h := range hits {
+		if h.Check == check {
+			out = append(out, h)
+		}
+	}
+	return out
+}
+
 func respWithCookie(cookie string) *httpx.Response {
 	return &httpx.Response{Status: 200, SetCookies: []string{cookie}}
 }
@@ -52,8 +63,9 @@ func TestDedupCSRFAcrossPages(t *testing.T) {
 // 不同 cookie / 不同缺失属性：各自成条，不被误去重。
 func TestDedupKeepsDistinctFindings(t *testing.T) {
 	d := NewDeduper()
-	a := RunDedup(respWithCookie("SID=1"), htmlx.Parse(""), "http://t/a", d)
-	b := RunDedup(respWithCookie("OTHER=2; HttpOnly"), htmlx.Parse(""), "http://t/b", d)
+	// 只比对 cookie-attrs：SID=1 还会命中 weak-session-id（那是另一类检查）
+	a := onlyCheck(RunDedup(respWithCookie("SID=1"), htmlx.Parse(""), "http://t/a", d), "cookie-attrs")
+	b := onlyCheck(RunDedup(respWithCookie("OTHER=x"), htmlx.Parse(""), "http://t/b", d), "cookie-attrs")
 	if len(a) != 1 || len(b) != 1 {
 		t.Fatalf("不同 cookie 应各自成条: a=%d b=%d", len(a), len(b))
 	}
@@ -65,9 +77,14 @@ func TestDedupKeepsDistinctFindings(t *testing.T) {
 // Hygiene 表必须覆盖两个配置卫生项。
 func TestHygieneTable(t *testing.T) {
 	h := Hygiene()
-	for _, k := range []string{"cookie-attrs", "csrf-form"} {
-		if !h[k] {
-			t.Fatalf("%s 应归入配置卫生", k)
+	// cookie-attrs 是纯配置卫生（缺属性）；csrf-form / weak-session-id
+	// 是 CWE-352 / CWE-330 这类真漏洞，必须落在 verified 里参与覆盖率口径
+	if !h["cookie-attrs"] {
+		t.Fatal("cookie-attrs 应归入配置卫生")
+	}
+	for _, k := range []string{"csrf-form", "weak-session-id"} {
+		if h[k] {
+			t.Fatalf("%s 是真漏洞项，不得归入配置卫生", k)
 		}
 	}
 }

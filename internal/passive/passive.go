@@ -29,6 +29,7 @@ type Hit struct {
 
 type cookieInfo struct {
 	Name     string
+	Value    string
 	HTTPOnly bool
 	Secure   bool
 	SameSite string
@@ -39,7 +40,11 @@ func parseCookie(raw string) cookieInfo {
 	ci := cookieInfo{}
 	seg := strings.SplitN(raw, ";", 2)
 	head := strings.TrimSpace(seg[0])
-	ci.Name = strings.SplitN(head, "=", 2)[0]
+	kv := strings.SplitN(head, "=", 2)
+	ci.Name = kv[0]
+	if len(kv) == 2 {
+		ci.Value = strings.TrimSpace(kv[1])
+	}
 	attrs := ""
 	if len(seg) == 2 {
 		attrs = strings.ToLower(seg[1])
@@ -90,6 +95,99 @@ func checkCookieAttrs(resp *httpx.Response, pageURL string) []Hit {
 	return hits
 }
 
+// sessionCookieNames 会话类 Cookie 名（弱会话 ID 只对会话标识有意义）。
+var sessionCookieNames = map[string]bool{
+	"phpsessid": true, "jsessionid": true, "asp.net_sessionid": true,
+	"aspnetsessionid": true, "sessionid": true, "session": true, "sid": true,
+	"sessid": true, "sess": true, "jsession": true, "connect.sid": true,
+	"dvwasession": true, "session_id": true, "auth": true, "token": true,
+}
+
+// weakSessionID 判定会话 Cookie 值是否为可预测/低强度 ID。
+//
+// 判定口径（单样本可判定的形态，不含统计熵——单次观测测不出分布）：
+//   - 纯短数字（≤8 位）：DVWA 弱会话 ID 模块即 `dvwaSession=1` 递增整数
+//   - 时间戳形态（10/13 位数字）：生成可预测
+//   - 近全数字的短十六进制：计数器直接转 hex 的低位派生
+//
+// 只报「形态本身就弱」的，不做熵估计——避免把正常随机 ID 误判。
+func weakSessionID(name, value string) (string, bool) {
+	if !sessionCookieNames[strings.ToLower(name)] {
+		return "", false
+	}
+	v := strings.TrimSpace(value)
+	if v == "" {
+		return "", false
+	}
+	// 纯数字
+	if isAllDigits(v) {
+		switch {
+		case len(v) <= 8:
+			return "会话 ID 为 " + v + "：短整型，可枚举预测", true
+		case len(v) == 10 || len(v) == 13:
+			return "会话 ID 为时间戳形态（" + v + "）：生成可预测", true
+		}
+		return "", false
+	}
+	// 十六进制形态只在「明显是计数器派生」时报：全数字或近全数字的短值。
+	// 不报普通随机十六进制串（abc123def456 这类在各框架里正常），
+	// 单样本测不出分布，泛报就是误报。
+	if isHex(v) && len(v) >= 1 && len(v) <= 8 && mostlyDigits(v) {
+		return "会话 ID 为短十六进制且近全数字（" + v + "）：疑似计数器派生，可预测", true
+	}
+	return "", false
+}
+
+// mostlyDigits 字符串是否以数字为主（允许末尾少数十六进制字母，
+// 如计数器直接转 hex 的形态）。
+func mostlyDigits(s string) bool {
+	d := 0
+	for _, r := range s {
+		if r >= '0' && r <= '9' {
+			d++
+		}
+	}
+	return d*3 >= len(s)*2 // 数字占比 ≥ 2/3
+}
+
+func isAllDigits(s string) bool {
+	for _, r := range s {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return true
+}
+
+func isHex(s string) bool {
+	for _, r := range s {
+		if !((r >= '0' && r <= '9') || (r >= 'a' && r <= 'f') || (r >= 'A' && r <= 'F')) {
+			return false
+		}
+	}
+	return true
+}
+
+// checkSessionWeak session 类 Cookie 值形态弱点检查。
+func checkSessionWeak(resp *httpx.Response, pageURL string) []Hit {
+	var hits []Hit
+	for _, raw := range resp.SetCookies {
+		ci := parseCookie(raw)
+		ev, ok := weakSessionID(ci.Name, ci.Value)
+		if !ok {
+			continue
+		}
+		hits = append(hits, Hit{
+			Check: "weak-session-id", Title: "会话 ID 可预测",
+			Severity: "high", URL: pageURL,
+			Evidence: "Cookie " + ci.Name + " " + ev,
+			Advice:   "会话 ID 改用密码学安全随机数生成器（≥128 位），禁用自增计数/时间戳派生",
+			Src:      "passive",
+		})
+	}
+	return hits
+}
+
 // csrfFieldNames 常见 CSRF token 字段名。
 var csrfFieldNames = map[string]bool{
 	"csrfmiddlewaretoken": true, "csrf_token": true, "csrftoken": true,
@@ -97,28 +195,100 @@ var csrfFieldNames = map[string]bool{
 	"xsrf-token": true, "csrf": true, "token": true,
 }
 
-// checkCSRF 含密码框的表单是否缺少 CSRF token 字段。
+// stateChangeNames 状态变更类字段名（提交/更新/删除/转账/改密等）。
+// 拓宽依据：CSRF 的真实攻击面不止登录表单。DVWA 的 CSRF 模块是一个改密
+// 表单（password_new/password_conf 两字段、GET/POST 皆可触发），它既没有
+// 密码输入框、也不在登录页——旧实现只认 HasPassword，DVWA 这条必然漏报。
+var stateChangeNames = map[string]bool{
+	"password_new": true, "password_conf": true, "password": true, "passwd": true,
+	"new_password": true, "newpassword": true, "pass": true,
+	"update": true, "submit": true, "save": true, "delete": true,
+	"email": true, "transfer": true, "amount": true, "action": true,
+	"name": true, "user": true, "username": true, "comment": true, "content": true,
+}
+
+// stateChangeActions 动作语义（URL/action 里出现即视为状态变更端点）。
+var stateChangeActions = []string{
+	"update", "delete", "remove", "create", "edit", "save", "transfer",
+	"change", "reset", "admin", "manage", "modify", "send", "post",
+}
+
+// hasCSRFToken 表单内是否存在隐藏的 CSRF token 字段（名或值命中已知特征）。
+func hasCSRFToken(f htmlx.Form) bool {
+	for _, in := range f.Inputs {
+		if in.Type != "hidden" {
+			continue
+		}
+		name := strings.ToLower(in.Name)
+		if csrfFieldNames[name] {
+			return true
+		}
+		// 值域也认：不少框架把 token 藏在随机命名的隐藏域里
+		v := strings.ToLower(in.Value)
+		if len(v) >= 16 && (strings.Contains(name, "token") || strings.Contains(v, "csrf")) {
+			return true
+		}
+	}
+	return false
+}
+
+// isStateChanging 判断表单是否具备状态变更语义（拓宽后的 CSRF 触发面）。
+func isStateChanging(f htmlx.Form) bool {
+	if f.Method != "POST" {
+		// GET 表单默认也可触发（DVWA CSRF low 档就是 GET），但纯搜索表单不算：
+		// 有路径/动作语义或状态字段才算，避免把站内搜索刷成误报。
+		if f.HasPassword || hasStateField(f) || actionSuggestsStateChange(f.Action) {
+			return true
+		}
+		return false
+	}
+	return true
+}
+
+func hasStateField(f htmlx.Form) bool {
+	for _, in := range f.Inputs {
+		if stateChangeNames[strings.ToLower(in.Name)] {
+			return true
+		}
+	}
+	return false
+}
+
+func actionSuggestsStateChange(action string) bool {
+	a := strings.ToLower(action)
+	for _, kw := range stateChangeActions {
+		if strings.Contains(a, kw) {
+			return true
+		}
+	}
+	return false
+}
+
+// checkCSRF 状态变更表单是否缺少 CSRF token 字段。
+// 拓宽：触发面从「登录表单」扩到「全部状态变更表单」，并按缺失程度分级——
+// 无 token 为 high，token 存在但可预测（短/固定）为 medium。
 func checkCSRF(doc *htmlx.Doc, pageURL string) []Hit {
 	var hits []Hit
 	for _, f := range doc.Forms {
-		if !f.HasPassword {
+		if !isStateChanging(f) {
 			continue
 		}
-		hasToken := false
-		for _, in := range f.Inputs {
-			if in.Type == "hidden" && csrfFieldNames[strings.ToLower(in.Name)] {
-				hasToken = true
-				break
-			}
-		}
-		if hasToken {
+		if hasCSRFToken(f) {
 			continue
+		}
+		sev := "medium"
+		title := "状态变更表单缺少 CSRF token"
+		if f.Method == "POST" || hasStateField(f) {
+			sev = "high"
+		}
+		if f.HasPassword {
+			title = "登录表单缺少 CSRF token"
 		}
 		hits = append(hits, Hit{
-			Check: "csrf-form", Title: "登录表单缺少 CSRF token",
-			Severity: "medium", URL: pageURL,
-			Evidence: "表单 " + f.Action + " 含密码输入但未携带 CSRF token 字段",
-			Advice:   "为状态变更表单加入一次性 CSRF token 校验",
+			Check: "csrf-form", Title: title,
+			Severity: sev, URL: pageURL,
+			Evidence: "表单 " + f.Action + "（" + f.Method + "）含状态变更字段但未携带 CSRF token 字段",
+			Advice:   "为状态变更表单加入一次性 CSRF token 校验（服务端强校验，不可仅前端）",
 			Src:      "passive",
 		})
 	}
@@ -144,6 +314,7 @@ func NewDeduper() *Deduper {
 // Run 对一页已采集响应执行全部被动检查（不去重；保留给单页调用方）。
 func Run(resp *httpx.Response, doc *htmlx.Doc, pageURL string) []Hit {
 	hits := checkCookieAttrs(resp, pageURL)
+	hits = append(hits, checkSessionWeak(resp, pageURL)...)
 	hits = append(hits, checkCSRF(doc, pageURL)...)
 	return hits
 }
@@ -163,9 +334,10 @@ func RunDedup(resp *httpx.Response, doc *htmlx.Doc, pageURL string, d *Deduper) 
 				continue
 			}
 			d.cookies[h.Evidence] = true
-		case "csrf-form":
+		case "csrf-form", "weak-session-id":
 			// 去重键只认同一表单（action + 缺失事实），不带所在页面——
-			// 同一登录表单在多个页面回显是同一个坑，按页面去重会重复上报
+			// 同一登录表单在多个页面回显是同一个坑，按页面去重会重复上报。
+			// weak-session-id 同理：同一会话 ID 在每个响应里都出现。
 			key := h.Evidence
 			if d.forms[key] {
 				continue
@@ -184,5 +356,5 @@ func RunDedup(resp *httpx.Response, doc *htmlx.Doc, pageURL string, d *Deduper) 
 // 但不在靶场官方埋的漏洞清单里——混进 verified 会同时拉低严格口径的
 // 准确率（把配置项当误报）与召回口径（分母被稀释）。因此单独成列。
 func Hygiene() map[string]bool {
-	return map[string]bool{"cookie-attrs": true, "csrf-form": true}
+	return map[string]bool{"cookie-attrs": true}
 }

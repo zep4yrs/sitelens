@@ -47,6 +47,19 @@ type Report struct {
 	Score int    `json:"score"`
 	Grade string `json:"grade"`
 	Items []Item `json:"items"`
+	// Weaknesses 头存在但策略本身可绕过的弱点（CSP 指令级放宽等）。
+	// 拓宽依据：只判「头在不在」会把 DVWA CSP Bypass 这类模块漏掉——
+	// 它头是在的，但策略里允许 unsafe-inline/self 脚本注入即被绕过。
+	Weaknesses []Weakness `json:"weaknesses,omitempty"`
+}
+
+// Weakness 一条安全头策略弱点。
+type Weakness struct {
+	Header    string `json:"header"`
+	Directive string `json:"directive"`
+	Severity  string `json:"severity"`
+	Evidence  string `json:"evidence"`
+	Advice    string `json:"advice"`
 }
 
 var gradeSteps = []struct {
@@ -90,5 +103,102 @@ func Assess(headers map[string]string) *Report {
 			break
 		}
 	}
+	rep.Weaknesses = assessCSP(get("content-security-policy"))
 	return rep
+}
+
+// cspDirective 解析后的 CSP 指令（名小写 → 值列表）。
+func parseCSP(v string) map[string][]string {
+	out := map[string][]string{}
+	for _, part := range strings.Split(v, ";") {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		fields := strings.Fields(part)
+		if len(fields) == 0 {
+			continue
+		}
+		name := strings.ToLower(fields[0])
+		vals := make([]string, 0, len(fields)-1)
+		for _, f := range fields[1:] {
+			vals = append(vals, strings.ToLower(f))
+		}
+		out[name] = vals
+	}
+	return out
+}
+
+// assessCSP 分析 CSP 指令级放宽（策略存在但可被绕过）。
+//
+// 判定面覆盖 DVWA CSP Bypass 的经典绕过链与常见弱配置：
+//   - script-src 含 unsafe-inline / unsafe-eval → 内联注入可执行
+//   - script-src 含 self / 通配 / 域名白名单 → 同源自托管脚本可执行
+//     （DVWA 的解法正是上传含 JS 的图片到 self 再引入）
+//   - script-src 含 data: / * → 数据 URI 或任意源脚本
+//   - 缺 object-src / base-uri / frame-ancestors → 插件、base 劫持、点击劫持
+//   - 缺 default-src 兜底 → 其他指令无约束
+func assessCSP(v string) []Weakness {
+	if strings.TrimSpace(v) == "" {
+		return nil
+	}
+	d := parseCSP(v)
+	script := d["script-src"]
+	if script == nil {
+		script = d["default-src"]
+	}
+	var w []Weakness
+	// CSP 关键字可能带单引号（'self' / 'unsafe-inline'），也可能裸写，
+	// 比较前统一去引号，避免同一关键字两种写法判定不一致。
+	has := func(vals []string, want string) bool {
+		for _, x := range vals {
+			if strings.Trim(x, "'") == strings.Trim(want, "'") {
+				return true
+			}
+		}
+		return false
+	}
+
+	if has(script, "unsafe-inline") {
+		w = append(w, Weakness{"content-security-policy", "script-src", "high",
+			"script-src 含 'unsafe-inline'：内联 <script>/事件处理器可执行，XSS 注入不受阻",
+			"移除 'unsafe-inline'，用 nonce/hash 白名单替代"})
+	}
+	if has(script, "unsafe-eval") {
+		w = append(w, Weakness{"content-security-policy", "script-src", "medium",
+			"script-src 含 'unsafe-eval'：eval/Function 等动态求值可执行",
+			"移除 'unsafe-eval'，改为不依赖字符串求值的写法"})
+	}
+	if has(script, "self") {
+		w = append(w, Weakness{"content-security-policy", "script-src", "high",
+			"script-src 含 'self'：同源自托管脚本可执行，上传含 JS 的文件即可绕过 CSP",
+			"避免 'self'，用 nonce/hash 精确白名单；对上传目录单独收紧"})
+	}
+	if has(script, "*") || has(script, "data:") || has(script, "http:") || has(script, "https:") {
+		w = append(w, Weakness{"content-security-policy", "script-src", "high",
+			"script-src 含通配/任意协议源（* / data: / http: / https:）：脚本可从任意源加载",
+			"收紧 script-src 到明确的可信源清单"})
+	}
+	if _, ok := d["object-src"]; !ok {
+		w = append(w, Weakness{"content-security-policy", "object-src", "low",
+			"未声明 object-src：<object>/<embed> 插件内容无约束",
+			"添加 object-src 'none'"})
+	}
+	if _, ok := d["base-uri"]; !ok {
+		w = append(w, Weakness{"content-security-policy", "base-uri", "medium",
+			"未声明 base-uri：注入 <base href> 可劫持相对路径脚本/表单",
+			"添加 base-uri 'none' 或 'self'"})
+	}
+	// frame-ancestors 不回落 default-src，缺了就是没防护
+	if _, ok := d["frame-ancestors"]; !ok {
+		w = append(w, Weakness{"content-security-policy", "frame-ancestors", "low",
+			"未声明 frame-ancestors：页面可被任意站 iframe 嵌套（点击劫持）",
+			"添加 frame-ancestors 'self'"})
+	}
+	if _, ok := d["default-src"]; !ok {
+		w = append(w, Weakness{"content-security-policy", "default-src", "low",
+			"缺少 default-src 兜底：未逐一列出的指令无约束",
+			"添加 default-src 'self' 作为兜底"})
+	}
+	return w
 }

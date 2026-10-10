@@ -261,7 +261,9 @@ func TestHomepageFormFeedsDAST(t *testing.T) {
 	}
 }
 
-// TestHygieneSeparatedFromVerified 配置卫生项不得混进 verified。
+// TestHygieneSeparatedFromVerified 纯配置卫生项（缺 Cookie 属性）不得混进
+// verified；而 CSRF token 缺失、弱会话 ID 是 CWE-352 / CWE-330 真漏洞，
+// 必须落在 verified 里参与覆盖率口径。
 func TestHygieneSeparatedFromVerified(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// 无 HttpOnly/Secure/SameSite 的会话 cookie：典型配置卫生项
@@ -277,9 +279,10 @@ func TestHygieneSeparatedFromVerified(t *testing.T) {
 	eng := New(cfg, nil, nil)
 	res := eng.Scan(srv.URL, Options{Deep: true, Passive: true}, nil, nil)
 
+	// 配置卫生项只应出现在 extras.hygiene
 	for _, v := range res.Verified {
-		if v["check"] == "cookie-attrs" || v["check"] == "csrf-form" {
-			t.Fatalf("配置卫生项不得出现在 verified: %+v", v)
+		if v["check"] == "cookie-attrs" {
+			t.Fatalf("纯配置卫生项不得出现在 verified: %+v", v)
 		}
 	}
 	hyg, _ := res.Extras["hygiene"].([]map[string]any)
@@ -295,6 +298,19 @@ func TestHygieneSeparatedFromVerified(t *testing.T) {
 	}
 	if n != 1 {
 		t.Fatalf("cookie-attrs 跨页应去重为 1 条，实际 %d", n)
+	}
+	// CSRF / 弱会话 ID 必须进 verified
+	seen := map[string]bool{}
+	for _, v := range res.Verified {
+		if c, ok := v["check"].(string); ok {
+			seen[c] = true
+		}
+	}
+	if !seen["csrf-form"] {
+		t.Fatalf("无 token 的 POST 登录表单应报 csrf-form 到 verified；verified=%d 条", len(res.Verified))
+	}
+	if !seen["weak-session-id"] {
+		t.Fatalf("PHPSESSID=1 应报 weak-session-id 到 verified；verified=%d 条", len(res.Verified))
 	}
 }
 
@@ -398,5 +414,32 @@ func TestHomeFormParamNotLostByCrawl(t *testing.T) {
 	}
 	if !found {
 		t.Fatalf("首页表单参数注入应被报出；verified=%d 条", len(res.Verified))
+	}
+}
+
+// CSP Bypass 型目标：CSP 头在但策略可绕过（script-src 'self' unsafe-inline），
+// 必须作为 verified 发现出现（DVWA CSP Bypass 模块即此类）。
+func TestCSPWeakPolicyReportedAsVerified(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Security-Policy",
+			"default-src 'self'; script-src 'self' 'unsafe-inline'")
+		w.Write([]byte(`<html><body>ok</body></html>`))
+	}))
+	defer srv.Close()
+
+	cfg := config.Default()
+	cfg.Scan.RateIntervalMS = 0
+	cfg.Target.AllowPrivate = true
+	eng := New(cfg, nil, nil)
+	res := eng.Scan(srv.URL, Options{Deep: true, Passive: true}, nil, nil)
+
+	found := false
+	for _, v := range res.Verified {
+		if v["check"] == "csp-weak-directive" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("CSP 可绕过策略应报 csp-weak-directive 到 verified；verified=%d 条", len(res.Verified))
 	}
 }
