@@ -1,5 +1,67 @@
 # 更新日志
 
+## 未发布（弱会话/存储型 XSS/缓存/命令注入回显：判定通道补齐）
+
+> 上一轮（PR #35）拓宽了 CSRF / 弱会话 ID / CSP 三个检查类的判定面。
+> 这一轮继续把「底座在、判定面窄」的同类漏报补掉，并补上两处
+> **判定通道缺失**（不是探测面窄）的真漏报：命令注入只看时间差分、
+> 存储型 XSS 只看同响应回显。
+
+### 新增判定通道
+
+- **命令注入回显通道**（`cmd-echo`）。此前只有 `sleep` 时间差分一条路，
+  只看得到「盲」场景。DVWA 的 Command Injection 模块是把命令输出直接
+  回显在响应正文里的，时间差分完全看不见。新增注入 `echo 算式` 的探针，
+  以「运算结果出现在响应里、且基线里没有」判定。误报防护：反射回显型
+  目标会把 payload 原样吐出（`;echo 15846`），此时响应里也含结果数字，
+  判定必须逐处检查出现位置——**全部**紧邻命令/算式标记才算字面量回显，
+  存在一处孤立出现才是真求值。URL 编码形态（`%3Becho+15846`）一并覆盖。
+- **弱随机标识差分通道**（`weak-random-id`）。同一 URL 两次取样，比较
+  会话类载体（csrf_token / nonce / viewstate / authenticity_token 等）的值。
+  「每次刷新都变」且**形态本身低熵**（时间戳 / 短整数 / 近全数字短十六进制）
+  才报。强随机串每次刷新当然也变，那是正常的——不做熵统计（单样本测不出
+  分布，泛报就是误报）。时间戳型会话 ID 与无状态防缓存令牌是主要命中面。
+- **存储型 XSS 通道**（`xss-stored` / `xss-stored-raw`）。反射通道看的是
+  「同一响应回显」，存储通道看的是「写进去、别处读出来」——DVWA 的
+  XSS (Stored) 模块（guestbook）对反射通道必然零命中。探针只写无害标记
+  （随机段，不含脚本语法），判定标记是否跨请求持久化回显；再看回显
+  上下文（`<script>` / 事件属性 / js 赋值）判可执行性。仅满足持久化、
+  不可执行的按 `xss-stored-raw`（前置项）报 medium，不夸大成完整 XSS。
+- **敏感页缓存卫生**（`cacheable-sensitive`）。会话 / 账户类页面缺
+  `Cache-Control: no-store/private` 时，内容可被共享缓存或浏览器回退键
+  命中。归 verified（CWE-525），不是 hygiene——它是对可见敏感页的实际
+  暴露判定。同站同类只报一次。
+
+### 修复
+
+- **CSP 只评首页导致整块漏报**。`security.Assess` 此前只吃首页响应头，
+  而 CSP 是**逐路径**策略——DVWA 只在 `vulnerabilities/csp/` 上设 CSP 头，
+  首页没有。结果是「有策略但策略可绕过」这一类的漏洞在整站扫描里必然漏掉。
+  改为首页无 CSP 时横扫已采集页面取首个带 CSP 的响应做指令级分析；
+  同 URL 同指令去重，防多处追加刷屏。
+- **无字段的 POST 表单被丢弃**。`collectFormSignals` / `collectForms` 此前
+  在「无可注入字段且无文件字段」时直接跳过，而 DVWA Weak Session IDs 模块
+  就是 `<form method="post"><input type="submit"></form>`——没有字段、
+  没有密码框，提交后却下发 `dvwaSession=<递增整数>`。这类表单现在会进入
+  状态变更探测队列。
+- **`dast.Resp` 补 `SetCookies`**。httpx 有意把 Set-Cookie 单条保真存放、
+  不并入 `Headers`，而引擎的 DAST 适配器只转发了 `Headers` ——弱会话 Cookie
+  判定拿不到值。已补转发。
+
+### 配置
+
+- `dast.random_diff` / `dast.stored_xss` / `dast.cache_hygiene` /
+  `dast.weak_cookie`（默认全开），与 `dast.deep_probes` 总闸联动。
+
+### 回归
+
+- 新增 `internal/dast/extend_test.go`：低熵形态 10 例、随机差分三形态
+  （时间戳命中 / 强随机不报 / 稳定标识不报）+ 总闸关闭、命令注入回显
+  命中与字面量回显不报、存储型 XSS 脚本上下文命中 / 纯文本不判可执行 /
+  被过滤不报 / 总闸关闭。
+- `internal/engine/cache_hygiene_test.go`：缓存判定与敏感页识别。
+- 新增 check id 全部登记 CWE 映射。
+
 ## 未发布（覆盖率：探测点丢失修复 + 报错状态通道）
 
 > 靶场实扫暴露的两处「本该命中却没命中」，都不是探测面宽窄问题：

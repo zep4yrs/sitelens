@@ -45,6 +45,14 @@ dast:
   error_status: true         # 报错状态差分（注入引号后 2xx→5xx 判定，
                              # 覆盖只回通用 500 页、无数据库报错回显的目标）
   max_probes_per_class: 12   # 单类探针上限（防重类吃满预算）
+  random_diff: true          # 会话载体随机差分（同一 URL 两次取样，
+                             # 时间戳/短整数形态的会话标识命中）
+  stored_xss: true           # 存储型 XSS：写无害标记 → 跨请求读回
+                             # （反射通道看不见"写进去、别处读出来"）
+  cache_hygiene: true        # 敏感页缓存卫生（会话页缺 no-store 判定）
+  weak_cookie: true          # 状态变更表单下发弱会话 Cookie（值形态判定，
+                             # 覆盖 DVWA Weak Session IDs 这类"提交按钮
+                             # 生成会话 ID"的模块）
 
 intel:
   dump_path: data/intel_dump.json.gz

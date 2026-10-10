@@ -397,16 +397,64 @@ func (e *Engine) Scan(rawURL string, opts Options, onProgress progress, cancel f
 	// 5) 安全响应头评分
 	onProgress(70, "评估安全响应头…")
 	res.Security = security.Assess(home.Headers)
+	// CSP 是**逐路径**策略：DVWA 只在 `vulnerabilities/csp/` 上设 CSP 头，
+	// 首页没有。只评首页会让「有策略但策略可绕过」整块漏掉——实测漏报。
+	// 取首个带 CSP 的响应做指令级弱点分析（首页没有时横扫已采集页面）。
+	cspHeaders, cspURL := home.Headers, baseURL
+	if !hasCSPHeader(cspHeaders) {
+		for _, p := range pages {
+			if hasCSPHeader(p.resp.Headers) {
+				cspHeaders, cspURL = p.resp.Headers, p.resp.FinalURL
+				break
+			}
+		}
+	}
+	if strings.TrimSpace(cspURL) != strings.TrimSpace(baseURL) {
+		sc := security.Assess(cspHeaders)
+		res.Security.Weaknesses = append(res.Security.Weaknesses, sc.Weaknesses...)
+	}
 	// 安全头策略弱点（CSP 指令级放宽等）进 verified：
 	// 「头在但策略可绕过」是实打实的漏洞（DVWA CSP Bypass 即此类），
 	// 只挂在 security 评分里不会被覆盖率口径看见。
+	// 同一指令去重：Assess 会多次追加（首页 + 子路径），不去重会刷出
+	// 多条同 URL 同指令的记录。
+	seenWeak := map[string]bool{}
 	for _, w := range res.Security.Weaknesses {
+		key := cspURL + "\x00" + w.Directive
+		if seenWeak[key] {
+			continue
+		}
+		seenWeak[key] = true
 		m := verifiedMap(map[string]any{
 			"check": "csp-weak-directive", "title": "CSP 策略可绕过（" + w.Directive + "）",
-			"severity": w.Severity, "url": baseURL,
+			"severity": w.Severity, "url": cspURL,
 			"evidence": w.Evidence, "advice": w.Advice, "src": "security",
 		})
 		res.Verified = append(res.Verified, m)
+	}
+
+	// 5.5) 敏感页缓存卫生：会话/账户类页面缺 no-store 时，内容可被
+	// 共享缓存或浏览器回退键命中——会话数据外泄的常见路径。
+	// 归 verified（映射 CWE-525），不是 hygiene：它是对「可见敏感页」的
+	// 实际暴露判定，不是通用配置建议。
+	if opts.Passive || opts.DAST {
+		for _, p := range pages {
+			u := p.resp.FinalURL
+			if u == "" || !pageLooksSensitive(u) {
+				continue
+			}
+			if ok, cc := pageCacheable(p.resp.Headers); ok {
+				res.Verified = append(res.Verified, verifiedMap(map[string]any{
+					"check": "cacheable-sensitive", "title": "敏感页面可被缓存",
+					"severity": "medium", "url": u,
+					"evidence": "敏感页 " + u + " 的 Cache-Control 为 " + cc +
+						"（未禁止存储），会话内容可能被共享缓存或浏览器回退键读取",
+					"advice": "对会话/账户类响应设置 Cache-Control: no-store; private",
+					"src":    "passive",
+				}))
+				break // 同站同类只报一次，防逐页刷屏
+			}
+		}
 	}
 
 	// 6) 验证型 check
@@ -564,6 +612,9 @@ func (e *Engine) Scan(rawURL string, opts Options, onProgress progress, cancel f
 			CmdInject:         e.cfg.DAST.CmdInject && deepOn,
 			CRLF:              e.cfg.DAST.CRLF && deepOn,
 			ErrorStatus:       &errStatusOn,
+			RandomDiff:        e.cfg.DAST.RandomDiff && deepOn,
+			StoredXSS:         e.cfg.DAST.StoredXSS && deepOn,
+			WeakCookie:        e.cfg.DAST.WeakCookie && deepOn,
 			MaxProbesPerClass: e.cfg.DAST.MaxProbesPerClass,
 			OnHit: func(f dast.Finding) {
 				emit("hit", f.Severity+" · "+f.Title+" — "+f.Param)
@@ -1011,7 +1062,7 @@ func (d dastFetcher) PostFormSmall(rawURL string, data map[string]string) *dast.
 	if err != nil || r == nil {
 		return nil
 	}
-	return &dast.Resp{Status: r.Status, Headers: r.Headers, Body: r.Body}
+	return &dast.Resp{Status: r.Status, Headers: r.Headers, SetCookies: r.SetCookies, Body: r.Body}
 }
 
 func (d dastFetcher) GetSmall(rawURL string) *dast.Resp {
@@ -1019,7 +1070,7 @@ func (d dastFetcher) GetSmall(rawURL string) *dast.Resp {
 	if err != nil || r == nil {
 		return nil
 	}
-	return &dast.Resp{Status: r.Status, Headers: r.Headers, Body: r.Body}
+	return &dast.Resp{Status: r.Status, Headers: r.Headers, SetCookies: r.SetCookies, Body: r.Body}
 }
 
 // GetWithHeaders 带自定义请求头的 GET（Cookie/头注入通道）。
@@ -1107,8 +1158,12 @@ func collectForms(crForms []crawler.Form,
 		if f.HasPwd && f.Action != "" {
 			*loginForms = append(*loginForms, loginFormEntry{URL: f.Action})
 		}
-		// 文件型表单：无文本字段也要登记（上传面探测入口）
-		if f.Action == "" || (len(f.Names) == 0 && len(f.FileFields) == 0) {
+		// 文件型表单与「无字段状态变更表单」都要登记：
+		// 前者是上传面入口；后者（DVWA Weak Session IDs 的
+		// <form method=post><input type=submit></form>）提交后不发会
+		// 弱会话 Cookie，是弱会话 ID 模块唯一可见点。
+		if f.Action == "" || (len(f.Names) == 0 && len(f.FileFields) == 0 &&
+			!strings.EqualFold(f.Method, "post")) {
 			continue
 		}
 		addFormTarget(f.Action, f.Names, f.Method, f.FileFields, f.LoginFields, links, forms)
@@ -1139,7 +1194,10 @@ func collectFormSignals(doc *htmlx.Doc, pageURL string,
 				names = append(names, in.Name)
 			}
 		}
-		if action == "" || (len(names) == 0 && len(files) == 0) {
+		// 无字段的 POST 表单也要登记（状态变更表单：DVWA Weak Session IDs
+		// 就是「只有 submit 按钮」的 POST 表单，提交后下发弱会话 Cookie）。
+		if action == "" || (len(names) == 0 && len(files) == 0 &&
+			!strings.EqualFold(f.Method, "post")) {
 			continue
 		}
 		addFormTarget(action, names, f.Method, files, loginFieldsOf(f.Inputs), links, forms)
@@ -1165,6 +1223,7 @@ func addFormTarget(action string, names []string, method string, files []string,
 	}
 	*forms = append(*forms, dast.FormTarget{
 		Action: action, Fields: names, FileFields: files, LoginFields: loginFields,
+		Method: strings.ToLower(method),
 	})
 }
 
@@ -1211,4 +1270,45 @@ func resolveAction(pageURL, action string) string {
 		return action
 	}
 	return base.ResolveReference(ref).String()
+}
+
+// pageLooksSensitive 判定 URL 是否属于会话/账户类页面（缓存卫生的适用面）。
+func pageLooksSensitive(u string) bool {
+	l := strings.ToLower(u)
+	for _, h := range []string{"account", "profile", "user", "admin", "dashboard",
+		"session", "login", "bank", "order", "cart", "checkout", "settings", "password"} {
+		if strings.Contains(l, h) {
+			return true
+		}
+	}
+	return false
+}
+
+// pageCacheable 判定响应是否允许被缓存（无 no-store/private/no-cache 即可缓存）。
+func pageCacheable(headers map[string]string) (bool, string) {
+	cc := ""
+	for k, v := range headers {
+		if strings.EqualFold(k, "Cache-Control") {
+			cc = strings.ToLower(v)
+			break
+		}
+	}
+	if strings.Contains(cc, "no-store") || strings.Contains(cc, "private") ||
+		strings.Contains(cc, "no-cache") {
+		return false, cc
+	}
+	if cc == "" {
+		return true, "(未设置)"
+	}
+	return true, cc
+}
+
+// hasCSPHeader 响应头里是否有非空的 Content-Security-Policy。
+func hasCSPHeader(headers map[string]string) bool {
+	for k, v := range headers {
+		if strings.EqualFold(k, "Content-Security-Policy") && strings.TrimSpace(v) != "" {
+			return true
+		}
+	}
+	return false
 }
