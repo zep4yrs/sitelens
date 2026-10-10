@@ -1093,7 +1093,7 @@ func collectForms(crForms []crawler.Form,
 		if f.Action == "" || (len(f.Names) == 0 && len(f.FileFields) == 0) {
 			continue
 		}
-		addFormTarget(f.Action, f.Names, f.Method, f.FileFields, links, forms)
+		addFormTarget(f.Action, f.Names, f.Method, f.FileFields, f.LoginFields, links, forms)
 	}
 }
 
@@ -1124,7 +1124,7 @@ func collectFormSignals(doc *htmlx.Doc, pageURL string,
 		if action == "" || (len(names) == 0 && len(files) == 0) {
 			continue
 		}
-		addFormTarget(action, names, f.Method, files, links, forms)
+		addFormTarget(action, names, f.Method, files, loginFieldsOf(f.Inputs), links, forms)
 	}
 }
 
@@ -1132,7 +1132,7 @@ func collectFormSignals(doc *htmlx.Doc, pageURL string,
 // DVWA 类靶场的 SQLi/XSS 模块菜单链接不带参数、参数在 GET 表单里，
 // 不合成则 URL 参数探测永远探不到。
 func addFormTarget(action string, names []string, method string, files []string,
-	links *[]string, forms *[]dast.FormTarget) {
+	loginFields []string, links *[]string, forms *[]dast.FormTarget) {
 	if strings.EqualFold(method, "get") {
 		if u, err := url.Parse(action); err == nil {
 			q := u.Query()
@@ -1145,7 +1145,38 @@ func addFormTarget(action string, names []string, method string, files []string,
 			*links = append(*links, u.String())
 		}
 	}
-	*forms = append(*forms, dast.FormTarget{Action: action, Fields: names, FileFields: files})
+	*forms = append(*forms, dast.FormTarget{
+		Action: action, Fields: names, FileFields: files, LoginFields: loginFields,
+	})
+}
+
+// loginFieldsOf 从表单输入里挑出登录表单的用户名/口令字段名。
+// 口令字段优先级最高（password 类型）；用户名按 type/name 语义推断。
+// 找不到口令字段返回 nil（非登录表单，不做认证绕过探测）。
+func loginFieldsOf(inputs []htmlx.Input) []string {
+	var pwd, user string
+	for _, in := range inputs {
+		if in.Name == "" {
+			continue
+		}
+		low := strings.ToLower(in.Name)
+		switch {
+		case in.Type == "password":
+			if pwd == "" {
+				pwd = in.Name
+			}
+		case user == "" && (strings.Contains(low, "user") || strings.Contains(low, "login") ||
+			strings.Contains(low, "email") || strings.Contains(low, "account") || low == "uname"):
+			user = in.Name
+		}
+	}
+	if pwd == "" {
+		return nil
+	}
+	if user == "" {
+		return []string{pwd} // 只有口令也做（部分表单用户名固定）
+	}
+	return []string{user, pwd}
 }
 
 // resolveAction 解析表单相对 action（空 action 按页面自身）。

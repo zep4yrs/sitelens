@@ -81,3 +81,35 @@ func TestAttrValueUnquoted(t *testing.T) {
 		t.Fatalf("无引号属性解析失败: %q", v)
 	}
 }
+
+// TestParseAreaImageMapLinks：<area href> 也是导航链接，必须提取。
+//
+// sqli-labs / xsslabs 等靶场的关卡索引用 <img usemap> + <area href="Less-N">
+// 图片地图实现，只认 <a> 会让爬虫在首页就断队列——实测 sqli-labs 只爬 5 页、
+// 69 个关卡一个都到不了（Zero Coverage 的根因之一）。
+func TestParseAreaImageMapLinks(t *testing.T) {
+	html := `<html><body>
+	<img src="map.png" usemap="#m">
+	<map name="m">
+	  <area shape="rect" coords="0,0,10,10" href="Less-1/" alt="L1">
+	  <area shape="rect" coords="0,0,10,10" href='Less-2/' alt="L2">
+	  <area shape="rect" coords="0,0,10,10" href="Less-2/" alt="dup">
+	</map>
+	<a href="/index.html">home</a>
+	</body></html>`
+	d := Parse(html)
+	want := map[string]bool{"Less-1/": false, "Less-2/": false, "/index.html": false}
+	for _, l := range d.Links {
+		if _, ok := want[l]; ok {
+			if want[l] {
+				t.Errorf("链接 %q 重复", l)
+			}
+			want[l] = true
+		}
+	}
+	for l, got := range want {
+		if !got {
+			t.Errorf("<area> 链接 %q 未提取；实得 %v", l, d.Links)
+		}
+	}
+}

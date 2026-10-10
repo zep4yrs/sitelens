@@ -41,12 +41,13 @@ type Page struct {
 
 // Form 暴露给引擎的表单（与 htmlx.Form 解耦，避免引擎依赖解析细节）。
 type Form struct {
-	Names      []string `json:"names,omitempty"`       // 可注入字段名（DAST 表单探测用，截取前 16 个）
-	FileFields []string `json:"file_fields,omitempty"` // input[type=file] 字段名（上传面探测用）
-	Action     string
-	Method     string
-	HasPwd     bool
-	Fields     int
+	Names       []string `json:"names,omitempty"`       // 可注入字段名（DAST 表单探测用，截取前 16 个）
+	FileFields  []string `json:"file_fields,omitempty"` // input[type=file] 字段名（上传面探测用）
+	Action      string
+	Method      string
+	HasPwd      bool
+	LoginFields []string `json:"login_fields,omitempty"` // 登录表单的用户名/口令字段名
+	Fields      int
 }
 
 // Result 爬取汇总。
@@ -209,7 +210,8 @@ func (c *Crawler) Crawl(home *httpx.Response, extraSeeds []string) *Result {
 				}
 			}
 			names := make([]string, 0, len(f.Inputs))
-			var files []string
+			var files, loginF []string
+			var pwd, user string
 			for _, in := range f.Inputs {
 				if in.Name == "" {
 					continue
@@ -223,11 +225,28 @@ func (c *Crawler) Crawl(home *httpx.Response, extraSeeds []string) *Result {
 				if len(names) < 16 {
 					names = append(names, in.Name)
 				}
+				// 登录表单字段识别：口令框 + 用户名框（供 SQLi 认证绕过探测）
+				low := strings.ToLower(in.Name)
+				if in.Type == "password" {
+					if pwd == "" {
+						pwd = in.Name
+					}
+				} else if user == "" && (strings.Contains(low, "user") ||
+					strings.Contains(low, "login") || strings.Contains(low, "email") ||
+					strings.Contains(low, "account") || low == "uname") {
+					user = in.Name
+				}
+			}
+			if pwd != "" {
+				loginF = []string{pwd}
+				if user != "" {
+					loginF = []string{user, pwd}
+				}
 			}
 			res.Forms = append(res.Forms, Form{
 				Action: act, Method: f.Method,
 				HasPwd: f.HasPassword, Fields: len(f.Inputs),
-				Names: names, FileFields: files,
+				Names: names, FileFields: files, LoginFields: loginF,
 			})
 		}
 

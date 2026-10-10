@@ -59,10 +59,31 @@ func Parse(body string) *Doc {
 		}
 	}
 
-	// <a href>
+	// <a href> 与 <area href>：两者都是导航型链接。
+	// <area> 不能漏——sqli-labs / xsslabs 等靶场的关卡索引用 <img usemap> +
+	// <area href="Less-N"> 图片地图实现，只认 <a> 会让爬虫在首页就断了队列
+	// （实测 sqli-labs 只爬 5 页、69 个关卡一个都到不了）。
 	pos := 0
 	for {
 		i := strings.Index(low[pos:], "<a ")
+		if i < 0 {
+			break
+		}
+		start := pos + i
+		tagEnd := strings.Index(low[start:], ">")
+		if tagEnd < 0 {
+			break
+		}
+		tagText := body[start : start+tagEnd+1]
+		if href := attrValue(tagText, "href"); href != "" && !seenLinks[href] {
+			seenLinks[href] = true
+			doc.Links = append(doc.Links, href)
+		}
+		pos = start + tagEnd + 1
+	}
+	pos = 0
+	for {
+		i := strings.Index(low[pos:], "<area")
 		if i < 0 {
 			break
 		}
