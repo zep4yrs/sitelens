@@ -119,6 +119,7 @@ type Options struct {
 	AuthzBypass       bool          // 越权（授权绕过）探测：身份标识可控 + 无访问控制
 	APIAudit          bool          // 开放 API 通道（未授权读取 / IDOR）
 	CryptoProbe       bool          // 加密实现弱点（确定性加密 / 弱算法）
+	UploadBypass      bool          // 上传绕过验证（危险扩展名/类型/双扩展名）
 	OnHit             func(Finding) // 命中即时回调（实时事件流，nil = 不回调）
 }
 
@@ -141,6 +142,7 @@ func DefaultOptions() Options {
 		AuthzBypass:       true,
 		APIAudit:          true,
 		CryptoProbe:       true,
+		UploadBypass:      true,
 		MaxProbesPerClass: 12,
 	}
 }
@@ -181,6 +183,13 @@ type Fetcher interface {
 // HeaderFetcher 可选扩展：支持带自定义请求头的单请求（Cookie/头注入通道）。
 type HeaderFetcher interface {
 	GetWithHeaders(rawURL string, headers map[string]string) *Resp
+}
+
+// MultipartCTFetcher 可选扩展：支持指定 Content-Type 的多段上传
+// （上传绕过验证需要「危险扩展名 + 伪造 MIME」组合）。
+// 可选实现：返回 nil 表示不支持，上传绕过通道自动跳过（不误报）。
+type MultipartCTFetcher interface {
+	PostMultipartSmallCT(rawURL, fileField, fileName, content, contentType string, extra map[string]string) *Resp
 }
 
 // Target 带参数的探测目标。
@@ -452,6 +461,12 @@ func (r *Runner) RunForms(targets []FormTarget) []Finding {
 					}
 					hits = append(hits, *f)
 				}
+				// 上传绕过验证：受理面之上再判「危险扩展名/类型是否被放行」。
+				// 只在受理面成立时才有意义（uploadProbe 内部会重复建基线，
+				// 这里独立判定，拒绝一切的表单不会误报）。
+				if r.opts.UploadBypass {
+					hits = append(hits, r.uploadBypassProbe(ft, ff, extra)...)
+				}
 				break // 每表单只探第一个文件字段
 			}
 		}
@@ -616,6 +631,17 @@ func (r *Runner) RunForms(targets []FormTarget) []Finding {
 				hit.Signals = []string{pc.kind + " 表单探针命中"}
 				hits = append(hits, *hit)
 				break // 该类命中即停
+			}
+		}
+		// 命令注入回显通道：表单字段专有路径。DVWA Command Injection 模块是
+		// POST 表单（ip 字段）+ 命令输出回显，而 cmdEchoInject 此前只在
+		// deepResidual 里对 URL 参数跑——POST 表单型目标整块漏掉。
+		if r.deepEnabled() && r.opts.CmdInject && !r.stopped() {
+			if f := r.cmdEchoForm(p.ft, p.field, baseBody, &done, total); f != nil {
+				if r.opts.OnHit != nil {
+					r.opts.OnHit(*f)
+				}
+				hits = append(hits, *f)
 			}
 		}
 		// 布尔差分盲注：表单字段专有通道（报错不回显时的唯一出路）

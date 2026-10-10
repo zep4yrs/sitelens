@@ -144,35 +144,11 @@ func cacheable(headers map[string]string) (bool, string) {
 // 命令注入回显通道：把算术运算的结果直接回显在响应里
 // ---------------------------------------------------------------------------
 
-// cmdEchoMarkers 命令输出回显的特征：探针里的算式结果。
-// 用 7393+8453=15846 这类唯一值：参数原样回显时是算式文本，不是结果；
-// 只有真被 shell 求值了才会出现结果数字。
-const cmdEchoA = "7393"
-const cmdEchoB = "8453"
-const cmdEchoSum = "15846" // 7393 + 8453
-const cmdEchoSub = "1061"  // 8453 - 7393
-
-// cmdEchoProbes 回显型命令注入探针（分隔符 + echo 算式）。
-// 只做 echo 运算，不读取文件、不外发、不破坏。
-var cmdEchoProbes = []string{
-	";echo " + cmdEchoSum,
-	"|echo " + cmdEchoSum,
-	"&&echo " + cmdEchoSum,
-	"&echo " + cmdEchoSum,
-	"$(echo " + cmdEchoSum + ")",
-	"`echo " + cmdEchoSum + "`",
-	"$((" + cmdEchoA + "+" + cmdEchoB + "))",
-	";expr " + cmdEchoA + " + " + cmdEchoB,
-	"|expr " + cmdEchoA + " + " + cmdEchoB,
-	"%0aecho " + cmdEchoSum,
-}
-
-// cmdEchoVariant 第二种算式（防止单值撞上页面里本来就有 15846）。
-var cmdEchoProbes2 = []string{
-	";echo " + cmdEchoSub,
-	"|echo " + cmdEchoSub,
-	"$(expr " + cmdEchoB + " - " + cmdEchoA + ")",
-}
+// 命令注入回显通道的常量与探针序列（cmdEchoExpr / cmdEchoResult /
+// cmdEchoProbes）由 deep.go 定义——同一条通道只留一份来源。
+// 判定也不再靠「结果串出现」这一弱信号：反射回显型目标会把探针原样吐出，
+// 算式的两个操作数与结果在正文里同框，纯子串匹配必误报。deep.go 的
+// cmdEchoConfirmed 改用「结果是否独立成串（未被算式紧邻）」判定。
 
 // ---------------------------------------------------------------------------
 // 存储型 XSS：写进去、别处读出来
@@ -220,50 +196,7 @@ func scriptContextNear(body, mark string) (bool, string) {
 //
 // 判据：枚举所有出现位置，只要存在一处「孤立出现」就是真求值；
 // 全部紧邻命令/算式标记才判为字面量回显。
-func echoedAsLiteral(body, result, expr string) bool {
-	low := strings.ToLower(body)
-	needle := strings.ToLower(result)
-	exprLow := strings.ToLower(expr)
-	idx := 0
-	found := false
-	for {
-		i := strings.Index(low[idx:], needle)
-		if i < 0 {
-			break
-		}
-		i += idx
-		found = true
-		start := i - 40
-		if start < 0 {
-			start = 0
-		}
-		ctx := low[start:i]
-		literal := strings.Contains(ctx, exprLow)
-		if !literal {
-			before := strings.TrimRight(ctx, " \t\r\n")
-			// 覆盖 URL 编码形态：反射型回显常把 payload 以 %3Becho+ 形式吐出
-			for _, mark := range []string{"echo", "expr", "$(", "`", "|", ";", "&&", "&",
-				"%3b%20", "%3b+", "%7c", "%26%26", "%24%28", "+echo", "echo+"} {
-				if strings.HasSuffix(before, mark) || strings.HasSuffix(before, mark+" ") {
-					literal = true
-					break
-				}
-			}
-			after := low[i+len(result):]
-			if strings.HasPrefix(strings.TrimLeft(after, " \t"), "=") {
-				literal = true
-			}
-		}
-		if !literal {
-			return false
-		}
-		idx = i + len(needle)
-		if idx >= len(low) {
-			break
-		}
-	}
-	return found
-}
+func echoedAsLiteral(b byte) bool { return isSepOrSpace(b) }
 
 // sessionCookieNames 会话类 Cookie 名（与 passive 同口径，弱会话 ID 只对这些有意义）。
 var sessionCookieNames = map[string]bool{

@@ -62,6 +62,9 @@ dast:
                              # API 资源越权（DVWA API 模块 / 公开 JSON 端点）
   crypto_probe: true         # 加密实现弱点：确定性加密（ECB/固定 IV/硬编码
                              # 密钥）与弱算法/无盐哈希（DVWA Cryptography 模块）
+  upload_bypass: true        # 上传绕过验证：危险扩展名/伪造 MIME/双扩展名
+                             # 是否被服务端放行（upload-labs 21 关类）。提交内容
+                             # 始终是无害文本标记，只判"收没收"，不落地不执行
 
 intel:
   dump_path: data/intel_dump.json.gz
@@ -73,6 +76,14 @@ intel:
 netsec:
   tls_timeout_sec: 8
   mail_check: true
+
+oob:                         # 出带回调（SSRF/盲 XSS/XXE 外发）——默认关
+  enabled: false             # 主动外发，需显式开启并自备接收端
+  mode: callback             # callback（轮询接收端日志）| csv（读本地落盘）
+  callback: ""               # callback 模式的日志拉取地址（GET，返回命中记录）
+  csv_path: ""               # csv 模式落盘路径（供外部 dnslog/oast 同步）
+  token_host: ""             # 触发用回调域名，如 <id>.oast.pro / <id>.dnslog.cn
+  max_probes: 12             # 单扫描探测参数上限
 
 loginbrute:                  # 仅限授权目标；前端需勾选授权确认
   max_tries: 400

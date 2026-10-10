@@ -76,6 +76,15 @@ func (f *deepFetcher) GetSmall(u string) *Resp {
 			return &Resp{Status: 200, Body: "<html>javax.naming.CommunicationException</html>"}
 		}
 		return &Resp{Status: 200, Body: "<html>ok</html>"}
+	case "/cmdecho":
+		// 真命令执行：把算式替换为求值结果，payload 字面量不再出现。
+		if strings.Contains(v, cmdEchoExpr) {
+			return &Resp{Status: 200, Body: "<html>PING ok\n" + cmdEchoResult + "</html>"}
+		}
+		return &Resp{Status: 200, Body: "<html>PING " + v + " ok</html>"}
+	case "/cmdechoraw":
+		// 原样回显型：响应把 payload 整个吐出，含算式子串——不应命中。
+		return &Resp{Status: 200, Body: "<html>PING " + v + " ok</html>"}
 	}
 	return &Resp{Status: 200, Body: "<html>safe</html>"}
 }
@@ -517,3 +526,108 @@ func TestDeepProbesOffGate(t *testing.T) {
 }
 
 var _ = url.Parse
+
+// TestCmdEcho 命令注入回显通道：命令真执行、回显求值结果即命中。
+func TestCmdEcho(t *testing.T) {
+	f := &deepFetcher{}
+	opts := DefaultOptions()
+	opts.TimeBlind = false
+	opts.BoolBlind = false
+	opts.CmdInject = true
+	opts.BlindThresholdMS = 100000 // 关掉时间通道，只验回显通道
+	hits := New(f, opts).Run([]string{"https://a.com/cmdecho?ip=1.1.1.1"})
+	if !hasCheck(hits, "cmd-inject") {
+		t.Fatalf("回显型命令注入应命中: %+v", hits)
+	}
+	for _, h := range hits {
+		if h.Check == "cmd-inject" && !strings.Contains(h.Evidence, cmdEchoResult) {
+			t.Fatalf("命中应来自回显通道（证据含求值结果）: %+v", h)
+		}
+	}
+}
+
+// TestCmdEchoRawNoFalsePositive 原样回显型目标不应误报：
+// 响应把含算式的 payload 原样吐出，但从不出现求值结果。
+func TestCmdEchoRawNoFalsePositive(t *testing.T) {
+	f := &deepFetcher{}
+	opts := DefaultOptions()
+	opts.TimeBlind = false
+	opts.BoolBlind = false
+	opts.CmdInject = true
+	opts.BlindThresholdMS = 100000
+	hits := New(f, opts).Run([]string{"https://a.com/cmdechoraw?ip=1.1.1.1"})
+	if hasCheck(hits, "cmd-inject") {
+		t.Fatalf("原样回显不应判为命令注入: %+v", hits)
+	}
+}
+
+// TestCmdEchoConfirmed 判定单元：求值回显 vs 字面量回显 vs 基线自带。
+func TestCmdEchoConfirmed(t *testing.T) {
+	cases := []struct {
+		name     string
+		body     string
+		baseline string
+		want     bool
+	}{
+		{"真求值", "<html>PING ok\n" + cmdEchoResult + "</html>", "<html>PING ok</html>", true},
+		{"URL编码求值", "<html>PING%20ok%0A" + cmdEchoResult + "</html>", "<html>PING ok</html>", true},
+		// 回显型站点：payload 原样吐出（算式在正文），结果独立成行 => 真求值
+		{"回显型真求值", "<pre>PING 1.1.1.1;echo " + cmdEchoExpr + " ok</pre>\n" + cmdEchoResult, "<pre>PING ok</pre>", true},
+		// 算式与结果紧贴 => 视为 payload 字面量的一部分，不判命中
+		{"算式紧贴结果", "<html>" + cmdEchoExpr + cmdEchoResult + "</html>", "<html>ok</html>", false},
+		{"基线自带", "<html>" + cmdEchoResult + "</html>", "<html>" + cmdEchoResult + "</html>", false},
+		{"无结果", "<html>PING ok</html>", "<html>PING ok</html>", false},
+	}
+	for _, c := range cases {
+		if got := cmdEchoConfirmed(c.body, c.baseline); got != c.want {
+			t.Fatalf("%s: cmdEchoConfirmed=%v want=%v", c.name, got, c.want)
+		}
+	}
+}
+
+// TestCmdEchoForm 表单字段命令回显通道：POST 表单 + 求值回显即命中。
+func TestCmdEchoForm(t *testing.T) {
+	f := &formEchoFetcher{}
+	opts := DefaultOptions()
+	opts.TimeBlind = false
+	opts.BoolBlind = false
+	opts.CmdInject = true
+	hits := New(f, opts).RunForms([]FormTarget{
+		{Action: "https://a.com/exec", Fields: []string{"ip", "Submit"}},
+	})
+	if !hasCheck(hits, "cmd-inject") {
+		t.Fatalf("表单命令回显应命中: %+v", hits)
+	}
+}
+
+// TestCmdEchoFormRawNoFP 表单原样回显（不出求值结果）不应误报。
+func TestCmdEchoFormRawNoFP(t *testing.T) {
+	f := &formEchoFetcher{raw: true}
+	opts := DefaultOptions()
+	opts.TimeBlind = false
+	opts.BoolBlind = false
+	opts.CmdInject = true
+	hits := New(f, opts).RunForms([]FormTarget{
+		{Action: "https://a.com/exec", Fields: []string{"ip", "Submit"}},
+	})
+	if hasCheck(hits, "cmd-inject") {
+		t.Fatalf("原样回显不应判命令注入: %+v", hits)
+	}
+}
+
+// formEchoFetcher 表单命令回显桩：raw=true 时只原样吐出 payload。
+type formEchoFetcher struct {
+	deepFetcher
+	raw bool
+}
+
+func (f *formEchoFetcher) PostFormSmall(u string, data map[string]string) *Resp {
+	v := data["ip"]
+	if f.raw {
+		return &Resp{Status: 200, Body: "<pre>PING " + v + " ok</pre>"}
+	}
+	if strings.Contains(v, cmdEchoExpr) {
+		return &Resp{Status: 200, Body: "<pre>PING " + v + " ok</pre>\n" + cmdEchoResult}
+	}
+	return &Resp{Status: 200, Body: "<pre>PING " + v + " ok</pre>"}
+}

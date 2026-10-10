@@ -33,7 +33,7 @@ func impactKindForCheck(checkID string) string {
 		return "execution"
 	case "xxe":
 		return "disclosure"
-	case "upload-surface":
+	case "upload-surface", "upload-bypass":
 		return "execution"
 	}
 	return "unknown"

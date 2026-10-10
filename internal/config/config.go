@@ -32,6 +32,7 @@ type Config struct {
 	Modules    ModulesConfig    `yaml:"modules"`
 	Auth       AuthConfig       `yaml:"auth"`
 	Ssrf       SsrfConfig       `yaml:"ssrf"`
+	Oob        OobConfig        `yaml:"oob"`
 	Exploit    ExploitConfig    `yaml:"exploit"`
 	ML         MLConfig         `yaml:"ml"`
 }
@@ -64,6 +65,21 @@ type SsrfConfig struct {
 	BeaconEnabled bool   `yaml:"beacon_enabled"` // 默认关（主动能力折中）
 	BeaconBase    string `yaml:"beacon_base"`    // 目标可达的扫描器基地址
 	MaxProbes     int    `yaml:"max_probes"`     // 单扫描探测参数上限
+}
+
+// OobConfig 出带回调（外部接收端）：与 Ssrf.Beacon 的分工是「无需目标能
+// 连回扫描器」。beacon 方案要求目标侧能访问到扫描器局域网地址，公网靶场
+// 场景下普遍不成立（靶场连不回你的内网），因此 SSRF 长期处于"能力有、
+// 测不了"的状态——CSV 方案把回调地址换成可公网访问的第三方（如
+// interact.sh / dnslog / Burp Collaborator），目标只要向外发一次请求，
+// 我们轮询该接收端的日志即可确认。
+type OobConfig struct {
+	Enabled   bool   `yaml:"enabled"`    // 默认关（主动外发，需显式开启）
+	Mode      string `yaml:"mode"`       // callback（轮询日志）| csv（写入本地文件）
+	Callback  string `yaml:"callback"`   // callback 模式的日志拉取地址（GET，返回命中记录）
+	CSVPath   string `yaml:"csv_path"`   // csv 模式的落盘路径（供外部同步/人工核对）
+	TokenHost string `yaml:"token_host"` // 触发用的回调域名（如 abc.oast.pro）
+	MaxProbes int    `yaml:"max_probes"` // 单扫描探测参数上限
 }
 
 // StoreConfig 历史持久化（文件式，替代 Python 版的 PG 依赖）。
@@ -154,6 +170,7 @@ type DASTConfig struct {
 	AuthzBypass       bool  `yaml:"authz_bypass"`         // 越权探测（身份标识客户端可控）
 	APIAudit          bool  `yaml:"api_audit"`            // 开放 API 通道（未授权读取 / IDOR）
 	CryptoProbe       bool  `yaml:"crypto_probe"`         // 加密实现弱点（确定性加密 / 弱算法）
+	UploadBypass      bool  `yaml:"upload_bypass"`        // 上传绕过验证（危险扩展名/类型/双扩展名）
 }
 
 // IntelConfig 漏洞情报知识库。
@@ -285,6 +302,7 @@ func Default() *Config {
 			AuthzBypass:       true,
 			APIAudit:          true,
 			CryptoProbe:       true,
+			UploadBypass:      true,
 		},
 		Exploit: ExploitConfig{
 			Enabled:          false, // 总闸默认关：设置页「利用级验证」可开
@@ -377,7 +395,7 @@ var knownTopKeys = map[string]bool{
 	"scan": true, "target": true, "checks": true, "crawler": true, "dast": true,
 	"intel": true, "netsec": true, "loginbrute": true, "audit": true,
 	"batch": true, "web": true, "store": true, "active": true, "modules": true,
-	"auth": true, "ssrf": true, "exploit": true, "ml": true,
+	"auth": true, "ssrf": true, "oob": true, "exploit": true, "ml": true,
 }
 
 // LoadOrDefault 加载配置；出错时 stderr 告警并使用默认值

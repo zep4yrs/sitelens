@@ -53,6 +53,7 @@ var checkCWE = map[string][]string{
 	"log4j-inject":        {"CWE-502"},  // JNDI 注入 / 不可信反序列化
 	"xxe":                 {"CWE-611"},  // XML 外部实体
 	"upload-surface":      {"CWE-434"},  // 不受限文件上传（受理面）
+	"upload-bypass":       {"CWE-434"},  // 不受限文件上传（扩展名/类型绕过验证）
 	"sqli-error-cookie":   {"CWE-89"},   // Cookie 通道注入
 	"sqli-error-header":   {"CWE-89"},   // 头通道注入
 	"xss-reflect-cookie":  {"CWE-79"},
