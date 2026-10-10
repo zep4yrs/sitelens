@@ -51,7 +51,7 @@ func techCPEVendorProduct(cpe string) string {
 
 // nvdPossible 按 CPE 检索 NVD 字典出 possible 级情报行。
 // 每技术上限 maxPerTech 条，严重度优先；CVE 与既有输出去重由调用方 seen 承担。
-func (k *KB) nvdPossible(techName string, seen map[int64]bool, out *[]Finding) {
+func (k *KB) nvdPossible(techName string, seen map[int64]bool, out *[]Finding, intent nvdIntent) {
 	if k.nvd == nil || k.techCPE == nil || out == nil {
 		return
 	}
@@ -60,7 +60,12 @@ func (k *KB) nvdPossible(techName string, seen map[int64]bool, out *[]Finding) {
 	if vp == "" {
 		return
 	}
-	nvd := k.nvdStore() // A3：CPE 通道确实需要 NVD，惰性取数
+	var nvd *NVDStore
+	if intent == intentLoad {
+		nvd = k.nvdStore() // 显式以 NVD 为数据源：可按需解码
+	} else {
+		nvd = k.nvd // 惰性口径：索引未常驻就不出 CPE 通道行
+	}
 	if nvd == nil {
 		return
 	}

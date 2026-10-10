@@ -89,6 +89,18 @@ func TestVersionAndStats(t *testing.T) {
 	}
 }
 
+// scanFlowTimeout 「轮询到作业完成」类用例的超时上限，按构建模式取。
+//
+// 180s 与仓库既有口径一致（server_test.TestBatchFlow / graph_api_test 两个
+// 端到端都是 180s）；竞态模式再多给 20s——那是给 race 插桩本身的开销留量
+// （同一批量用例 -race 下实测 ~90s，非竞态 ~17s），不是继续掩盖慢根因。
+func scanFlowTimeout() time.Duration {
+	if raceBuild {
+		return 200 * time.Second
+	}
+	return 180 * time.Second
+}
+
 func TestScanJobFlow(t *testing.T) {
 	s, api := newServer(t)
 	// 找目标假站地址：起一个
@@ -108,13 +120,13 @@ func TestScanJobFlow(t *testing.T) {
 		t.Fatalf("缺 job_id: %v", body)
 	}
 
-	// 轮询直到完成。上限由 scanDeadline() 给出（非 race 60s / race 5min）：
-	// 扫描末段（步骤 11「关联漏洞情报」）要冷加载情报库（模板情报 2.9w 行 +
-	// 惰性 NVD 索引），成本既随 Runner 冷启动放大（同批 Runner 整包 18s/145s
-	// 波动），又在 -race 构建下再乘 ~10 倍（实测同一扫描 5.7s→57.7s）。原 30s
-	// 上限把「机器快慢」当成「任务是否卡死」，两条路径都会假红。
+	// 轮询直到完成。上限按构建模式取（见 scanFlowTimeout）：-race 插桩下整个
+	// 扫描慢一个量级，非竞态仍按性能口径收紧。
+	// 注：此前 30→90→180s 连续放宽并非阈值问题——是扫描收尾的 NVD 富化首拉
+	// 全量索引（见 intel.nvdIntent）把单次扫描推到 33s+。根因修掉后本用例
+	// -race 实测 8s，阈值不再是掩盖慢根因的那层。
 	var job map[string]any
-	deadline := time.Now().Add(scanDeadline())
+	deadline := time.Now().Add(scanFlowTimeout())
 	for {
 		_, job = getJSON(t, api.URL+"/api/job/"+jobID)
 		if job["status"] == "done" || job["status"] == "error" || job["status"] == "cancelled" {
@@ -200,12 +212,10 @@ func TestBatchFlow(t *testing.T) {
 	if jobID == "" {
 		t.Fatalf("缺 job_id: %v", resp)
 	}
-	// 轮询直到完成。上限由 scanDeadline() 给出（非 race 60s / race 5min），
-	// 与 TestScanJobFlow 同源：本用例两条目标各跑一次完整扫描，末尾同样
-	// 要冷加载情报库（模板情报 2.9w 行 + 惰性 NVD 索引），成本既随 Runner
-	// 冷启动放大，又在 -race 下再乘 ~10 倍。判据与断言（done==2、入库 1 条）
-	// 未放宽。
-	deadline := time.Now().Add(scanDeadline())
+	// 轮询直到完成。上限按构建模式取（见 scanFlowTimeout），与 TestScanJobFlow
+	// 同源：本用例两条目标各跑一次完整扫描，-race 插桩下整体慢一个量级。
+	// 判据与断言（done==2、入库 1 条）未放宽。
+	deadline := time.Now().Add(scanFlowTimeout())
 	var job map[string]any
 	for {
 		_, job = getJSON(t, api.URL+"/api/job/"+jobID+"/results")

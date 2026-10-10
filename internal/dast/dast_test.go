@@ -227,13 +227,8 @@ func TestMaxParamsCap(t *testing.T) {
 	})
 	// 1 目标 × （基线 1 + 四类探针序列 + 反序列化 1 + 深度探测面预算）；
 	// 探针序列条数受常量控制，这里只断言「上限生效」而非写死数值。
-	// 深度探测面：各类探针在未命中时全量发出（不短路），故按上界累计。
-	capN := 1 + len(xssProbes) + len(sqliErrorAll()) + len(redirProbes) + len(traversalProbes) + 1
-	capN += 1 + len(sstiProbes) + 4 // CRLF 响应头基线 + SSTI + 表达式
-	capN += 6 + 5 + 5 + 3           // NoSQL/XPath/LDAP/Log4j 探针数
-	capN += 1 + len(cmdProbes) + 1  // 命令注入：基线 + 探针 + 复测
-	capN += 1                       // CRLF 探针
-	capN += 1                       // CRLF 响应头基线
+	// 预算口径收敛到 maxURLRequestsPerParam（与生产同源，避免两处漂移）。
+	capN := maxURLRequestsPerParam(opts)
 	if f.request > capN {
 		t.Fatalf("MaxParams=1 应只探测 1 个参数（≤%d 请求），实际 %d", capN, f.request)
 	}
@@ -273,11 +268,9 @@ func TestRunFormsBudget(t *testing.T) {
 	hits := New(f, opts).RunForms([]FormTarget{
 		{Action: "https://a.com/reg", Fields: []string{"u", "e", "n"}},
 	})
-	// 1 字段 × （基线 1 + 四类探针序列 + 布尔盲注 + XXE）；预算生效即不超过。
-	// 表单侧深度家族目前只接 XXE（GET 参数面的深度家族不跑表单）。
-	capN := 1 + len(xssProbes) + len(sqliErrorAll()) + len(redirProbes) + len(traversalProbes)
-	capN += 1 + 2*2*2 // 布尔盲注：基线 + 通道(真假)×双确认
-	capN += 1         // XXE
+	// 1 字段 × （基线 1 + 四类探针序列 + 表单侧深度面 + 布尔盲注）；预算生效即不超过。
+	// 预算口径收敛到 maxFormRequestsPerField（与生产同源）。
+	capN := maxFormRequestsPerField(opts)
 	if f.request > capN {
 		t.Fatalf("MaxParams=1 应只探测 1 字段（≤%d 请求），实际 %d", capN, f.request)
 	}

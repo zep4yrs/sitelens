@@ -178,11 +178,19 @@ func (k *KB) NVDCount() int {
 }
 
 // nvdFill 在 Match 构造 Finding 后补全缺失的 CVSS 与 CWE（宁缺毋滥：只填空位）。
-func (k *KB) nvdFill(f *Finding) {
+//
+// intentLoad 才允许首次拉起索引（见 nvdIntent）；intentLazy 下索引未常驻直接
+// 返回——扫描收尾的富化不得为「补个字段」付出秒级同步解码 + 1.7GB 常驻。
+func (k *KB) nvdFill(f *Finding, intent nvdIntent) {
 	if f.CVE == "" {
 		return
 	}
-	nvd := k.nvdStore() // A3：真正需要 CVSS/CWE 时才加载
+	var nvd *NVDStore
+	if intent == intentLoad {
+		nvd = k.nvdStore() // 显式以 NVD 为数据源：可按需解码
+	} else {
+		nvd = k.nvd // 惰性口径：只用已常驻索引，不触发加载
+	}
 	if nvd == nil {
 		return
 	}

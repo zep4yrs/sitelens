@@ -135,20 +135,20 @@ func TestNVDFillEnrichesMissingCVSS(t *testing.T) {
 	}
 	kb.AttachNVD(store)
 	fv := Finding{CVE: "CVE-2099-0001"}
-	kb.nvdFill(&fv)
+	kb.nvdFill(&fv, intentLoad)
 	if fv.CVSSScore != 9.8 || fv.CVSSSev != "critical" {
 		t.Errorf("nvdFill 未补全: %+v", fv)
 	}
 	// 已有评分不被覆盖
 	f2 := Finding{CVE: "CVE-2099-0001", CVSSScore: 5.0, CVSSSev: "medium"}
-	kb.nvdFill(&f2)
+	kb.nvdFill(&f2, intentLoad)
 	if f2.CVSSScore != 5.0 {
 		t.Errorf("已有评分不应被覆盖: %+v", f2)
 	}
 	// 未挂载时安全
 	kb2 := &KB{}
 	f3 := Finding{CVE: "CVE-2099-0001"}
-	kb2.nvdFill(&f3)
+	kb2.nvdFill(&f3, intentLoad)
 	if f3.CVSSScore != 0 {
 		t.Errorf("未挂载不应填充: %+v", f3)
 	}
@@ -338,7 +338,65 @@ func TestNVDPathLazyLoading(t *testing.T) {
 	}
 }
 
-// TestNVDFillTriggersLazyLoad：CVSS/CWE 补全路径自动触发惰性加载。
+// TestNVDFillLazyIntentDoesNotLoad：intentLazy 下索引未常驻时不得拉起
+// 全量解码（扫描收尾富化口径）；索引已常驻时照常补空。
+func TestNVDFillLazyIntentDoesNotLoad(t *testing.T) {
+	entries := []NVDEntry{{CVE: "CVE-3000-0002", Score: 7.5, Sev: "high", CWEs: []string{"CWE-79"}}}
+	out := filepath.Join(t.TempDir(), "n.json.gz")
+	if err := writeNVDFile(out, entries); err != nil {
+		t.Fatal(err)
+	}
+	kb := &KB{}
+	kb.AttachNVDPath(out)
+
+	f := Finding{CVE: "CVE-3000-0002"}
+	kb.nvdFill(&f, intentLazy)
+	if kb.NVDLoaded() {
+		t.Fatal("intentLazy 不得拉起 NVD 索引")
+	}
+	if f.CVSSScore != 0 {
+		t.Errorf("未常驻时不应补全，实得 %v", f.CVSSScore)
+	}
+
+	// 索引常驻（显式加载一次）后，惰性口径照常补空。
+	if kb.NVD() == nil {
+		t.Fatal("显式取数应加载")
+	}
+	f2 := Finding{CVE: "CVE-3000-0002"}
+	kb.nvdFill(&f2, intentLazy)
+	if f2.CVSSScore != 7.5 {
+		t.Errorf("常驻后应补全为 7.5，实得 %v", f2.CVSSScore)
+	}
+}
+
+// TestMatchDoesNotLoadNVD：Match（默认惰性口径）在索引未常驻时不得拉起解码。
+func TestMatchDoesNotLoadNVD(t *testing.T) {
+	dir := t.TempDir()
+	// 极小的 vuln_kb 与 NVD 旁路文件：只验证「是否拉起」这一行为契约。
+	if err := os.WriteFile(filepath.Join(dir, "vuln_kb.json"), []byte(`{"entries":[]}`), 0644); err != nil {
+		t.Fatal(err)
+	}
+	_ = os.WriteFile(filepath.Join(dir, "tech_cpe.json"), []byte(`{"cpe":{"wordpress":"cpe:2.3:a:wordpress:wordpress:6.4:*:*:*:*:*:*:*"}}`), 0644)
+	cpe, _ := LoadTechCPE(filepath.Join(dir, "tech_cpe.json"))
+	nvdPath := filepath.Join(dir, "n.json.gz")
+	var entries []NVDEntry
+	for i := 0; i < 2000; i++ {
+		entries = append(entries, NVDEntry{CVE: "CVE-2099-000" + string(rune('0'+i%10)), Score: 5.0, Sev: "medium"})
+	}
+	if err := writeNVDFile(nvdPath, entries); err != nil {
+		t.Fatal(err)
+	}
+	kb := &KB{}
+	kb.AttachNVDPath(nvdPath)
+	kb.AttachTechCPE(cpe)
+
+	findings := kb.Match([]TechHit{{Name: "WordPress", Version: "6.4"}})
+	if kb.NVDLoaded() {
+		t.Fatalf("Match 不得拉起 NVD 索引（intentLazy 口径），实得 %d 条发现", len(findings))
+	}
+}
+
+// TestNVDFillTriggersLazyLoad：显式 intentLoad 时 CVSS/CWE 补全路径自动触发惰性加载。
 func TestNVDFillTriggersLazyLoad(t *testing.T) {
 	entries := []NVDEntry{{CVE: "CVE-3000-0002", Score: 7.5, Sev: "high", CWEs: []string{"CWE-79"}}}
 	out := filepath.Join(t.TempDir(), "n.json.gz")
@@ -351,7 +409,7 @@ func TestNVDFillTriggersLazyLoad(t *testing.T) {
 		t.Fatal("前置：不应已加载")
 	}
 	f := Finding{CVE: "CVE-3000-0002"}
-	kb.nvdFill(&f) // 应触发加载并补全
+	kb.nvdFill(&f, intentLoad) // 应触发加载并补全
 	if f.CVSSScore != 7.5 {
 		t.Errorf("CVSS 应被补全为 7.5，实得 %v", f.CVSSScore)
 	}

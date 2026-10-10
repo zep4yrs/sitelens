@@ -1,5 +1,40 @@
 # 更新日志
 
+## 未发布（深度探测面：注入通道扩容）
+
+> 在 v5.0.1 主动探测面加深（PR #26：探针序列化 + 多形态 + 特征表 15→29 +
+> 表单布尔盲注）之上的**纯增量层**：新增 SSTI（含表达式注入）/ 命令注入 /
+> CRLF / NoSQL / XPath / LDAP / JNDI(Log4Shell) / XXE / 上传受理面 /
+> Cookie-头注入通道，遍历编码扩到 6 形态 × 4 文件。由 `dast.deep_probes`
+> 总控（默认开）。兼容性：原有 check id 与证据链字段不变；新增 check id
+> 已登记 CWE 与 impact 归类。
+
+### 新增注入通道（`deep_probes`）
+
+- **SSTI**：四族模板语法探针（Jinja2/Twig、JSP EL、Ruby EL、ERB/EJS），
+  唯一算术乘积回显确认；表达式注入（SpEL/OGNL/EL）另认解析报错特征。
+- **命令注入**：分号/管道 sleep 形态**时间差分** + 双确认（critical），
+  不执行破坏性命令，只 sleep。
+- **CRLF 响应头注入**：判定只看响应头集合新增名，不看正文。
+- **NoSQL / XPath / LDAP**：操作符或引号注入触发数据层 / 解析层报错回显。
+- **JNDI（Log4Shell）**：`${jndi:}` 注入的解析特征。
+- **XXE**：POST XML 体外部实体展开特征。
+- **上传受理面**：提交无害文本文件判定是否受理（非绕过验证）。
+- **Cookie / 头注入**：Cookie、User-Agent、Referer、XFF 通道的报错 SQLi / 反射 XSS。
+
+### 遍历多形态扩面
+
+- 文件面：`/etc/passwd`、`windows/win.ini`、`/etc/hosts`、`boot.ini` 跨平台。
+- 编码面 6 形态：原生 `../`、双写 `....//`、URL 编码 `%2e%2e%2f`、绝对路径、
+  混编 `..%2f`、双重编码 `%252e%252e%252f`。
+
+### 请求有界
+
+- 新增单类探针上限 `MaxProbesPerClass`（默认 12），核心四类的遍历与深度面
+  各家族都按它截断；进度条总长与测试上界共用 `maxURLRequestsPerParam` /
+  `maxFormRequestsPerField` 两个口径函数，避免探针表与预算两处漂移。
+
+
 ## v5.0.1（未发布，扫描型缺陷修复 + 探测面加深）
 
 > 靶场基准评测（v5.0.0，460 条真值 / 6 TP / R_in 13.0%）暴露的扫描型缺陷

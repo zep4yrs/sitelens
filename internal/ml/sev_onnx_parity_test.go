@@ -16,7 +16,14 @@ import (
 // 资产/DLL 缺失时 t.Skip（开发机形态差异不阻塞无 onnx 环境）。
 func TestSevOnnxParity(t *testing.T) {
 	root := filepath.Join("..", "..")
-	assets := filepath.Join(root, "data", "go", "ml_assets")
+	// 与 linear parity 同口径：走运行时同一套候选表（data/go → models/go 回退）。
+	assets := LocateAssetsDir(
+		filepath.Join(root, "data", "go", "ml_assets"),
+		filepath.Join(root, "models", "go", "ml_assets"),
+	)
+	if assets == "" {
+		t.Skip("onnx 对拍资产缺失（data/go/ml_assets 与 models/go/ml_assets 均无全套文件），跳过")
+	}
 	fixPath := filepath.Join(assets, "sev-fixtures.json")
 	vocabPath := filepath.Join(assets, "sev-prior-v3.1.vocab.txt")
 	onnxA := filepath.Join(assets, "sev-prior-v3.1-a.onnx")
@@ -24,6 +31,9 @@ func TestSevOnnxParity(t *testing.T) {
 	dll := os.Getenv("SITLENS_ORT_DLL")
 	if dll == "" {
 		dll = filepath.Join(root, "data", "onnxruntime", "onnxruntime.dll")
+		if _, err := os.Stat(dll); err != nil {
+			dll = filepath.Join(root, "models", "onnxruntime", "onnxruntime.dll")
+		}
 	}
 	for _, p := range []string{fixPath, vocabPath, onnxA, onnxB, dll} {
 		if _, err := os.Stat(p); err != nil {

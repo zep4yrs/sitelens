@@ -42,19 +42,39 @@ var sqlErrors = []string{
 // 只认 /etc/passwd 会漏 Windows 目标与 CVE 根路径变体；
 // 全部与基线求差后判定（页面本来就有的不算）。
 var traversalMarks = []string{
-	"root:x:0:0:", "root:x:0:0", "[boot loader]", // Linux passwd / win.ini
-	"daemon:x:", "for 16-bit app support",
+	"root:x:0:0:", "root:x:0:0", "daemon:x:1:1:", // Linux /etc/passwd
+	"[boot loader]", "[operating systems]", // Windows boot.ini
+	"[fonts]", "[extensions]", "for 16-bit app support", // Windows win.ini
+	"127.0.0.1\tlocalhost", "127.0.0.1 localhost", // /etc/hosts
 }
 
-// traversalProbes 目录遍历探针序列（按优先级）。多编码多深度：
-// 原生 ../ / URL 编码 %2e%2e%2f / 双写 ....// / 绝对路径，覆盖过滤器绕过。
-var traversalProbes = []string{
-	"../../../../../../../../etc/passwd",
-	"....//....//....//....//....//....//etc/passwd",
-	"%2e%2e%2f%2e%2e%2f%2e%2e%2f%2e%2e%2f%2e%2e%2fetc%2fpasswd",
-	"/etc/passwd",
-	"..%2f..%2f..%2f..%2f..%2fetc%2fpasswd",
+// traversalProbes 目录遍历探针序列（按优先级）。
+// 文件面：passwd（Linux）→ win.ini / boot.ini（Windows，多形态）。
+// 编码面 6 形态：原生 ../ / 双写 ....// / URL 编码 %2e%2e%2f / 绝对路径 /
+// 混编 ..%2f / 双重编码 %252e%252e%252f——覆盖常见过滤器绕过。
+// 顺序即优先级：文件外层、编码内层，最可能命中的组合排最前。
+var traversalFiles = []string{
+	"/etc/passwd", "/windows/win.ini", "/etc/hosts", "/boot.ini",
 }
+
+var traversalEncodings = []string{
+	"../../../../../../../../{f}",                      // 原生
+	"....//....//....//....//....//....//{f}",          // 双写斜杠绕过
+	"%2e%2e%2f%2e%2e%2f%2e%2e%2f%2e%2e%2f%2e%2e%2f{f}", // URL 编码
+	"{f}",                               // 绝对路径
+	"..%2f..%2f..%2f..%2f..%2f..%2f{f}", // 混编编码
+	"%252e%252e%252f%252e%252e%252f%252e%252e%252f{f}", // 双重编码
+}
+
+var traversalProbes = func() []string {
+	var ps []string
+	for _, f := range traversalFiles {
+		for _, enc := range traversalEncodings {
+			ps = append(ps, strings.ReplaceAll(enc, "{f}", f))
+		}
+	}
+	return ps
+}()
 
 // redirProbes 开放重定向探针序列：协议相对 / 绝对 / 反斜杠变体。
 var redirProbes = []string{
@@ -188,11 +208,8 @@ func (r *Runner) Run(links []string) []Finding {
 	if len(targets) == 0 {
 		return nil
 	}
-	perTarget := 1 + len(xssProbes) + len(sqliErrorProbes) + len(redirProbes) + len(traversalProbes) + 1
-	perTarget += r.deepBudget()
-	if r.opts.TimeBlind {
-		perTarget += 3 // 基线计时 + 注入 + 复测
-	}
+	// 进度条总长：与测试上界共用同一口径（maxURLRequestsPerParam），避免两处漂移。
+	perTarget := maxURLRequestsPerParam(r.opts)
 	total := len(targets) * perTarget
 	done := 0
 	tick := func(msg string) {
@@ -216,8 +233,9 @@ func (r *Runner) Run(links []string) []Finding {
 
 		hits = append(hits, r.probeSequences(tgt, baseBody, &done, total)...)
 
-		// 深度探测面（SSTI/命令注入/CRLF/NoSQL/XPath/LDAP/表达式/Log4j）：
-		// 需要响应头基线（CRLF 判定），故在此单独取一次基线响应。
+		// 深度面里两件 probeSequences 放不下的：命令注入（时间差分 + 双确认，
+		// 不是单发探针）与 CRLF（要拿响应头基线比对）。其余深度家族已由
+		// probeSequences 的类表覆盖，不重复发请求。
 		if r.deepEnabled() && !r.stopped() {
 			var baseHeaders map[string]bool
 			if base := r.fetch.GetSmall(tgt.URL); base != nil {
@@ -227,7 +245,7 @@ func (r *Runner) Run(links []string) []Finding {
 			if r.prog != nil {
 				r.prog(done, total, shortLabel(tgt))
 			}
-			hits = append(hits, r.deepSequences(tgt, baseBody, baseHeaders, &done, total)...)
+			hits = append(hits, r.deepResidual(tgt, baseHeaders, &done, total)...)
 		}
 
 		// Cookie / 头注入通道（sqli-labs Less-24/42~45 类入口；需扩展接口）
@@ -270,15 +288,21 @@ func (r *Runner) probeSequences(tgt Target, baseBody string, done *int, total in
 		kind   string
 		values []string
 	}
-	for _, pc := range []probeCase{
+	cases := []probeCase{
 		{"xss", xssProbes},
 		{"sqli", sqliErrorAll()},
 		{"redirect", redirProbes},
 		{"traversal", traversalProbes},
-	} {
-		for _, value := range pc.values {
-			if r.stopped() {
-				return hits
+	}
+	if r.deepEnabled() {
+		for _, dc := range probeSequenceDeepClasses() {
+			cases = append(cases, probeCase{dc.Kind, dc.Values})
+		}
+	}
+	for _, pc := range cases {
+		for i, value := range pc.values {
+			if r.stopped() || (r.opts.MaxProbesPerClass > 0 && i >= r.opts.MaxProbesPerClass) {
+				break
 			}
 			probeURL := setParam(tgt.URL, tgt.Param, value)
 			if len(probeURL) > r.opts.MaxURLLen {
@@ -296,7 +320,7 @@ func (r *Runner) probeSequences(tgt Target, baseBody string, done *int, total in
 			if resp == nil {
 				continue
 			}
-			hit := judge(pc.kind, resp, baseBody, tgt)
+			hit := probeJudge(pc.kind, resp, baseBody, tgt)
 			if hit == nil {
 				continue
 			}
@@ -419,7 +443,7 @@ func (r *Runner) RunForms(targets []FormTarget) []Finding {
 		}
 		tick(label)
 
-		for _, pc := range []struct {
+		formCases := []struct {
 			kind   string
 			values []string
 		}{
@@ -427,10 +451,19 @@ func (r *Runner) RunForms(targets []FormTarget) []Finding {
 			{"sqli", sqliErrorAll()},
 			{"redirect", redirProbes},
 			{"traversal", traversalProbes},
-		} {
-			for _, value := range pc.values {
-				if r.stopped() {
-					return hits
+		}
+		if r.deepEnabled() {
+			for _, dc := range formDeepProbeClasses() {
+				formCases = append(formCases, struct {
+					kind   string
+					values []string
+				}{dc.Kind, dc.Values})
+			}
+		}
+		for _, pc := range formCases {
+			for i, value := range pc.values {
+				if r.stopped() || (r.opts.MaxProbesPerClass > 0 && i >= r.opts.MaxProbesPerClass) {
+					break
 				}
 				data := map[string]string{}
 				for f := range baseData {
@@ -442,7 +475,7 @@ func (r *Runner) RunForms(targets []FormTarget) []Finding {
 				if resp == nil {
 					continue
 				}
-				hit := judge(pc.kind, resp, baseBody, Target{URL: p.ft.Action, Param: p.field})
+				hit := probeJudge(pc.kind, resp, baseBody, Target{URL: p.ft.Action, Param: p.field})
 				if hit == nil {
 					continue
 				}
