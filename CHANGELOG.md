@@ -1,5 +1,37 @@
 # 更新日志
 
+## 未发布（爬虫 robots 解析修复：Disallow: / 不再静默塌缩）
+
+> 走查发现一个会让爬取在真实目标上塌缩到入口页的 P0：`allowed()` 用的是
+> 「Disallow 前缀」的极简实现，只认 `User-agent: *` 段、忽略 `Allow` 与通配，
+> 且当目标 robots.txt 写 `Disallow: /`（封禁整站）时，**每一条同域链接都会被
+> 静默跳过**——扫描出来只有一页，报告却毫无线索。
+
+### 修复
+
+- **robots 解析重写**（`internal/crawler/robots.go`）：按 UA 分组（连续 UA 共享
+  规则、精确 UA 优先于 `*`），组内 `Allow`/`Disallow` **最长匹配优先、同长 Allow 胜**，
+  支持 `*` 通配与 `$` 结尾锚点，剥离行内注释与 CRLF，空 `Disallow:` 视为无限制。
+  此前 `Allow: /admin/public` 无法覆盖 `Disallow: /admin/`、`/*.php$` 被当成字面前缀，
+  都会误判。
+- **整站封禁不再静默**：命中组封禁 `/` 时记 `Result.RobotsAll`，引擎在扫描进度里
+  明确提示「robots.txt 封禁整站（Disallow: /），爬取仅入口页」，并给出
+  `crawler.respect_robots=false` 的覆盖指引。是否遵循仍是配置项，但结果不再无声无息。
+
+### 复现与验证（真实目标）
+
+- `https://pentest-ground.com:4280/robots.txt` 实际内容即 `User-agent: *` +
+  `Disallow: /`——此前该目标爬取只会得到入口页。回归测试逐字节复刻这份 robots，
+  断言：遵循时 `RobotsAll=true` 且仅入口页、关闭遵循时恢复完整爬取。
+- 新增 robots 单测：Allow 覆盖、空 Disallow、通配 `*`/锚点 `$`、多 UA 分组、
+  注释/CRLF、Sitemap 收集。
+
+### 口径
+
+`respect_robots` 默认仍为 `true`（遵循）。对**授权目标**（本机靶场/已授权内网）
+若要完整爬取，按需置 `false`——这是配置决策，不是被静默吞掉的 bug。
+
+
 ## 未发布（验证码识别重放 / 越权 / 加密实现 / 开放 API：四条判定通道）
 
 > 承接上一轮「判定通道补齐」的思路，这一轮把 Issue 里点名的四个模块
