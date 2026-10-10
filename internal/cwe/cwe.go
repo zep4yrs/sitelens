@@ -43,20 +43,25 @@ var checkCWE = map[string][]string{
 	"deser-surface":   {"CWE-502"},
 
 	// dast 深度探测面（v5.1）
-	"ssti":               {"CWE-1336"}, // 服务端模板注入
-	"expression-inject":  {"CWE-917"},  // 表达式语言注入（EL/SpEL/OGNL）
-	"cmd-inject":         {"CWE-78"},   // OS 命令注入
-	"crlf-inject":        {"CWE-113"},  // HTTP 响应拆分（CRLF）
-	"nosql-inject":       {"CWE-943"},  // NoSQL 查询注入
-	"xpath-inject":       {"CWE-643"},  // XPath 注入
-	"ldap-inject":        {"CWE-90"},   // LDAP 注入
-	"log4j-inject":       {"CWE-502"},  // JNDI 注入 / 不可信反序列化
-	"xxe":                {"CWE-611"},  // XML 外部实体
-	"upload-surface":     {"CWE-434"},  // 不受限文件上传（受理面）
-	"sqli-error-cookie":  {"CWE-89"},   // Cookie 通道注入
-	"sqli-error-header":  {"CWE-89"},   // 头通道注入
-	"xss-reflect-cookie": {"CWE-79"},
-	"xss-reflect-header": {"CWE-79"},
+	"ssti":                {"CWE-1336"}, // 服务端模板注入
+	"expression-inject":   {"CWE-917"},  // 表达式语言注入（EL/SpEL/OGNL）
+	"cmd-inject":          {"CWE-78"},   // OS 命令注入
+	"crlf-inject":         {"CWE-113"},  // HTTP 响应拆分（CRLF）
+	"nosql-inject":        {"CWE-943"},  // NoSQL 查询注入
+	"xpath-inject":        {"CWE-643"},  // XPath 注入
+	"ldap-inject":         {"CWE-90"},   // LDAP 注入
+	"log4j-inject":        {"CWE-502"},  // JNDI 注入 / 不可信反序列化
+	"xxe":                 {"CWE-611"},  // XML 外部实体
+	"upload-surface":      {"CWE-434"},  // 不受限文件上传（受理面）
+	"sqli-error-cookie":   {"CWE-89"},   // Cookie 通道注入
+	"sqli-error-header":   {"CWE-89"},   // 头通道注入
+	"xss-reflect-cookie":  {"CWE-79"},
+	"xss-reflect-header":  {"CWE-79"},
+	"xss-stored":          {"CWE-79"},  // 存储型 XSS
+	"xss-stored-raw":      {"CWE-79"},  // 存储内容未过滤（前置项）
+	"csp-weak-directive":  {"CWE-693"}, // 保护机制失效（CSP 策略可绕过）
+	"cacheable-sensitive": {"CWE-525"}, // 敏感页可缓存（浏览器缓存泄露）
+	"weak-random-id":      {"CWE-330"}, // 弱随机标识（时间戳/低熵形态）
 
 	// passive（被动检测）
 	"cookie-attrs": {"CWE-1004"},

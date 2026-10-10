@@ -22,6 +22,7 @@
 package dast
 
 import (
+	"regexp"
 	"strings"
 	"time"
 )
@@ -188,6 +189,13 @@ func (r *Runner) deepResidual(tgt Target, baseHeaders map[string]bool, done *int
 			emit(*f)
 		}
 	}
+
+	// 4) 随机差分：同一个带参页面连打两次，看会话类载体的值是否「每刷必变」。
+	// 这是弱随机标识的强信号——时间戳型会话 ID / 无状态防缓存令牌都这样。
+	// 只能走路径级判定（要拿同一 URL 的两次完整响应），故不入探针序列表。
+	if f := r.sessionDiff(tgt, label, done, total); f != nil {
+		emit(*f)
+	}
 	return hits
 }
 
@@ -240,6 +248,39 @@ func (r *Runner) cmdEchoInject(tgt Target, label string, done *int, total int) *
 		chainEvidence(f, u, resp)
 		f.Signals = []string{"echo 算术表达式求值回显", "结果仅在注入响应出现、基线不含"}
 		return f
+	}
+	return nil
+}
+
+// sessionDiff 会话载体随机差分探测。
+//
+// 判据：同一 URL 两次取样，提取出的会话类载体值「全变」且形态低熵。
+// 只报形态本身就弱的（时间戳 / 短整数 / 近全数字短十六进制）——
+// 强随机串每次刷新当然也变，那是正常的，不算弱点（不做熵统计：单样本
+// 测不出分布，泛报就是误报）。
+func (r *Runner) sessionDiff(tgt Target, label string, done *int, total int) *Finding {
+	if !r.opts.RandomDiff {
+		return nil
+	}
+	first := probeGet(r, tgt.URL, label, done, total)
+	if first == nil {
+		return nil
+	}
+	second := probeGet(r, tgt.URL, label, done, total)
+	if second == nil {
+		return nil
+	}
+	// Cookie 载体不参与差分（DVWA 的 dvwaSession 由服务器在登录时下发，
+	// 同一会话内稳定）。差分看的是「响应里每次都重新生成的载体」：
+	// 隐藏字段 / 内联脚本 / 变量赋值——时间戳型会话 ID 与防缓存令牌就在那里。
+	keys := []string{"csrftoken", "csrf_token", "_token", "xsrf", "nonce",
+		"requestverificationtoken", "authenticity_token", "viewstate"}
+	for _, key := range keys {
+		f := r.diffOneKey(tgt, key, first.Body, second.Body)
+		if f != nil {
+			f.Signals = []string{"两次取样该标识值均变化且形态低熵"}
+			return f
+		}
 	}
 	return nil
 }
@@ -343,6 +384,63 @@ func isSepOrSpace(b byte) bool {
 		return true
 	}
 	return false
+}
+
+// diffOneKey 单个键的差分判定。
+func (r *Runner) diffOneKey(tgt Target, key, bodyA, bodyB string) *Finding {
+	a := extractHiddenValue(bodyA, key)
+	b := extractHiddenValue(bodyB, key)
+	if a == "" || b == "" || a == b {
+		return nil
+	}
+	weak, shape := lowEntropyShape(a)
+	if !weak {
+		weak, shape = lowEntropyShape(b)
+	}
+	if !weak {
+		return nil
+	}
+	return &Finding{
+		Check: "weak-random-id", Title: "弱随机标识（时间戳/低熵形态）",
+		Severity: "medium", URL: tgt.URL, Param: key,
+		Evidence: "标识 " + key + " 每次响应重新生成且形态低熵：" + shape + "（两次取样值不同）",
+		Advice:   "改用密码学安全的随机源（≥128 位）生成会话标识与令牌",
+	}
+}
+
+// extractHiddenValue 从响应正文里提取隐藏输入值 / 变量赋值（值载体）。
+// 覆盖三种常见形态：<input ... name="k" value="v">、name 在前、
+// 以及 JS 里的 "k":"v" / k = "v"。
+func extractHiddenValue(body, key string) string {
+	// 形态 1：input name=X ... value=Y（属性顺序任意，取该标签内 value）
+	for _, namePat := range []string{`name="` + key + `"`, `name='` + key + `'`, `name=` + key + ``} {
+		re := regexp.MustCompile(`(?is)<input[^>]*` + namePat + `[^>]*>`)
+		if m := re.FindString(body); m != "" {
+			if v := firstAttr(m, "value"); v != "" {
+				return v
+			}
+		}
+	}
+	// 形态 2：value 在前 name 在后
+	re := regexp.MustCompile(`(?is)<input[^>]*value=["']([^"']+)["'][^>]*name=["']?` + key + `["']?[^>]*>`)
+	if m := re.FindStringSubmatch(body); len(m) > 1 {
+		return m[1]
+	}
+	// 形态 3：JS 对象属性 "k":"v" 或 k: 'v'
+	re = regexp.MustCompile(`(?is)["']?` + key + `["']?\s*[:=]\s*["']([0-9a-fA-F-]{4,64})["']`)
+	if m := re.FindStringSubmatch(body); len(m) > 1 {
+		return m[1]
+	}
+	return ""
+}
+
+// firstAttr 取标签内首个同名属性值。
+func firstAttr(tag, attr string) string {
+	re := regexp.MustCompile(`(?is)` + attr + `\s*=\s*["']([^"']*)["']`)
+	if m := re.FindStringSubmatch(tag); len(m) > 1 {
+		return m[1]
+	}
+	return ""
 }
 
 // cmdInject 命令注入时间差分探测：注入 sleep 后响应延迟超阈值 + 复测确认。
@@ -751,8 +849,13 @@ func formDeepProbeClasses() []struct {
 		{"crlf", []string{crlfInject}},
 		{"nosql", nosqlFormProbes},
 		{"xpath", xpathFormProbes},
+		{"cmd-echo", cmdEchoFormProbes},
 	}
 }
+
+// cmdEchoFormProbes 表单侧命令注入回显探针：与 URL 侧同源（cmdEchoProbes），
+// 只去掉 %0a 换行形态——POST 体里的换行分隔符语义与 URL 不同。
+var cmdEchoFormProbes = cmdEchoProbes[:6]
 
 // nosqlFormProbes 表单侧 NoSQL 探针（POST 体不做操作符数组形态）。
 var nosqlFormProbes = []string{`{"$ne":""}`, `' || '1'=='1`, `{"$where":"1"}`}
@@ -832,6 +935,20 @@ func judgeDeep(kind string, resp *Resp, baseline string, tgt Target) *Finding {
 				Advice:   "使用参数化 LDAP 查询；转义 * ( ) \\ 等元字符",
 			}
 		}
+	case "cmd-echo":
+		// 回显型命令注入与 URL 通道共用同一判定（cmdEchoConfirmed）：
+		// 求值结果必须**独立成串**才算真执行，紧贴算式的一律视为 payload
+		// 字面量回显。同一条通道只留一个判据，避免两处判准漂移。
+		if !cmdEchoConfirmed(resp.Body, baseline) {
+			break
+		}
+		return &Finding{
+			Check: "cmd-inject", Title: "命令注入（运算结果回显确认）",
+			Severity: "critical", URL: tgt.URL, Param: tgt.Param,
+			Evidence: "参数 " + tgt.Param + " 注入 echo 表达式后回显求值结果 " + cmdEchoResult +
+				"（算式 " + cmdEchoExpr + " 本身不含该结果，排除原样回显）",
+			Advice: "禁止将用户输入拼接进系统命令；使用参数化 API 与白名单",
+		}
 	case "log4j":
 		if m := matchMarkerNotIn(resp.Body, baseline, "", log4jMarkers); m != "" {
 			return &Finding{
@@ -892,6 +1009,7 @@ func maxURLRequestsPerParam(o Options) int {
 		n += 5
 	}
 	n += 1 // 反序列化探针
+	n += 2 // 随机差分（同一 URL 两次取样）
 	return n
 }
 
@@ -923,6 +1041,9 @@ func maxFormRequestsPerField(o Options) int {
 	}
 	if deepEnabled(o) && o.CmdInject {
 		n += capOpt(len(cmdEchoProbes), o) // 表单侧命令回显通道
+	}
+	if o.StoredXSS {
+		n += 1 // 存储型 XSS：每表单一次写入
 	}
 	return n
 }
@@ -981,5 +1102,11 @@ func deepProbeClasses() []struct {
 		{"xpath", xpathProbes},
 		{"ldap", ldapProbes},
 		{"log4j", log4jProbes},
+		{"cmd-echo", cmdEchoAll()},
 	}
 }
+
+// cmdEchoAll 命令注入回显通道的探针全集。
+// 算式 7393*8453+11=62500040 是 8 位唯一乘积，正常页面不会天然出现，
+// 单一算式即可，无需多算式交替。
+func cmdEchoAll() []string { return cmdEchoProbes }
