@@ -362,3 +362,95 @@ func (f *fakeFetch) PostRawSmall(rawURL, contentType, body string) *Resp { retur
 func (f *fakeFetch) PostMultipartSmall(rawURL, fileField, fileName, content string, extra map[string]string) *Resp {
 	return nil
 }
+
+// statusFlipFetcher 模拟 Acunetix testasp 的 Search.asp 行为：参数正常
+// 时 200 且正文健康，注入引号后翻成通用 500 页（正文无任何数据库报错
+// 特征）。报错特征表再宽也命不中——只能靠状态码翻转判定。
+type statusFlipFetcher struct{ n int }
+
+func (f *statusFlipFetcher) GetSmall(u string) *Resp {
+	f.n++
+	q := u
+	if i := strings.Index(u, "?"); i >= 0 {
+		q = u[i:]
+	}
+	decoded, _ := url.QueryUnescape(q)
+	if strings.Contains(decoded, "'") {
+		return &Resp{Status: 500, Body: "<title>500 - Internal server error.</title>"}
+	}
+	return &Resp{Status: 200, Body: "<html>search results ok</html>"}
+}
+
+func (f *statusFlipFetcher) PostFormSmall(u string, d map[string]string) *Resp {
+	return &Resp{Status: 200, Body: "<html>ok</html>"}
+}
+
+func TestSQLErrorStatusFlipDetected(t *testing.T) {
+	opts := DefaultOptions()
+	r := New(&statusFlipFetcher{}, opts)
+	hits := r.Run([]string{"http://t/Search.asp?tfSearch=forum"})
+	found := false
+	for _, h := range hits {
+		if h.Check == "sqli-error" && h.Param == "tfSearch" {
+			found = true
+			if !strings.Contains(h.Evidence, "500") {
+				t.Fatalf("证据应含状态码: %s", h.Evidence)
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("注入引号触发 500 应命中 sqli-error，实际命中 %d 条", len(hits))
+	}
+}
+
+// healthyNoFlipFetcher 参数注入后仍 200：不得凭状态码误报。
+type healthyNoFlipFetcher struct{}
+
+func (f *healthyNoFlipFetcher) GetSmall(u string) *Resp {
+	return &Resp{Status: 200, Body: "<html>fine</html>"}
+}
+func (f *healthyNoFlipFetcher) PostFormSmall(u string, d map[string]string) *Resp {
+	return &Resp{Status: 200, Body: "<html>fine</html>"}
+}
+
+func TestSQLErrorStatusNoFalsePositive(t *testing.T) {
+	r := New(&healthyNoFlipFetcher{}, DefaultOptions())
+	for _, h := range r.Run([]string{"http://t/x?a=1"}) {
+		if h.Check == "sqli-error" {
+			t.Fatalf("健康站点不应命中报错 SQLi: %+v", h)
+		}
+	}
+}
+
+// always500Fetcher 整站 5xx：基线本身不健康，不得据此判注入。
+type always500Fetcher struct{}
+
+func (f *always500Fetcher) GetSmall(u string) *Resp {
+	return &Resp{Status: 500, Body: "<html>broken</html>"}
+}
+func (f *always500Fetcher) PostFormSmall(u string, d map[string]string) *Resp {
+	return &Resp{Status: 500, Body: "<html>broken</html>"}
+}
+
+func TestSQLErrorStatusBaselineUnhealthySkipped(t *testing.T) {
+	r := New(&always500Fetcher{}, DefaultOptions())
+	for _, h := range r.Run([]string{"http://t/x?a=1"}) {
+		if h.Check == "sqli-error" {
+			t.Fatalf("基线即 5xx 时不得报状态差分: %+v", h)
+		}
+	}
+}
+
+// 测试桩补齐 Fetcher 可选通道（返回 nil = 不支持，相应对探测自动跳过）。
+func (f *statusFlipFetcher) PostRawSmall(string, string, string) *Resp { return nil }
+func (f *statusFlipFetcher) PostMultipartSmall(string, string, string, string, map[string]string) *Resp {
+	return nil
+}
+func (f *healthyNoFlipFetcher) PostRawSmall(string, string, string) *Resp { return nil }
+func (f *healthyNoFlipFetcher) PostMultipartSmall(string, string, string, string, map[string]string) *Resp {
+	return nil
+}
+func (f *always500Fetcher) PostRawSmall(string, string, string) *Resp { return nil }
+func (f *always500Fetcher) PostMultipartSmall(string, string, string, string, map[string]string) *Resp {
+	return nil
+}

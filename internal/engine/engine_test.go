@@ -348,3 +348,55 @@ func TestSeedPathQueryPreserved(t *testing.T) {
 		t.Fatalf("带参种子入口应命中参数级注入；verified=%d 条", len(res.Verified))
 	}
 }
+
+// TestHomeFormParamNotLostByCrawl 首页 GET 表单合成的带参 URL 必须在
+// 爬取阶段之后仍留在 DAST 队列里。
+//
+// 回归背景（真实漏报）：爬取分支里曾写着 `dastLinks = cr.ParamLinks`，
+// 直接覆盖了首页合成链接。cr.ParamLinks 只收被反解析为 <a href> 的链接，
+// 而「参数藏在 GET 表单里」的入口（Acunetix testasp 的 Search.asp?tfSearch=）
+// 不在其中——首页采集完就在这一步被丢掉，参数级注入整块测不到。
+func TestHomeFormParamNotLostByCrawl(t *testing.T) {
+	var daoPT bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/Search.asp":
+			// 首页只有一个 GET 空 action 表单，参数 tfSearch；
+			// 正常词 200 健康页，注入引号翻 500（报错状态差分通道）
+			if r.URL.Query().Get("tfSearch") == "" {
+				w.Write([]byte(`<html><body><form name="f" method="get" action=""><input name="tfSearch" type="text"></form></body></html>`))
+				return
+			}
+			daoPT = true
+			if strings.Contains(r.URL.Query().Get("tfSearch"), "'") {
+				w.WriteHeader(500)
+				w.Write([]byte("<title>500 - Internal server error.</title>"))
+				return
+			}
+			w.Write([]byte("<html>search results ok</html>"))
+		default:
+			// 有个无关的 <a href> 页面，让爬取非空——正是它当年触发了覆盖
+			w.Write([]byte(`<html><body><a href="/about.asp">about</a></body></html>`))
+		}
+	}))
+	defer srv.Close()
+
+	cfg := config.Default()
+	cfg.Scan.RateIntervalMS = 0
+	cfg.Target.AllowPrivate = true
+	eng := New(cfg, nil, nil)
+	res := eng.Scan(srv.URL+"/Search.asp", Options{Deep: true, DAST: true}, nil, nil)
+
+	if !daoPT {
+		t.Fatalf("首页 GET 表单参数 tfSearch 未进入 DAST 探测队列（被爬取结果覆盖）")
+	}
+	found := false
+	for _, v := range res.Verified {
+		if v["param"] == "tfSearch" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("首页表单参数注入应被报出；verified=%d 条", len(res.Verified))
+	}
+}

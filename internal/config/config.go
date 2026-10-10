@@ -144,6 +144,7 @@ type DASTConfig struct {
 	DeepProbes        bool  `yaml:"deep_probes"`          // 深度探测面总闸（SSTI/命令注入/CRLF/NoSQL/XPath/LDAP/表达式/JNDI/XXE）
 	CmdInject         bool  `yaml:"cmd_inject"`           // 命令注入时间差分（重类，深度面内单独可关）
 	CRLF              bool  `yaml:"crlf"`                 // CRLF 响应头注入
+	ErrorStatus       bool  `yaml:"error_status"`         // 报错状态差分（注入引号后 2xx→5xx 判定）
 	MaxProbesPerClass int   `yaml:"max_probes_per_class"` // 单类探针上限（防重类吃满预算）
 }
 
@@ -261,6 +262,7 @@ func Default() *Config {
 			DeepProbes:        true, // 深度探测面默认开：覆盖面是评测的核心诉求
 			CmdInject:         true,
 			CRLF:              true,
+			ErrorStatus:       true,
 			MaxProbesPerClass: 12,
 		},
 		Exploit: ExploitConfig{

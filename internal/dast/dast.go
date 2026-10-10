@@ -8,6 +8,7 @@
 package dast
 
 import (
+	"fmt"
 	"net/url"
 	"strconv"
 	"strings"
@@ -109,6 +110,7 @@ type Options struct {
 	CmdInject         bool          // 命令注入时间差分（重类，默认开）
 	CRLF              bool          // CRLF 响应头注入
 	MaxProbesPerClass int           // 单类探针上限（防重类吃满预算，默认 12）
+	ErrorStatus       *bool         // 报错状态差分通道（nil = 默认开）
 	OnHit             func(Finding) // 命中即时回调（实时事件流，nil = 不回调）
 }
 
@@ -164,8 +166,10 @@ type HeaderFetcher interface {
 
 // Target 带参数的探测目标。
 type Target struct {
-	URL   string // 完整 URL（含 query）
-	Param string // 参数名
+	URL         string // 完整 URL（含 query）
+	Param       string // 参数名
+	Status      int    // 基线 HTTP 状态码（报错状态差分通道用；0 = 未知）
+	ErrorStatus bool   // 报错状态差分开关（Run 里按 Options 回填）
 }
 
 // Runner DAST 探测执行器。
@@ -225,10 +229,13 @@ func (r *Runner) Run(links []string) []Finding {
 			break
 		}
 		// 基线：原 URL 响应。页面天然含有的报错/系统特征不算命中。
+		// 同时记基线状态码：报错状态差分通道要拿它判断"注入把页面打崩了"。
 		baseBody := ""
 		if base := r.fetch.GetSmall(tgt.URL); base != nil {
 			baseBody = strings.ToLower(base.Body)
+			tgt.Status = base.Status
 		}
+		tgt.ErrorStatus = r.errorStatusEnabled()
 		tick(shortLabel(tgt))
 
 		hits = append(hits, r.probeSequences(tgt, baseBody, &done, total)...)
@@ -737,6 +744,21 @@ func judge(kind string, resp *Resp, baseline string, tgt Target) *Finding {
 					Evidence: "注入单引号触发数据库报错特征：" + e,
 					Advice:   "使用参数化查询；关闭详细报错回显",
 				}
+			}
+		}
+		// 报错状态差分：参数正常时页面 2xx/3xx，注入引号后翻成 5xx。
+		// 这类目标（Acunetix testasp 的 Search.asp）只回一个通用 500 页，
+		// 正文里没有任何 sqlErrors 特征——特征表再宽也命不中，靠状态码
+		// 翻转才是唯一通道。基线必须是健康态，否则站点本身 5xx 时会漫天误报。
+		if tgt.ErrorStatus && tgt.Status > 0 && tgt.Status < 400 &&
+			resp.Status >= 500 {
+			return &Finding{
+				Check: "sqli-error", Title: "报错型 SQL 注入（状态差分确认）",
+				Severity: "high", URL: tgt.URL, Param: tgt.Param,
+				Evidence: "参数 " + tgt.Param + " 注入引号后响应由 " +
+					fmt.Sprint(tgt.Status) + " 翻为 " + fmt.Sprint(resp.Status) +
+					"（注入触发服务端异常）",
+				Advice: "使用参数化查询；关闭详细报错回显",
 			}
 		}
 	case "redirect":
