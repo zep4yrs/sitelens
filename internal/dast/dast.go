@@ -111,6 +111,10 @@ type Options struct {
 	CRLF              bool          // CRLF 响应头注入
 	MaxProbesPerClass int           // 单类探针上限（防重类吃满预算，默认 12）
 	ErrorStatus       *bool         // 报错状态差分通道（nil = 默认开）
+	RandomDiff        bool          // 会话载体随机差分（两次取样比标识值，默认开）
+	StoredXSS         bool          // 存储型 XSS 探测（写无害标记，跨请求读回）
+	CacheHygiene      bool          // 敏感页缓存卫生（缺 no-store 判定）
+	WeakCookie        bool          // 状态变更表单下发弱会话 Cookie（值形态判定）
 	OnHit             func(Finding) // 命中即时回调（实时事件流，nil = 不回调）
 }
 
@@ -125,6 +129,10 @@ func DefaultOptions() Options {
 		MaxURLLen:         2048,
 		CmdInject:         true,
 		CRLF:              true,
+		RandomDiff:        true,
+		StoredXSS:         true,
+		CacheHygiene:      true,
+		WeakCookie:        true,
 		MaxProbesPerClass: 12,
 	}
 }
@@ -133,7 +141,10 @@ func DefaultOptions() Options {
 type Resp struct {
 	Status  int
 	Headers map[string]string
-	Body    string
+	// SetCookies 单条保真的 Set-Cookie（httpx 有意不并入 Headers：
+	// Go http.Header 本就逐条分离，弱会话判定需要看值形态）。
+	SetCookies []string
+	Body       string
 }
 
 // Header 大小写不敏感取响应头。
@@ -353,6 +364,9 @@ type FormTarget struct {
 	// 用于 SQLi 认证绕过探测：SQLi 登录绕过（admin'--）与表单盲注是不同的
 	// 判定通道——成功登录返回 302/跳转，尺寸差分判不出。
 	LoginFields []string
+	// Method 表单方法（小写）。状态变更探测只对 POST 表单做——
+	// DVWA Weak Session IDs 是「无字段 + POST 提交按钮」这种形态。
+	Method string
 }
 
 // RunForms 对表单字段执行与 URL 参数相同的四类无害探测。
@@ -431,6 +445,49 @@ func (r *Runner) RunForms(targets []FormTarget) []Finding {
 					hits = append(hits, *f)
 				}
 				break // 每表单只探第一个文件字段
+			}
+		}
+	}
+
+	// 存储型 XSS：写无害标记 → 跨请求读回。与字段注入 plan 分开——
+	// 反射通道看的是「同一响应回显」，存储通道看的是「持久化后别处读到」。
+	if r.opts.StoredXSS {
+		storedDone := map[string]bool{}
+		for _, ft := range targets {
+			if r.stopped() {
+				break
+			}
+			if ft.Action == "" || len(ft.Fields) == 0 || storedDone[ft.Action] {
+				continue
+			}
+			storedDone[ft.Action] = true
+			if f := r.storedXSSSubmit(ft, &done, total); f != nil {
+				if r.opts.OnHit != nil {
+					r.opts.OnHit(*f)
+				}
+				hits = append(hits, *f)
+			}
+		}
+	}
+
+	// 状态变更表单（无字段 + POST 提交按钮）：提交一次观测是否下发
+	// 弱形态会话 Cookie。DVWA Weak Session IDs 模块唯一可见点。
+	if r.opts.WeakCookie {
+		scDone := map[string]bool{}
+		for _, ft := range targets {
+			if r.stopped() {
+				break
+			}
+			if ft.Action == "" || len(ft.Fields) > 0 || scDone[ft.Action] ||
+				len(ft.LoginFields) > 0 {
+				continue
+			}
+			scDone[ft.Action] = true
+			if f := r.stateChangeSubmit(ft, &done, total); f != nil {
+				if r.opts.OnHit != nil {
+					r.opts.OnHit(*f)
+				}
+				hits = append(hits, *f)
 			}
 		}
 	}

@@ -146,6 +146,10 @@ type DASTConfig struct {
 	CRLF              bool  `yaml:"crlf"`                 // CRLF 响应头注入
 	ErrorStatus       bool  `yaml:"error_status"`         // 报错状态差分（注入引号后 2xx→5xx 判定）
 	MaxProbesPerClass int   `yaml:"max_probes_per_class"` // 单类探针上限（防重类吃满预算）
+	RandomDiff        bool  `yaml:"random_diff"`          // 会话载体随机差分（两次取样比标识值）
+	StoredXSS         bool  `yaml:"stored_xss"`           // 存储型 XSS 探测（写无害标记，别处读回）
+	CacheHygiene      bool  `yaml:"cache_hygiene"`        // 敏感页缓存卫生（缺 no-store 判定）
+	WeakCookie        bool  `yaml:"weak_cookie"`          // 状态变更表单下发弱会话 Cookie（值形态判定）
 }
 
 // IntelConfig 漏洞情报知识库。
@@ -264,6 +268,10 @@ func Default() *Config {
 			CRLF:              true,
 			ErrorStatus:       true,
 			MaxProbesPerClass: 12,
+			RandomDiff:        true,
+			StoredXSS:         true,
+			CacheHygiene:      true,
+			WeakCookie:        true,
 		},
 		Exploit: ExploitConfig{
 			Enabled:          false, // 总闸默认关：设置页「利用级验证」可开
