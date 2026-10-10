@@ -57,6 +57,9 @@ type Result struct {
 	AllLinks      []string // 全部同域链接
 	Forms         []Form
 	RobotsHonored bool
+	// RobotsAll 为 true 表示 robots.txt 封禁整站（Disallow: /），
+	// 爬取已按策略塌缩到入口页——用于告警而非静默。
+	RobotsAll bool
 }
 
 // Crawler 爬取器。
@@ -64,7 +67,8 @@ type Crawler struct {
 	client       *httpx.Client
 	opts         config.CrawlerConfig
 	homeHost     string
-	disallow     []string // robots Disallow 前缀
+	robots       *robotsGroup // 命中的 robots 规则组（nil = 无限制）
+	robotsAll    bool         // robots 是否封禁整站（Disallow: /）
 	start        time.Time
 	renderer     Renderer // 可选：无头渲染器（SPA 支持）
 	sitemapDecls []string // robots.txt 声明的 Sitemap 地址
@@ -106,6 +110,7 @@ func (c *Crawler) Crawl(home *httpx.Response, extraSeeds []string) *Result {
 	if c.opts.RespectRobots {
 		res.RobotsHonored = true
 		c.loadRobots(home.FinalURL)
+		res.RobotsAll = c.robotsAll
 	}
 
 	visited := map[string]bool{}
@@ -357,33 +362,19 @@ func normalize(raw string) string {
 	return strings.TrimSuffix(s, "/")
 }
 
-// allowed robots.txt Disallow 前缀检查。
+// allowed robots.txt 放行判定：按命中的 UA 组做 Allow/Disallow
+// 最长匹配。未开启遵循、无规则组、或解析失败均放行。
 func (c *Crawler) allowed(raw string) bool {
-	if !c.opts.RespectRobots || len(c.disallow) == 0 {
+	if !c.opts.RespectRobots || c.robots == nil {
 		return true
 	}
-	u, err := url.Parse(raw)
-	if err != nil {
-		return false
-	}
-	path := u.Path
-	if path == "" {
-		path = "/"
-	}
-	for _, p := range c.disallow {
-		if p == "" {
-			continue
-		}
-		if strings.HasPrefix(path, p) {
-			return false
-		}
-	}
-	return true
+	return c.robots.allowedBy(pathOf(raw))
 }
 
-// loadRobots 拉取并解析 robots.txt 的 User-agent: * 段 Disallow 规则，
-// 同时收集 Sitemap: 声明行供种子提取。拉取失败视为无限制。
-func (c *Crawler) loadRobots(homeURL string) {
+// loadRobotsAgent 拉取并解析 robots.txt：选中适用于 agent 的规则组，
+// 同时收集 Sitemap 声明供种子提取。拉取失败视为无限制。
+// agent 为空时用 "*"（不针对特定爬虫名做精确匹配）。
+func (c *Crawler) loadRobotsAgent(homeURL, agent string) {
 	u, err := url.Parse(homeURL)
 	if err != nil {
 		return
@@ -393,32 +384,22 @@ func (c *Crawler) loadRobots(homeURL string) {
 	if err != nil || resp == nil || resp.Status != 200 {
 		return
 	}
-	inStar := false
-	for _, line := range strings.Split(resp.Body, "\n") {
-		line = strings.TrimSpace(line)
-		if line == "" || strings.HasPrefix(line, "#") {
-			continue
-		}
-		idx := strings.Index(line, ":")
-		if idx < 0 {
-			continue
-		}
-		key := strings.ToLower(strings.TrimSpace(line[:idx]))
-		val := strings.TrimSpace(line[idx+1:])
-		switch key {
-		case "user-agent":
-			inStar = val == "*"
-		case "disallow":
-			if inStar {
-				c.disallow = append(c.disallow, val)
-			}
-		case "sitemap":
-			if strings.HasPrefix(val, "http") {
-				c.sitemapDecls = append(c.sitemapDecls, val)
-			}
-		}
+	f := parseRobots(resp.Body)
+	c.sitemapDecls = append(c.sitemapDecls, f.sitemaps...)
+	c.robots = f.selectGroup(agent)
+	if c.robots == nil {
+		return
+	}
+	// 全站封禁（Disallow: /）会让爬取塌缩到首页——这是常见且静默的
+	// 覆盖缺口，明确记标记并告警，避免"扫了个空站却毫无提示"。
+	if !c.robots.allowedBy("/") {
+		c.robotsAll = true
+		crawlLog("robots: User-agent group DISALLOWS '/' — crawling will collapse to the entry page (set crawler.respect_robots=false to override)")
 	}
 }
+
+// loadRobots 兼容旧签名：以 "*" 组加载。
+func (c *Crawler) loadRobots(homeURL string) { c.loadRobotsAgent(homeURL, "*") }
 
 var locRe = regexp.MustCompile(`(?is)<loc>\s*([^<]+?)\s*</loc>`)
 

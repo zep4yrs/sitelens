@@ -320,6 +320,11 @@ func (e *Engine) Scan(rawURL string, opts Options, onProgress progress, cancel f
 			}
 		}
 		cr := c.Crawl(home, seeds)
+		if cr.RobotsAll {
+			// robots 封禁整站（Disallow: /）：爬取已塌缩到入口页。显式提示，
+			// 避免「扫出个空站却毫无线索」。需要覆盖时设 crawler.respect_robots=false。
+			onProgress(41, "robots.txt 封禁整站（Disallow: /），爬取仅入口页；如需完整爬取请将 crawler.respect_robots 设为 false")
+		}
 		for i := range cr.Pages {
 			p := &cr.Pages[i]
 			if normalizeKey(p.FinalURL) == normalizeKey(home.FinalURL) {
