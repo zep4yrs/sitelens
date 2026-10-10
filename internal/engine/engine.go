@@ -335,7 +335,12 @@ func (e *Engine) Scan(rawURL string, opts Options, onProgress progress, cancel f
 				doc: htmlx.Parse(p.Body),
 			})
 		}
-		dastLinks = cr.ParamLinks
+		// 爬取期带参链接并入（不覆盖）首页/种子已采集的探测点：
+		// cr.ParamLinks 只含被反解析为 <a href> 的链接，而「首页 GET 表单
+		// 合成的带参 URL」与「带参种子」不在其中——直接赋值会把它们丢掉，
+		// 导致 Search.asp?tfSearch 这类「参数藏在 GET 表单里」的入口整块
+		// 测不到（Acunetix testasp 的 Search.asp 就是这么漏的）。
+		dastLinks = append(dastLinks, cr.ParamLinks...)
 		// 认证深化：未配置 login_url 时，从爬到的表单里自动发现登录表单
 		// （含 password 输入框）并以凭证登录——DAST/目录探测随后带认证态
 		if e.cfg.Auth.LoginURL == "" && opts.AuthCookie == "" &&
@@ -534,6 +539,7 @@ func (e *Engine) Scan(rawURL string, opts Options, onProgress progress, cancel f
 			beaconBase = strings.TrimRight(e.cfg.Ssrf.BeaconBase, "/")
 		}
 		deepOn := e.cfg.DAST.DeepProbes
+		errStatusOn := e.cfg.DAST.ErrorStatus
 		r := dast.New(dastFetcher{client}, dast.Options{
 			MaxParams:         e.cfg.DAST.MaxParams,
 			TimeBlind:         e.cfg.DAST.TimeBlind,
@@ -546,6 +552,7 @@ func (e *Engine) Scan(rawURL string, opts Options, onProgress progress, cancel f
 			DeepProbes:        &deepOn,
 			CmdInject:         e.cfg.DAST.CmdInject && deepOn,
 			CRLF:              e.cfg.DAST.CRLF && deepOn,
+			ErrorStatus:       &errStatusOn,
 			MaxProbesPerClass: e.cfg.DAST.MaxProbesPerClass,
 			OnHit: func(f dast.Finding) {
 				emit("hit", f.Severity+" · "+f.Title+" — "+f.Param)

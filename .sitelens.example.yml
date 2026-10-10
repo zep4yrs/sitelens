@@ -42,6 +42,8 @@ dast:
   deep_probes: true          # 总闸（关则只跑核心四类）
   cmd_inject: true           # 命令注入时间差分（重类，单列可关）
   crlf: true                 # CRLF 响应头注入
+  error_status: true         # 报错状态差分（注入引号后 2xx→5xx 判定，
+                             # 覆盖只回通用 500 页、无数据库报错回显的目标）
   max_probes_per_class: 12   # 单类探针上限（防重类吃满预算）
 
 intel:

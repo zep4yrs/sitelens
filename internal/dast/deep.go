@@ -306,6 +306,11 @@ func (r *Runner) deepEnabled() bool {
 	return r.opts.DeepProbes == nil || *r.opts.DeepProbes
 }
 
+// errorStatusEnabled 报错状态差分通道（nil = 默认开）。
+func (r *Runner) errorStatusEnabled() bool {
+	return r.opts.ErrorStatus == nil || *r.opts.ErrorStatus
+}
+
 // sqliErrorAll 核心报错 SQLi 探针 + 上下文变体扩展（堆叠/排序/注释闭合）。
 func sqliErrorAll() []string {
 	out := make([]string, 0, len(sqliErrorProbes)+len(sqliErrorExtra))
@@ -742,6 +747,12 @@ func maxFormRequestsPerField(o Options) int {
 
 // deepEnabled Options 口径的深度面总闸（nil = 默认开）。
 func deepEnabled(o Options) bool { return o.DeepProbes == nil || *o.DeepProbes }
+
+// errorStatusEnabled 报错状态差分通道总闸（nil = 默认开）。
+func errorStatusEnabled(o Options) bool { return o.ErrorStatus == nil || *o.ErrorStatus }
+
+// boolP 取 bool 地址（Options 里三态开关用 nil 表示"未设置=默认开"）。
+func boolP(v bool) *bool { return &v }
 
 // capOpt 单类上限口径（0 = 不限）。
 func capOpt(n int, o Options) int {
