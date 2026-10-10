@@ -53,6 +53,9 @@ dast:
   weak_cookie: true          # 状态变更表单下发弱会话 Cookie（值形态判定，
                              # 覆盖 DVWA Weak Session IDs 这类"提交按钮
                              # 生成会话 ID"的模块）
+  upload_bypass: true        # 上传绕过验证：危险扩展名/伪造 MIME/双扩展名
+                             # 是否被服务端放行（upload-labs 21 关类）。提交内容
+                             # 始终是无害文本标记，只判"收没收"，不落地不执行
 
 intel:
   dump_path: data/intel_dump.json.gz

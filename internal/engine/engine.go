@@ -615,6 +615,7 @@ func (e *Engine) Scan(rawURL string, opts Options, onProgress progress, cancel f
 			RandomDiff:        e.cfg.DAST.RandomDiff && deepOn,
 			StoredXSS:         e.cfg.DAST.StoredXSS && deepOn,
 			WeakCookie:        e.cfg.DAST.WeakCookie && deepOn,
+			UploadBypass:      e.cfg.DAST.UploadBypass && deepOn,
 			MaxProbesPerClass: e.cfg.DAST.MaxProbesPerClass,
 			OnHit: func(f dast.Finding) {
 				emit("hit", f.Severity+" · "+f.Title+" — "+f.Param)
@@ -1124,6 +1125,15 @@ func (d dastFetcher) PostRawSmall(rawURL, contentType, body string) *dast.Resp {
 // PostMultipartSmall 多段上传（上传受理面探测用）。
 func (d dastFetcher) PostMultipartSmall(rawURL, fileField, fileName, content string, extra map[string]string) *dast.Resp {
 	r, err := d.c.PostMultipart(rawURL, fileField, fileName, content, extra)
+	if err != nil || r == nil {
+		return nil
+	}
+	return &dast.Resp{Status: r.Status, Headers: r.Headers, Body: r.Body}
+}
+
+// PostMultipartSmallCT 多段上传（可指定 Content-Type，上传绕过验证用）。
+func (d dastFetcher) PostMultipartSmallCT(rawURL, fileField, fileName, content, contentType string, extra map[string]string) *dast.Resp {
+	r, err := d.c.PostMultipartCT(rawURL, fileField, fileName, content, contentType, extra)
 	if err != nil || r == nil {
 		return nil
 	}

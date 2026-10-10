@@ -115,6 +115,7 @@ type Options struct {
 	StoredXSS         bool          // 存储型 XSS 探测（写无害标记，跨请求读回）
 	CacheHygiene      bool          // 敏感页缓存卫生（缺 no-store 判定）
 	WeakCookie        bool          // 状态变更表单下发弱会话 Cookie（值形态判定）
+	UploadBypass      bool          // 上传绕过验证（危险扩展名/类型/双扩展名）
 	OnHit             func(Finding) // 命中即时回调（实时事件流，nil = 不回调）
 }
 
@@ -133,6 +134,7 @@ func DefaultOptions() Options {
 		StoredXSS:         true,
 		CacheHygiene:      true,
 		WeakCookie:        true,
+		UploadBypass:      true,
 		MaxProbesPerClass: 12,
 	}
 }
@@ -173,6 +175,13 @@ type Fetcher interface {
 // HeaderFetcher 可选扩展：支持带自定义请求头的单请求（Cookie/头注入通道）。
 type HeaderFetcher interface {
 	GetWithHeaders(rawURL string, headers map[string]string) *Resp
+}
+
+// MultipartCTFetcher 可选扩展：支持指定 Content-Type 的多段上传
+// （上传绕过验证需要「危险扩展名 + 伪造 MIME」组合）。
+// 可选实现：返回 nil 表示不支持，上传绕过通道自动跳过（不误报）。
+type MultipartCTFetcher interface {
+	PostMultipartSmallCT(rawURL, fileField, fileName, content, contentType string, extra map[string]string) *Resp
 }
 
 // Target 带参数的探测目标。
@@ -443,6 +452,12 @@ func (r *Runner) RunForms(targets []FormTarget) []Finding {
 						r.opts.OnHit(*f)
 					}
 					hits = append(hits, *f)
+				}
+				// 上传绕过验证：受理面之上再判「危险扩展名/类型是否被放行」。
+				// 只在受理面成立时才有意义（uploadProbe 内部会重复建基线，
+				// 这里独立判定，拒绝一切的表单不会误报）。
+				if r.opts.UploadBypass {
+					hits = append(hits, r.uploadBypassProbe(ft, ff, extra)...)
 				}
 				break // 每表单只探第一个文件字段
 			}

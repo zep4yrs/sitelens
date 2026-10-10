@@ -166,6 +166,7 @@ type DASTConfig struct {
 	StoredXSS         bool  `yaml:"stored_xss"`           // 存储型 XSS 探测（写无害标记，别处读回）
 	CacheHygiene      bool  `yaml:"cache_hygiene"`        // 敏感页缓存卫生（缺 no-store 判定）
 	WeakCookie        bool  `yaml:"weak_cookie"`          // 状态变更表单下发弱会话 Cookie（值形态判定）
+	UploadBypass      bool  `yaml:"upload_bypass"`        // 上传绕过验证（危险扩展名/类型/双扩展名）
 }
 
 // IntelConfig 漏洞情报知识库。
@@ -288,6 +289,7 @@ func Default() *Config {
 			StoredXSS:         true,
 			CacheHygiene:      true,
 			WeakCookie:        true,
+			UploadBypass:      true,
 		},
 		Exploit: ExploitConfig{
 			Enabled:          false, // 总闸默认关：设置页「利用级验证」可开

@@ -267,6 +267,12 @@ func (c *Client) PostRaw(rawURL, contentType, body string) (*Response, error) {
 // fileField 为文件字段名，fileName 为文件名，content 为文件内容。
 func (c *Client) PostMultipart(rawURL, fileField, fileName, content string,
 	extra map[string]string) (*Response, error) {
+	return c.postMultipart(rawURL, fileField, fileName, content, "application/octet-stream", extra)
+}
+
+// postMultipart 多段上传共用实现（可指定文件字段 Content-Type）。
+func (c *Client) postMultipart(rawURL, fileField, fileName, content, contentType string,
+	extra map[string]string) (*Response, error) {
 	c.wait()
 	const boundary = "----sitelensUploadBoundary7e3a9f"
 	var b strings.Builder
@@ -277,7 +283,7 @@ func (c *Client) PostMultipart(rawURL, fileField, fileName, content string,
 	}
 	b.WriteString("--" + boundary + "\r\n")
 	b.WriteString(`Content-Disposition: form-data; name="` + fileField + `"; filename="` + fileName + `"` + "\r\n")
-	b.WriteString("Content-Type: application/octet-stream\r\n\r\n")
+	b.WriteString("Content-Type: " + contentType + "\r\n\r\n")
 	b.WriteString(content + "\r\n")
 	b.WriteString("--" + boundary + "--\r\n")
 
@@ -294,6 +300,13 @@ func (c *Client) PostMultipart(rawURL, fileField, fileName, content string,
 		return nil, err
 	}
 	return toResponseCap(resp, rawURL, 512_000), nil
+}
+
+// PostMultipartCT 与 PostMultipart 相同，但显式指定文件字段的 Content-Type。
+// 上传绕过验证需要「危险扩展名 + 伪造 image/png」组合（目标只查 MIME 时的绕过）。
+func (c *Client) PostMultipartCT(rawURL, fileField, fileName, content, contentType string,
+	extra map[string]string) (*Response, error) {
+	return c.postMultipart(rawURL, fileField, fileName, content, contentType, extra)
 }
 
 // PostJSON POST JSON 请求体（单请求，不跟随重定向；JSON API 登录用）。
