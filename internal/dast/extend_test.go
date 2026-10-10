@@ -126,14 +126,14 @@ func TestRandomDiffOff(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestCmdEchoHit(t *testing.T) {
+	// 回显通道常量以 deep.go 为准（cmdEchoExpr / cmdEchoResult），
+	// 这里不再硬编码算式数值——算式一改，测试跟着改是漂移的温床。
 	f := &fakeFetch{rules: []func(u string) *Resp{func(u string) *Resp {
-		if strings.Contains(u, "echo+15846") || strings.Contains(u, "echo%2015846") ||
-			strings.Contains(u, "echo+15846") || strings.Contains(u, "15846") {
-			// 模拟 shell 执行 echo 后回显结果
-			if strings.Contains(u, "%3Becho") || strings.Contains(u, ";echo") ||
-				strings.Contains(u, "%7Cecho") || strings.Contains(u, "|echo") {
-				return &Resp{Status: 200, Body: "<html>15846</html>"}
-			}
+		// 注入 URL 里的算式是 URL 编码过的（* + 分别变 %2A %2B），
+		// 按算式原文匹配会整条漏掉——这正是历史上「测得了却没命中」的坑。
+		if strings.Contains(u, "7393") {
+			// 模拟 shell 执行 echo 后回显求值结果（算式被结果替换）
+			return &Resp{Status: 200, Body: "<html>" + cmdEchoResult + "</html>"}
 		}
 		return &Resp{Status: 200, Body: "<html>ok</html>"}
 	}}}

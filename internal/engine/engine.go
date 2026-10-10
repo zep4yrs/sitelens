@@ -620,6 +620,18 @@ func (e *Engine) Scan(rawURL string, opts Options, onProgress progress, cancel f
 				emit("hit", f.Severity+" · "+f.Title+" — "+f.Param)
 			},
 		})
+		// 出带回调（OOB）：目标外发到外部接收端即确认。与 beacon 互补——
+		// beacon 要求目标能连回扫描器（公网靶场不成立），OOB 用可公网访问的
+		// 接收端/本地 CSV，覆盖 SSRF / 盲 XSS / XXE 外发 / JNDI 出带。
+		// 默认关；开启后对候选参数各发一次探针（有界）。
+		oobCfg := dast.OobConfig{
+			Enabled:   e.cfg.Oob.Enabled,
+			Mode:      e.cfg.Oob.Mode,
+			Callback:  e.cfg.Oob.Callback,
+			CSVPath:   e.cfg.Oob.CSVPath,
+			TokenHost: e.cfg.Oob.TokenHost,
+			MaxProbes: e.cfg.Oob.MaxProbes,
+		}
 		for _, f := range r.RunForms(dastFormTargets) {
 			dastAll = append(dastAll, f)
 			m := verifiedMap(map[string]any{
@@ -641,6 +653,24 @@ func (e *Engine) Scan(rawURL string, opts Options, onProgress progress, cancel f
 			})
 			res.Verified = append(res.Verified, m)
 			dastMaps = append(dastMaps, m)
+		}
+		// 出带回调探测（默认关）：对已采集的带参目标逐参数注入回调地址。
+		if oobCfg.Enabled {
+			var oobTargets []dast.Target
+			for _, t := range r.URLTargets(dastLinks) {
+				oobTargets = append(oobTargets, t)
+			}
+			for _, f := range r.OobProbe(oobTargets, oobCfg) {
+				dastAll = append(dastAll, f)
+				m := verifiedMap(map[string]any{
+					"check": f.Check, "title": f.Title, "severity": f.Severity,
+					"url": f.URL, "evidence": f.Evidence, "advice": f.Advice,
+					"src": "dast", "param": f.Param,
+					"payload": f.Payload,
+				})
+				res.Verified = append(res.Verified, m)
+				dastMaps = append(dastMaps, m)
+			}
 		}
 		// 3.0 利用级无害验证：双开关（请求开关 × config exploit.enabled，
 		// 设置页「利用级验证」控制总闸）；目标合规责任在使用者
