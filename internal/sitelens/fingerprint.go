@@ -389,12 +389,21 @@ func (ct *compiledTech) match(ev *Evidence, bodyLow string, litHits map[string]b
 		}
 	}
 	if len(ct.html) > 0 || len(ct.inline) > 0 {
-		// 字面量关键词通道要求**至少一个强关键词**命中：EHole 类社区指纹是
-		// 「任一关键词命中即算」的 OR 语义，其关键词常含通用词（login /
-		// username / type="password" …），仅凭弱词命中会造成大量假阳性
-		// （实测 DVWA 单站被判 58 项技术，其中 54 项为假阳性）。
-		// 只有弱命中时**不返回**，继续尝试其它通道（最终可能判否）。
-		var weakOnly string
+		// 字面量关键词通道（EHole 类社区指纹）有双重闸门：
+		//
+		// ① 弱证据过滤：keyword 的全部语义 token 都是通用词/低熵短串
+		//    （login / url / oa / 360 …）时不足以识别产品，只记待定；
+		//    实测 DVWA 单站曾被判 58 项技术，54 项假阳性。
+		//
+		// ② 单关键词佐证要求：EHole 指纹是「任一关键词命中即算」的 OR 语义，
+		//    而**产品名本身**（VMware / Consul / MacOS）常出现在无关页面的
+		//    讨论、下载清单或部署文档里——DVWA 首页 README 提了一次
+		//    "VMware"，就把站点判成 VMware Horizon/vCenter/vRealize 四项。
+		//    故：唯一命中的关键字若只是**产品名形态**（无路径 / 域名 / 版本 /
+		//    复合词等高区分度特征），要求同一指纹的**第二个不同关键词**也命中
+		//    才算识别；否则只记待定。
+		var fallback string // 弱命中或产品名单命中：有更强证据才采信
+		strongSeen := []string{}
 		for _, p := range ct.html {
 			if p.isLit && litHits != nil {
 				// 预筛已含该字面量才可能命中，省掉逐技术 Contains
@@ -403,10 +412,17 @@ func (ct *compiledTech) match(ev *Evidence, bodyLow string, litHits map[string]b
 				}
 				desc := fmt.Sprintf("关键词 %s", truncate(p.raw, 40))
 				if weakKeyword(p.raw) {
-					if weakOnly == "" {
-						weakOnly = desc
+					if fallback == "" {
+						fallback = desc
 					}
 					continue
+				}
+				if productNameOnly(p.raw) {
+					strongSeen = appendUnique(strongSeen, p.raw)
+					if fallback == "" {
+						fallback = desc
+					}
+					continue // 产品名单关键词需第二个佐证
 				}
 				return desc, "", true
 			}
@@ -415,7 +431,11 @@ func (ct *compiledTech) match(ev *Evidence, bodyLow string, litHits map[string]b
 					versionFromMatch(subs), true
 			}
 		}
-		_ = weakOnly // 仅弱证据不足以识别，继续其它通道
+		// 两个及以上不同产品名单关键词命中 → 互相佐证，采信
+		if len(strongSeen) >= 2 {
+			return fmt.Sprintf("关键词 %s", truncate(strongSeen[0], 40)), "", true
+		}
+		_ = fallback // 仅弱/单条产品名证据不足以识别，继续其它通道
 		if len(ct.src) > 0 {
 			for _, p := range ct.src {
 				for _, src := range ev.ScriptSrcs {

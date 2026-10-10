@@ -342,6 +342,10 @@ type FormTarget struct {
 	Action     string   // 绝对 URL
 	Fields     []string // 可注入字段名
 	FileFields []string // 文件型字段名（上传面探测用）
+	// LoginFields 登录表单的用户名/口令字段（非空 = 该表单是登录表单）。
+	// 用于 SQLi 认证绕过探测：SQLi 登录绕过（admin'--）与表单盲注是不同的
+	// 判定通道——成功登录返回 302/跳转，尺寸差分判不出。
+	LoginFields []string
 }
 
 // RunForms 对表单字段执行与 URL 参数相同的四类无害探测。
@@ -386,6 +390,10 @@ func (r *Runner) RunForms(targets []FormTarget) []Finding {
 	var hits []Finding
 	xxeDone := map[string]bool{}
 	uploadDone := map[string]bool{}
+
+	// SQLi 认证绕过：登录表单专用通道（302 型成功在尺寸差分下不可见）。
+	// 独立于字段注入 plan——登录表单的成功/失败不以响应尺寸区分。
+	hits = append(hits, r.runAuthBypass(targets, &done, total)...)
 
 	// 上传受理面探测：对含 input[type=file] 的表单提交一次无害文本文件。
 	// 与字段注入 plan 分开——上传表单（upload-labs 类）往往没有可注入的

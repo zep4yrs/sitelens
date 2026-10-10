@@ -93,3 +93,55 @@ func TestWeakKeywordRegressionDVWA(t *testing.T) {
 		}
 	}
 }
+
+// TestWeakKeywordLowEntropyShortTokens 是**短词误判回归**（在线靶场实测）：
+// EHole 导入的关键词混入 `oa` / `url` / `nas` / `360` / `vop` 这类低熵短串，
+// 单独命中会把无关产品判成命中——实测 DVWA 被判出 VOP（17 条 CVE）、
+// Jiusi-OA（关键词 oa）、Dahua-DSS（关键词 url），
+// testasp（IIS）被判出 35Mail（关键词 35）、Jiusi-OA。
+func TestWeakKeywordLowEntropyShortTokens(t *testing.T) {
+	for _, k := range []string{
+		"oa", "url", "uri", "host", "nas", "san", "dns", "vop", "voip",
+		"360", "8000", "35", "wso", "dss", "wcm", "hfs", "aten",
+		"mail", "sessid", "session", "firewall", "router", "gateway",
+		"theme", "modules", "plugins", "configuration", "redirect",
+		"rums", "url2", "dss2",
+	} {
+		if !weakKeyword(k) {
+			t.Errorf("低熵短串 %q 应判弱（否则会把无关产品判成命中）", k)
+		}
+	}
+}
+
+// TestWeakKeywordStructuredNotOverFiltered 是**误杀回归**：带路径 / 标签 /
+// 复合词结构的关键词，其短 token 仍具区分度，不得被短词闸门误杀。
+func TestWeakKeywordStructuredNotOverFiltered(t *testing.T) {
+	for _, k := range []string{
+		"dvwa/css/login.css", "dvwa/images/login_logo.png",
+		"wp-content", "image/aaa.png", "nginx/1.31.6",
+		"<title>Damn Vulnerable Web App (DVWA) - Login</title>",
+		"switchingserverpopup", "lgdynacodebtn", "dahuadefined",
+	} {
+		if weakKeyword(k) {
+			t.Errorf("结构化关键词 %q 应判强（否则真指纹被误杀）", k)
+		}
+	}
+}
+
+// TestProductNameOnly 裸产品名形态需第二关键词佐证（防「README 提一次
+// VMware 就把站点判成 VMware Horizon」类误判）。
+func TestProductNameOnly(t *testing.T) {
+	for _, k := range []string{"VMware", "Consul", "MacOS", "Apache", "Tomcat"} {
+		if !productNameOnly(k) {
+			t.Errorf("裸产品名 %q 应需佐证", k)
+		}
+	}
+	for _, k := range []string{
+		"dvwa/css/login.css", "nginx/1.31.6", "switchingserverpopup",
+		"help.mail.35.com", "Dahua-DSS", "lgdynacodebtn",
+	} {
+		if productNameOnly(k) {
+			t.Errorf("带结构关键词 %q 不应需佐证", k)
+		}
+	}
+}
