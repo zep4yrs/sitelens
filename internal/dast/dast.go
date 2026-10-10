@@ -503,6 +503,17 @@ func (r *Runner) RunForms(targets []FormTarget) []Finding {
 				break // 该类命中即停
 			}
 		}
+		// 命令注入回显通道：表单字段专有路径。DVWA Command Injection 模块是
+		// POST 表单（ip 字段）+ 命令输出回显，而 cmdEchoInject 此前只在
+		// deepResidual 里对 URL 参数跑——POST 表单型目标整块漏掉。
+		if r.deepEnabled() && r.opts.CmdInject && !r.stopped() {
+			if f := r.cmdEchoForm(p.ft, p.field, baseBody, &done, total); f != nil {
+				if r.opts.OnHit != nil {
+					r.opts.OnHit(*f)
+				}
+				hits = append(hits, *f)
+			}
+		}
 		// 布尔差分盲注：表单字段专有通道（报错不回显时的唯一出路）
 		if r.opts.BoolBlind && !r.stopped() {
 			plan := []FormTarget{{Action: p.ft.Action, Fields: []string{p.field}}}

@@ -49,6 +49,22 @@ var cmdProbes = []string{
 	"`sleep %ds`", "$(sleep %ds)", "%%0asleep %ds", "\nsleep %ds",
 }
 
+// cmdEchoProbes 命令注入的「回显型」探针：命令分隔符 + echo 算术表达式。
+// 与 cmdProbes 的分工：sleep 只覆盖「盲」场景（回显不可见），而
+// DVWA Command Injection 这类模块把命令输出直接回显在响应正文里，
+// 时间差分通道对它完全无效（命令秒回，延迟不超阈值）——那条通道
+// 此前被当成"命令注入能力已具备"的证据，实际是判定面缺一条路。
+//
+// 风险控制：只 echo 一个唯一算术乘积，不读文件、不写文件、不连网。
+// 乘积用与 SSTI 不同的常量，避免两族探针在同一响应里互相误判。
+const cmdEchoExpr = "7393*8453+11"
+const cmdEchoResult = "62500040"
+
+var cmdEchoProbes = []string{
+	";echo %s", "|echo %s", "||echo %s", "&echo %s", "&&echo %s",
+	"`echo %s`", "$(echo %s)", "%%0aecho %s", "\necho %s",
+}
+
 // crlfHeaders CRLF 注入时观测的注入头名（参数值注入 \r\n 后响应头应新增）。
 const crlfHeaderName = "X-Sitelens-Crlf"
 const crlfInject = "%0d%0a" + crlfHeaderName + ":%20sl9z7"
@@ -164,7 +180,169 @@ func (r *Runner) deepResidual(tgt Target, baseHeaders map[string]bool, done *int
 			emit(*f)
 		}
 	}
+
+	// 3) 命令注入（回显型）：分隔符 + echo 算术表达式，以求值回显判定。
+	// 与时间差分互补——回显型目标命令秒回，时间通道必然漏。
+	if r.opts.CmdInject {
+		if f := r.cmdEchoInject(tgt, label, done, total); f != nil {
+			emit(*f)
+		}
+	}
 	return hits
+}
+
+// cmdEchoInject 命令注入回显通道：注入 echo <唯一乘积>，以运算结果回显判定。
+//
+// 关键误报防线：回显型站点会把 payload 原样吐出（`127.0.0.1;echo 7393*8453+11`），
+// 响应里因此**也含**表达式子串。因此不能只看"结果出现"，必须看：
+//  1. 出现了**求值结果**（62500040），而 payload 自身不含它（算术式 vs 结果）；
+//  2. 该结果在基线与原始 payload 回显里都不存在；
+//  3. 结果出现处不是被命令/算术标记包裹的字面量（URL 编码回显形态亦然）。
+func (r *Runner) cmdEchoInject(tgt Target, label string, done *int, total int) *Finding {
+	budget := r.opts.MaxProbesPerClass
+	if budget <= 0 {
+		budget = 12
+	}
+	probes := cmdEchoProbes
+	if len(probes) > budget {
+		probes = probes[:budget]
+	}
+	// 基线：正常值响应，取正文做差
+	base := probeGet(r, tgt.URL, label, done, total)
+	if base == nil || r.stopped() {
+		return nil
+	}
+	baseBody := strings.ToLower(base.Body)
+
+	for _, tmpl := range probes {
+		if r.stopped() {
+			return nil
+		}
+		payload := strings.ReplaceAll(tmpl, "%s", cmdEchoExpr)
+		u := setParam(tgt.URL, tgt.Param, payload)
+		if len(u) > r.opts.MaxURLLen {
+			continue
+		}
+		resp := probeGet(r, u, label, done, total)
+		if resp == nil {
+			continue
+		}
+		if !cmdEchoConfirmed(resp.Body, baseBody) {
+			continue
+		}
+		f := &Finding{
+			Check: "cmd-inject", Title: "命令注入（echo 回显确认）",
+			Severity: "critical", URL: tgt.URL, Param: tgt.Param, Payload: payload,
+			Evidence: "参数注入 echo 表达式后回显求值结果 " + cmdEchoResult +
+				"（算式 " + cmdEchoExpr + " 本身不含该结果，排除原样回显）",
+			Advice: "禁止将用户输入拼接进系统命令；使用参数化 API 与白名单",
+		}
+		chainEvidence(f, u, resp)
+		f.Signals = []string{"echo 算术表达式求值回显", "结果仅在注入响应出现、基线不含"}
+		return f
+	}
+	return nil
+}
+
+// cmdEchoForm 表单字段的命令回显探测：与 cmdEchoInject 同一判定，
+// 差异只在注入走 POST 表单字段（其余字段填基线值）。
+func (r *Runner) cmdEchoForm(ft FormTarget, field, baseBody string, done *int, total int) *Finding {
+	budget := r.opts.MaxProbesPerClass
+	if budget <= 0 {
+		budget = 12
+	}
+	probes := cmdEchoProbes
+	if len(probes) > budget {
+		probes = probes[:budget]
+	}
+	base := map[string]string{}
+	for _, f := range ft.Fields {
+		if f != "" {
+			base[f] = "sl-dast-base"
+		}
+	}
+	for _, tmpl := range probes {
+		if r.stopped() {
+			return nil
+		}
+		payload := strings.ReplaceAll(tmpl, "%s", cmdEchoExpr)
+		data := map[string]string{}
+		for k := range base {
+			data[k] = base[k]
+		}
+		data[field] = payload
+		resp := r.fetch.PostFormSmall(ft.Action, data)
+		*done++
+		if r.prog != nil {
+			r.prog(*done, total, field+"@"+ft.Action)
+		}
+		if resp == nil {
+			continue
+		}
+		if !cmdEchoConfirmed(resp.Body, baseBody) {
+			continue
+		}
+		f := &Finding{
+			Check: "cmd-inject", Title: "命令注入（echo 回显确认）",
+			Severity: "critical", URL: ft.Action, Param: field, Payload: payload,
+			Evidence: "表单字段 " + field + " 注入 echo 表达式后回显求值结果 " +
+				cmdEchoResult + "（算式本身不含该结果，排除原样回显）",
+			Advice: "禁止将用户输入拼接进系统命令；使用参数化 API 与白名单",
+		}
+		f.Replay = formReplay(ft.Action, field, payload)
+		f.Signals = []string{"echo 算术表达式求值回显", "表单字段通道"}
+		return f
+	}
+	return nil
+}
+
+// cmdEchoConfirmed 判定响应是否为「命令真执行后的求值回显」。
+//
+// 判定逻辑：找到求值结果串的每一处出现，看它是否「紧贴算式字面量」。
+// 回显型站点会把 `1.1.1.1;echo 7393*8453+11` 原样吐出（算式在正文里），
+// 但那种情况算式与结果**不会贴在一起**——原样回显只有算式、没有结果；
+// 真求值是命令把算式换成结果，正文里结果独立成串。
+//
+// 因此：结果串的每一处出现，若其紧前就是算式（允许空白/命令分隔符间隔），
+// 视为 payload 字面量的一部分（防御性）；存在一处独立出现即为真求值。
+func cmdEchoConfirmed(body, baseBody string) bool {
+	low := strings.ToLower(body)
+	if strings.Contains(strings.ToLower(baseBody), cmdEchoResult) {
+		return false // 基线本来就含该串，判不准
+	}
+	if !strings.Contains(low, cmdEchoResult) {
+		return false
+	}
+	idx := 0
+	for {
+		i := strings.Index(low[idx:], cmdEchoResult)
+		if i < 0 {
+			break
+		}
+		pos := idx + i
+		before := low[:pos]
+		// 取结果前面一小段（只允许空白与常见命令分隔符），判断是否紧贴算式。
+		j := len(before)
+		for j > 0 && isSepOrSpace(before[j-1]) {
+			j--
+		}
+		head := before[:j]
+		if strings.HasSuffix(head, cmdEchoExpr) {
+			idx = pos + len(cmdEchoResult)
+			continue // 这一处是算式后紧跟的结果（payload 字面量形态）
+		}
+		return true // 独立出现 => 真求值
+	}
+	return false
+}
+
+// isSepOrSpace 结果与算式之间的容许间隔字符（空白 / 命令分隔符 / 引号）。
+func isSepOrSpace(b byte) bool {
+	switch b {
+	case ' ', '\t', '\n', '\r', ';', '|', '&', '`', ')', '(', '\'', '"', '+', '-':
+		return true
+	}
+	return false
 }
 
 // cmdInject 命令注入时间差分探测：注入 sleep 后响应延迟超阈值 + 复测确认。
@@ -703,7 +881,8 @@ func maxURLRequestsPerParam(o Options) int {
 	if deepEnabled(o) {
 		n += 1 // CRLF 响应头基线
 		if o.CmdInject {
-			n += 1 + capOpt(len(cmdProbes), o) + 1 // 基线 + 注入 + 复测
+			n += 1 + capOpt(len(cmdProbes), o) + 1 // 时间差分：基线 + 注入 + 复测
+			n += 1 + capOpt(len(cmdEchoProbes), o) // 回显通道：基线 + 探针序列
 		}
 	}
 	if o.TimeBlind {
@@ -741,6 +920,9 @@ func maxFormRequestsPerField(o Options) int {
 	}
 	if o.BoolBlind {
 		n += 5
+	}
+	if deepEnabled(o) && o.CmdInject {
+		n += capOpt(len(cmdEchoProbes), o) // 表单侧命令回显通道
 	}
 	return n
 }

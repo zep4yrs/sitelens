@@ -57,6 +57,14 @@ netsec:
   tls_timeout_sec: 8
   mail_check: true
 
+oob:                         # 出带回调（SSRF/盲 XSS/XXE 外发）——默认关
+  enabled: false             # 主动外发，需显式开启并自备接收端
+  mode: callback             # callback（轮询接收端日志）| csv（读本地落盘）
+  callback: ""               # callback 模式的日志拉取地址（GET，返回命中记录）
+  csv_path: ""               # csv 模式落盘路径（供外部 dnslog/oast 同步）
+  token_host: ""             # 触发用回调域名，如 <id>.oast.pro / <id>.dnslog.cn
+  max_probes: 12             # 单扫描探测参数上限
+
 loginbrute:                  # 仅限授权目标；前端需勾选授权确认
   max_tries: 400
   max_users: 8
