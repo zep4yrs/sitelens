@@ -306,7 +306,7 @@ function renderDetail(r, scanId, url) {
   }
 
   var ex = r.extras || {};
-  var titles = { active_fp: "主动路径指纹", dir_scan: "目录探测", subdomain: "子域名",
+  var titles = { active_fp: "主动路径指纹", dir_scan: "目录探测", dir_full_words: "目录全量词表", subdomain: "子域名",
                  service: "端口服务", netsec: "TLS / DNS 安全", weak_audit: "登录爆破结果",
                  webshell: "WebShell 路径探测", jsmap: "JS 攻击面", dast: "DAST 检测" };
   Object.keys(ex).forEach(function (key) {

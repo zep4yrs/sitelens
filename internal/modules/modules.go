@@ -9,8 +9,10 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -29,6 +31,12 @@ type PageHit struct {
 	Size   int    `json:"size"`
 	Title  string `json:"title"`
 	Bypass string `json:"bypass,omitempty"` // 403 绕过成功的技术名（空 = 未绕过）
+	// DirIndex 目录列表开启（命中响应含 IIS/Apache/Nginx 目录索引标记）。
+	// 与「路径存在」是两种发现：列表页可下载源码/备份，是独立缺陷。
+	DirIndex bool `json:"dir_index,omitempty"`
+	// Via 命中来源：空 = 词表原生；否则为「爬取链接扩展」（带出触发它的页面），
+	// 供证据链回链——避免"报了却不知道从哪来的"。
+	Via string `json:"via,omitempty"`
 }
 
 // loadWords 字典加载：去空行 + 截取上限。
@@ -184,10 +192,42 @@ func serializedProgress(f func(done, total int, msg string)) func(done, total in
 // 命中的技术记入 PageHit.Bypass。
 func DirScan(client *httpx.Client, baseURL string, cfg config.ActiveConfig,
 	progress func(done, total int, msg string), cancel func() bool) []PageHit {
+	return DirScanExtra(client, baseURL, cfg, nil, nil, progress, cancel)
+}
+
+// dirExtra 一条扩展探测目标（来源自爬取到的同域链接）。
+type dirExtra struct {
+	Path string // 站点根的相对路径（前导 /）
+	Via  string // 带出它的页面（证据回链）
+}
+
+// DirScanExtra = DirScan + 爬取链接扩展。
+//
+// 词表探测是"猜路径"，猜不到的端点（自定义上传点 / 提交点 / SPA 路由）
+// 整块漏掉——靶场实测 upload-labs 一关未命中：关卡文件名不在 1887 条
+// 保守词表里（全量 full 词表 9633 条里有 upload.php，但默认档位只跑 300）。
+// 爬取阶段已经抓到同域链接（含带参链接），把它们解析成站点根相对路径
+// 补进候选集，请求量只增加「去掉词表重复后」的净增量，并记为 Via 溯源。
+func DirScanExtra(client *httpx.Client, baseURL string, cfg config.ActiveConfig,
+	extra []string, viaOf func(string) string,
+	progress func(done, total int, msg string), cancel func() bool) []PageHit {
 	words := loadWords(cfg.WordlistDir, "dir_default.txt", cfg.DirMaxPaths)
-	if len(words) == 0 {
+	if len(words) == 0 && len(extra) == 0 {
 		return nil
 	}
+	// 词表归一：去前导斜杠，便于与扩展路径同口径去重
+	normWords := make([]string, 0, len(words))
+	inWords := map[string]bool{}
+	for _, w := range words {
+		w = strings.TrimLeft(strings.TrimSpace(w), "/")
+		if w == "" || inWords[w] {
+			continue
+		}
+		inWords[w] = true
+		normWords = append(normWords, w)
+	}
+	words = normWords
+	extraList := normalizeExtras(extra, viaOf, baseURL, inWords)
 	base := strings.TrimRight(baseURL, "/")
 	baseline := soft404Sizes(client, baseURL)
 	// 根页基线尺寸：rewrite 类绕过需与根页区分（否则拿到的只是首页 = 误报）
@@ -199,41 +239,209 @@ func DirScan(client *httpx.Client, baseURL string, cfg config.ActiveConfig,
 	}
 	attempts := 0
 	hits := []PageHit{}
-	for i, w := range words {
+
+	// 候选集：词表（猜）+ 扩展（爬取到的真实端点）。扩展排在前面——
+	// 它们已由爬取证明存在，命中率天然高于猜测路径，先把预算落在上面。
+	type candidate struct {
+		path string
+		via  string
+	}
+	cands := make([]candidate, 0, len(words)+len(extraList))
+	for _, e := range extraList {
+		cands = append(cands, candidate{path: strings.TrimLeft(e.Path, "/"), via: e.Via})
+	}
+	for _, w := range words {
+		cands = append(cands, candidate{path: strings.TrimLeft(w, "/")})
+	}
+
+	// 固定并发小池：目录探测是纯网络等待，逐条串行在 300 条词表上要等
+	// 几十秒；并发 8 与模块其余部分的 worker 口径一致。写入仅主协程，
+	// 子协程只投递结果到带缓冲通道。
+	const dirWorkers = 8
+	type dirResult struct {
+		hit PageHit
+		ok  bool
+	}
+	results := make(chan dirResult, len(cands))
+	sem := make(chan struct{}, dirWorkers)
+	var wg sync.WaitGroup
+	for _, cd := range cands {
 		if cancel != nil && cancel() {
 			break
 		}
-		u := base + "/" + strings.TrimLeft(w, "/")
-		r, err := client.GetFollow(u)
-		if err != nil || r == nil {
-			if progress != nil {
-				progress(i+1, len(words), w)
+		wg.Add(1)
+		sem <- struct{}{}
+		go func(cd candidate) {
+			defer wg.Done()
+			defer func() { <-sem }()
+			u := base + "/" + cd.path
+			r, err := client.GetFollow(u)
+			if err != nil || r == nil {
+				results <- dirResult{}
+				return
 			}
-			continue
-		}
-		status := r.Status
-		bypassNote := ""
-		if status == 403 && cfg.DirBypass403 {
-			if r2, via := tryBypass403(client, u, "/"+strings.TrimLeft(w, "/"),
-				base, rootSize, baseline, &attempts, cancel); r2 != nil {
-				status = r2.Status
-				r = r2
-				bypassNote = via
+			status := r.Status
+			bypassNote := ""
+			if status == 403 && cfg.DirBypass403 {
+				if r2, via := tryBypass403(client, u, "/"+cd.path,
+					base, rootSize, baseline, &attempts, cancel); r2 != nil {
+					status = r2.Status
+					r = r2
+					bypassNote = via
+				}
 			}
-		}
-		if (status == 200 || status == 401 || status == 403) && !baseline[len(r.Body)] {
-			hits = append(hits, PageHit{
-				URL: u, Path: "/" + strings.TrimLeft(w, "/"),
+			if (status != 200 && status != 401 && status != 403) || baseline[len(r.Body)] {
+				results <- dirResult{}
+				return
+			}
+			results <- dirResult{ok: true, hit: PageHit{
+				URL: u, Path: "/" + cd.path,
 				Status: status, Size: len(r.Body),
-				Title:  htmlx.Parse(r.Body).Title,
-				Bypass: bypassNote,
-			})
+				Title:    htmlx.Parse(r.Body).Title,
+				Bypass:   bypassNote,
+				DirIndex: dirIndexMark(r.Status, r.Body, r.Headers["Content-Type"]),
+				Via:      cd.via,
+			}}
+		}(cd)
+	}
+	wg.Wait()
+	close(results)
+	done := 0
+	for r := range results {
+		if r.ok {
+			hits = append(hits, r.hit)
 		}
+		done++
 		if progress != nil {
-			progress(i+1, len(words), w)
+			progress(done, len(cands), "")
 		}
 	}
+	// 命中序稳定化：扩展来源优先，其余按路径字典序（并发完成序不可复现）
+	sort.SliceStable(hits, func(i, j int) bool {
+		if (hits[i].Via != "") != (hits[j].Via != "") {
+			return hits[i].Via != ""
+		}
+		return hits[i].Path < hits[j].Path
+	})
 	return hits
+}
+
+// normalizeExtras 把爬取到的同域链接归一为「站点根相对路径」候选集。
+// 规则：
+//  1. 只收同域 http(s)，去 fragment/query（目录探测是路径级事实）；
+//  2. 去掉站点根前缀，得到相对路径；
+//  3. 已在词表内的丢弃（重复请求无新增信息），同路径只留首个来源；
+//  4. 丢弃根路径本身与静态资源后缀（图片/样式/字体不是端点）；
+//  5. 上限 200 条——扩展是补充不是替代，不挤占词表预算。
+//
+// viaOf 给出每条候选链接的来源页（可空判定，空则回落到站点根）。
+// 带参链接由 DAST 负责探测，此处只取路径形态做端点存在性核查——
+// 查的是「这个端点会不会直接吐源码/配置/备份」，与参数注入是两回事。
+func normalizeExtras(extra []string, viaOf func(string) string,
+	baseURL string, inWords map[string]bool) []dirExtra {
+	if len(extra) == 0 {
+		return nil
+	}
+	bu, err := url.Parse(baseURL)
+	if err != nil {
+		return nil
+	}
+	rootPath := bu.Path
+	if rootPath == "" {
+		rootPath = "/"
+	}
+	if !strings.HasSuffix(rootPath, "/") {
+		rootPath += "/"
+	}
+	out := make([]dirExtra, 0, 32)
+	seen := map[string]bool{}
+	for _, raw := range extra {
+		u, err := url.Parse(strings.TrimSpace(raw))
+		if err != nil || u.Host == "" {
+			continue
+		}
+		if !strings.EqualFold(u.Scheme, bu.Scheme) || !strings.EqualFold(u.Host, bu.Host) {
+			continue
+		}
+		pth := u.Path
+		if !strings.HasPrefix(pth, rootPath) {
+			continue // 站点根之外，目录探测（相对站点根拼路径）表达不了
+		}
+		pth = strings.TrimPrefix(pth, rootPath)
+		pth = strings.Trim(pth, "/")
+		if pth == "" || seen[pth] || inWords[pth] {
+			continue
+		}
+		if staticAsset(pth) {
+			continue
+		}
+		seen[pth] = true
+		via := baseURL
+		if viaOf != nil {
+			if v := viaOf(raw); v != "" {
+				via = v
+			}
+		}
+		out = append(out, dirExtra{Path: "/" + pth, Via: via})
+		if len(out) >= 200 {
+			break
+		}
+	}
+	return out
+}
+
+// staticAsset 静态资源后缀：不是可探测端点，扩展时跳过（词表里保留，
+// 那是人工整理的路径，语义不同）。
+func staticAsset(p string) bool {
+	switch strings.ToLower(pathExt(p)) {
+	case ".png", ".jpg", ".jpeg", ".gif", ".svg", ".ico", ".webp", ".bmp",
+		".css", ".woff", ".woff2", ".ttf", ".eot", ".map", ".mp4", ".webm",
+		".mp3", ".pdf", ".gz", ".zip":
+		return true
+	}
+	return false
+}
+
+// pathExt 取路径最后一段的扩展名（无点返回空）。
+func pathExt(p string) string {
+	last := p
+	if i := strings.LastIndex(p, "/"); i >= 0 {
+		last = p[i+1:]
+	}
+	if i := strings.Index(last, "."); i >= 0 {
+		return last[i:]
+	}
+	return ""
+}
+
+// dirIndexPatterns 目录索引页标记（IIS / Apache 2.x / Nginx / Python
+// SimpleHTTPServer / Node serve-index）。大小写不敏感。
+var dirIndexPatterns = []string{
+	"<title>index of /",
+	"<h1>index of /",
+	"parent directory</a>",
+	"to parent directory</a>",
+	"[to parent directory]",
+	"directory listing for /",
+}
+
+// dirIndexMark 目录列表开启判定：响应为 200、HTML 形态、正文含索引标记，
+// 且**响应体不是 SPA 外壳**（外壳也含 "index of" 类词的概率极低，但
+// JSON/API 响应必须先排除——HTML 形态检查即为此）。
+func dirIndexMark(status int, body, contentType string) bool {
+	if status != 200 || body == "" {
+		return false
+	}
+	if contentType != "" && !strings.Contains(strings.ToLower(contentType), "html") {
+		return false
+	}
+	low := strings.ToLower(body)
+	for _, p := range dirIndexPatterns {
+		if strings.Contains(low, p) {
+			return true
+		}
+	}
+	return false
 }
 
 // WebshellProbe WebShell 探测：命中 = 200 且正文非空（后台马常驻路径）。

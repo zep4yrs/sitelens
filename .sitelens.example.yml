@@ -123,6 +123,12 @@ store:
 active:                      # 主动模块阈值（模块本身默认关，扫描请求内指定）
   dir_max_paths: 300
   dir_bypass_403: false      # 403 绕过重试（伪造来源头）
+  # 目录探测的端点扩展（扫描请求内 dir_full_words=true 开启，full/apocalypse
+  # 档位默认开）：
+  #  ① 词表从保守 300 条升级到 full/ 全量并集（9.6k+3.2k+4.2k），实测默认
+  #     1887 条词表里 upload 端点一个都没有；
+  #  ② 爬取到的同域链接并入候选集——词表猜不到的端点（自定义上传点/提交点/
+  #     SPA 路由）只能从爬到的链接里来，命中会记录来源页供复核。
   sub_max_words: 2000
   sub_workers: 20
   shell_max_paths: 200

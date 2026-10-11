@@ -177,3 +177,113 @@ func TestProgressSerialized(t *testing.T) {
 	})
 	_ = seen
 }
+
+// fakeDirIndex 服务器：/upload/ 返回目录索引，/upload/evil.php 是可直读端点，
+// /upload.php 也是端点（模拟 upload-labs 关卡页），词表里一个都没有。
+func dirIndexServer(t *testing.T) *httptest.Server {
+	t.Helper()
+	mux := http.NewServeMux()
+	mux.HandleFunc("/upload/", func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/upload/" {
+			fmt.Fprint(w, "<html><title>Pass-01</title>请选择要上传的文件</html>")
+			return
+		}
+		// Nginx 风格目录索引
+		fmt.Fprint(w, "<html><head><title>Index of /upload/</title></head>"+
+			"<body><h1>Index of /upload/</h1><a href=\"../\">../</a></body></html>")
+	})
+	mux.HandleFunc("/upload.php", func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, "<html><title>Pass-01</title>upload labs level page</html>")
+	})
+	mux.HandleFunc("/dump.sql", func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, "-- MySQL dump\nCREATE TABLE users(id int);")
+	})
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, strings.Repeat("notfound", 10))
+	})
+	return httptest.NewServer(mux)
+}
+
+// TestDirScanExtraFindsCrawledEndpoint 端点扩展：词表猜不到的端点
+// （upload-labs 关卡这种自定义上传点）必须靠爬取到的链接补进来命中。
+func TestDirScanExtraFindsCrawledEndpoint(t *testing.T) {
+	dir := writeWordlist(t, "dir_default.txt", []string{"admin", "login"})
+	srv := dirIndexServer(t)
+	defer srv.Close()
+	cfg := benchCfg(dir)
+
+	// 旧路径（无扩展）：upload 端点一个都不在词表里 → 命中 0
+	base := DirScan(client(), srv.URL, cfg, nil, nil)
+	for _, h := range base {
+		if strings.HasPrefix(h.Path, "/upload") {
+			t.Fatalf("无扩展时不应命中 upload 端点，实得 %+v", h)
+		}
+	}
+
+	// 扩展路径：爬取到的链接交进来 → 命中 upload 关卡页 + upload 目录索引
+	extra := []string{srv.URL + "/upload.php", srv.URL + "/upload/"}
+	viaOf := func(string) string { return srv.URL + "/index.php" }
+	hits := DirScanExtra(client(), srv.URL, cfg, extra, viaOf, nil, nil)
+
+	var gotIndex, gotLevel, gotVia bool
+	for _, h := range hits {
+		switch h.Path {
+		case "/upload", "/upload/":
+			gotIndex = h.DirIndex
+			gotVia = h.Via != ""
+		case "/upload.php":
+			gotLevel = true
+		}
+	}
+	if !gotIndex {
+		t.Fatalf("upload 目录索引未识别为目录列表，hits=%+v", hits)
+	}
+	if !gotLevel {
+		t.Fatalf("爬取到的 upload 端点未命中，hits=%+v", hits)
+	}
+	if !gotVia {
+		t.Fatal("扩展命中缺少来源回链（Via）")
+	}
+}
+
+// TestDirScanExtraDedupAndFilter 扩展候选的归一与过滤：
+// 词表内重复请求要去掉、静态资源不探、跨域不探。
+func TestDirScanExtraDedupAndFilter(t *testing.T) {
+	inWords := map[string]bool{"admin": true}
+	got := normalizeExtras([]string{
+		"http://example.com/admin",          // 词表内 → 丢
+		"http://example.com/assets/a.css",   // 静态资源 → 丢
+		"http://other.com/x.php",            // 跨域 → 丢
+		"http://example.com/upload.php",     // 收
+		"http://example.com/upload.php?a=1", // 同路径去重 → 丢
+		"http://example.com/deep/nested/x",  // 收
+	}, nil, "http://example.com", inWords)
+	if len(got) != 2 {
+		t.Fatalf("扩展候选归一错误：%+v", got)
+	}
+	if got[0].Path != "/upload.php" || got[1].Path != "/deep/nested/x" {
+		t.Fatalf("候选路径错误：%+v", got)
+	}
+}
+
+// TestDirIndexMarkNegative 目录列表判定的反例：普通 HTML 页 / 非 HTML 响应
+// 都不算目录索引（防"有 index 字样就报"）。
+func TestDirIndexMarkNegative(t *testing.T) {
+	cases := []struct {
+		status int
+		body   string
+		ct     string
+		want   bool
+	}{
+		{200, "<html><title>Index of /xyz</title></html>", "text/html; charset=utf-8", true},
+		{200, "<html><h1>Index of /</h1><a href=\"../\">Parent Directory</a></html>", "text/html", true},
+		{403, "<html><title>Index of /</title></html>", "text/html", false},           // 非 200
+		{200, `{"index":"of /"}`, "application/json", false},                          // 非 HTML
+		{200, "<html><title>首页</title>欢迎访问 index of / 目录</html>", "text/html", false}, // 无索引标记
+	}
+	for _, c := range cases {
+		if got := dirIndexMark(c.status, c.body, c.ct); got != c.want {
+			t.Fatalf("dirIndexMark(%d,%q,%q)=%v want %v", c.status, c.body, c.ct, got, c.want)
+		}
+	}
+}

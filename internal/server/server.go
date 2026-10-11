@@ -524,10 +524,10 @@ var levelPresets = map[string]map[string]any{
 	"quick":      {"deep": false},
 	"standard":   {"deep": true},
 	"deep":       {"deep": true, "active_fp": true, "service_probe": true, "checks": "core", "dast": true},
-	"full":       {"deep": true, "active_fp": true, "dir_scan": true, "dir_bypass": true, "subdomain": true, "webshell": true, "service_probe": true, "checks": "all", "dast": true, "netsec": true, "passive": true},
+	"full":       {"deep": true, "active_fp": true, "dir_scan": true, "dir_bypass": true, "dir_full_words": true, "subdomain": true, "webshell": true, "service_probe": true, "checks": "all", "dast": true, "netsec": true, "passive": true},
 	"assets":     {"deep": true, "dir_scan": true, "subdomain": true, "takeover": true, "active_fp": true},
 	"stealth":    {"deep": true, "browser_ua": true, "passive": true, "netsec": true},
-	"apocalypse": {"deep": true, "active_fp": true, "dir_scan": true, "dir_bypass": true, "subdomain": true, "takeover": true, "webshell": true, "weak_audit": true, "service_probe": true, "checks": "all", "dast": true, "netsec": true, "passive": true, "browser_ua": true, "nuclei_cap": 6000},
+	"apocalypse": {"deep": true, "active_fp": true, "dir_scan": true, "dir_bypass": true, "dir_full_words": true, "subdomain": true, "takeover": true, "webshell": true, "weak_audit": true, "service_probe": true, "checks": "all", "dast": true, "netsec": true, "passive": true, "browser_ua": true, "nuclei_cap": 6000},
 }
 
 // scanOptions 平铺 payload → 引擎选项（对齐 Python /api/scan）。
@@ -567,6 +567,7 @@ func scanOptions(body map[string]any) engine.Options {
 	if v, ok := body["dir_max_paths"].(float64); ok && v > 0 {
 		o.DirMaxPaths = int(v)
 	}
+	o.DirFullWords = boolOf(body["dir_full_words"], false)
 	if v, ok := body["shell_max_paths"].(float64); ok && v > 0 {
 		o.ShellMaxPaths = int(v)
 	}

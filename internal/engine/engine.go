@@ -57,6 +57,7 @@ type Options struct {
 	Checks        string                  // none | core | all
 	NucleiCap     int                     // Nuclei 单次模板上限（0 = 用配置默认 nuclei_cap）
 	DirMaxPaths   int                     // 目录探测字典上限（0 = 用配置默认）
+	DirFullWords  bool                    // 目录探测用全量词表（3.2k+6k 并集；大词表档位置位）
 	ShellMaxPaths int                     // WebShell 字典上限（0 = 用配置默认）
 	SubMaxWords   int                     // 子域名字典词数上限（0 = 用配置默认）
 	ProbePorts    []int                   // 端口探测端口集（nil = 用配置/默认常见端口集）
@@ -265,6 +266,8 @@ func (e *Engine) Scan(rawURL string, opts Options, onProgress progress, cancel f
 
 	acc := newTechAcc()
 	dastLinks := []string{}               // 爬取阶段收集的带参链接（DAST 探测点）
+	allLinks := []string{}                // 爬取阶段收集的全部同域链接（目录探测端点扩展用）
+	pageURLs := []string{}                // 实际采集到的页面 URL（端点发现的来源回链用）
 	apiCandidates := []string{}           // API 风格页面 URL（未授权/IDOR 探测点）
 	var dastFormTargets []dast.FormTarget // 爬取阶段收集的表单（DAST 表单探测点）
 	var loginForms []loginFormEntry       // 含密码框的表单页（弱口令审计入口）
@@ -331,6 +334,7 @@ func (e *Engine) Scan(rawURL string, opts Options, onProgress progress, cancel f
 				continue // 首页已收录
 			}
 			res.Pages = append(res.Pages, PageInfo{URL: p.FinalURL, Status: p.Status})
+			pageURLs = append(pageURLs, p.FinalURL)
 			pages = append(pages, crawlPage{
 				resp: &httpx.Response{
 					Status:     p.Status,
@@ -348,6 +352,8 @@ func (e *Engine) Scan(rawURL string, opts Options, onProgress progress, cancel f
 		// 导致 Search.asp?tfSearch 这类「参数藏在 GET 表单里」的入口整块
 		// 测不到（Acunetix testasp 的 Search.asp 就是这么漏的）。
 		dastLinks = append(dastLinks, cr.ParamLinks...)
+		allLinks = append(allLinks, cr.AllLinks...)
+		pageURLs = append(pageURLs, home.FinalURL)
 		// API 探测点：API 端点通常不带查询串（/api/v2/user/1），拿不到就整块
 		// 测不到——只从带参链接收集会让 API 通道永远空跑。这里把爬到的
 		// 页面 URL 一并登记，由 RunAPI 自行筛出 API 风格路径。
@@ -766,7 +772,16 @@ func (e *Engine) Scan(rawURL string, opts Options, onProgress progress, cancel f
 		}
 		if opts.DirScan {
 			onProgress(87, "目录探测…")
-			dirHits = modules.DirScan(client, baseURL, ac, nil, cancelled)
+			// 词表升级：全量档位（3.2k+ / 6k+）带全量档位标签时，把
+			// active 词表并集拉进来——默认 300 条保守词表在实测里
+			// 只覆盖全量 9633 条的 55/9633，upload 端点一个都不在。
+			// 升级只在显式大词表档位发生，不改默认档位的请求预算。
+			if opts.DirFullWords && ac.DirMaxPaths < len(fullWordlistUnion(e.cfg.Active.WordlistDir)) {
+				ac.DirMaxPaths = len(fullWordlistUnion(e.cfg.Active.WordlistDir))
+			}
+			// 爬取链接扩展：端点存在性核查（词表猜不到的端点在链接里）。
+			viaOf := func(link string) string { return pageOfLink(link, pageURLs) }
+			dirHits = modules.DirScanExtra(client, baseURL, ac, allLinks, viaOf, nil, cancelled)
 			res.Extras["dir"] = dirHits
 			// 403 绕过命中的路径单列成块（可被绕过的访问控制 = 独立发现）
 			var bypassed []modules.PageHit
@@ -781,6 +796,23 @@ func (e *Engine) Scan(rawURL string, opts Options, onProgress progress, cancel f
 			}
 			if len(bypassed) > 0 {
 				res.Extras["bypass"] = bypassed
+			}
+			// 目录探测命中进 verified：此前只落 Extras["dir"]，报告主体里
+			// 看不见——「报出来了但不在发现列表」等于没报。分类：
+			// 目录列表开启 / 403 可绕过 / 路径存在且可直读（源码/配置/备份
+			// 的后缀判定由后缀白名单给出，不臆断「是漏洞」）。
+			for _, h := range dirHits {
+				check, title := dirFindingOf(h)
+				if check == "" {
+					continue // 无缺陷语义的路径存在（普通入口页）不进发现
+				}
+				m := verifiedMap(map[string]any{
+					"check": check, "title": title, "severity": dirSeverityOf(h),
+					"url": h.URL, "advice": dirAdviceOf(h), "src": "dir",
+					"evidence": dirEvidenceOf(h),
+				})
+				res.Verified = append(res.Verified, m)
+				emit("hit", m["severity"].(string)+" · "+title+" — "+h.URL)
 			}
 		}
 		if opts.Webshell {
@@ -1069,6 +1101,143 @@ func attachTemplates(e *Engine, findings []intel.Finding) {
 			findings[i].Templates = byCVE[cve]
 		}
 	}
+}
+
+// dirFindingOf 目录探测命中 → (check, title)。返回空 check 表示该命中
+// 只有「路径存在」语义（普通入口页/目录），不构成缺陷，不进发现列表。
+//
+// 判定只依据可观测事实，不做"猜漏洞类型"：
+//   - 目录列表开启（响应本身是索引页）→ dir-listing，可直读文件
+//   - 403 被绕过 → dir-bypass-403，访问控制失效
+//   - 路径后缀是可执行/配置/备份形态且正文非空 → exposed-endpoint，
+//     服务端直接把非常规资源吐出来了（upload-labs 这类"关卡页"面）
+func dirFindingOf(h modules.PageHit) (check, title string) {
+	switch {
+	case h.DirIndex:
+		return "dir-listing", "目录列表开启（可直读目录内容）"
+	case h.Bypass != "":
+		return "dir-bypass-403", "访问控制可绕过（403 变体命中）"
+	}
+	if !sensitiveSuffix(h.Path) {
+		return "", ""
+	}
+	return "exposed-endpoint", "端点为可直读的源/配置/备份形态：" + h.Path
+}
+
+// sensitiveSuffix 路径后缀是否为"本不该被直接读取"的形态。
+// 只按后缀判定，不看内容——内容判定交给 check 层的词匹配。
+func sensitiveSuffix(p string) bool {
+	low := strings.ToLower(p)
+	dot := strings.LastIndex(low, ".")
+	if dot < 0 {
+		return false
+	}
+	switch low[dot:] {
+	case ".php", ".php3", ".php4", ".php5", ".php7", ".phtml", ".pht", ".phps",
+		".asp", ".aspx", ".ashx", ".asmx", ".jsp", ".jspx", ".do", ".action",
+		".cgi", ".pl", ".py", ".rb", ".sh", ".cgi-bin":
+		return false // 脚本端点：正常可达，是否存在缺陷要靠内容判定
+	case ".bak", ".backup", ".old", ".orig", ".save", ".swp", ".swo", ".tmp",
+		".sql", ".tar", ".tar.gz", ".tgz", ".zip", ".rar", ".7z", ".gz",
+		".conf", ".config", ".ini", ".yml", ".yaml", ".env", ".log",
+		".key", ".pem", ".crt", ".p12", ".jks":
+		return true
+	}
+	return false
+}
+
+// dirSeverityOf 目录发现的严重度：直读备份/配置(key/pem/env)最重。
+func dirSeverityOf(h modules.PageHit) string {
+	if h.DirIndex || h.Bypass != "" {
+		return "medium"
+	}
+	low := strings.ToLower(h.Path)
+	for _, s := range []string{".env", ".key", ".pem", ".p12", ".jks", ".sql", ".conf", ".config", ".ini", ".yml", ".yaml"} {
+		if strings.HasSuffix(low, s) {
+			return "high"
+		}
+	}
+	return "medium"
+}
+
+func dirAdviceOf(h modules.PageHit) string {
+	switch {
+	case h.DirIndex:
+		return "关闭目录索引（autoindex off / Directory Listing 禁用）"
+	case h.Bypass != "":
+		return "修正访问控制策略（403 不应可被路径变异/伪造头绕过）"
+	}
+	return "移除 Web 根下的备份/配置文件，或加访问控制"
+}
+
+// dirEvidenceOf 目录发现的证据文本：状态码 + 尺寸 + 命中来源回链。
+func dirEvidenceOf(h modules.PageHit) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "HTTP %d · %dB", h.Status, h.Size)
+	if h.DirIndex {
+		b.WriteString(" · 目录索引标记命中")
+	}
+	if h.Bypass != "" {
+		b.WriteString(" · 403 绕过（" + h.Bypass + "）")
+	}
+	if h.Via != "" {
+		b.WriteString(" · 来源 " + h.Via)
+	}
+	return b.String()
+}
+
+// pageOfLink 端点扩展的证据回链：给出「谁把这个链接带出来的」。
+//
+// 爬取结果只保留了链接集合，没有逐条保留「来源页」映射（Result.AllLinks
+// 是扁平的）。这里的近似是诚实的：若链接的路径自身就出现在某页 URL 里，
+// 说明该页与该端点同源；否则回落到站点根——绝不编造来源。
+func pageOfLink(link string, pages []string) string {
+	lu, err := url.Parse(link)
+	if err != nil {
+		return ""
+	}
+	target := strings.Trim(lu.Path, "/")
+	if target == "" {
+		return ""
+	}
+	for _, p := range pages {
+		pu, perr := url.Parse(p)
+		if perr != nil {
+			continue
+		}
+		pp := strings.Trim(pu.Path, "/")
+		if pp == "" || pp == target {
+			continue // 自指不是溯源：链接自身不能当自己的来源
+		}
+		if strings.HasPrefix(target, pp+"/") || strings.HasPrefix(pp, target+"/") {
+			return p
+		}
+	}
+	return ""
+}
+
+// fullWordlistUnion 全量目录词表并集（去重）。用于大词表档位把
+// active 词表从保守 300 条扩到全量：实测默认词表 1887 条里
+// upload 端点一个都没有，而 full/dir-9.6k.txt 里有整组 upload.* 路径。
+// 文件缺失时返回空（调用方沿用原上限）。
+func fullWordlistUnion(dir string) []string {
+	var out []string
+	seen := map[string]bool{}
+	for _, name := range []string{"dir-9.6k.txt", "php-3.2k.txt", "jsp-4.2k.txt"} {
+		data, err := os.ReadFile(filepath.Join(dir, "full", name))
+		if err != nil {
+			continue
+		}
+		for _, l := range strings.Split(string(data), "\n") {
+			l = strings.TrimSpace(l)
+			if l == "" || strings.HasPrefix(l, "#") || seen[l] {
+				continue
+			}
+			seen[l] = true
+			out = append(out, l)
+		}
+	}
+	return out
 }
 
 // nucleiSubset 按已识别技术挑选 Nuclei 模板并转换为 check。
