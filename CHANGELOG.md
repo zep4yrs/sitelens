@@ -1,6 +1,24 @@
 # 更新日志
 
-## v5.1.0（2026-10-11，模板调度 CVE 通道 + 判定通道补齐）
+## v5.1.0（2026-10-11，模板调度 CVE 通道 + 桌面切 Wails 壳 + 判定通道补齐）
+
+### 桌面交付：正式切到 Wails 壳
+
+- 交付线从 Electron 壳（`desktop/`）切到 **Wails 壳**（`desktop-wails/`，
+  Go + 系统 WebView2），单文件壳约 12MB（对比 Electron 安装包 ~100MB），
+  壳与引擎同语言栈。Electron 壳保留为历史形态，不再作为发版产物。
+- 端口决策补齐：**壳偏好 > 配置原文 `web.listen` > 默认 5087**，被占用才换
+  随机空闲端口，协商结果回写 `desktop-prefs.json` 供下次认领（旧 Wails 壳
+  恒取随机端口，书签/排障 URL 每次失效）。纯逻辑抽 `internal/portpolicy`，
+  跨平台单测覆盖。
+- 壳版本号新增单一来源 `desktop-wails/version.go`，启动页版本号位与托盘
+  提示由此取值（此前恒空）。
+- 发版链路切换：`tools/release_local.sh` 改走 `tools/wails_build.sh`
+  （构建壳 + 引擎载荷 → PE 魔数校验 → 壳/引擎版本一致性硬闸 → NSIS 打包）。
+- CI 新增「Wails 壳回归」步骤：独立模块单测 + `GOOS=windows` 构建/vet 门禁。
+- **未接线项（如实记录）**：自动更新、崩溃自愈、单实例三块尚未实现，
+  本版以手动覆盖安装交付；用户数据区与旧壳不同（`SiteLens-Wails`），
+  升级需手工迁移。详见 `desktop-wails/README.md`。
 
 > 承接「技术名 → 模板 tag 归一」（上一个已合并的改动）。tag 归一解决的是
 > 「指纹名与模板 tag 两侧写法不一致」，但模板里还有一大类**只用 CVE 命名、

@@ -61,7 +61,9 @@ func buildSplashHTML() string {
 	}
 	// 全量替换（-1）：注释与正文槽位都吃，避免「第一处在注释里」把正文槽漏掉
 	h := strings.ReplaceAll(splashTmpl, "{{LOGO}}", logoTag)
-	return strings.ReplaceAll(h, "{{VER}}", "")
+	// VER 槽注入版本号（Version 单一来源，见 version.go）——此前恒传空串，
+	// 启动页版本号位一直是空白，用户无从核对装的是哪一版。
+	return strings.ReplaceAll(h, "{{VER}}", "v"+Version)
 }
 
 func main() {
@@ -85,11 +87,8 @@ func main() {
 		log.Fatalf("引擎程序不存在: %s", engineExe)
 	}
 
-	port, err := freePort()
-	if err != nil {
-		log.Fatalf("取空闲端口失败: %v", err)
-	}
-	listen := net.JoinHostPort("127.0.0.1", fmt.Sprint(port))
+	// 端口决策：壳偏好 > 配置原文 > 默认 5087，被占用才随机（见 port.go）。
+	listen, port := chooseListen()
 	cfgPath, err := writeUserConfig(listen)
 	if err != nil {
 		log.Fatalf("写用户配置失败: %v", err)
@@ -209,7 +208,7 @@ func main() {
 	// 通知栏托盘（对齐 Electron 壳 createTray 的最小集）：品牌图标 + 显示主界面/退出
 	tray := app.SystemTray.New()
 	tray.SetIcon(iconICO)
-	tray.SetTooltip("SiteLens 站点透视")
+	tray.SetTooltip("SiteLens 站点透视 v" + Version)
 	trayMenu := app.NewMenu()
 	trayMenu.Add("显示主界面").OnClick(func(*application.Context) {
 		if w := getMainWin(); w != nil {
@@ -261,10 +260,12 @@ func detectEngineDir() (string, bool) {
 		return "", false
 	}
 	exeDir = filepath.Dir(exeDir)
+	// 打包态 = exe 同级 engine/（安装器布局）；开发态 = 仓库 desktop/engine
+	// （npm run engine 的暂存产物）；SITLENS_ENGINE_DIR 可覆盖（上方已处理）。
+	// 原「本机绝对路径兜底」已删——切正式交付后，产品产物里不该出现开发机路径。
 	for _, cand := range []string{
-		filepath.Join(exeDir, "engine"),                          // 打包态（安装器布局）
-		filepath.Join(exeDir, "..", "desktop", "engine"),         // 开发态（仓库布局）
-		`D:\fengqiao\Desktop\26-08python实训\实训考核2\desktop\engine`, // 本机实验兜底
+		filepath.Join(exeDir, "engine"),
+		filepath.Join(exeDir, "..", "desktop", "engine"),
 	} {
 		if _, err := os.Stat(filepath.Join(cand, "sitelens.exe")); err == nil {
 			return cand, true
