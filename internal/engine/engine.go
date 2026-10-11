@@ -547,7 +547,12 @@ func (e *Engine) Scan(rawURL string, opts Options, onProgress progress, cancel f
 			}
 			noteBudget("Nuclei 模板上限减半（" + fmt.Sprint(opts.NucleiCap) + "）")
 		}
-		if nl := e.nucleiSubset(res.Technologies, res.Title, opts.NucleiCap); len(nl) > 0 {
+		if nl, stat := e.nucleiSubset(res.Technologies, res.Title, opts.NucleiCap); stat != nil {
+			// 模板通道可见性：不记录的话，报告里只有"跑了 N 条"，
+			// 看不出预算是被 tag 命中吃掉的还是被 LRU 轮转吃掉的——
+			// 而这两者的命中概率差一个量级（EXP-1003：info 暴露面类
+			// lift 12 倍 vs 带 CVE 的复现类长期 0 命中）。
+			res.Extras["nuclei"] = stat
 			nHits, nRuns := checks.RunListWithLog(client, baseURL, nl, e.cfg.Checks.Workers, cancelled,
 				func(done, total int, msg string) {
 					if total > 0 {
@@ -1241,18 +1246,19 @@ func fullWordlistUnion(dir string) []string {
 }
 
 // nucleiSubset 按已识别技术挑选 Nuclei 模板并转换为 check。
-func (e *Engine) nucleiSubset(techs []Tech, pageTitle string, cap int) []checks.Check {
+func (e *Engine) nucleiSubset(techs []Tech, pageTitle string, cap int) ([]checks.Check, map[string]any) {
 	entries, err := nuclei.Index(e.cfg.Checks.NucleiDir,
 		filepath.Join(e.cfg.Store.DataDir, "nuclei_index.json"))
 	if err != nil || len(entries) == 0 {
-		return nil
+		return nil, nil
 	}
-	tags := map[string]bool{}
 	var names []string
 	for _, t := range techs {
-		tags[strings.ToLower(t.Name)] = true
 		names = append(names, t.Name)
 	}
+	// 技术名 → 模板 tag 归一（显示名 `Microsoft IIS` vs 模板 tag `iis`）：
+	// 精确比对下 tag 这一路对多数技术空转，预算全落 LRU 轮转。
+	tags := nuclei.TechTagSet(names)
 	// 相关度查询文本：技术名 + 页面标题（模板名/tag 词面重合排序）
 	query := strings.Join(names, " ") + " " + pageTitle
 
@@ -1262,6 +1268,13 @@ func (e *Engine) nucleiSubset(techs []Tech, pageTitle string, cap int) []checks.
 		cap = e.cfg.Checks.NucleiCap
 	}
 	selected := nuclei.Select(entries, tags, query, cap, e.nucleiLRU)
+	stat := map[string]any{
+		"index_total": len(entries),
+		"tag_hits":    nuclei.CountTagHits(entries, tags),
+		"selected":    len(selected),
+		"budget":      cap,
+		"sources":     nuclei.SourceCounts(selected),
+	}
 	if len(selected) > 0 {
 		now := time.Now().UnixNano()
 		for _, ent := range selected {
@@ -1279,7 +1292,7 @@ func (e *Engine) nucleiSubset(techs []Tech, pageTitle string, cap int) []checks.
 		}
 		out = append(out, cs...)
 	}
-	return out
+	return out, stat
 }
 
 // loadNucleiLRU 从磁盘恢复调度表（文件缺失 = 全新开始）。

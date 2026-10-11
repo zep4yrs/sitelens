@@ -243,6 +243,21 @@ func Select(entries []Entry, techTags map[string]bool, queryText string,
 		}
 		return hit[i].Path < hit[j].Path
 	})
+	// tag 命中集的预算配比：技术名归一会让命中集显著变大（一个指纹命中
+	// 一个 tag，而一个 tag 下可能有成百条模板）。不设上限时，命中集会把
+	// 整个预算吃光，LRU 轮转彻底停摆——「全池迟早跑完一遍」的数学保证
+	// 反而被更强的匹配破坏了。故命中集最多占预算的 2/3，余下留给轮转；
+	// 命中集本身在超配比时先按截断（严重度序已排好，取前段）。
+	hitBudget := n * 2 / 3
+	if hitBudget < 1 {
+		hitBudget = 1
+	}
+	if len(hit) > hitBudget {
+		// 被截断的命中模板不丢弃：它们是"匹配度可能更高但严重度更低"的
+		// 一类，退回轮转池参与竞争（否则同一批模板每轮被截断，永远跑不到）
+		rest = append(rest, hit[hitBudget:]...)
+		hit = hit[:hitBudget]
+	}
 	// ② 相关度路由：TF 余弦相似度（查询 = 页面标题+技术名，
 	//    文档 = 模板名+tags+路径）。与原版 embedding 余弦同构——
 	//    同为余弦，只是向量空间为词频而非 256 维语义向量；
