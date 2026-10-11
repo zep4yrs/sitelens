@@ -34,7 +34,9 @@ desktop-wails/
 |---|---|
 | 引擎目录探测 | 打包态 `<exe同级>/engine/`；开发态 `../desktop/engine`；`SITLENS_ENGINE_DIR` 覆盖 |
 | 端口决策 | 壳偏好（`desktop-prefs.json`）> 配置原文 `web.listen` > 默认 **5087**，被占用才随机；协商结果回写 |
-| 配置落点 | `%APPDATA%\SiteLens-Wails\config.yml`（**不写安装目录**，EPERM 教训）；merge 语义只更新 `web.listen` |
+| 配置落点 | `%APPDATA%\SiteLens-Wails\config.yml`（**不写安装目录**，EPERM 教训）；merge 语义只更新受管键（`web.listen` + 可写路径 `store.data_dir` / `intel.overrides_path` / `checks.nuclei_dir` / `checks.plugin_dir`，见 `internal/usercfg`） |
+| 种子交付 | 启动调引擎 `update-seed`，随包种子按**包版本**覆盖用户区（`internal/seedrefresh` 定边界） |
+| 自动更新 | 启动静默 + 托盘手动；读 `latest.yml` → 版本比对 → 下载 + sha512 校验 → `/S` 静默就地覆盖安装 → 自动重开（`internal/updater` 定判定） |
 | 启动页 | 透明无底板挂件「对焦」动画；最低展示 1.9s；主窗创建即隐藏、与启动页退场同时现身 |
 | 托盘 | 品牌图标 + 显示主界面 / 退出 |
 | 退出回收 | `taskkill /T /F` 树杀引擎（含 chromedp 拉起的 Chrome 孙进程） |
@@ -48,6 +50,8 @@ desktop-wails/
 | `%APPDATA%\SiteLens-Wails\config.yml` | 引擎配置（壳写入的受管键 + 用户键） | 永久 |
 | `%APPDATA%\SiteLens-Wails\state` | 扫描历史（store.data_dir） | 永久 |
 | `%APPDATA%\SiteLens-Wails\desktop-prefs.json` | 壳偏好（协商端口） | 永久 |
+| `%APPDATA%\SiteLens-Wails\data` | 随包种子（按版本交付：NVD/情报/指纹） | 随版本覆盖 |
+| `%APPDATA%\SiteLens-Wails\updates` | 自动更新下载的安装包 | 可清理 |
 
 > 注意：Wails 线的用户数据区是 `%APPDATA%\SiteLens-Wails`，
 > 与 Electron 壳的 `%APPDATA%\SiteLens` **不同**——两条壳并存时不互相污染，
@@ -76,13 +80,25 @@ bash tools/release_local.sh --publish    # 再上传 CNB Release（需 CNB_TOKEN
 
 ## 已知边界（如实说）
 
-- **自动更新未接线**：Electron 壳用 electron-updater 做增量更新；
-  Wails 线的 updater 方案（wails updater / 自建版本检查）**尚未实现**，
-  当前升级靠手动下载安装包覆盖安装。这是切壳时最需要补的一块。
+- **自动更新已接线（v5.2）**：启动静默检查 + 托盘「检查更新」；读更新源的
+  `latest.yml`、比对版本、下载安装包并 sha512 校验，然后以 `/S` **静默就地覆盖
+  安装**（无向导页，安装器按注册表 `InstallDir` 不挪窝），装完自动拉起新版。
+  - **覆盖更新的另一环是「种子按版本交付」**：本壳启动时调引擎
+    `update-seed`，把随包只读种子（NVD 快照/情报行/指纹规则）按**包版本**
+    覆盖到用户数据区。旧 Electron 壳是「用户区不存在才拷」，包内快照永远
+    进不来（升了版本情报还是旧的）；现在版本变化才覆盖、同版本 no-op，
+    `state/`（历史）、`pools/nuclei/`（模板池）、`plugins/`、`data/wordlists/`
+    永不覆盖。
+  - **已知限制（如实）**：安装器是机器级（`RequestExecutionLevel admin`），
+    非提权进程拉起的自动更新**会弹一次 UAC**——语义上是就地覆盖、无向导页，
+    但不是零交互；要做到零 UAC 需改用户级安装，另行评估。
 - **崩溃自愈未接线**：Electron 壳有引擎崩溃自动重启（5 分钟窗口 ≤3 次
   指数退避）；Wails 壳当前引擎异常退出即随壳退出，未做重启。
 - **单实例未接线**：Electron 壳用 `requestSingleInstanceLock` 保证单开；
   Wails 壳当前可多开（多个壳各拉一个引擎，端口靠偏好/随机区分）。
+- **前端未见壳桥**：Electron 壳经 preload 暴露 `window.sitelens`，设置页
+  「关于与更新」「桌面端」两页据此显示并直连更新器；Wails 壳未提供等价桥，
+  这两个页签在壳内不出现（更新入口在托盘菜单）。
 - **配置迁移**：两条壳的用户数据区不同（`SiteLens-Wails` vs `SiteLens`），
   从 Electron 壳升级过来的用户需要手工把配置/历史拷到新目录。
 - **安装包未签名**：首次运行 SmartScreen 可能拦一下，选「更多信息 → 仍要运行」。

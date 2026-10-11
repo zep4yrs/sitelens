@@ -50,6 +50,9 @@ func main() {
   sitelens [flags] update-osv    从 OSV.dev 同步受影响区间与 CVSS 评分
   sitelens [flags] update-nvd [feed [起] [止]]
                                  镜像 NVD CVE 字典；feed=年度批量（推荐，快）
+  sitelens [flags] update-seed [--seed-dir <包内种子>] [--user-dir <用户数据区>]
+                                 按包版本把随包只读种子覆盖到用户数据区
+                                 （桌面壳在版本变化后首启自动调用）
   sitelens [flags] update-tplintel
                                  模板 CVE × NVD 关联生成模板情报行
   sitelens [flags] update-ehole [url]
@@ -80,6 +83,19 @@ func main() {
 		flag.Usage()
 		os.Exit(2)
 	}
+	// update-seed 是「路径参数」型子命令（--seed-dir/--user-dir），
+	// 而 flag.Parse() 在遇到子命令名时已停止解析——参数落进 flag.Args()。
+	// 这里局部再解析一次，只认这两个开关，其余命令零影响。
+	if len(args) > 0 && args[0] == "update-seed" {
+		fs := flag.NewFlagSet("update-seed", flag.ContinueOnError)
+		seed := fs.String("seed-dir", "", "随包只读种子目录")
+		usr := fs.String("user-dir", "", "用户数据区目录")
+		if err := fs.Parse(args[1:]); err != nil {
+			os.Exit(2)
+		}
+		os.Exit(updateSeedCommand(*seed, *usr))
+	}
+
 	cfg := config.LoadOrDefault(*cfgPath)
 
 	// 4.0 Track A / A1：GC 软上限（零行为变化，仅让 GC 在尖峰前更早介入）。
