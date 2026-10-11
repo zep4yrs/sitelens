@@ -21,6 +21,7 @@ Unicode true
 ManifestDPIAware true
 
 !include "MUI2.nsh"
+!include "LogicLib.nsh"
 
 Name "SiteLens 站点透视 ${VERSION}"
 OutFile "${OUTFILE}"
@@ -57,6 +58,19 @@ VIAddVersionKey /LANG=2052 "LegalCopyright" "fengqiao"
 Section "SiteLens 站点透视" SEC_MAIN
   SetOutPath "$INSTDIR"
   File /r "${SRCDIR}/${STAGEDIR}/*.*"
+
+  ; 静默覆盖更新（/S，桌面壳自动更新拉起时）没有完成页——MUI_FINISHPAGE_RUN
+  ; 只作用于交互向导的完成页，静默路径下不显式处理就「装完没窗口」，用户以为
+  ; 升级失败。这里装完直接拉起新版（与完成页勾选「立即启动」同效果）。
+  ;
+  ; 注意（如实说明，不粉饰）：本安装器是**机器级**安装（RequestExecutionLevel
+  ; admin + $PROGRAMFILES64），因此从非提权进程拉起的自动更新会弹一次 UAC。
+  ; 这不影响「就地覆盖、无向导页、装完自动重开」的语义，但不是零交互升级；
+  ; 要做到零 UAC 需改用户级安装（per-user + $LOCALAPPDATA），那是安装形态的
+  ; 变更，另行评估。
+  ${If} ${Silent}
+    Exec "$INSTDIR\sitelens.exe"
+  ${EndIf}
 
   ; 开始菜单快捷方式
   CreateDirectory "$SMPROGRAMS\SiteLens"

@@ -36,6 +36,8 @@ import (
 	"github.com/wailsapp/wails/v3/pkg/application"
 	"github.com/wailsapp/wails/v3/pkg/events"
 	"gopkg.in/yaml.v3"
+
+	"sitelens-wails/internal/usercfg"
 )
 
 //go:embed assets/index.html
@@ -87,9 +89,24 @@ func main() {
 		log.Fatalf("引擎程序不存在: %s", engineExe)
 	}
 
+	// 用户数据区与受管路径：可写数据（历史/情报/模板池/插件）归用户区，
+	// 只读资产留安装目录。路径决策见 internal/usercfg（有跨平台单测）。
+	userData, err := userDataDir()
+	if err != nil {
+		log.Fatalf("取用户数据目录失败: %v", err)
+	}
+	managed := usercfg.Resolve(userData, engineDir)
+	if err := prepareUserData(managed); err != nil {
+		log.Fatalf("建用户数据目录失败: %v", err)
+	}
+
+	// 覆盖更新的一环：把随包只读种子按**包版本**交付到用户数据区。
+	// 版本变化才覆盖，同版本二次启动 no-op；边界见引擎 internal/seedrefresh。
+	deliverSeeds(engineExe, managed.SeedDir, userData)
+
 	// 端口决策：壳偏好 > 配置原文 > 默认 5087，被占用才随机（见 port.go）。
 	listen, port := chooseListen()
-	cfgPath, err := writeUserConfig(listen)
+	cfgPath, err := writeUserConfig(listen, managed)
 	if err != nil {
 		log.Fatalf("写用户配置失败: %v", err)
 	}
@@ -216,8 +233,19 @@ func main() {
 		}
 	})
 	trayMenu.AddSeparator()
+	trayMenu.Add("检查更新").OnClick(func(*application.Context) {
+		go runUpdateCheck(userData, app)
+	})
+	trayMenu.AddSeparator()
 	trayMenu.Add("退出 SiteLens").OnClick(func(*application.Context) { app.Quit() })
 	tray.SetMenu(trayMenu)
+
+	// 启动静默检查一次：发现新版本即下载并静默覆盖安装（装完由安装器拉起新版）。
+	// 失败完全静默（离线/源不可达是常态，不该打扰用户），shell.log 留痕可查。
+	go func() {
+		time.Sleep(8 * time.Second) // 让启动页/引擎就绪先走完，不抢启动期资源
+		runUpdateCheckQuiet(userData, app)
+	}()
 
 	log.Println("进入事件循环")
 	if err := app.Run(); err != nil {
@@ -284,16 +312,22 @@ func freePort() (int, error) {
 	return l.Addr().(*net.TCPAddr).Port, nil
 }
 
-// writeUserConfig 最小配置落用户目录（%APPDATA%/SiteLens-Wails/config.yml）。
+// writeUserConfig 写引擎配置（%APPDATA%/SiteLens-Wails/config.yml）。
+//
+// 受管键 = 壳语义：监听地址 + **所有可写路径**（扫描历史 / 情报覆盖 / 模板池 /
+// 插件），后者的值由 usercfg 归到用户数据区。这一步不是"顺手补齐"：
+// 引擎以 cwd（安装目录 engine/）解析相对路径，只写 web.listen 时，扫描历史与
+// 情报会写进 $PROGRAMFILES64\SiteLens\engine\data —— 普通用户对该目录只读，
+// 写入即失败（Electron 壳 v3.0.0 踩过同一个坑）。
+//
 // merge 语义（与 Electron 壳 yml-merge 同思路）：保留文件里已有的其余键
-// （用户的 scan/loginbrute 等自定义），只更新 web.listen；解析失败时按行
-// 文本合并、原文其余内容原样保留（不整文件重建清空用户键）。
-func writeUserConfig(listen string) (string, error) {
-	dir, err := os.UserConfigDir()
+// （用户的 scan/loginbrute 等自定义），只更新受管键；解析失败时按行文本合并、
+// 原文其余内容原样保留（不整文件重建清空用户键）。
+func writeUserConfig(listen string, m usercfg.Managed) (string, error) {
+	dir, err := userDataDir()
 	if err != nil {
 		return "", err
 	}
-	dir = filepath.Join(dir, "SiteLens-Wails")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return "", err
 	}
@@ -302,9 +336,10 @@ func writeUserConfig(listen string) (string, error) {
 	if b, rerr := os.ReadFile(p); rerr == nil {
 		if uerr := yaml.Unmarshal(b, &cfg); uerr != nil {
 			// 解析失败（重复键/Tab 缩进等手滑）时 cfg 为 nil，继续走结构化合并
-			// 会把文件重置成只剩 web.listen，用户的 scan/loginbrute 等全部键被
+			// 会把文件重置成只剩受管键，用户的 scan/loginbrute 等全部键被
 			// 静默抹掉，违反上方 merge 契约。改为按行文本合并兜底：坏文件其余
-			// 行原样保留，只更新 web.listen 一行，并留日志告警。
+			// 行原样保留，只更新 web.listen 一行，并留日志告警（其余受管键
+			// 无法按行安全插入，宁可留给用户修好 YAML 后下次启动补齐）。
 			log.Printf("writeUserConfig: %s 解析失败(%v)，按行合并仅更新 web.listen，其余内容原样保留", p, uerr)
 			if werr := os.WriteFile(p, []byte(mergeWebListen(string(b), listen)), 0o644); werr != nil {
 				return "", werr
@@ -315,12 +350,7 @@ func writeUserConfig(listen string) (string, error) {
 	if cfg == nil {
 		cfg = map[string]any{}
 	}
-	web, _ := cfg["web"].(map[string]any)
-	if web == nil {
-		web = map[string]any{}
-		cfg["web"] = web
-	}
-	web["listen"] = listen
+	usercfg.ApplyManaged(cfg, listen, m)
 	body, merr := yaml.Marshal(cfg)
 	if merr != nil {
 		body = []byte(fmt.Sprintf("web:\n  listen: %s\n", listen))
