@@ -144,5 +144,16 @@ Markdown 报告**里都能看到一行「模板调度」摘要：
 
 ## 下载
 
-安装包见本页 Release 资产 `SiteLens-Setup-5.1.0.exe`。本版为 Wails 线**首个发布**，
-从 5.0.0（Electron 壳）升级请**手动下载覆盖安装**；装到本版后，后续版本走自动更新。
+| 文件 | 说明 |
+| --- | --- |
+| `SiteLens-Setup-5.1.0.exe` | Windows 安装包（约 744MB，含全量 ML 资产与 ONNX 运行时） |
+
+SHA256：
+
+```
+adaf99bd718120c50312809b1d92d3eeed887082a991dcff18af7561421f1677
+```
+
+本版为 Wails 线**首个发布**，从 5.0.0（Electron 壳）升级请**手动下载覆盖安装**
+（旧版没有能识别 Wails 更新源的更新器）；装到本版后，后续版本走自动更新。
+用户数据区为 `%APPDATA%\SiteLens-Wails`，与旧 Electron 壳不同，需手工迁移配置与历史。
