@@ -1,54 +1,61 @@
 #!/bin/bash
 # SiteLens 本地发版（v3.0.1 起为唯一发版路径）。
 #
-# 为什么改成本地发版：CI 跑在 Linux（golang 镜像），而 build-engine.js 曾执行
-# 不带 GOOS 的 go build —— 打出的「sitelens.exe」实为 Linux ELF，装进 Windows
-# 安装包后引擎永远起不来（v3.0.0 真实事故）。本地在 Windows 上构建产物必为 PE，
-# 且能在打包前后即时验证。CI 的 tag 流水线已停用（见 .cnb.yml）。
+# 交付线（v5.1.0 起）：**Wails 壳**（desktop-wails/）。Electron 壳（desktop/）
+# 保留为历史形态，不再作为发版产物——切换原因见 README「交付形态」与
+# docs/开发文档-4.0.md §26.25（分发体积 11.9MB 单文件 vs ~100MB 安装包）。
+#
+# 为什么本地发版：CI 跑在 Linux（golang 镜像），跨平台构建的 Windows 产物
+# 曾在无 GOOS 时被误打成 Linux ELF（v3.0.0 真实事故）。本地构建 + PE 魔数校验
+# 能在打包前后即时验证，不依赖 CI 平台假设。CI 的 tag 流水线已停用（见 .cnb.yml）。
 #
 # 用法：
 #   tools/release_local.sh              # 构建 + 校验 + 打包（不发布）
 #   tools/release_local.sh --publish    # 再上传 CNB Release（需 CNB_TOKEN）
 #
-# 前置：Go 1.26+、Node 18+、npm；desktop 依赖已安装（npm ci）。
-# 产物：desktop/release/SiteLens-Setup-<ver>.exe（+ .blockmap + latest.yml）
+# 前置：Go 1.26+、makensis（Linux 上打 NSIS 需 wine+xvfb-run，见 tools/ci_nsis_exe.sh）。
+# 产物：dist/release/SiteLens-Setup-<ver>.exe
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-DESKTOP="$ROOT/desktop"
 PUBLISH=0
 [ "${1:-}" = "--publish" ] && PUBLISH=1
 
-cd "$DESKTOP"
-VER="$(node -p "require('./package.json').version")"
+# 版本号单一来源：desktop-wails/version.go（切 wails 交付后不再是
+# desktop/package.json——那是 Electron 壳的产物）。
+VER="$(grep -oP 'const Version = "\K[0-9.]+' "$ROOT/desktop-wails/version.go" | head -1)"
 TAG="v$VER"
-echo "== SiteLens 本地发版：$VER（tag $TAG）=="
+echo "== SiteLens 本地发版（Wails 线）：$VER（tag $TAG）=="
 
-# 1) 引擎载荷：显式 GOOS=windows + PE 魔数校验（build-engine.js 内置硬闸）。
-echo "== [1/4] 构建引擎载荷 =="
-node build-engine.js
+# 1) 构建壳 + 引擎载荷（脚本内置 PE 魔数校验 + 壳/引擎版本一致性硬闸）。
+echo "== [1/4] 构建壳与引擎载荷 =="
+bash "$ROOT/tools/wails_build.sh"
 
-# 2) 产物平台复验（双保险：脚本已校验，这里再独立确认一次）。
-echo "== [2/4] 校验引擎为 Windows PE =="
-head2="$(head -c2 "$DESKTOP/engine/sitelens.exe")"
-if [ "$head2" != "MZ" ]; then
-  echo "× 引擎产物不是 Windows PE（文件头非 MZ）。当前构建机：$(uname -s)"
-  echo "  修复：确保 GOOS=windows GOARCH=amd64（build-engine.js 已设；若手动构建请自行指定）"
-  exit 1
-fi
-echo "  ✓ PE 头正确"
-"$DESKTOP/engine/sitelens.exe" -version
+STAGE="$ROOT/dist/wails/SiteLens"
+[ -f "$STAGE/sitelens.exe" ] || { echo "× 壳产物缺失：$STAGE/sitelens.exe" >&2; exit 1; }
+[ -f "$STAGE/engine/sitelens.exe" ] || { echo "× 引擎产物缺失：$STAGE/engine/sitelens.exe" >&2; exit 1; }
 
-# 3) 打包 NSIS 安装包。
-#    signExecutable=false：只跳过代码签名，保留 exe 图标/版本元数据改写
-#   （旧参 signAndEditExecutable=false 连图标一起跳过——安装后 exe 与桌面
-#     快捷方式全是默认图标，2026-09-18 用户实测发现，已修正）。
+# 2) 平台复验（双保险：构建脚本已校验，这里再独立确认一次产物布局）。
+echo "== [2/4] 校验产物为 Windows PE =="
+for f in "$STAGE/sitelens.exe" "$STAGE/engine/sitelens.exe"; do
+  head2="$(head -c2 "$f")"
+  [ "$head2" = "MZ" ] || { echo "× $f 非 Windows PE（文件头非 MZ）" >&2; exit 1; }
+done
+echo "  ✓ 壳 + 引擎 PE 头正确"
+
+# 3) 打包 NSIS 安装包（复用 installer/installer.nsi；Linux 上经 ci_nsis_exe.sh
+#    套 xvfb-run，无 display driver 时 32 位引导程序必秒退）。
 echo "== [3/4] 打包安装包 =="
-npx electron-builder --win nsis --publish never -c.win.signExecutable=false
-
-EXE="$DESKTOP/release/SiteLens-Setup-$VER.exe"
-[ -f "$EXE" ] || { echo "× 未产出安装包：$EXE"; exit 1; }
-echo "  ✓ 安装包：$EXE（$(stat -c%s "$EXE" 2>/dev/null || wc -c <"$EXE") bytes）"
+mkdir -p "$ROOT/dist/release"
+OUTFILE="$ROOT/dist/release/SiteLens-Setup-$VER.exe"
+bash "$ROOT/tools/ci_nsis_exe.sh" \
+  -DVERSION="$VER" \
+  -DSRCDIR="$ROOT/dist/wails" \
+  -DSTAGEDIR="SiteLens" \
+  -DOUTFILE="$OUTFILE" \
+  "$ROOT/installer/installer.nsi"
+[ -s "$OUTFILE" ] || { echo "× 未产出安装包：$OUTFILE" >&2; exit 1; }
+echo "  ✓ 安装包：$OUTFILE（$(stat -c%s "$OUTFILE" 2>/dev/null || wc -c <"$OUTFILE") bytes）"
 
 # 4) 可选：上传 CNB Release（版本 release 三件套）。
 if [ "$PUBLISH" = "1" ]; then
@@ -57,20 +64,10 @@ if [ "$PUBLISH" = "1" ]; then
   export SITLENS_TAG="$TAG"
   BODY="$ROOT/tools/release-body-$VER.md"
   [ -f "$BODY" ] && export SITLENS_BODY_FILE="$BODY"
-  bash "$ROOT/tools/release_upload.sh" \
-    "$EXE" \
-    "$EXE.blockmap" \
-    "$DESKTOP/release/latest.yml"
+  bash "$ROOT/tools/release_upload.sh" "$OUTFILE"
   echo "  ✓ 已上传（含发行说明：${SITLENS_BODY_FILE:-无}）"
 else
   echo "== [4/4] 跳过上传（加 --publish 启用；需 CNB_TOKEN）=="
 fi
 
 echo "== 完成：$TAG =="
-cat <<EOF
-
-后续（更新源，唯一来源在 GitHub desktop-stable）：
-  1) 把三件套上传到 GitHub desktop-stable release：
-     SiteLens-Setup-$VER.exe / .exe.blockmap / latest.yml
-  2) 用户端「设置 → 检查更新」即可增量（blockmap）或全量升级。
-EOF

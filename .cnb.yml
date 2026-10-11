@@ -33,6 +33,18 @@
         - node --test web/js/esc.test.mjs web/js/scan-options.test.mjs # 转义回归 + 三维选择器映射单测
         - node --test tools/ci_pipeline_guard.test.mjs # CI 配置门禁：wine 调用必须套 xvfb-run（tag 构建曾在此红）
         - cd desktop && node --test # 桌面壳单测：配置合并器 + 端口决策（逻辑最密层；无参自动发现）
+    - name: Wails 壳回归
+      script:
+        # v5.1.0 起交付线切到 Wails 壳（desktop-wails/）。它是**独立模块**
+        # （自己的 go.mod），主模块 `go test ./internal/...` 扫不到，必须单独测。
+        # 说明：CNB 把 script 列表项用 && 串成一条，所以每项都要自包含——
+        # 用子 shell `(cd ... && ...)`，不要在项之间依赖 cwd 延续。
+        # 纯逻辑包（端口决策）跨平台真跑测试；壳本体（package main）含 Windows
+        # 后端不能被 Linux 执行，故只做 GOOS=windows 的构建 + vet 门禁。
+        - (cd desktop-wails && go test ./internal/...)
+        - (cd desktop-wails && GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go vet ./...)
+        - (cd desktop-wails && GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -o /tmp/sitelens-wails.exe .)
+        - test -z "$(cd desktop-wails && gofmt -l .)" || { echo "× desktop-wails 未过 gofmt"; exit 1; }
 
 main:
   push:

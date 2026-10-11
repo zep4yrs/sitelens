@@ -308,11 +308,32 @@ function renderDetail(r, scanId, url) {
   var ex = r.extras || {};
   var titles = { active_fp: "主动路径指纹", dir_scan: "目录探测", dir_full_words: "目录全量词表", subdomain: "子域名",
                  service: "端口服务", netsec: "TLS / DNS 安全", weak_audit: "登录爆破结果",
-                 webshell: "WebShell 路径探测", jsmap: "JS 攻击面", dast: "DAST 检测" };
+                 webshell: "WebShell 路径探测", jsmap: "JS 攻击面", dast: "DAST 检测",
+                 exploit: "利用级无害验证", nuclei: "Nuclei 模板调度" };
   Object.keys(ex).forEach(function (key) {
     var items = ex[key] || [];
+    if (key === "nuclei") {
+      // 汇总对象（非数组）：与 app.js 同口径——调度预算被 CVE 通道 / tag / LRU 各吃掉多少
+      var srcs = items.sources && typeof items.sources === "object"
+        ? Object.keys(items.sources).map(function (k) { return k + ":" + items.sources[k]; }).join(" ") : "-";
+      html += '<div class="sec-title">' + esc(titles[key]) + "</div>" +
+        '<div class="extras-box mono">候选池 ' + esc(String(items.index_total || 0)) +
+        " · tag 命中 " + esc(String(items.tag_hits || 0)) +
+        " · 受影响 CVE " + esc(String(items.cve_total || 0)) +
+        " · CVE 命中模板 " + esc(String(items.cve_hits || 0)) +
+        "<br>本轮选入 " + esc(String(items.selected || 0)) + "/" + esc(String(items.budget || 0)) +
+        " · 来源 " + esc(srcs) + "</div>";
+      return;
+    }
+    if (key === "exploit") {
+      html += '<div class="sec-title">' + esc(titles[key]) + "</div>" +
+        '<div class="extras-box mono">proven ' + esc(String(items.proven || 0)) +
+        " · observed " + esc(String(items.observed || 0)) + " · 闸门 " + esc(String(items.gate || "-")) + "</div>";
+      return;
+    }
+    var cnt = Array.isArray(items) ? items.length : null;
     html += '<div class="sec-title">' + esc(titles[key] || key) +
-      ' <span class="count">' + items.length + "</span></div>";
+      (cnt !== null ? ' <span class="count">' + cnt + "</span>" : "") + "</div>";
     if (!items.length) return;
     html += '<div class="extras-box mono">';
     items.forEach(function (it) { html += extrasLine(key, it) + "<br>"; });
