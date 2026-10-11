@@ -219,11 +219,24 @@ var sevRank = map[string]int{"critical": 0, "high": 1, "medium": 2, "low": 3, "i
 // cursor 语义由 lastRun 表取代：轮转位置由"最久未跑"自然推导。
 func Select(entries []Entry, techTags map[string]bool, queryText string,
 	n int, lastRun map[string]int64) []Entry {
+	return SelectWithCVE(entries, techTags, nil, queryText, n, lastRun)
+}
+
+// SelectWithCVE 同 Select，另加 CVE 通道：cveSet 为目标指纹实际受影响的
+// CVE 集合（intel 关联产出），声明这些 CVE 的模板优先于 tag 命中置顶——
+// 「这台机器真的中的」比「tag 词面能对上」更值得先跑预算。cveSet 为
+// nil/空时行为与 Select 完全一致（零回归）。
+func SelectWithCVE(entries []Entry, techTags, cveSet map[string]bool, queryText string,
+	n int, lastRun map[string]int64) []Entry {
 	if n <= 0 || len(entries) == 0 {
 		return nil
 	}
-	var hit, rest []Entry
+	var cveHit, hit, rest []Entry
 	for _, e := range entries {
+		if entryMatchesCVE(e, cveSet) {
+			cveHit = append(cveHit, e)
+			continue
+		}
 		matched := false
 		for _, tg := range e.Tags {
 			if techTags[tg] {
@@ -237,26 +250,40 @@ func Select(entries []Entry, techTags map[string]bool, queryText string,
 			rest = append(rest, e)
 		}
 	}
-	sort.SliceStable(hit, func(i, j int) bool {
-		if sevRank[hit[i].Sev] != sevRank[hit[j].Sev] {
-			return sevRank[hit[i].Sev] < sevRank[hit[j].Sev]
-		}
-		return hit[i].Path < hit[j].Path
-	})
+	bySevPath := func(s []Entry) {
+		sort.SliceStable(s, func(i, j int) bool {
+			if sevRank[s[i].Sev] != sevRank[s[j].Sev] {
+				return sevRank[s[i].Sev] < sevRank[s[j].Sev]
+			}
+			return s[i].Path < s[j].Path
+		})
+	}
+	bySevPath(cveHit)
+	bySevPath(hit)
 	// tag 命中集的预算配比：技术名归一会让命中集显著变大（一个指纹命中
 	// 一个 tag，而一个 tag 下可能有成百条模板）。不设上限时，命中集会把
 	// 整个预算吃光，LRU 轮转彻底停摆——「全池迟早跑完一遍」的数学保证
 	// 反而被更强的匹配破坏了。故命中集最多占预算的 2/3，余下留给轮转；
 	// 命中集本身在超配比时先按截断（严重度序已排好，取前段）。
+	// CVE 命中集最优先（对目标最有针对性）；随后 tag 命中。两者合计
+	// 最多占预算 2/3，余下留给 LRU 轮转——「全池迟早跑完一遍」的数学
+	// 保证不能被更强的匹配彻底挤掉。被截断的模板不丢弃，退回轮转池
+	// 参与竞争（否则同一批每轮被截断，永远跑不到）。
 	hitBudget := n * 2 / 3
 	if hitBudget < 1 {
 		hitBudget = 1
 	}
-	if len(hit) > hitBudget {
-		// 被截断的命中模板不丢弃：它们是"匹配度可能更高但严重度更低"的
-		// 一类，退回轮转池参与竞争（否则同一批模板每轮被截断，永远跑不到）
-		rest = append(rest, hit[hitBudget:]...)
-		hit = hit[:hitBudget]
+	if len(cveHit) > hitBudget {
+		rest = append(rest, cveHit[hitBudget:]...)
+		cveHit = cveHit[:hitBudget]
+	}
+	remain := hitBudget - len(cveHit)
+	if remain < 0 {
+		remain = 0
+	}
+	if len(hit) > remain {
+		rest = append(rest, hit[remain:]...)
+		hit = hit[:remain]
 	}
 	// ② 相关度路由：TF 余弦相似度（查询 = 页面标题+技术名，
 	//    文档 = 模板名+tags+路径）。与原版 embedding 余弦同构——
@@ -286,7 +313,8 @@ func Select(entries []Entry, techTags map[string]bool, queryText string,
 		return rest[i].Path < rest[j].Path
 	})
 
-	out := append([]Entry{}, hit...)
+	out := append([]Entry{}, cveHit...)
+	out = append(out, hit...)
 	for _, e := range rest {
 		if len(out) >= n {
 			break

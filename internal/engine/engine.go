@@ -1245,6 +1245,41 @@ func fullWordlistUnion(dir string) []string {
 	return out
 }
 
+// affectedCVEs 目标指纹 → 受影响 CVE 集合（intel KB 关联）。
+// 只读、失败静默（KB 未挂载 / 匹配异常 → 空集，调度退回纯 tag+LRU）。
+// 上限防爆：单技术最多取 maxPerTech 条情报行的 CVE，且集合整体封顶。
+func (e *Engine) affectedCVEs(techs []Tech) map[string]bool {
+	_, kb := e.snapshot()
+	if kb == nil || len(techs) == 0 {
+		return nil
+	}
+	hits := make([]intel.TechHit, 0, len(techs))
+	for _, t := range techs {
+		hits = append(hits, intel.TechHit{Name: t.Name, Version: t.Version})
+	}
+	out := map[string]bool{}
+	for _, f := range kb.Match(hits) {
+		cve := strings.ToUpper(strings.TrimSpace(f.CVE))
+		if cve == "" {
+			continue
+		}
+		out[cve] = true
+		if len(out) >= maxAffectedCVEs {
+			break
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+// maxAffectedCVEs 单次扫描纳入 CVE 通道的 CVE 数上限。
+// 情报关联对一台指纹繁多的目标可能产出成百条 CVE，全量反查模板会把
+// 命中集撑到预算之外——封顶保证 CVE 通道是「精准提权」而非「换一种
+// 方式吃光预算」。
+const maxAffectedCVEs = 64
+
 // nucleiSubset 按已识别技术挑选 Nuclei 模板并转换为 check。
 func (e *Engine) nucleiSubset(techs []Tech, pageTitle string, cap int) ([]checks.Check, map[string]any) {
 	entries, err := nuclei.Index(e.cfg.Checks.NucleiDir,
@@ -1259,6 +1294,11 @@ func (e *Engine) nucleiSubset(techs []Tech, pageTitle string, cap int) ([]checks
 	// 技术名 → 模板 tag 归一（显示名 `Microsoft IIS` vs 模板 tag `iis`）：
 	// 精确比对下 tag 这一路对多数技术空转，预算全落 LRU 轮转。
 	tags := nuclei.TechTagSet(names)
+	// CVE 通道（准入收口）：指纹技术名 → 受影响 CVE（intel 关联）→ 声明
+	// 该 CVE 的模板置顶。对应「情报关联命中 CVE 时把该 CVE 影响的模板
+	// 直接提权，而不是等 LRU 轮到那一条」——这是把「库存」变成「这次
+	// 就可能打中」的那一步。intel 未挂载时 cveSet 为空，行为零回归。
+	cveSet := e.affectedCVEs(techs)
 	// 相关度查询文本：技术名 + 页面标题（模板名/tag 词面重合排序）
 	query := strings.Join(names, " ") + " " + pageTitle
 
@@ -1267,10 +1307,12 @@ func (e *Engine) nucleiSubset(techs []Tech, pageTitle string, cap int) ([]checks
 	if cap <= 0 {
 		cap = e.cfg.Checks.NucleiCap
 	}
-	selected := nuclei.Select(entries, tags, query, cap, e.nucleiLRU)
+	selected := nuclei.SelectWithCVE(entries, tags, cveSet, query, cap, e.nucleiLRU)
 	stat := map[string]any{
 		"index_total": len(entries),
 		"tag_hits":    nuclei.CountTagHits(entries, tags),
+		"cve_hits":    nuclei.CountCVEHits(entries, cveSet),
+		"cve_total":   len(cveSet),
 		"selected":    len(selected),
 		"budget":      cap,
 		"sources":     nuclei.SourceCounts(selected),
