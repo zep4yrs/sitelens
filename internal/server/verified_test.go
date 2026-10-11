@@ -104,3 +104,41 @@ func TestReportRendersMergedAndSplit(t *testing.T) {
 		t.Fatalf("MD nil Result 未安全返回")
 	}
 }
+
+// TestNucleiSchedSummary 回归：extras.nuclei 调度摘要必须把
+// 「受影响 CVE」与「CVE 命中模板」分开列（这才是这条通道的判读口径：
+// cve_total=0 是指纹没对上情报，cve_hits=0 是模板池里没有声明这些 CVE
+// 的模板，两者含义不同，不能合成一个数）。字段缺失 / 非 map 时返回空串。
+func TestNucleiSchedSummary(t *testing.T) {
+	if got := nucleiSchedSummary(nil); got != "" {
+		t.Fatalf("nil extras 应返回空串, got %q", got)
+	}
+	if got := nucleiSchedSummary(map[string]any{"nuclei": []any{1}}); got != "" {
+		t.Fatalf("非 map 形态应返回空串, got %q", got)
+	}
+
+	s := nucleiSchedSummary(map[string]any{"nuclei": map[string]any{
+		"index_total": 82709, "tag_hits": 12, "cve_total": 7, "cve_hits": 3,
+		"selected": 100, "budget": 150,
+		"sources": map[string]int{"http/cves": 40, "legacy": 60},
+	}})
+	for _, want := range []string{"受影响 CVE 7", "CVE 命中模板 3", "tag 命中 12", "本轮选入 100/150", "http/cves 40"} {
+		if !strings.Contains(s, want) {
+			t.Fatalf("摘要缺 %q:\n%s", want, s)
+		}
+	}
+
+	// 报告双通道都要带上这段（JSON 里早有，UI/报告此前没有——补的就是这一公里）
+	rec := &store.ScanRecord{
+		ScanSummary: store.ScanSummary{ID: 1, URL: "http://a.example", Host: "a.example"},
+		Result: &engine.Result{Extras: map[string]any{"nuclei": map[string]any{
+			"index_total": 100, "cve_total": 2, "cve_hits": 1, "selected": 10, "budget": 15,
+		}}},
+	}
+	if h := htmlReport(rec); !strings.Contains(h, "受影响 CVE 2") {
+		t.Fatalf("HTML 报告未呈现调度摘要")
+	}
+	if m := markdownReport(rec); !strings.Contains(m, "## 模板调度") || !strings.Contains(m, "CVE 命中模板 1") {
+		t.Fatalf("MD 报告未呈现调度摘要:\n%s", m)
+	}
+}

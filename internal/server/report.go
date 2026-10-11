@@ -3,6 +3,7 @@ package server
 import (
 	"fmt"
 	"html"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -25,6 +26,54 @@ func sevClass(sev string) string {
 	default:
 		return "info"
 	}
+}
+
+// nucleiSchedSummary 从 extras.nuclei 提取模板调度摘要（单一来源，HTML/MD 共用）。
+// 这是「指纹受影响 CVE 反查模板并提权」通道的唯一在线读数：
+// cve_total 为 0 说明指纹没对上情报，cve_hits 为 0 说明模板池里没有声明
+// 这些 CVE 的模板——两者分开列，才看得出预算是被 CVE 通道、tag 命中
+// 还是 LRU 轮转吃掉的。字段缺失（旧记录 / 模块未跑）返回空串。
+func nucleiSchedSummary(extras map[string]any) string {
+	if extras == nil {
+		return ""
+	}
+	m, ok := extras["nuclei"].(map[string]any)
+	if !ok {
+		return ""
+	}
+	num := func(k string) int {
+		switch v := m[k].(type) {
+		case int:
+			return v
+		case int64:
+			return int(v)
+		case float64:
+			return int(v)
+		}
+		return 0
+	}
+	var srcs []string
+	if sm, ok := m["sources"].(map[string]int); ok {
+		keys := make([]string, 0, len(sm))
+		for k := range sm {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		for _, k := range keys {
+			srcs = append(srcs, fmt.Sprintf("%s %d", k, sm[k]))
+		}
+	}
+	parts := []string{
+		fmt.Sprintf("候选池 %d", num("index_total")),
+		fmt.Sprintf("tag 命中 %d", num("tag_hits")),
+		fmt.Sprintf("受影响 CVE %d", num("cve_total")),
+		fmt.Sprintf("CVE 命中模板 %d", num("cve_hits")),
+		fmt.Sprintf("本轮选入 %d/%d", num("selected"), num("budget")),
+	}
+	if len(srcs) > 0 {
+		parts = append(parts, "来源 "+strings.Join(srcs, " · "))
+	}
+	return strings.Join(parts, " · ")
 }
 
 // htmlReport 渲染单次扫描的 HTML 报告（fmt=html 导出）。
@@ -89,6 +138,11 @@ func htmlReport(rec *store.ScanRecord) string {
 			}
 			b.WriteString("</table>")
 		}
+	}
+
+	// 模板调度可见性（extras.nuclei）：预算去哪了
+	if sched := nucleiSchedSummary(rec.Result.Extras); sched != "" {
+		b.WriteString("<h2>模板调度</h2><p>" + esc(sched) + "</p>")
 	}
 
 	// 漏洞情报
@@ -184,6 +238,11 @@ func markdownReport(rec *store.ScanRecord) string {
 			b.WriteString("| " + sevClass(sev) + " | " + mdCell(tit) + " | " + mdCell(u) + " | " + mdCell(ev) + " | " + mdCell(ad) + " |\n")
 		}
 		b.WriteString("\n")
+	}
+
+	// 模板调度可见性（extras.nuclei）
+	if sched := nucleiSchedSummary(rec.Result.Extras); sched != "" {
+		b.WriteString("## 模板调度\n\n" + sched + "\n\n")
 	}
 
 	// 漏洞情报

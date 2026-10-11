@@ -561,7 +561,8 @@ function renderResult(r, scanId) {
                  service: "端口服务", netsec: "TLS / DNS 安全", weak_audit: "登录爆破结果",
                  webshell: "WebShell 路径探测", jsmap: "JS 攻击面", dast: "DAST 检测",
                  passive: "被动安全检测", bypass: "403 绕过探测", dir: "目录探测",
-                 netproto: "协议模板检测（tcp/dns/ssl）", exploit: "利用级无害验证" };
+                 netproto: "协议模板检测（tcp/dns/ssl）", exploit: "利用级无害验证",
+                 nuclei: "Nuclei 模板调度" };
   Object.keys(ex).forEach(function (key) {
     // ml_prior / ml_sev 已在摘要区与降级说明呈现，不进通用 extras 列表
     if (key === "ml_prior" || key === "ml_sev") return;
@@ -573,6 +574,21 @@ function renderResult(r, scanId) {
       // 汇总对象：{proven, observed, gate}
       html += '<div class="extras-box mono">proven ' + esc(String(items.proven || 0)) +
         " · observed " + esc(String(items.observed || 0)) + " · 闸门 " + esc(String(items.gate || "-")) + "</div>";
+      return;
+    }
+    if (key === "nuclei") {
+      // 调度可见性汇总（对象非数组）：预算被 CVE 通道 / tag 命中 / LRU 轮转各吃掉多少。
+      // 这是「指纹真受影响的 CVE 反查模板并提权」那条通道的唯一在线读数——
+      // cve_hits 长期为 0 说明指纹没对上情报（模板池瞄的不是这台机器）。
+      var srcs = items.sources && typeof items.sources === "object"
+        ? Object.keys(items.sources).map(function (k) { return k + ":" + items.sources[k]; }).join(" ") : "-";
+      html += '<div class="extras-box mono">' +
+        "候选池 " + esc(String(items.index_total || 0)) +
+        " · tag 命中 " + esc(String(items.tag_hits || 0)) +
+        " · 受影响 CVE " + esc(String(items.cve_total || 0)) +
+        " · CVE 命中模板 " + esc(String(items.cve_hits || 0)) +
+        "<br>本轮选入 " + esc(String(items.selected || 0)) + "/" + esc(String(items.budget || 0)) +
+        " · 来源 " + esc(srcs) + "</div>";
       return;
     }
     if (!items.length) { html += '<p class="muted" style="font-size:13px">未发现。</p>'; return; }
