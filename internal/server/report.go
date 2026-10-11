@@ -65,47 +65,46 @@ func htmlReport(rec *store.ScanRecord) string {
 	}
 	b.WriteString("</table>")
 
-	// 已验证发现
-	if rec.Result != nil {
-		b.WriteString("<h2>已验证发现（" + strconv.Itoa(len(rec.Result.Verified)) + "）</h2>")
-		if len(rec.Result.Verified) == 0 {
-			b.WriteString("<p>无</p>")
-		} else {
-			b.WriteString("<table><tr><th>严重度</th><th>标题</th><th>URL</th><th>证据</th><th>建议</th></tr>")
-			for _, v := range rec.Result.Verified {
-				sev, _ := v["severity"].(string)
-				tit, _ := v["title"].(string)
-				u, _ := v["url"].(string)
-				ev, _ := v["evidence"].(string)
-				ad, _ := v["advice"].(string)
-				rep, _ := v["replay"].(string)
-				cell := esc(ev)
-				if rep != "" {
+	// 已验证发现（按 (check, host, path) 归并 + 按来源分列）
+	groups := mergeVerified(rec.Result.Verified)
+	b.WriteString("<h2>已验证发现（" + strconv.Itoa(len(groups)) + " 项 / 原始 " + strconv.Itoa(len(rec.Result.Verified)) + " 条）</h2>")
+	if len(groups) == 0 {
+		b.WriteString("<p>无</p>")
+	} else {
+		order, bySrc := splitBySrc(groups)
+		for _, src := range order {
+			rows := bySrc[src]
+			b.WriteString("<h3>" + esc(srcLabel(src)) + "（" + strconv.Itoa(len(rows)) + "）</h3>")
+			b.WriteString("<table><tr><th>严重度</th><th>来源</th><th>标题</th><th>URL</th><th>证据</th><th>建议</th></tr>")
+			for _, g := range rows {
+				cell := esc(strings.Join(g.Evidence, "；"))
+				if g.Replay != "" {
 					// 证据链：curl 一键复现命令随报告交付（2.0 验证器语义）
 					cell += `<details style="margin-top:6px"><summary style="cursor:pointer">复现命令</summary>` +
 						`<pre style="white-space:pre-wrap;background:#0f172a;color:#e2e8f0;padding:8px;border-radius:6px;overflow:auto">` +
-						esc(rep) + "</pre></details>"
+						esc(g.Replay) + "</pre></details>"
 				}
-				b.WriteString("<tr><td class=\"sev-" + sevClass(sev) + "\">" + sevClass(sev) + "</td><td>" + esc(tit) + "</td><td>" + esc(u) + "</td><td>" + cell + "</td><td>" + esc(ad) + "</td></tr>")
+				us := strings.Join(g.URLs, "<br>")
+				b.WriteString("<tr><td class=\"sev-" + sevClass(g.Severity) + "\">" + sevClass(g.Severity) + "</td><td>" + esc(g.srcSummary()) + "</td><td>" + esc(g.Title) + "</td><td>" + esc(us) + "</td><td>" + cell + "</td><td>" + esc(g.Advice) + "</td></tr>")
 			}
 			b.WriteString("</table>")
 		}
+	}
 
-		// 漏洞情报
-		b.WriteString("<h2>漏洞情报关联（" + strconv.Itoa(len(rec.Result.Vulnerabilities)) + "）</h2>")
-		if len(rec.Result.Vulnerabilities) == 0 {
-			b.WriteString("<p>无</p>")
-		} else {
-			b.WriteString("<table><tr><th>严重度</th><th>技术</th><th>CVE</th><th>名称</th><th>判定</th><th>KEV</th></tr>")
-			for _, v := range rec.Result.Vulnerabilities {
-				kev := ""
-				if v.KEV {
-					kev = "KEV!"
-				}
-				b.WriteString("<tr><td class=\"sev-" + sevClass(v.Severity) + "\">" + esc(v.SeverityZh) + "</td><td>" + esc(v.Tech) + "</td><td>" + esc(v.CVE) + "</td><td>" + esc(v.Name) + "</td><td>" + esc(v.Verdict) + "</td><td>" + kev + "</td></tr>")
+	// 漏洞情报
+	b.WriteString("<h2>漏洞情报关联（" + strconv.Itoa(len(rec.Result.Vulnerabilities)) + "）</h2>")
+	if len(rec.Result.Vulnerabilities) == 0 {
+		b.WriteString("<p>无</p>")
+	} else {
+		b.WriteString("<table><tr><th>严重度</th><th>技术</th><th>CVE</th><th>名称</th><th>判定</th><th>KEV</th></tr>")
+		for _, v := range rec.Result.Vulnerabilities {
+			kev := ""
+			if v.KEV {
+				kev = "KEV!"
 			}
-			b.WriteString("</table>")
+			b.WriteString("<tr><td class=\"sev-" + sevClass(v.Severity) + "\">" + esc(v.SeverityZh) + "</td><td>" + esc(v.Tech) + "</td><td>" + esc(v.CVE) + "</td><td>" + esc(v.Name) + "</td><td>" + esc(v.Verdict) + "</td><td>" + kev + "</td></tr>")
 		}
+		b.WriteString("</table>")
 	}
 	b.WriteString("<p style=\"color:#64748b;font-size:12px\">由 SiteLens " + Version + " 生成；发现为辅助人工复查线索，非最终判决。</p>")
 	b.WriteString("</body></html>")
@@ -152,22 +151,24 @@ func markdownReport(rec *store.ScanRecord) string {
 		b.WriteString("\n")
 	}
 
-	// 已验证发现
-	verified := rec.Result.Verified
-	b.WriteString("## 已验证发现（" + strconv.Itoa(len(verified)) + "）\n\n")
-	if len(verified) == 0 {
+	// 已验证发现（按 (check, host, path) 归并 + 按来源分列）
+	groups := mergeVerified(rec.Result.Verified)
+	b.WriteString("## 已验证发现（" + strconv.Itoa(len(groups)) + " 项 / 原始 " + strconv.Itoa(len(rec.Result.Verified)) + " 条）\n\n")
+	if len(groups) == 0 {
 		b.WriteString("无\n\n")
 	} else {
-		b.WriteString("| 严重度 | 标题 | URL | 证据 | 建议 |\n|---|---|---|---|---|\n")
-		for _, v := range verified {
-			sev, _ := v["severity"].(string)
-			tit, _ := v["title"].(string)
-			u, _ := v["url"].(string)
-			ev, _ := v["evidence"].(string)
-			ad, _ := v["advice"].(string)
-			b.WriteString("| " + sevClass(sev) + " | " + mdCell(tit) + " | " + mdCell(u) + " | " + mdCell(ev) + " | " + mdCell(ad) + " |\n")
+		order, bySrc := splitBySrc(groups)
+		for _, src := range order {
+			rows := bySrc[src]
+			b.WriteString("### " + srcLabel(src) + "（" + strconv.Itoa(len(rows)) + "）\n\n")
+			b.WriteString("| 严重度 | 来源 | 标题 | URL | 证据 | 建议 |\n|---|---|---|---|---|---|\n")
+			for _, g := range rows {
+				b.WriteString("| " + sevClass(g.Severity) + " | " + mdCell(g.srcSummary()) + " | " + mdCell(g.Title) +
+					" | " + mdCell(strings.Join(g.URLs, " ")) + " | " + mdCell(strings.Join(g.Evidence, "；")) +
+					" | " + mdCell(g.Advice) + " |\n")
+			}
+			b.WriteString("\n")
 		}
-		b.WriteString("\n")
 	}
 
 	// 配置卫生（extras.hygiene）：配置事实，与漏洞验证分列
