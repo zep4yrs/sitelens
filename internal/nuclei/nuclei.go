@@ -29,16 +29,17 @@ import (
 
 // Entry 索引条目（建索引时一次全量 Convert 验证）。
 type Entry struct {
-	Path        string   `json:"path"`            // 相对 dir
-	Name        string   `json:"name"`            // 模板名（相关度排序用）
-	Tags        []string `json:"tags"`            // 精确 tags（来自完整 Convert）
-	Sev         string   `json:"sev"`             // 精确严重度
-	CVEs        []string `json:"cves,omitempty"`  // 模板声明的 CVE（模板情报层）
-	Proto       string   `json:"proto,omitempty"` // tcp|dns|ssl = 协议模板（空 = HTTP）
-	MTime       int64    `json:"mtime"`           // 文件修改时间
-	Size        int64    `json:"size"`            // 文件大小
-	Convertible bool     `json:"convertible"`     // 能通过漏斗转换为可执行 check
-	LastRun     int64    `json:"lastrun"`         // 最近一次运行时间（unix nano；0=从未）
+	Path        string   `json:"path"`             // 相对 dir
+	Name        string   `json:"name"`             // 模板名（相关度排序用）
+	Tags        []string `json:"tags"`             // 精确 tags（来自完整 Convert）
+	Sev         string   `json:"sev"`              // 精确严重度
+	CVEs        []string `json:"cves,omitempty"`   // 模板声明的 CVE（模板情报层）
+	Proto       string   `json:"proto,omitempty"`  // tcp|dns|ssl = 协议模板（空 = HTTP）
+	MTime       int64    `json:"mtime"`            // 文件修改时间
+	Size        int64    `json:"size"`             // 文件大小
+	Convertible bool     `json:"convertible"`      // 能通过漏斗转换为可执行 check
+	LastRun     int64    `json:"lastrun"`          // 最近一次运行时间（unix nano；0=从未）
+	Source      string   `json:"source,omitempty"` // 模板来源类别（路径归一，见 NormalizeSource）
 }
 
 // cacheSchema 索引缓存格式版本——格式变更时递增以强制重建
@@ -46,7 +47,8 @@ type Entry struct {
 // v5：raw 请求形态 + afrog 经典形态接入，同批文件可转换面扩大。
 // v6：Entry 增 CVEs 字段（模板情报层）。
 // v7：协议模板准入（tcp/dns/ssl，Proto 字段）。
-const cacheSchema = 7
+// v8：Entry 增 Source 字段（路径归一来源类别，输出分列口径）。
+const cacheSchema = 8
 
 type cacheFile struct {
 	Schema  int     `json:"schema"`
@@ -138,6 +140,7 @@ func Index(dir, cachePath string) ([]Entry, error) {
 				Sev:         sev,
 				Tags:        tags,
 				CVEs:        cves,
+				Source:      NormalizeSource(rel),
 				Proto:       proto,
 				MTime:       st.ModTime().Unix(),
 				Size:        st.Size(),
@@ -167,6 +170,46 @@ func IndexCached(cachePath string) []Entry {
 		return nil
 	}
 	return cached.Entries
+}
+
+// sourceTop 来源类别白名单——与 sync.go 的镜像目录一一对应（HTTP 11 类
+// + 协议 3 类），另加 legacy 与 unknown 兜底。归一化只认这一张表，
+// 保证 Source 是稳定枚举，不随模板库目录命名漂移。
+var sourceTop = map[string]bool{
+	"cves": true, "exposed-panels": true, "technologies": true,
+	"vulnerabilities": true, "misconfiguration": true, "exposures": true,
+	"default-logins": true, "takeovers": true, "miscellaneous": true,
+	"fuzzing": true, "cnvd": true,
+	"network": true, "dns": true, "ssl": true,
+	"legacy": true,
+}
+
+// NormalizeSource 从模板相对路径归一出来源类别。
+// 实际落盘形态有二：
+//   - http/<类别>/…（HTTP 模板统一挂 http/ 下，类别是第二段）
+//   - <协议>/…（network/dns/ssl，类别即首段）
+//
+// 另有 legacy/ 旧语料。白名单外一律归 unknown——保证 Source 是稳定枚举，
+// 不随模板库目录命名漂移。目的是让输出层按来源分列、口径能单算，
+// 不参与任何判定或排序。
+func NormalizeSource(rel string) string {
+	rel = strings.TrimPrefix(filepath.ToSlash(rel), "./")
+	segs := strings.Split(rel, "/")
+	if len(segs) == 0 {
+		return "unknown"
+	}
+	first := strings.ToLower(strings.TrimSpace(segs[0]))
+	// http/ 前缀下取第二段（类别）；协议类与 legacy 取首段。
+	if first == "http" {
+		if len(segs) < 2 {
+			return "unknown"
+		}
+		first = strings.ToLower(strings.TrimSpace(segs[1]))
+	}
+	if sourceTop[first] {
+		return first
+	}
+	return "unknown"
 }
 
 var (
