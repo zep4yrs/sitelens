@@ -13,7 +13,6 @@ package diag
 import (
 	"fmt"
 	"os"
-	"path/filepath"
 	"runtime"
 	"sort"
 	"strings"
@@ -213,11 +212,23 @@ func ConfigSummary(cfg *config.Config) map[string]any {
 }
 
 // maskPath 只保留路径的最后一段（文件名/目录名），不暴露本机目录结构。
+//
+// 不用 filepath.Base：平台相关的分隔符语义会把另一种分隔符当普通字符——
+// 在 Linux 上 filepath.Base(`C:\Users\x\state`) 会原样返回整串，等于没脱敏
+// （诊断包完全可能在 Windows 采集、Linux 复制分析，或反之）。这里同时认
+// `/` 与 `\`，两种形态都只保留最后一段。
 func maskPath(p string) string {
 	if p == "" {
 		return ""
 	}
-	return filepath.Base(filepath.Clean(p))
+	trimmed := strings.TrimRight(p, `/\`)
+	if trimmed == "" {
+		return ""
+	}
+	if i := strings.LastIndexAny(trimmed, `/\`); i >= 0 {
+		return trimmed[i+1:]
+	}
+	return trimmed
 }
 
 // renderText 渲染成可直接粘贴到 Issue 的纯文本。

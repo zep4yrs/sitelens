@@ -45,11 +45,17 @@ func TestConfigSummaryNeverLeaksSecrets(t *testing.T) {
 }
 
 // TestMaskPathOnlyBaseName 路径只保留最后一段，不暴露本机目录结构。
+//
+// 诊断包跨平台使用（Windows 采集 → Linux 分析，反之亦然），所以两种
+// 分隔符都要按分隔符处理：在 Linux 上跑本用例时必须也能脱掉 `C:\...`。
 func TestMaskPathOnlyBaseName(t *testing.T) {
 	cases := map[string]string{
 		`C:\Users\realname\state`:   "state",
 		"/home/user/data/state":     "state",
 		"data/go/technologies.json": "technologies.json",
+		`C:\mixed/sep\path/data`:    "data",
+		`C:\Users\realname\state\`:  "state", // 尾部分隔符
+		"/":                         "",      // 根路径没有可展示段
 		"":                          "",
 	}
 	for in, want := range cases {
