@@ -2,7 +2,7 @@ module cnb.cool/feng-qiao/sitelens
 
 go 1.26
 
-toolchain go1.26.9
+toolchain go1.26.10
 
 require (
 	github.com/chromedp/chromedp v0.16.0
