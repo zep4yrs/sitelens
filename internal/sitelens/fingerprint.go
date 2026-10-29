@@ -77,7 +77,7 @@ type compiledTech struct {
 	tech       *Technology
 	headers    map[string][]pattern
 	cookies    []pattern
-	meta       map[string]*regexp.Regexp
+	meta       map[string]pattern // meta 名 → 预编译正则（带门控，省掉白跑正则）
 	html       []pattern
 	src        []pattern
 	inline     []pattern
@@ -87,11 +87,12 @@ type compiledTech struct {
 
 // pattern 字面量或正则的单个匹配模式。
 type pattern struct {
-	re    *regexp.Regexp // isLit=false 时可用
-	gate  string         // isLit=false 时：正则必然包含的最长字面量（小写预筛）
-	lit   string         // isLit=true 时的小写子串
-	raw   string         // 原始文本（证据显示用）
-	isLit bool
+	re       *regexp.Regexp // isLit=false 时可用
+	gate     string         // isLit=false 时：正则必然包含的最长字面量（小写预筛）
+	gateTree *gateNode      // isLit=false 时：正文通道必含字面量条件树（见 gate.go）
+	lit      string         // isLit=true 时的小写子串
+	raw      string         // 原始文本（证据显示用）
+	isLit    bool
 }
 
 // compilePats 编译模式组：无正则元字符的按字面量快路径处理；
@@ -99,12 +100,15 @@ type pattern struct {
 // 编译失败的模式跳过不 panic——社区指纹库（千级条目）里个别
 // RE2 不支持的形态（反向引用/环视）不该炸掉整个扫描进程。
 func compilePats(patterns []string) []pattern {
-	return compilePatsMode(patterns, false)
+	return compilePatsMode(patterns, false, nil)
 }
 
 // compilePatsMode exact=true 时全部按字面量精确包含处理（EHole 等
 // 关键词型社区指纹：关键词含正则元字符也不该按正则解释）。
-func compilePatsMode(patterns []string, exact bool) []pattern {
+// intern 非 nil 时按原始 pattern 串复用已编译正则：同一指纹库内 1980 条
+// 正则 pattern 实为 1759 条唯一模式，复用 *regexp.Regexp 还能让单次 Match
+// 内的正文正则结果缓存跨技术命中（缓存以 *regexp.Regexp 为键）。
+func compilePatsMode(patterns []string, exact bool, intern map[string]pattern) []pattern {
 	out := make([]pattern, 0, len(patterns))
 	for _, p := range patterns {
 		if p == "" {
@@ -114,8 +118,18 @@ func compilePatsMode(patterns []string, exact bool) []pattern {
 			out = append(out, pattern{lit: strings.ToLower(p), raw: p, isLit: true})
 			continue
 		}
+		if intern != nil {
+			if pat, ok := intern[p]; ok {
+				out = append(out, pat)
+				continue
+			}
+		}
 		if re, err := regexp.Compile("(?i)" + p); err == nil {
-			out = append(out, pattern{re: re, raw: p, gate: literalGate(p)})
+			pat := pattern{re: re, raw: p, gate: literalGate(p)}
+			if intern != nil {
+				intern[p] = pat
+			}
+			out = append(out, pat)
 		}
 	}
 	return out
@@ -243,6 +257,10 @@ func loadFrom(data json.RawMessage) ([]*compiledTech, error) {
 		return nil, err
 	}
 	out := make([]*compiledTech, 0, len(box.Technologies))
+	// 同库内按原始 pattern 串复用已编译正则（1,980 → 1,759 个 *regexp.Regexp）
+	intern := map[string]pattern{}
+	// 同串复用门控条件树（语法树解析只在加载期做一次）
+	gateCache := map[string]*gateNode{}
 	for _, t := range box.Technologies {
 		if len(t.Rules) == 0 || t.Name == "" {
 			continue
@@ -253,27 +271,39 @@ func loadFrom(data json.RawMessage) ([]*compiledTech, error) {
 		}
 		ct := &compiledTech{tech: &Technology{Name: t.Name, Cats: t.Cats, Conf: t.Conf}}
 		for name, pats := range rules.Headers {
-			if ps := compilePatsMode(pats, t.Exact); len(ps) > 0 {
+			if ps := compilePatsMode(pats, t.Exact, intern); len(ps) > 0 {
 				if ct.headers == nil {
 					ct.headers = make(map[string][]pattern)
 				}
 				ct.headers[strings.ToLower(unescapeName(name))] = ps
 			}
 		}
-		ct.cookies = compilePatsMode(rules.Cookies, t.Exact)
+		ct.cookies = compilePatsMode(rules.Cookies, t.Exact, intern)
 		for name, p := range rules.Meta {
 			if p == "" {
 				continue
 			}
 			if ct.meta == nil {
-				ct.meta = make(map[string]*regexp.Regexp)
+				ct.meta = make(map[string]pattern)
 			}
-			// 键名是 meta 名而非正则：反转义历史导出中的 \. \- 序列
-			ct.meta[strings.ToLower(unescapeName(name))] = regexp.MustCompile("(?i)" + p)
+			// 键名是 meta 名而非正则：反转义历史导出中的 \. \- 序列。
+			// 值仍按正则处理（含简单字面量）。门控只用语法树条件树：旧
+			// literalGate 会把 `\s`/`\d` 之类转义当字面量字符（WordPress 的
+			// `WordPress\s*([\d.]+)?` 会推出 "wordpresss"），而 meta 通道历史上
+			// 没有门控，套用旧门会改变判定（实测漏 WordPress）。
+			raw := p
+			ct.meta[strings.ToLower(unescapeName(name))] = pattern{
+				re: regexp.MustCompile("(?i)" + raw), raw: raw,
+				gateTree: gateTreeFor(raw, gateCache),
+			}
 		}
-		ct.html = compilePatsMode(rules.HTML, t.Exact)
-		ct.src = compilePats(rules.Scripts.Src)
-		ct.inline = compilePats(rules.Scripts.Content)
+		ct.html = compilePatsMode(rules.HTML, t.Exact, intern)
+		ct.src = compilePatsMode(rules.Scripts.Src, false, intern)
+		ct.inline = compilePatsMode(rules.Scripts.Content, false, intern)
+		// 正文通道（html/inline）正则挂「必含字面量」条件树：加载期推导一次，
+		// 匹配期只做字面量存在性判定，避免在 40KB 正文上白跑 NFA。
+		attachGateTrees(ct.html, gateCache)
+		attachGateTrees(ct.inline, gateCache)
 		ct.iconHashes = rules.IconHash
 		ct.usable = len(ct.headers) > 0 || len(ct.cookies) > 0 ||
 			len(ct.meta) > 0 || len(ct.html) > 0 ||
@@ -293,14 +323,82 @@ func versionFromMatch(m []string) string {
 	return ""
 }
 
+// matchCtx 单次 Match 的输入级预筛与缓存：跨全部技术复用，避免同一份证据
+// 被重复 ToLower / 重复门控 Contains / 重复执行同一个正则。
+type matchCtx struct {
+	bodyLow     string                         // 正文小写（Evidence 惰性缓存）
+	litHits     map[string]bool                // html 字面量命中集合（nil = 无预筛）
+	gateHits    map[string]bool                // 正文通道正则门控命中集合（nil = 无预筛）
+	gatePresent func(string) bool              // 正文预筛的字面量存在性判定（nil = 无预筛）
+	reCache     map[*regexp.Regexp]regexResult // 正文正则结果缓存（同页同正则只执行一次）
+	hdrVal      map[string]string              // 小写头名 → 原始头值（对齐 EqualFold 取头语义）
+	hdrLow      map[string]string              // 小写头名 → 小写头值
+	hdrList     []headerPair                   // 通配头分支：原始头名/值/小写值
+	metaPresent map[string]func(string) bool   // meta 名 → 该 meta 内容的小写字面量存在性判定
+}
+
+// headerPair 一个响应头（通配头通道按头遍历用）。
+type headerPair struct{ name, val, low string }
+
+// regexResult 一次正文正则执行的结果（text 为空 = 未命中）。
+type regexResult struct {
+	text string
+	subs []string
+}
+
+func newMatchCtx(ev *Evidence) *matchCtx {
+	mc := &matchCtx{bodyLow: ev.lowerBody()}
+	if len(ev.Headers) > 0 {
+		mc.hdrVal = make(map[string]string, len(ev.Headers))
+		mc.hdrLow = make(map[string]string, len(ev.Headers))
+		mc.hdrList = make([]headerPair, 0, len(ev.Headers))
+		for k, v := range ev.Headers {
+			lk := strings.ToLower(k)
+			low := strings.ToLower(v)
+			// 同名（大小写不敏感）头只取一个：与旧 EqualFold 遍历取首个的语义对齐
+			if _, ok := mc.hdrVal[lk]; !ok {
+				mc.hdrVal[lk] = v
+				mc.hdrLow[lk] = low
+			}
+			mc.hdrList = append(mc.hdrList, headerPair{name: k, val: v, low: low})
+		}
+	}
+	if len(ev.Metas) > 0 {
+		mc.metaPresent = make(map[string]func(string) bool, len(ev.Metas))
+		for name, content := range ev.Metas {
+			low := strings.ToLower(content)
+			mc.metaPresent[name] = func(lit string) bool { return strings.Contains(low, lit) }
+		}
+	}
+	return mc
+}
+
+// findBodyPattern 在正文中匹配单个模式：字面量走 Contains；正则走单次 Match
+// 内的结果缓存（同一 *regexp.Regexp 在同一份正文上只执行一次，加载期已按
+// 原始 pattern 串 intern，重复 pattern 共享同一 *regexp.Regexp）。
+func (mc *matchCtx) findBodyPattern(p pattern, body string) (string, []string) {
+	if p.isLit || p.re == nil {
+		return p.findIn(body, mc.bodyLow)
+	}
+	if r, ok := mc.reCache[p.re]; ok {
+		return r.text, r.subs
+	}
+	text, subs := p.findIn(body, mc.bodyLow)
+	if mc.reCache == nil {
+		mc.reCache = make(map[*regexp.Regexp]regexResult, 8)
+	}
+	mc.reCache[p.re] = regexResult{text: text, subs: subs}
+	return text, subs
+}
+
 // Match 对已采集证据应用全部指纹，返回命中列表。
 // 通道语义与 Python 版一致：通道内任一正则命中即该通道成立；
 // 单条指纹声明多个通道时，全部通道命中才算命中（AND）。
 func Match(techs []*compiledTech, ev *Evidence) []Hit {
 	hits := make([]Hit, 0, 8)
-	bodyLow := strings.ToLower(ev.Body)
+	mc := newMatchCtx(ev)
 	for _, ct := range techs {
-		if evName, evVer, ok := ct.match(ev, bodyLow, nil); ok {
+		if evName, evVer, ok := ct.match(ev, mc); ok {
 			hits = append(hits, Hit{
 				Name: ct.tech.Name, Cats: ct.tech.Cats, Conf: ct.tech.Conf,
 				Evidence: evName, Version: evVer,
@@ -313,15 +411,17 @@ func Match(techs []*compiledTech, ev *Evidence) []Hit {
 // MatchPrescreen 带字面量预筛的匹配：对全部 html 字面量模式做一次
 // 前缀桶单遍扫描（O(正文长度)），逐技术改为查表——万级指纹库下把
 // 「模式数 × 正文长度」的 Contains 总量压成一次正文扫描。
+// 正则门控字面量并入同一次扫描（gateHits）：门不命中即跳过正则，
+// 等价于旧实现在正文小写上的逐正则 strings.Contains。
 func MatchPrescreen(techs []*compiledTech, ev *Evidence, ps *litPrescreen) []Hit {
 	hits := make([]Hit, 0, 8)
-	bodyLow := strings.ToLower(ev.Body)
-	var litHits map[string]bool
+	mc := newMatchCtx(ev)
 	if ps != nil && len(ps.buckets) > 0 {
-		litHits = ps.scan(bodyLow)
+		mc.litHits, mc.gateHits = ps.scan(mc.bodyLow)
+		mc.gatePresent = func(lit string) bool { return mc.gateHits[lit] }
 	}
 	for _, ct := range techs {
-		if evName, evVer, ok := ct.match(ev, bodyLow, litHits); ok {
+		if evName, evVer, ok := ct.match(ev, mc); ok {
 			hits = append(hits, Hit{
 				Name: ct.tech.Name, Cats: ct.tech.Cats, Conf: ct.tech.Conf,
 				Evidence: evName, Version: evVer,
@@ -332,9 +432,8 @@ func MatchPrescreen(techs []*compiledTech, ev *Evidence, ps *litPrescreen) []Hit
 }
 
 // match 按通道顺序应用证据；返回 (证据描述, 版本, 是否命中)。
-// bodyLow 为正文小写形态（调用方提升一次），litHits 为全局字面量预筛
-// 结果（nil = 无预筛，逐模式 Contains）。
-func (ct *compiledTech) match(ev *Evidence, bodyLow string, litHits map[string]bool) (string, string, bool) {
+// mc 为单次 Match 共享的正文级上下文（小写正文 / 字面量预筛 / 正则结果缓存）。
+func (ct *compiledTech) match(ev *Evidence, mc *matchCtx) (string, string, bool) {
 	if len(ct.headers) > 0 {
 		for name, pats := range ct.headers {
 			if name == "*" {
@@ -343,24 +442,23 @@ func (ct *compiledTech) match(ev *Evidence, bodyLow string, litHits map[string]b
 				// 同样要求强关键词命中：如 must-revalidate / no-cache 之类
 				// 通用缓存头值不构成产品识别依据（曾把 SAMSUNG-SNB-2000
 				// 判在无关联的站点上）。
-				for hn, hv := range ev.Headers {
-					if hv == "" {
+				for _, hp := range mc.hdrList {
+					if hp.val == "" {
 						continue
 					}
-					hvLow := strings.ToLower(hv)
 					for _, p := range pats {
-						if p.isLit && strings.Contains(hvLow, p.lit) && !weakKeyword(p.raw) {
-							return fmt.Sprintf("%s=%s", hn, truncate(hv, 80)), "", true
+						if p.isLit && strings.Contains(hp.low, p.lit) && !weakKeyword(p.raw) {
+							return fmt.Sprintf("%s=%s", hp.name, truncate(hp.val, 80)), "", true
 						}
 					}
 				}
 				continue
 			}
-			val := ev.Header(name)
+			val := mc.hdrVal[name]
 			if val == "" {
 				continue
 			}
-			valLow := strings.ToLower(val)
+			valLow := mc.hdrLow[name]
 			for _, p := range pats {
 				if text, subs := p.findIn(val, valLow); text != "" {
 					return fmt.Sprintf("%s=%s", name, truncate(val, 80)),
@@ -379,12 +477,19 @@ func (ct *compiledTech) match(ev *Evidence, bodyLow string, litHits map[string]b
 		}
 	}
 	if len(ct.meta) > 0 {
-		for metaName, re := range ct.meta {
-			if content := ev.Metas[metaName]; content != "" {
-				if m := re.FindStringSubmatch(content); m != nil {
-					return fmt.Sprintf("meta %s=%s", metaName,
-						truncate(content, 60)), versionFromMatch(m), true
-				}
+		for metaName, p := range ct.meta {
+			content := ev.Metas[metaName]
+			if content == "" {
+				continue
+			}
+			// 必含字面量门控：meta 内容短，但万级指纹逐条执行正则的机器开销
+			// 不小；门控只做字面量存在性判定，结果与执行正则一致。
+			if p.gateMiss(mc.metaPresent[metaName]) {
+				continue
+			}
+			if m := p.re.FindStringSubmatch(content); m != nil {
+				return fmt.Sprintf("meta %s=%s", metaName,
+					truncate(content, 60)), versionFromMatch(m), true
 			}
 		}
 	}
@@ -405,9 +510,9 @@ func (ct *compiledTech) match(ev *Evidence, bodyLow string, litHits map[string]b
 		var fallback string // 弱命中或产品名单命中：有更强证据才采信
 		strongSeen := []string{}
 		for _, p := range ct.html {
-			if p.isLit && litHits != nil {
+			if p.isLit && mc.litHits != nil {
 				// 预筛已含该字面量才可能命中，省掉逐技术 Contains
-				if !litHits[p.lit] {
+				if !mc.litHits[p.lit] {
 					continue
 				}
 				desc := fmt.Sprintf("关键词 %s", truncate(p.raw, 40))
@@ -426,7 +531,12 @@ func (ct *compiledTech) match(ev *Evidence, bodyLow string, litHits map[string]b
 				}
 				return desc, "", true
 			}
-			if text, subs := p.findIn(ev.Body, bodyLow); text != "" {
+			// 正文通道正则的必含字面量门控（旧最长字面量门 + 语法树条件）：
+			// 条件确定不成立即可跳过，等价于执行正则后必然不命中。
+			if !p.isLit && p.gateMiss(mc.gatePresent) {
+				continue
+			}
+			if text, subs := mc.findBodyPattern(p, ev.Body); text != "" {
 				return fmt.Sprintf("正则 %s", truncate(p.raw, 40)),
 					versionFromMatch(subs), true
 			}
@@ -448,7 +558,10 @@ func (ct *compiledTech) match(ev *Evidence, bodyLow string, litHits map[string]b
 		}
 		if len(ct.inline) > 0 {
 			for _, p := range ct.inline {
-				if text, subs := p.findIn(ev.Body, bodyLow); text != "" {
+				if !p.isLit && p.gateMiss(mc.gatePresent) {
+					continue
+				}
+				if text, subs := mc.findBodyPattern(p, ev.Body); text != "" {
 					return fmt.Sprintf("内联JS %s", truncate(text, 40)),
 						versionFromMatch(subs), true
 				}

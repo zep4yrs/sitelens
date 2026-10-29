@@ -3,7 +3,9 @@ package httpx
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -332,5 +334,365 @@ func TestDialContextRejectsPrivateResolvedDomain(t *testing.T) {
 	}
 	if reached.Load() {
 		t.Fatal("混合答案不应拨出任何连接")
+	}
+}
+
+// ---- 5.2 性能优化：拨号层轻量 Happy Eyeballs（RFC 8305） --------------------
+//
+// 回归背景：BUG-021 的初版修法为了消除 DNS 重绑定窗口，对已校验 IP 串行
+// 拨号，丢失了 Go 默认 Transport 的 Happy Eyeballs。多 A 记录 / IPv6 黑洞
+// 场景下首个地址拒绝或丢包会把请求一路拖到超时（每地址最长 30s）。
+//
+// 测试手法：拨号动作已抽成可注入的 c.dial（生产 nil = baseDialer），用 fake
+// 拨号器精确控制「哪个地址何时成功/黑洞」，不依赖真实网络、无公网。
+// 所有耗时断言都留 ≥8 倍余量，-count=5 不抖动。
+
+// stubAddr / stubConn 单次拨号返回的占位连接：只关心 Close 状态与身份，
+// 不承载真实 IO（Happy Eyeballs 调度与 HTTP 报文无关）。
+type stubAddr struct{}
+
+func (stubAddr) Network() string { return "tcp" }
+func (stubAddr) String() string  { return "stub" }
+
+type stubConn struct{ closed atomic.Bool }
+
+func (c *stubConn) Read([]byte) (int, error)    { return 0, io.EOF }
+func (c *stubConn) Write(p []byte) (int, error) { return len(p), nil }
+func (c *stubConn) Close() error                { c.closed.Store(true); return nil }
+func (c *stubConn) LocalAddr() net.Addr         { return stubAddr{} }
+func (c *stubConn) RemoteAddr() net.Addr        { return stubAddr{} }
+func (c *stubConn) SetDeadline(time.Time) error { return nil }
+func (c *stubConn) SetReadDeadline(time.Time) error {
+	return nil
+}
+func (c *stubConn) SetWriteDeadline(time.Time) error { return nil }
+
+func addrStrs(addrs []netip.Addr) string {
+	parts := make([]string, 0, len(addrs))
+	for _, a := range addrs {
+		parts = append(parts, a.String())
+	}
+	return strings.Join(parts, ",")
+}
+
+// TestDialCandidatesInterleaveAndCap 候选序：IPv6/IPv4 交错（首选族取首个解析
+// 结果）、单族原序、交错后再截断到 maxDialAddrs（避免一长串同族地址把另一族
+// 全挤出窗口）。
+func TestDialCandidatesInterleaveAndCap(t *testing.T) {
+	v4 := func(i int) netip.Addr { return netip.MustParseAddr(fmt.Sprintf("203.0.113.%d", i)) }
+	v6 := func(i int) netip.Addr { return netip.MustParseAddr(fmt.Sprintf("2001:db8::%d", i)) }
+
+	cases := []struct {
+		name string
+		in   []netip.Addr
+		want string
+	}{
+		{"空输入", nil, ""},
+		{"单地址", []netip.Addr{v4(1)}, "203.0.113.1"},
+		{"单族保持原序", []netip.Addr{v4(1), v4(2), v4(3)}, "203.0.113.1,203.0.113.2,203.0.113.3"},
+		{
+			"v6 优先交错",
+			[]netip.Addr{v6(1), v4(1), v6(2), v4(2)},
+			"2001:db8::1,203.0.113.1,2001:db8::2,203.0.113.2",
+		},
+		{
+			"v4 优先交错",
+			[]netip.Addr{v4(1), v6(1), v4(2), v6(2)},
+			"203.0.113.1,2001:db8::1,203.0.113.2,2001:db8::2",
+		},
+		{
+			// v6 全在前 + 两族各 6 条：先交错再截断 → 未截断时会只剩 v6。
+			"交错后截断到上限",
+			[]netip.Addr{v6(1), v6(2), v6(3), v6(4), v6(5), v6(6),
+				v4(1), v4(2), v4(3), v4(4), v4(5), v4(6)},
+			"2001:db8::1,203.0.113.1,2001:db8::2,203.0.113.2," +
+				"2001:db8::3,203.0.113.3,2001:db8::4,203.0.113.4",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := addrStrs(dialCandidates(tc.in)); got != tc.want {
+				t.Fatalf("候选序不符\n got: %s\nwant: %s", got, tc.want)
+			}
+		})
+	}
+}
+
+// TestHappyEyeballsBlackholeFirstIP 验收①：首候选地址黑洞、次候选可用时，
+// 必须在 ~stagger 后连上第二个地址，而不是等首地址超时。
+//
+// 同时验收②：落败尝试（黑洞那个）必须收到取消并及时退出（不泄漏 goroutine）；
+// 胜者连接被原样返回。
+func TestHappyEyeballsBlackholeFirstIP(t *testing.T) {
+	old := target.AllowPrivate()
+	target.SetAllowPrivate(true)
+	defer target.SetAllowPrivate(old)
+
+	const (
+		blackholeIP = "203.0.113.9"
+		goodIP      = "198.51.100.7"
+	)
+	var (
+		mu          sync.Mutex
+		dials       []string
+		cancelOnce  sync.Once
+		blackholeCh = make(chan struct{})
+		goodConn    = &stubConn{}
+		goodDials   atomic.Int32
+	)
+	c := NewWithOptions(ClientOptions{Resolve: true})
+	c.lookupIP = func(context.Context, string) ([]netip.Addr, error) {
+		return []netip.Addr{
+			netip.MustParseAddr(blackholeIP),
+			netip.MustParseAddr(goodIP),
+		}, nil
+	}
+	c.dial = func(ctx context.Context, network, addr string) (net.Conn, error) {
+		host, _, _ := net.SplitHostPort(addr)
+		mu.Lock()
+		dials = append(dials, host)
+		mu.Unlock()
+		if host == goodIP {
+			goodDials.Add(1)
+			return goodConn, nil
+		}
+		<-ctx.Done() // 黑洞：真实网络里会挂到 30s 拨号超时 / ctx 超时
+		cancelOnce.Do(func() { close(blackholeCh) })
+		return nil, ctx.Err()
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	baseGoroutines := runtime.NumGoroutine()
+	start := time.Now()
+	conn, err := c.dialContext(ctx, "tcp", net.JoinHostPort("he-blackhole.invalid", "443"))
+	elapsed := time.Since(start)
+
+	if err != nil {
+		t.Fatalf("次候选可用时应在 stagger 后连上，实际失败（耗时 %v）：%v", elapsed, err)
+	}
+	if conn != goodConn {
+		t.Fatalf("返回的连接应来自可用地址 %s", goodIP)
+	}
+	if goodDials.Load() != 1 {
+		t.Fatalf("可用地址应只拨一次，实际 %d 次", goodDials.Load())
+	}
+	// 上界：远小于黑洞地址挂满 ctx/30s 的串行实现（本机无网络、仅 fake 拨号，
+	// 留 12 倍余量防 CI/并发构建下的调度抖动）。
+	if elapsed > 3*time.Second {
+		t.Fatalf("黑洞首地址把拨号拖了 %v（应 ≈ stagger %v + 握手）：仍是串行拨号",
+			elapsed, happyEyeballsStagger)
+	}
+	// 下界：第二个尝试必须错峰（不是同时发起）——完成后才启动/立即发起都会小于 100ms。
+	if elapsed < 100*time.Millisecond {
+		t.Fatalf("次尝试在 %v 就绪，早于 stagger %v：未按 RFC 8305 错峰",
+			elapsed, happyEyeballsStagger)
+	}
+	// 落败的黑洞尝试必须被取消（否则它要挂到 ctx 超时，每个请求泄漏一条连接）。
+	select {
+	case <-blackholeCh:
+	case <-time.After(2 * time.Second):
+		t.Fatal("黑洞首地址的尝试未被取消：胜者未 cancel 其余尝试 → goroutine/连接泄漏")
+	}
+	// 取消传导后尝试 goroutine 应回落（轮询给调度器一点时间，容忍 4 个余量）。
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		if n := runtime.NumGoroutine(); n <= baseGoroutines+4 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("拨号结束后 goroutine 为 %d（基线 %d）：尝试 goroutine 泄漏",
+				runtime.NumGoroutine(), baseGoroutines)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if len(dials) != 2 || dials[0] != blackholeIP || dials[1] != goodIP {
+		t.Fatalf("拨号顺序应是「首地址先试、stagger 后追加次地址」，实际 %v", dials)
+	}
+}
+
+// TestHappyEyeballsSingleIPFastPath 验收③：单地址正常路径不变——只拨一次、
+// 不等 stagger、成功连接原样返回。
+func TestHappyEyeballsSingleIPFastPath(t *testing.T) {
+	old := target.AllowPrivate()
+	target.SetAllowPrivate(true)
+	defer target.SetAllowPrivate(old)
+
+	want := &stubConn{}
+	var calls atomic.Int32
+	c := NewWithOptions(ClientOptions{Resolve: true})
+	c.lookupIP = func(context.Context, string) ([]netip.Addr, error) {
+		return []netip.Addr{netip.MustParseAddr("203.0.113.9")}, nil
+	}
+	c.dial = func(context.Context, string, string) (net.Conn, error) {
+		calls.Add(1)
+		return want, nil
+	}
+
+	start := time.Now()
+	conn, err := c.dialContext(context.Background(), "tcp", "single.invalid:80")
+	elapsed := time.Since(start)
+	if err != nil || conn != want {
+		t.Fatalf("单地址正常拨号失败：conn=%v err=%v", conn, err)
+	}
+	if calls.Load() != 1 {
+		t.Fatalf("单地址应只拨一次，实际 %d 次", calls.Load())
+	}
+	if elapsed > 2*happyEyeballsStagger {
+		t.Fatalf("单地址不应有 stagger 等待，实际耗时 %v", elapsed)
+	}
+}
+
+// TestHappyEyeballsAllFailReturnsLastAddrError 全部地址失败：返回候选序最靠后
+// 地址的真实错误（保留串行实现的 lastErr 语义），并在 ctx 到期前结束。
+func TestHappyEyeballsAllFailReturnsLastAddrError(t *testing.T) {
+	old := target.AllowPrivate()
+	target.SetAllowPrivate(true)
+	defer target.SetAllowPrivate(old)
+
+	const (
+		firstIP  = "203.0.113.9"
+		secondIP = "203.0.113.10"
+	)
+	errFirst := errors.New("dial 203.0.113.9: connection refused")
+	errSecond := errors.New("dial 203.0.113.10: connection refused")
+	var calls atomic.Int32
+	c := NewWithOptions(ClientOptions{Resolve: true})
+	c.lookupIP = func(context.Context, string) ([]netip.Addr, error) {
+		return []netip.Addr{netip.MustParseAddr(firstIP), netip.MustParseAddr(secondIP)}, nil
+	}
+	c.dial = func(_ context.Context, _ string, addr string) (net.Conn, error) {
+		calls.Add(1)
+		switch host, _, _ := net.SplitHostPort(addr); host {
+		case firstIP:
+			return nil, errFirst
+		case secondIP:
+			return nil, errSecond
+		default:
+			return nil, fmt.Errorf("unexpected addr %q", addr)
+		}
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	start := time.Now()
+	conn, err := c.dialContext(ctx, "tcp", "he-allfail.invalid:443")
+	elapsed := time.Since(start)
+	if conn != nil {
+		t.Fatal("全部地址失败时不应返回连接")
+	}
+	if !errors.Is(err, errSecond) {
+		t.Fatalf("应返回候选序最靠后地址的错误 %v，实际 %v", errSecond, err)
+	}
+	if calls.Load() != 2 {
+		t.Fatalf("两个候选地址都应尝试，实际 %d 次", calls.Load())
+	}
+	if elapsed > 2*time.Second {
+		t.Fatalf("全部失败应收敛于 stagger 级别，实际耗时 %v", elapsed)
+	}
+}
+
+// TestHappyEyeballsValidatesAllBeforeDial SSRF 语义不变：解析结果混入私网
+// 地址时必须整体拒绝，且一个连接都不发——并行握手只能拨「已校验 IP」，
+// 不能借并行去挑一个合规地址先连（那正是 BUG-021 要堵的重绑定路径）。
+func TestHappyEyeballsValidatesAllBeforeDial(t *testing.T) {
+	old := target.AllowPrivate()
+	target.SetAllowPrivate(false)
+	defer target.SetAllowPrivate(old)
+
+	var calls atomic.Int32
+	c := NewWithOptions(ClientOptions{Resolve: true})
+	c.lookupIP = func(context.Context, string) ([]netip.Addr, error) {
+		return []netip.Addr{
+			netip.MustParseAddr("203.0.113.9"), // 合规
+			netip.MustParseAddr("127.0.0.1"),   // 私网 → 整体拒绝
+		}, nil
+	}
+	c.dial = func(context.Context, string, string) (net.Conn, error) {
+		calls.Add(1)
+		return &stubConn{}, nil
+	}
+	if _, err := c.dialContext(context.Background(), "tcp", "mixed.invalid:443"); err == nil {
+		t.Fatal("解析结果混入私网地址时必须整体拒绝")
+	}
+	if n := calls.Load(); n != 0 {
+		t.Fatalf("全量校验未通过时不应发起任何拨号，实际 %d 次", n)
+	}
+}
+
+// TestResolveFalsePathUnchanged resolve=false（本地/内网靶场矩阵）路径必须
+// 完全不变：直接交给 baseDialer，不解析、不走 Happy Eyeballs 层。
+func TestResolveFalsePathUnchanged(t *testing.T) {
+	var injected atomic.Bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte("ok"))
+	}))
+	defer srv.Close()
+
+	c := New(0) // New 默认 Resolve=false
+	c.dial = func(ctx context.Context, network, addr string) (net.Conn, error) {
+		injected.Store(true)
+		return nil, errors.New("resolve=false 不应走并发拨号层")
+	}
+	resp, err := c.GetDirect(srv.URL + "/x")
+	if err != nil {
+		t.Fatalf("resolve=false 时回环请求应直接由 baseDialer 建连：%v", err)
+	}
+	if resp.Body != "ok" {
+		t.Fatalf("响应体不符：%q", resp.Body)
+	}
+	if injected.Load() {
+		t.Fatal("resolve=false 路径被改道到 Happy Eyeballs 拨号层")
+	}
+}
+
+// TestHappyEyeballsThroughHTTPClient 端到端：resolve=true 时多地址解析结果经
+// transport 拨号，黑洞首地址不拖慢请求；Host 头仍由 Transport 按域名生成。
+func TestHappyEyeballsThroughHTTPClient(t *testing.T) {
+	old := target.AllowPrivate()
+	target.SetAllowPrivate(true)
+	defer target.SetAllowPrivate(old)
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(r.Host)) // 回显 Host 供断言
+	}))
+	defer srv.Close()
+	port := testServerPort(t, srv.URL)
+
+	var calls atomic.Int32
+	c := NewWithOptions(ClientOptions{Resolve: true, Timeout: 5 * time.Second})
+	c.lookupIP = func(context.Context, string) ([]netip.Addr, error) {
+		return []netip.Addr{
+			netip.MustParseAddr("203.0.113.9"), // 黑洞首地址（文档段，合法）
+			netip.MustParseAddr("127.0.0.1"),   // 真实可达（授权靶场姿态）
+		}, nil
+	}
+	c.dial = func(ctx context.Context, network, addr string) (net.Conn, error) {
+		calls.Add(1)
+		if host, _, _ := net.SplitHostPort(addr); host == "127.0.0.1" {
+			return baseDialer.DialContext(ctx, network, addr)
+		}
+		<-ctx.Done() // 黑洞
+		return nil, ctx.Err()
+	}
+
+	const hostName = "he-e2e.invalid"
+	start := time.Now()
+	resp, err := c.GetDirect("http://" + hostName + ":" + port + "/x")
+	elapsed := time.Since(start)
+	if err != nil {
+		t.Fatalf("黑洞首地址不应拖垮请求（耗时 %v）：%v", elapsed, err)
+	}
+	if elapsed > 3*time.Second {
+		t.Fatalf("黑洞首地址把请求拖了 %v（应 ≈ stagger %v）", elapsed, happyEyeballsStagger)
+	}
+	if gotHost, _, herr := net.SplitHostPort(resp.Body); herr != nil || gotHost != hostName {
+		t.Fatalf("Host 头应保留原域名 %q，实际 %q（err=%v）", hostName, resp.Body, herr)
+	}
+	if calls.Load() != 2 {
+		t.Fatalf("应恰好尝试黑洞地址与可达地址各一次，实际 %d 次", calls.Load())
 	}
 }

@@ -18,9 +18,12 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
+	"sync/atomic"
 
 	"gopkg.in/yaml.v3"
 
@@ -53,40 +56,63 @@ type Entry struct {
 //
 //   - path 列表展开（BUG-022，check 数变化）→ 旧缓存必须整库重建，
 //     否则升级后仍按旧"仅 8 个来源可转换"的结论调度。
-const cacheSchema = 9
+//
+// v10：缓存增「目录 mtime 戳」（Dirs），热路径不再全量 walk 计数，
+// 改为逐个 stat 缓存里的目录戳（见 index_hot.go）。
+//
+//   - 升级影响：v9 及更旧缓存整体失效 → 升级后首次 Index 全量重建一次
+//     （144k 满池约数秒量级），之后每次扫描走热路径；IndexCached 在重建
+//     完成前返回 nil（保持"绝不 mid-scan 重建"语义）。
+//   - 5.2 索引构建优化（worker pool 并行 + 前端形状预筛）是纯性能改动：
+//     转换产物与 entries 顺序/去重语义经全语料差分对照确认逐条等价
+//     （见 index_equiv_test.go，5,094 文件 0 差异）。
+const cacheSchema = 10
 
 type cacheFile struct {
-	Schema  int     `json:"schema"`
-	Files   int     `json:"files"` // 目录内 yaml/yml 总数（缓存有效性依据）
-	Entries []Entry `json:"entries"`
+	Schema  int        `json:"schema"`
+	Files   int        `json:"files"` // 目录内 yaml/yml 总数（诊断用；热路径校验改用 Dirs）
+	Dirs    []dirStamp `json:"dirs"`  // v10：模板目录树 mtime 戳（热路径新鲜度校验）
+	Entries []Entry    `json:"entries"`
 }
 
-// Index 建立（或读取缓存的）模板索引。缓存失效策略：模板文件总数
-// 与缓存不一致或缓存格式版本不符时重建（模板库是可再生的大目录，
-// 不追求细粒度失效）。
+// indexWorkersCap 索引构建并行度上限。模板转换是 CPU 密集型（YAML 解析
+// 占绝对大头），并行收益受核数约束；上限 8 是折中——再高收益递减，且
+// 重建索引常与扫描/服务同机运行，不宜吃满全部核。
+const indexWorkersCap = 8
+
+// tplFileResult 单模板文件的并行转换结果。只承载「与顺序无关」的逐文件
+// 产物；entries 顺序与 legacy 两轮同名去重仍在收集阶段按原下标顺序串行
+// 回放（见 Index），语义与旧的顺序实现逐条一致。
+type tplFileResult struct {
+	ok     bool // 漏斗通过，可入索引
+	rel    string
+	name   string
+	sev    string
+	tags   []string
+	cves   []string
+	source string
+	proto  string
+	mtime  int64
+	size   int64
+}
+
+// Index 建立（或读取缓存的）模板索引。缓存失效策略：缓存格式版本不符、
+// 或模板目录树变化（目录 mtime 戳不再全等）时重建（模板库是可再生的
+// 大目录，不追求细粒度失效）。
+//
+// 热路径（缓存有效）只做：缓存文件 stat + 目录戳校验（目录数 1-2k），
+// 不做全量 walk、不解码缓存 JSON（memo 命中时）——见 index_hot.go。
 func Index(dir, cachePath string) ([]Entry, error) {
-	var files []string
-	err := filepath.WalkDir(dir, func(p string, d os.DirEntry, werr error) error {
-		if werr != nil {
-			return nil
+	if cachePath != "" {
+		if entries, ok := indexLoadHot(dir, cachePath); ok {
+			return entries, nil
 		}
-		if !d.IsDir() && (strings.HasSuffix(p, ".yaml") || strings.HasSuffix(p, ".yml")) {
-			files = append(files, p)
-		}
-		return nil
-	})
+	}
+
+	// 冷路径 / 缓存失效：全量 walk（文件列表 + 目录戳一次取齐）。
+	files, stamps, err := walkTemplateFiles(dir)
 	if err != nil {
 		return nil, err
-	}
-	if data, rerr := os.ReadFile(cachePath); rerr == nil {
-		var cached cacheFile
-		// 有效性比对的是「目录内模板文件总数」——entries 只含漏斗
-		// 通过者，数目必然小于文件总数（旧缓存正是因拿 entries 数
-		// 与文件数比对而永远失配，每次都全量重建索引）
-		if json.Unmarshal(data, &cached) == nil && cached.Schema == cacheSchema &&
-			cached.Files == len(files) {
-			return cached.Entries, nil
-		}
 	}
 
 	// 两轮扫描：非 legacy 目录（官方 http/requests 形态 + afrog）优先，
@@ -105,75 +131,168 @@ func Index(dir, cachePath string) ([]Entry, error) {
 			first = append(first, f)
 		}
 	}
-	passes := [][]string{first, second}
 
+	// 每个 pass 内部并行转换（结果按下标回填），收集阶段按原顺序串行
+	// 回放两轮去重——entries 顺序、seenName 语义与旧实现逐条一致。
+	workers := indexWorkers()
 	entries := make([]Entry, 0, len(files))
 	seenName := map[string]bool{}
-	for pi, pass := range passes {
-		for _, f := range pass {
-			st, serr := os.Stat(f)
-			if serr != nil || st.Size() > 512*1024 {
+	for pi, pass := range [][]string{first, second} {
+		if len(pass) == 0 {
+			continue
+		}
+		for _, r := range convertTplFiles(dir, pass, workers) {
+			if !r.ok {
 				continue
 			}
-			rel, rerr := filepath.Rel(dir, f)
-			if rerr != nil {
-				continue
-			}
-			rel = filepath.ToSlash(rel)
-			data, rerr2 := os.ReadFile(f)
-			if rerr2 != nil {
-				continue
-			}
-			var proto string
-			checks := convertAny(data)
-			if len(checks) == 0 {
-				// HTTP 漏斗淘汰 → 协议模板旁路（3.0 非 HTTP 检测）
-				if nc := ConvertNetwork(data); nc != nil {
-					proto = nc.Proto
-				} else {
-					continue // 漏斗淘汰：只把可运行的模板纳入调度全集
-				}
-			}
-			name, sev, tags, cves := convertMeta(string(data))
-			if pi == 1 && seenName[name] {
+			if pi == 1 && seenName[r.name] {
 				continue // legacy 与新语料同名：新语料已收录，跳过
 			}
-			seenName[name] = true
+			seenName[r.name] = true
 			entries = append(entries, Entry{
-				Path:        rel,
-				Name:        name,
-				Sev:         sev,
-				Tags:        tags,
-				CVEs:        cves,
-				Source:      NormalizeSource(rel),
-				Proto:       proto,
-				MTime:       st.ModTime().Unix(),
-				Size:        st.Size(),
+				Path:        r.rel,
+				Name:        r.name,
+				Sev:         r.sev,
+				Tags:        r.tags,
+				CVEs:        r.cves,
+				Source:      r.source,
+				Proto:       r.proto,
+				MTime:       r.mtime,
+				Size:        r.size,
 				Convertible: true, // 建入索引即漏斗通过（Convert 非空或协议转换成功）
 			})
 		}
 	}
 	if cachePath != "" {
-		if data, jerr := json.Marshal(cacheFile{Schema: cacheSchema, Files: len(files), Entries: entries}); jerr == nil {
+		if data, jerr := json.Marshal(cacheFile{
+			Schema: cacheSchema, Files: len(files), Dirs: stamps, Entries: entries,
+		}); jerr == nil {
 			_ = os.WriteFile(cachePath, data, 0o644)
+			// 缓存落盘成功后写入 memo（键取落盘后的真实文件戳）。
+			if mtime, size, ok := indexCacheStat(cachePath); ok {
+				indexMemoStore(&indexMemoEntry{
+					cachePath: cachePath, mtime: mtime, size: size,
+					stamps: stamps, entries: entries,
+				})
+			}
 		}
 	}
 	return entries, nil
+}
+
+// indexWorkers 索引构建并行度：核数上限 indexWorkersCap。
+func indexWorkers() int {
+	w := runtime.NumCPU()
+	if w > indexWorkersCap {
+		w = indexWorkersCap
+	}
+	if w < 1 {
+		w = 1
+	}
+	return w
+}
+
+// convertTplFiles 并行转换一个 pass 的模板文件：results[i] 严格对应
+// files[i]（每个 worker 只写自己的下标，无共享写竞争）。批量很小时
+// 退回顺序执行，避免起协程的固定开销。
+func convertTplFiles(dir string, files []string, workers int) []tplFileResult {
+	results := make([]tplFileResult, len(files))
+	if workers <= 1 || len(files) < 32 {
+		for i, f := range files {
+			results[i] = convertTplFile(dir, f)
+		}
+		return results
+	}
+	var next atomic.Int64
+	var wg sync.WaitGroup
+	for w := 0; w < workers; w++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for {
+				i := int(next.Add(1)) - 1
+				if i >= len(files) {
+					return
+				}
+				results[i] = convertTplFile(dir, files[i])
+			}
+		}()
+	}
+	wg.Wait()
+	return results
+}
+
+// convertTplFile 单文件转换（旧顺序实现的逐文件部分，语义逐行保留）：
+// stat → 大小门禁 → 读文件 → 三前端转换 → 协议模板旁路 → 提取元信息。
+func convertTplFile(dir, f string) tplFileResult {
+	st, serr := os.Stat(f)
+	if serr != nil || st.Size() > 512*1024 {
+		return tplFileResult{}
+	}
+	rel, rerr := filepath.Rel(dir, f)
+	if rerr != nil {
+		return tplFileResult{}
+	}
+	rel = filepath.ToSlash(rel)
+	data, rerr2 := os.ReadFile(f)
+	if rerr2 != nil {
+		return tplFileResult{}
+	}
+	var proto string
+	shape := scanFrontShape(data)
+	if len(convertAnyShape(data, shape)) == 0 {
+		// HTTP 漏斗淘汰 → 协议模板旁路（3.0 非 HTTP 检测）。
+		// 形状预筛确认顶层无 tcp/dns/ssl 键时，协议转换必然为空，整段跳过。
+		if shape&frontNet == 0 {
+			return tplFileResult{}
+		}
+		nc := ConvertNetwork(data)
+		if nc == nil {
+			return tplFileResult{} // 漏斗淘汰：只把可运行的模板纳入调度全集
+		}
+		proto = nc.Proto
+	}
+	name, sev, tags, cves := convertMeta(string(data))
+	return tplFileResult{
+		ok:     true,
+		rel:    rel,
+		name:   name,
+		sev:    sev,
+		tags:   tags,
+		cves:   cves,
+		source: NormalizeSource(rel),
+		proto:  proto,
+		mtime:  st.ModTime().Unix(),
+		size:   st.Size(),
+	}
 }
 
 // IndexCached 只读缓存版 Index：缓存存在且 schema 匹配则返回条目，
 // 否则返回 nil（不触发全库重建）。供扫描热路径（模板情报层挂载 /
 // 协议扫描）使用——热路径里一次 13 万文件的漏斗重建就是一次扫描超时；
 // 全量重建只属于 serve 启动（nucleiSubset 走完整 Index）与显式 reload。
+//
+// 与 Index 共享进程内单条 memo：缓存文件未变时直接复用上次解码的
+// []Entry，免掉每次 18MB JSON 解码（引擎热路径每扫会各调一次）。
 func IndexCached(cachePath string) []Entry {
-	data, err := os.ReadFile(cachePath)
-	if err != nil {
+	if cachePath == "" {
 		return nil
 	}
-	var cached cacheFile
-	if json.Unmarshal(data, &cached) != nil || cached.Schema != cacheSchema {
+	mtime, size, ok := indexCacheStat(cachePath)
+	if !ok {
 		return nil
 	}
+	if m := indexMemoLoad(cachePath, mtime, size); m != nil {
+		return m.entries
+	}
+	cached, ok := readIndexCache(cachePath)
+	if !ok {
+		return nil
+	}
+	indexMemoStore(&indexMemoEntry{
+		cachePath: cachePath, mtime: mtime, size: size,
+		stamps: cached.Dirs, entries: cached.Entries,
+	})
 	return cached.Entries
 }
 
@@ -522,6 +641,13 @@ func Convert(data []byte) []checks.Check {
 	if !ok {
 		return nil
 	}
+	return convertPathForm(doc, req)
+}
+
+// convertPathForm path 形态的转换主体（parseTplPath 已通过门禁）。
+// 与 convertRawForm 共享同一份已解析文档：convertAny 不再为两个前端
+// 各做一次 YAML 全量解析（首命中顺序与旧实现一致）。
+func convertPathForm(doc tplDoc, req tplHTTP) []checks.Check {
 	nrs, ok := normFromTpl(req)
 	if !ok {
 		return nil
@@ -711,6 +837,11 @@ func ConvertRaw(data []byte) []checks.Check {
 	if !ok {
 		return nil
 	}
+	return convertRawForm(doc, req)
+}
+
+// convertRawForm raw 请求形态的转换主体（parseTplPath 已通过门禁）。
+func convertRawForm(doc tplDoc, req tplHTTP) []checks.Check {
 	if len(req.Raw) == 0 || strings.TrimSpace(req.Raw[0]) == "" || len(req.Matchers) == 0 {
 		return nil
 	}
@@ -908,18 +1039,35 @@ func firstOrZero(list []int) int {
 	return 0 // 多状态码走 StatusAny
 }
 
-// LoadFile 解析单个模板文件。
 // convertAny 三前端依次尝试：path 形态 → raw 请求形态 → afrog 经典形态。
+// 形状预筛（scanFrontShape）只跳过「已确认必然返回空」的前端，首个成功
+// 前端与旧顺序逐条一致；path/raw 共享同一份解析结果，afrog 语料由 3 次
+// YAML 全量解析降到 1 次。
 func convertAny(data []byte) []checks.Check {
-	if cs := Convert(data); len(cs) > 0 {
-		return cs
-	}
-	if cs := ConvertRaw(data); len(cs) > 0 {
-		return cs
-	}
-	return ConvertAfrog(data)
+	return convertAnyShape(data, scanFrontShape(data))
 }
 
+// convertAnyShape 同 convertAny，形状位图由调用方给出（Index 复用同一份
+// 扫描结果决定是否走协议模板旁路）。
+func convertAnyShape(data []byte, shape frontShape) []checks.Check {
+	if shape&frontHTTP != 0 {
+		doc, req, ok := parseTplPath(data)
+		if ok {
+			if cs := convertPathForm(doc, req); len(cs) > 0 {
+				return cs
+			}
+			if cs := convertRawForm(doc, req); len(cs) > 0 {
+				return cs
+			}
+		}
+	}
+	if shape&frontAfrog != 0 {
+		return ConvertAfrog(data)
+	}
+	return nil
+}
+
+// LoadFile 解析单个模板文件（读文件 + convertAny）。
 func LoadFile(path string) ([]checks.Check, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {

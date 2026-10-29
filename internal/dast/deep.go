@@ -840,6 +840,9 @@ func probeGetH(r *Runner, hf HeaderFetcher, rawURL string, headers map[string]st
 // formDeepProbeClasses 表单侧深度面探针类（类名 → 探针序列）。
 // 与 deepProbeClasses 同源：SSTI / CRLF 在 POST 体里同样成立；
 // NoSQL / XPath 的表单判定与 URL 判定共用 judgeDeep，一并接入。
+//
+// crlf 一项走「原始表单体」可选通道（rawFormPoster）：预编码 %0d%0a 不能被
+// url.Values.Encode 二次编码；Fetcher 未实现该通道时此探针跳过（宁少报）。
 func formDeepProbeClasses() []struct {
 	Kind   string
 	Values []string

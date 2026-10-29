@@ -21,6 +21,21 @@ type Evidence struct {
 	Metas       map[string]string // meta name/property(小写) → content
 	CookieNames []string          // Set-Cookie 的 Cookie 名列表
 	FaviconHash int64             // 站点 favicon 的 FOFA icon_hash（0 = 未采集）
+
+	// bodyLow 正文小写惰性缓存（40KB 级正文避免每页多次 ToLower 分配）。
+	// bodyLowSrc 记录缓存对应的原始正文：Body 被改写后自动失效重算，
+	// 保证「同一证据内容 → 同一匹配结果」的语义不受缓存影响。
+	bodyLow    string
+	bodyLowSrc string
+}
+
+// lowerBody 返回正文小写形态（惰性缓存；直接构造的 Evidence 也正确）。
+func (e *Evidence) lowerBody() string {
+	if e.bodyLowSrc != e.Body {
+		e.bodyLow = strings.ToLower(e.Body)
+		e.bodyLowSrc = e.Body
+	}
+	return e.bodyLow
 }
 
 // Header 大小写不敏感取响应头。
@@ -47,6 +62,10 @@ func Extract(resp *httpx.Response) *Evidence {
 		Metas:      doc.Metas,
 	}
 	ev.CookieNames = parseCookieNames(resp.SetCookies)
+	// 正文小写预计算：Extract 后紧接 Match，一次算好可让同一证据的多条匹配
+	// 路径复用（Match/MatchPrescreen 均经 lowerBody 读缓存）。
+	ev.bodyLow = strings.ToLower(resp.Body)
+	ev.bodyLowSrc = resp.Body
 	return ev
 }
 

@@ -58,7 +58,7 @@
 | BUG-014 | ✅ 已修 | `vulns/cveMs/index` 加 `RWMutex`，覆盖合并副本上完成再换代；并发合并 × 扫描一致性用例 |
 | BUG-015 | ✅ 已修 | 403 绕过请求计数改原子；并发下不超硬上限 |
 | BUG-016 | ✅ 已修 | afrog rule 级 expression 接线（`internal/afrogx` 编译/求值 + `checks.Match.Expr`）；真实语料 **878/1699（51.7%）通过**、转出 1,051 条 check（修前 0）；12 条真实模板夹具判定断言 + 来源覆盖门禁 |
-| BUG-017 | ✅ 已修（URL 通道） | `rawSetParam` 原始注入；真实 httptest 服务端**字节级断言**（收到真 CR/LF 与 `aced0005`）；⚠️ 表单侧 CRLF 仍待 engine 原始表单体通道（见 0.5.6） |
+| BUG-017 | ✅ 已修（URL + 表单通道） | `rawSetParam` 原始注入 + 表单侧原始表单体通道 `PostFormRawSmall`；真实 httptest 服务端**字节级断言**（收到真 CR/LF 与 `aced0005`），证据链 Request/Replay 与真实请求体逐字节一致；表单通道残留已收口（见 0.5.6） |
 | BUG-018 | ✅ 已修 | `chainEvidence` 不再覆盖表单 POST 语义；`TestRunFormsEvidenceStaysPOST` |
 | BUG-019 | ✅ 已修 | ONNX 资产路径改 `ml.LocateAssetsDir` 同源候选；`TestSevAssetsDir*`（本机无 CGO 未跑真实推理，见 0.5.5） |
 | BUG-020 | ✅ 已修 | Dockerfile 补 `intel_dump / nvd_cves / tpl_intel`；模板池与 ML 资产按体积走挂载，文件头写明降级矩阵；`/api/diagnostics` 可查资产就位 |
@@ -181,17 +181,65 @@ BUG-017 修前服务端只收到 `q=%250d%250a…`、BUG-008 修前 5 跳 × 8 �
 - `web/js/api-error.test.mjs` 5/5 ✅；`tui` esbuild 构建 + `--version`/`--help` ✅；desktop-wails 模块测试 ✅。
 - ⚠️ **本机 CGO_ENABLED=0、无 gcc/mingw**：`go test -race` 与 `-tags onnx` 无法在本地执行。并发用例按 race 友好设计，需 CI / 有 CGO 的环境复核 `CGO_ENABLED=1 go test -race ./internal/intel ./internal/server`；ONNX int8/fp32 精度实测需 `CGO_ENABLED=1` + `onnxruntime.dll`。
 - ⚠️ 本机 `core.autocrlf=true` 的 gofmt 假阳性：格式判定在 LF 归一化副本上完成；`.gitattributes` 已修（BUG-025）。
+- **第二轮（性能优化 + 表单 CRLF 收尾）复跑**：`go build ./...` + `go vet ./internal/... ./cmd/...` + `go test ./internal/... ./cmd/...` **40 包全绿**；`BenchmarkMatch` 5.3ms / `BenchmarkMultiPageScan` 6.2ms（详见 §0.6）；`web/js` 5/5、TUI 构建冒烟、desktop-wails 模块测试通过；全部改动 Go 文件 gofmt clean（LF 归一化副本）。
 
-### 0.5.6 明确遗留（本版不做 / 需拍板）
+### 0.5.6 遗留与已关闭项（本版收尾）
 
-| 项 | 说明 |
-|---|---|
-| **BUG-035 包体瘦身** | 待有 CGO + onnxruntime 的机器跑 int8/fp32 对拍后拍板；本轮交付实测脚手架 + 方案对比 + 决策矩阵，未改打包脚本 |
-| **表单侧 CRLF 探针** | URL 通道已真实注入；表单 POST 通道仍经 `url.Values.Encode` 二次编码，需 engine 的 dastFetcher 增加「原始表单体」可选通道（跨包改动，单独排期） |
-| **netx CNAME→私网** | 已知缺口（代码注释自认），release-body 已列为已知限制，本轮未动 |
-| **多 IP 串行拨号** | 为消除 DNS 重绑定窗口，httpx 按已校验 IP 串行拨号，失去 Happy Eyeballs；AAAA 黑洞场景首包可能吃满 Timeout，后续可加并行/分片超时拨号 |
-| **上游更新无官方 checksum** | 无官方校验值时只强制 https + 实测 sha256 留痕 + 可选钉值，不伪造校验 |
-| **两处行为变化** | `overrides_path` 收紧到数据目录内（旧配置指向目录外时设置页保存 400）；`sslmode` 默认 `disable`→`prefer`（本地无 TLS 自动回退）。发版说明需提及 |
+| 项 | 状态 | 说明 |
+|---|---|---|
+| **BUG-035 包体瘦身** | ⏳ 待实测拍板 | 待有 CGO + onnxruntime 的机器跑 int8/fp32 对拍后拍板；本轮交付实测脚手架 + 方案对比 + 决策矩阵，未改打包脚本 |
+| **表单侧 CRLF 探针** | ✅ 已关闭（第二轮） | engine `dastFetcher` 新增可选「原始表单体」通道 `PostFormRawSmall`（body 由 dast 按表单编码纪律显式构造：其余字段照常编码，仅目标字段值原样保留预编码字节）；`dast` 表单 CRLF 探针改走该通道，拿不到通道时跳过（宁少报，不发无效请求），其余表单探针仍走 `url.Values.Encode` 不变。验证：真实 httptest 服务端断言单次解码拿到真 CR/LF（非 `%25` 字面）+ 证据链 Request/Replay 与真实请求体逐字节一致 + 无通道时跳过；engine 端到端 `TestDastFormCRLFRawChannelEndToEnd`；修复前临时回退必红 |
+| **多 IP 串行拨号** | ✅ 已关闭（第二轮） | `internal/httpx` 在「一次解析 → 全量校验 → 只拨已校验 IP」语义不变前提下实现轻量 Happy Eyeballs（RFC 8305：250ms 错峰、先成功者胜出并取消其余、候选上限 8）。首地址黑洞场景从「请求超时失败」变为 ≈250ms 成功；单 IP 快路径不变 |
+| **netx CNAME→私网** | 遗留 | 已知缺口（代码注释自认），release-body 已列为已知限制，未动 |
+| **上游更新无官方 checksum** | 遗留 | 无官方校验值时只强制 https + 实测 sha256 留痕 + 可选钉值，不伪造校验 |
+| **两处行为变化** | 发版提示 | `overrides_path` 收紧到数据目录内（旧配置指向目录外时设置页保存 400）；`sslmode` 默认 `disable`→`prefer`（本地无 TLS 自动回退） |
+| **模板索引目录戳时序** | 说明（宁少报） | 热路径用目录 mtime 判断模板池是否变化；NTFS 目录 mtime 是毫秒级懒写、网络盘/粗粒度文件系统属性缓存等原因，极端时序下变更可能延后一次扫描被感知（只会少跑新模板，不会误报）；in-place 覆盖写与 5.1 判定同缺口，可删 `data/state/nuclei_index.json` 强制重建 |
+| **literalGate 转义误提取** | 后续（语义变更） | 旧字面量门控把 `\s`/`\d` 等转义当字面量（如 `WordPress\s*` 提取成 `wordpresss`，导致该规则在本可命中时被跳过——少报方向）。本轮**保持 5.1 语义未借优化改召回**；meta 通道已改挂新语法树门控避免 WordPress 类漏检；修正属提升召回的语义变更，另行评估 |
+
+### 0.6 第二轮：性能优化实录（2026-10-29，同机同语料交错实测）
+
+> 目标：把「每扫一次都要付」的 CPU 与 IO 固定成本压下来。所有优化**检测语义不变**，
+> 以「旧语义参照逐字段等价」测试 + 全语料差分兜底；性能基准已固化为可重复 benchmark。
+
+#### 0.6.1 前后数字
+
+| 场景 | 优化前 | 优化后 | 变化 |
+|---|---|---|---|
+| 指纹匹配（40KB 页 × 13,727 指纹） | 24.7 ms / 4,381 allocs | **5.3 ms / 194 allocs** | **4.7×**，分配 -95.6% |
+| 4 页 × 40KB 端到端扫描 | ≈102–123 ms | **≈6.2–6.4 ms** | **16.4×**（同树交错测） |
+| 模板索引热路径（每扫一次；20k 语料实测） | 97.7–99.5 ms | **7.3–7.7 ms** | **≈13×**；144k 真实目录结构折算 **≈6 ms/次**（原 ≈1.1 s/次） |
+| 模板索引 `IndexCached`（每扫 2 次） | ≈26 ms/次 | **<1 ms** | 20×+ |
+| 模板索引冷构建（5,094 文件语料） | 1.215 s | **268 ms**（同语料 Lead 复测） | **4.5×**；144k 折算 ≈35–57 s → **≈8 s** |
+| HTTP 拨号（首地址黑洞、后一可用） | 请求超时失败（默认 20 s） | **≈250 ms 成功** | 从失败变成功 |
+
+#### 0.6.2 改了什么
+
+- **指纹（internal/sitelens）**：`litindex.go` 重写为滚动 4 字节小写 key + 开放寻址表（单页正文单遍扫描）；新增 `gate.go` 用 `regexp/syntax` 从正则推导「必含字面量」AND/OR 条件树（可证明不匹配才跳过，拟真页 436 条正文正则实际只执行 2 条）；加载期按 raw intern 正则（1,980→1,759）+ 单次 Match 内正文通道结果缓存；`Evidence` 正文小写惰性缓存（Body 改写自动失效）；`Matcher` 名称 map（同名取首条）。
+- **引擎（internal/engine）**：第 4 阶段多页指纹识别页间并行（worker ≤ min(4,页数)；命中按页序串行累加，favicon 只取一次，progress 回调不进并行区）。
+- **模板索引（internal/nuclei）**：新增 `front_shape.go` 字节级前端形状预筛（afrog 模板 3 次 YAML 解析 → 1 次；path/raw 共享一次解析；结论是超集，不确定一律全试）；`Index` 两段式段内并行转换（cap 8，结果按原下标回填、entries 顺序/legacy 去重语义不变）；新增 `index_hot.go` 目录 mtime 戳 + 进程内单条 memo + `IndexCached` 接入；`cacheSchema` **v9→v10**。
+- **拨号（internal/httpx）**：轻量 Happy Eyeballs（IPv6/IPv4 交错、250ms 错峰、先成功者胜出并取消其余、候选上限 8；SSRF 全量校验前置不变）。
+- **表单 CRLF**：见 0.5.6（原始表单体通道）。
+
+#### 0.6.3 新增门禁 / 基准（长期跑）
+
+| 门禁 | 文件 | 作用 |
+|---|---|---|
+| 指纹匹配基准 | `internal/sitelens/bench_test.go`（`BenchmarkMatch`） | 发布前记录数字，防回退 |
+| 多页扫描基准 | `internal/engine/engine_parallel_test.go`（`BenchmarkMultiPageScan`） | 同上 |
+| 指纹语义等价（旧语义参照） | `internal/sitelens/prescreen_equiv_test.go` | 22 份真实/fuzz/合成页 × 全库逐字段比对 |
+| 门控健全性 | `internal/sitelens/gate_test.go` | 「门控跳过 ⇒ 正则确实不匹配」 |
+| 预筛等价性 | `internal/sitelens/litindex_test.go`、`evidence_test.go`、`matcher_test.go` | 字面量集合/正文缓存/名称表 |
+| 模板转换等价 | `internal/nuclei/index_equiv_test.go`、`front_shape_test.go` | 旧实现差分 + 首前端优先级 + 超集 fuzz |
+| 索引热路径 | `internal/nuclei/index_hot_test.go` | memo 命中不读文件、目录增删改名感知、schema 升级失效 |
+| 拨号 Happy Eyeballs | `internal/httpx/client_test.go` | 黑洞首 IP/全失败/全量校验零拨号/resolve=false 不变/端到端 Host 保留 |
+| 表单 CRLF 原始体 | `internal/dast/form_crlf_raw_test.go`、`internal/engine/dast_form_crlf_test.go` | 真实服务端字节级断言 + 证据链一致 |
+
+#### 0.6.4 遗留
+
+- 指纹旧 `literalGate` 对 `\s`/`\d` 的既有误提取未修（改召回属语义变更，见 0.5.6）。
+- 模板索引目录戳在非本地文件系统/极端时序下的漏检窗口（宁少报，见 0.5.6）。
+- `-race` 仍需 CGO 环境（本机无 gcc；新增并行代码建议 CI 补 `go test -race ./internal/{sitelens,engine,nuclei,httpx}`）。
+- 仍可继续做的：litindex 换 AC 自动机再省 ~1ms/页；`convertMeta` 的 `(?i)` CVE 正则（冷构建剩余最大单文件开销 ~30µs）；src/header 通道接条件树。
 
 ---
 

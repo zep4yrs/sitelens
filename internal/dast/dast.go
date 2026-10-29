@@ -192,6 +192,21 @@ type MultipartCTFetcher interface {
 	PostMultipartSmallCT(rawURL, fileField, fileName, content, contentType string, extra map[string]string) *Resp
 }
 
+// rawFormPoster 可选扩展：以「原始表单体」发送 POST（预编码载荷通道）。
+//
+// 为什么需要：普通表单探针经 PostFormSmall 发出时会对字段值做
+// url.Values.Encode，把预编码载荷里的 "%" 再编码成 "%25"
+// （%0d%0a → %250d%250a），服务端单次解码只拿到字面文本——表单侧 CRLF
+// 注入实际不生效（BUG-017 表单通道残留）。
+//
+// 实现方（engine 的 dastFetcher）必须把 body 原样作为
+// application/x-www-form-urlencoded 请求体发出，不得再做表单编码。
+// 可选实现：拿不到该通道时表单 CRLF 探针直接跳过（宁少报，不发一个
+// 注定无效、只会浪费目标请求额的探针）。
+type rawFormPoster interface {
+	PostFormRawSmall(rawURL, body string) *Resp
+}
+
 // Target 带参数的探测目标。
 type Target struct {
 	URL         string // 完整 URL（含 query）
@@ -610,12 +625,27 @@ func (r *Runner) RunForms(targets []FormTarget) []Finding {
 				if r.stopped() || (r.opts.MaxProbesPerClass > 0 && i >= r.opts.MaxProbesPerClass) {
 					break
 				}
-				data := map[string]string{}
-				for f := range baseData {
-					data[f] = "sl-dast-base"
+				// 预编码 CRLF 载荷必须走「原始表单体」通道：经 PostFormSmall 会
+				// 被 url.Values.Encode 二次编码（%0d%0a → %250d%250a），服务端
+				// 单次解码只拿到字面文本，注入实际不生效（BUG-017 表单通道残留）。
+				// 拿不到原始通道时不发该探针——宁少报，不发注定无效的请求。
+				var resp *Resp
+				rawBody := ""
+				if pc.kind == "crlf" {
+					raw, ok := r.fetch.(rawFormPoster)
+					if !ok {
+						continue
+					}
+					rawBody = rawFormBody(p.ft.Fields, p.field, value)
+					resp = raw.PostFormRawSmall(p.ft.Action, rawBody)
+				} else {
+					data := map[string]string{}
+					for f := range baseData {
+						data[f] = "sl-dast-base"
+					}
+					data[p.field] = value
+					resp = r.fetch.PostFormSmall(p.ft.Action, data)
 				}
-				data[p.field] = value
-				resp := r.fetch.PostFormSmall(p.ft.Action, data)
 				tick(label)
 				if resp == nil {
 					continue
@@ -624,11 +654,20 @@ func (r *Runner) RunForms(targets []FormTarget) []Finding {
 				if hit == nil {
 					continue
 				}
-				probeURL := formProbeURL(p.ft.Action, p.field, value)
 				hit.Payload = value
-				hit.Replay = formReplay(p.ft.Action, p.field, value)
-				hit.Request = formReqText(p.ft.Action, p.field, value)
-				chainEvidence(hit, probeURL, resp)
+				if pc.kind == "crlf" {
+					// 证据链与真实发出的原始表单体逐字节一致：Request/Replay 用
+					// 实际 body，不能再经 formBody 编码（否则复现命令又变回二次
+					// 编码形态，违反「证据链可复核」红线）。
+					hit.Request = formReqTextRaw(p.ft.Action, rawBody)
+					hit.Replay = formReplayRaw(p.ft.Action, rawBody)
+					chainEvidence(hit, "", resp)
+				} else {
+					probeURL := formProbeURL(p.ft.Action, p.field, value)
+					hit.Replay = formReplay(p.ft.Action, p.field, value)
+					hit.Request = formReqText(p.ft.Action, p.field, value)
+					chainEvidence(hit, probeURL, resp)
+				}
 				hit.Signals = []string{pc.kind + " 表单探针命中"}
 				hits = append(hits, *hit)
 				break // 该类命中即停
@@ -811,6 +850,34 @@ func formBody(field, payload string) string {
 	return v.Encode()
 }
 
+// rawFormBody 构造原始表单体：除目标字段外的其余字段按表单编码填惰性基线值，
+// 目标字段的值**原样写入**（预编码载荷不能被二次编码）。
+//
+// 与普通表单探针的请求体保持同一语义（其余字段同样填 sl-dast-base），差别只在
+// 目标字段值：普通探针交给 url.Values.Encode，这里逐字节保留调用方给定的
+// 预编码载荷（如 %0d%0aX-Sitelens-Crlf:%20…）。
+func rawFormBody(fields []string, field, rawValue string) string {
+	var b strings.Builder
+	for _, f := range fields {
+		if f == "" || f == field {
+			continue
+		}
+		if b.Len() > 0 {
+			b.WriteByte('&')
+		}
+		b.WriteString(url.QueryEscape(f))
+		b.WriteByte('=')
+		b.WriteString(url.QueryEscape("sl-dast-base"))
+	}
+	if b.Len() > 0 {
+		b.WriteByte('&')
+	}
+	b.WriteString(url.QueryEscape(field))
+	b.WriteByte('=')
+	b.WriteString(rawValue)
+	return b.String()
+}
+
 // formProbeURL 表单探针的 URL 形态（证据链文本/展示用）：query 串按表单
 // 编码规则转义，与真实发出的 POST 体字节一致。
 //
@@ -843,6 +910,13 @@ func formReqText(action, field, payload string) string {
 func formReqTextRaw(action, body string) string {
 	return "POST " + action + " HTTP/1.1\r\nContent-Type: application/x-www-form-urlencoded\r\n\r\n" +
 		body
+}
+
+// formReplayRaw 原始表单体的复现命令（POST 语义）：body 原样传入，与真实
+// 发出的请求字节一致。预编码载荷不能交给 formBody 再编码一次，否则复现
+// 命令发出的字节和探测时不一致（证据链可复核红线）。
+func formReplayRaw(action, body string) string {
+	return "curl -sk --path-as-is -d " + shellQuote(body) + " " + shellQuote(action)
 }
 
 // reqText 重放请求文本（GET 探针语义）。

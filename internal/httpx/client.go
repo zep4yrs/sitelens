@@ -4,6 +4,7 @@ package httpx
 
 import (
 	"context"
+	"errors"
 	"io"
 	"net"
 	"net/http"
@@ -43,6 +44,21 @@ const defaultMaxBodyBytes = 3_000_000 // 与 Python 端一致：超 3MB 不留�
 // 30s keepalive），避免自建 Transport 后底层行为漂移。
 var baseDialer = net.Dialer{Timeout: 30 * time.Second, KeepAlive: 30 * time.Second}
 
+// 拨号层 Happy Eyeballs（RFC 8305）参数。集中定义、不暴露为配置项（产品口径：
+// 不加新配置）；取值对齐 RFC 建议与 Go net 包的默认取向。
+const (
+	// happyEyeballsStagger 相邻两个拨号尝试的最小启动间隔（RFC 8305 §5 的
+	// Connection Attempt Delay 建议值 250ms）。首个候选地址立即尝试，之后
+	// 每 250ms 追加一个候选：既给前面的地址留出握手时间，又不会让首地址的
+	// 黑洞/拒绝把请求一路拖到超时。
+	happyEyeballsStagger = 250 * time.Millisecond
+
+	// maxDialAddrs 单次拨号最多并行参与的候选地址数。正常多 A/AAAA 记录远
+	// 少于 8；故障/恶意 DNS 返回几十条解析结果时必须限流——每个黑洞地址都会
+	// 挂一条连接（goroutine + fd）到 ctx 超时，无上限会耗尽资源。超出部分放弃。
+	maxDialAddrs = 8
+)
+
 // ClientOptions 客户端参数（全部来自 config.ScanConfig 的装配）。
 type ClientOptions struct {
 	Interval     time.Duration // 相邻请求最小间隔（限速），0=不限速
@@ -71,6 +87,9 @@ type Client struct {
 	// lookupIP 域名解析钩子（nil = target.ResolveHostIPs）。仅测试注入：
 	// 生产路径必须走系统解析，且同一份结果只用于本次「校验 + 拨号」。
 	lookupIP func(ctx context.Context, host string) ([]netip.Addr, error)
+	// dial 单次 TCP 建连钩子（nil = baseDialer.DialContext）。仅测试注入：
+	// 生产路径必须走真实拨号，注入 fake 只为确定性验证并发拨号调度。
+	dial func(ctx context.Context, network, addr string) (net.Conn, error)
 }
 
 // NewWithOptions 按参数创建客户端。
@@ -116,8 +135,15 @@ func NewWithOptions(o ClientOptions) *Client {
 // 127.0.0.1/10.x）绕过私网闸。现在解析只做一次，校验的 IP 集合就是随后
 // 拨号的目标（写 IP 字面量），不存在「校验过的名字被重新解析成别的地址」。
 //
+// 多地址并发拨号（5.2 性能优化）：BUG-021 的初版修法对已校验 IP 串行拨号，
+// 丢掉了 Go 默认 Transport 的 Happy Eyeballs（RFC 8305）——首个地址拒绝/黑洞
+// 时只能等满 30s 拨号超时，同一域名的其他可用地址全程没被尝试。现在把已校验
+// 的 IP 集合交给 dialValidatedIPs 做轻量并行握手。
+//
 // Host 头与 TLS SNI 不受影响：这里只改底层连接地址，请求身份仍由
 // http.Transport 按 URL 主机名生成（Host/SNI 保持原域名）。
+// SSRF 语义不变：候选地址全部来自上面一次解析 + target.ValidateIPs 全量校验
+// 的集合，只拨 IP 字面量，不重新解析、不新增候选。
 // Resolve=false（本地/内网靶场姿态）不做 DNS 级拦截，与原行为一致。
 func (c *Client) dialContext(ctx context.Context, network, addr string) (net.Conn, error) {
 	if !c.resolve {
@@ -147,15 +173,153 @@ func (c *Client) dialContext(ctx context.Context, network, addr string) (net.Con
 		return nil, verr
 	}
 	// 只拨已校验的 IP 字面量：即使此刻 DNS 已变，也连不到未校验地址。
-	var lastErr error
-	for _, ip := range ips {
-		conn, derr := baseDialer.DialContext(ctx, network, net.JoinHostPort(ip.String(), port))
-		if derr == nil {
-			return conn, nil
+	// 多地址并发拨号（轻量 Happy Eyeballs），避免串行等首个坏地址。
+	return c.dialValidatedIPs(ctx, network, port, ips)
+}
+
+// errAttemptSuperseded 落败的拨号尝试（已有别的地址先连上，本尝试被取消）。
+// 只用于错误归因：有胜者时直接返回连接，不会走到全失败分支。
+var errAttemptSuperseded = errors.New("其余拨号尝试已被取消")
+
+// dialAttempt 单次拨号尝试的结果（idx 为候选序下标，用于确定性错误归因）。
+type dialAttempt struct {
+	idx int
+	err error
+}
+
+// dialValidatedIPs 对「已全量校验」的 IP 集合做并发拨号（轻量 Happy Eyeballs）。
+//
+// 调度设计（RFC 8305 精简版）：
+//   - 候选顺序：IPv6/IPv4 按首选族交错（dialCandidates），最多 maxDialAddrs 个；
+//   - 首候选地址立即拨号，之后每 happyEyeballsStagger 追加一个尝试（错峰，
+//     避免一次握手风暴，也让首选地址先拿到机会）；
+//   - 第一个成功连接即返回，同时取消其余尝试（含仍在 stagger 等待的）；
+//   - 并发同时成功时由 sync.Once 唯一决定胜者，落败方自己关闭已建连接
+//     （否则没人再读 channel，fd 泄漏）；
+//   - 全部失败时返回「候选序最靠后地址」的错误，保留原串行实现的 lastErr
+//     语义（真实错误信息比笼统的 ctx 取消更利于排障）；
+//   - 总时长仍由调用方 ctx（http.Client.Timeout）约束：ctx 取消后各尝试
+//     立即返回（net.Dialer 尊重 ctx 取消），因此下面的接收循环不会永久阻塞。
+//
+// 语义约束：只拨入参携带的已校验 IP 字面量，本函数不解析域名、不新增候选。
+func (c *Client) dialValidatedIPs(ctx context.Context, network, port string, ips []netip.Addr) (net.Conn, error) {
+	dial := c.dial
+	if dial == nil {
+		dial = baseDialer.DialContext
+	}
+	addrs := dialCandidates(ips)
+	// 单地址：无并发收益，走最短路径（与串行实现逐字节等价）。
+	if len(addrs) == 1 {
+		return dial(ctx, network, net.JoinHostPort(addrs[0].String(), port))
+	}
+	dialCtx, cancel := context.WithCancel(ctx)
+	defer cancel() // 全失败/提前返回时释放 ctx 资源；胜者路径 cancel 幂等
+
+	var (
+		winOnce sync.Once
+		winner  net.Conn
+	)
+	// 带缓冲 len(addrs)：orchestrator 返回后迟到的结果不会阻塞尝试 goroutine。
+	resultCh := make(chan dialAttempt, len(addrs))
+	for i, ip := range addrs {
+		go func() {
+			// 错峰启动：第 i 个候选延迟 i*stagger。等待期间已被取消则不再
+			// 发起新连接（胜者已定或请求 ctx 结束）。
+			if i > 0 {
+				t := time.NewTimer(time.Duration(i) * happyEyeballsStagger)
+				defer t.Stop()
+				select {
+				case <-t.C:
+				case <-dialCtx.Done():
+					resultCh <- dialAttempt{idx: i, err: dialCtx.Err()}
+					return
+				}
+			}
+			conn, derr := dial(dialCtx, network, net.JoinHostPort(ip.String(), port))
+			if derr != nil {
+				resultCh <- dialAttempt{idx: i, err: derr}
+				return
+			}
+			// sync.Once 决定唯一胜者：并发同时成功时只有一个连接被交出去，
+			// 其余连接在这里立即关闭（否则 fd 泄漏且无人释放）。
+			won := false
+			winOnce.Do(func() { winner = conn; won = true })
+			if !won {
+				_ = conn.Close()
+				resultCh <- dialAttempt{idx: i, err: errAttemptSuperseded}
+				return
+			}
+			cancel() // 首个成功 → 取消其余尝试
+			resultCh <- dialAttempt{idx: i}
+		}()
+	}
+	// 每个尝试保证恰好回传一条结果（dial 尊重 ctx 取消，baseDialer 如此），
+	// 因此这里最多收 len(addrs) 条，不会漏收也不会永久阻塞。
+	var (
+		lastErr    error
+		lastErrIdx = -1
+	)
+	for pending := len(addrs); pending > 0; pending-- {
+		r := <-resultCh
+		if r.err == nil {
+			return winner, nil
 		}
-		lastErr = derr
+		// 取候选序最靠后地址的真实错误（落败取消不算失败，排除）。
+		if r.idx > lastErrIdx && !errors.Is(r.err, errAttemptSuperseded) {
+			lastErr, lastErrIdx = r.err, r.idx
+		}
+	}
+	if lastErr == nil {
+		lastErr = errAttemptSuperseded
 	}
 	return nil, lastErr
+}
+
+// dialCandidates 从「已全量校验」的 IP 集合生成拨号候选序：先按 RFC 8305 §3
+// 做 IPv6/IPv4 地址族交错，再截断到 maxDialAddrs。
+//
+// 交错规则：首选族 = 首个解析结果的族（系统解析器已按 RFC 6724 排好偏好序，
+// 同族内部顺序原样保留），两族轮流取。这样「v6 黑洞 + v4 可用」不会等完所有
+// v6 地址才试 v4；反之亦然。单族输入保持原序（无交错收益）。
+// 截断放在交错之后：避免「一长串同族地址把另一族全部挤出候选窗口」。
+func dialCandidates(ips []netip.Addr) []netip.Addr {
+	out := interleaveAddrs(ips)
+	if len(out) > maxDialAddrs {
+		out = out[:maxDialAddrs]
+	}
+	return out
+}
+
+// interleaveAddrs 按 RFC 8305 §3 对解析结果做 IPv6/IPv4 交错；单族输入原样返回。
+func interleaveAddrs(in []netip.Addr) []netip.Addr {
+	if len(in) < 2 {
+		return in
+	}
+	var v4, v6 []netip.Addr
+	for _, a := range in {
+		if a.Is4() { // ::ffff:a.b.c.d（4-in-6）按 IPv6 处理，保持原顺序归类
+			v4 = append(v4, a)
+		} else {
+			v6 = append(v6, a)
+		}
+	}
+	if len(v4) == 0 || len(v6) == 0 {
+		return in
+	}
+	prim, sec := v6, v4
+	if in[0].Is4() {
+		prim, sec = v4, v6
+	}
+	out := make([]netip.Addr, 0, len(in))
+	for i := 0; i < len(prim) || i < len(sec); i++ {
+		if i < len(prim) {
+			out = append(out, prim[i])
+		}
+		if i < len(sec) {
+			out = append(out, sec[i])
+		}
+	}
+	return out
 }
 
 // New 创建客户端；interval 为相邻请求最小间隔（限速）。
