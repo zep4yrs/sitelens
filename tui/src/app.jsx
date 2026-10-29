@@ -1,7 +1,11 @@
-// app.mjs —— 交互式 TUI（Ink）：目标输入 → 模式选择 → 实时扫描
-// （进度 + 事件流，命中红/绕过琥珀/认证青）→ 摘要。q 中止并取消任务。
+// app.jsx —— 交互式 TUI（Ink）。
+//
+// 首屏是**功能选择**（5.2 起）：扫描 / 源码审计 / 本机诊断 / 扫描历史。
+// 扫描走完整交互流程（目标 → 模式 → 实时进度 → 摘要）；其余三项交回给
+// 命令层执行（onAction），TUI 只做选择器——避免 Ink 渲染与子进程输出打架。
+//
 // 语义色与产品一致（无 emoji，纯文本 + 颜色）。
-import React, { useState, useEffect, useMemo } from "react";
+import React, { useState, useEffect } from "react";
 import { render, Box, Text, useApp, useInput } from "ink";
 import TextInput from "ink-text-input";
 import SelectInput from "ink-select-input";
@@ -21,17 +25,43 @@ const LEVEL_DESC = {
   apocalypse: "毁天灭地——全模块 + 全量模板（仅授权目标）",
 };
 
+const MENU = [
+  { label: "扫描目标网站", value: "scan", hint: "指纹 / 爬取 / 验证型检测 / DAST" },
+  { label: "源码静态审计", value: "audit", hint: "污点分析 + 规则匹配（本地目录）" },
+  { label: "本机诊断", value: "doctor", hint: "资产就位 / 降级能力 / 最近失败" },
+  { label: "扫描历史", value: "history", hint: "最近扫描与已验证发现汇总" },
+  { label: "退出", value: "quit", hint: "" },
+];
+
+/**
+ * runTUI 启动交互式 TUI，**返回一个动作**（而不是直接 exit）。
+ *
+ * 返回值：{cmd, args} —— 交由命令层（src/commands.mjs）执行；
+ * 返回 null 表示用户退出。
+ */
 export function runTUI() {
   return new Promise((resolve) => {
-    const { waitUntilExit } = render(React.createElement(App), { exitOnCtrlC: false });
-    waitUntilExit().then(resolve);
+    let unmount = null;
+    let settled = false;
+    const finish = (action) => {
+      if (settled) return;
+      settled = true;
+      try {
+        unmount?.();
+      } catch {}
+      resolve(action);
+    };
+    const r = render(React.createElement(App, { onAction: finish }), { exitOnCtrlC: false });
+    unmount = r.unmount;
+    r.waitUntilExit().then(() => finish(null));
   });
 }
 
-function App() {
+function App({ onAction }) {
   const { exit } = useApp();
-  const [phase, setPhase] = useState("input"); // input | level | scanning | summary | error
+  const [phase, setPhase] = useState("menu"); // menu | input | level | scanning | summary | error | auditdir
   const [url, setUrl] = useState("");
+  const [dir, setDir] = useState("");
   const [serve, setServe] = useState(null);
   const [prog, setProg] = useState({ pct: 0, msg: "" });
   const [events, setEvents] = useState([]);
@@ -60,7 +90,7 @@ function App() {
   const startScan = async (target, level) => {
     setPhase("scanning");
     try {
-      const srv = await startServe({}, { allowPrivate: process.env.SITLENS_ALLOW_PRIVATE === "1" });
+      const srv = await startServe({}, { allowPrivate: process.env.SITELENS_ALLOW_PRIVATE === "1" });
       setServe(srv);
       const job = await scan(srv.baseUrl, target, {
         level,
@@ -77,6 +107,71 @@ function App() {
       await serve?.stop();
     }
   };
+
+  if (phase === "menu") {
+    return (
+      <Box flexDirection="column" padding={1}>
+        <Text bold color="cyan">
+          SiteLens 站点透视 —— 终端扫描台
+        </Text>
+        <Box marginTop={1} flexDirection="column">
+          {MENU.map((m) => (
+            <Text key={m.value} color={m.value === "quit" ? "gray" : "white"}>
+              {"  " + m.label}
+              {m.hint ? <Text dimColor>{"  —— " + m.hint}</Text> : null}
+            </Text>
+          ))}
+        </Box>
+        <Box marginTop={1}>
+          <SelectInput
+            items={MENU.map((m) => ({ label: m.label, value: m.value }))}
+            onSelect={(item) => {
+              if (item.value === "quit") {
+                onAction(null);
+                return;
+              }
+              if (item.value === "audit") {
+                setPhase("auditdir");
+                return;
+              }
+              if (item.value === "doctor") {
+                onAction({ cmd: "doctor", args: [] });
+                return;
+              }
+              if (item.value === "history") {
+                onAction({ cmd: "history", args: [] });
+                return;
+              }
+              setPhase("input");
+            }}
+          />
+        </Box>
+        <Text dimColor> ↑↓ 选择 · 回车确认 · Ctrl+C 退出</Text>
+      </Box>
+    );
+  }
+
+  if (phase === "auditdir") {
+    return (
+      <Box flexDirection="column" padding={1}>
+        <Text bold>源码静态审计 —— 输入要审计的目录</Text>
+        <Box marginTop={1}>
+          <Text color="green">{" 目录 > "}</Text>
+          <TextInput
+            value={dir}
+            placeholder="/path/to/source 或 ."
+            onChange={setDir}
+            onSubmit={(v) => {
+              const d = v.trim();
+              if (!d) return;
+              onAction({ cmd: "audit", args: [d] });
+            }}
+          />
+        </Box>
+        <Text dimColor> 回车开始审计 · Ctrl+C 退出</Text>
+      </Box>
+    );
+  }
 
   if (phase === "input") {
     return (
@@ -177,10 +272,10 @@ function App() {
             [{v.severity}] {v.title} — {v.url}
           </Text>
         ))}
-        {verified.length > 15 ? <Text dimColor>…其余 {verified.length - 15} 条见历史（serve 数据目录）</Text> : null}
+        {verified.length > 15 ? <Text dimColor>…其余 {verified.length - 15} 条见历史（sitelens history）</Text> : null}
       </Box>
       <Text dimColor marginTop={1}>
-        扫描历史与完整 JSON 落 ~/.sitelens/data · Ctrl+C 退出
+        扫描历史与完整 JSON 落 ~/.sitelens/data/state · Ctrl+C 退出
       </Text>
     </Box>
   );

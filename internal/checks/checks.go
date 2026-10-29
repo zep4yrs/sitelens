@@ -24,6 +24,10 @@ type Match struct {
 	HeaderContains []string      `json:"h,omitempty"`      // 响应头区须全部包含（Nuclei 头匹配）
 	RegexBody      []string      `json:"rxbody,omitempty"` // 正文任一正则命中（OR，Nuclei regex 转换）
 	DSL            []string      `json:"dsl,omitempty"`    // dsl 表达式须全部为真（安全子集，见 internal/dsl）
+	// Expr afrog 经典 rules+expression 表达式（运行时求值，见 internal/afrogx）。
+	// 与其它条件并存时同样必须全部满足；编译失败/求值失败一律不命中——
+	// 宁少报不误报。仅 afrog 来源的模板会带这个字段。
+	Expr           string        `json:"expr,omitempty"`
 	Extracts       []ExtractSpec `json:"exs,omitempty"`    // 命名抽取变量（供 dsl 引用）
 	Method         string        `json:"method,omitempty"` // POST 模板请求方法
 	Body           string        `json:"body,omitempty"`   // POST 请求体

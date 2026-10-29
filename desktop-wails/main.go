@@ -5,7 +5,9 @@
 //     可用 SITLENS_ENGINE_DIR 覆盖）
 //  2. 取空闲端口，生成最小配置（web.listen）落【用户目录】——不写安装目录
 //     （v3.0.1 EPERM 教训：Program Files 只读）
-//  3. 拉起 sitelens.exe serve（cwd=引擎目录，相对 data/ 路径随 cwd 解析）
+//  3. 拉起 sitelens-engine.exe serve（cwd=引擎目录，相对 data/ 路径随 cwd 解析）
+//     —— 5.2 起引擎与 CLI 拆成两个二进制：引擎只做 serve + update-seed，
+//     CLI（scan/audit/update-*）独立分发、不随桌面安装包发布。
 //  4. /api/version 健康检查通过后开窗，窗口直接加载引擎 URL（引擎零改动）
 //  5. 退出时回收引擎进程
 //
@@ -31,6 +33,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/wailsapp/wails/v3/pkg/application"
@@ -50,6 +53,18 @@ var iconICO []byte // SiteLens 品牌 logo（与 Electron 壳 desktop/build/icon
 
 //go:embed assets/splash.html
 var splashTmpl string
+
+// createNoWindow = CREATE_NO_WINDOW（Windows SDK WinBase.h，值 0x08000000）。
+//
+// 语义：创建子进程时**不分配控制台窗口**。壳是 GUI 子系统程序，拉起引擎
+// （控制台子系统）时若不带这个标志，Windows 会给子进程新建一个控制台 →
+// 桌面弹出一个黑窗（BUG-032）；退出时树杀用的 taskkill 同理会闪一个
+// （BUG-033）。
+//
+// Go 的 syscall 包未导出该常量（它在 x/sys/windows 里，而本模块不引那个
+// 依赖），故按 WinBase.h 的定义就地硬编码——该值是 Windows ABI 的一部分，
+// 长期稳定。
+const createNoWindow = 0x08000000
 
 //go:embed assets/icon.png
 var splashPNG []byte
@@ -84,9 +99,10 @@ func main() {
 	if !ok {
 		log.Fatal("未找到引擎（期望 exe 同级 engine/ 或 ../desktop/engine，或设 SITLENS_ENGINE_DIR）")
 	}
-	engineExe := filepath.Join(engineDir, "sitelens.exe")
-	if _, err := os.Stat(engineExe); err != nil {
-		log.Fatalf("引擎程序不存在: %s", engineExe)
+	engineExe, ok := findEngineExe(engineDir)
+	if !ok {
+		log.Fatalf("引擎程序不存在（期望 %s 或 sitelens.exe）: %s",
+			engineExeName, engineDir)
 	}
 
 	// 用户数据区与受管路径：可写数据（历史/情报/模板池/插件）归用户区，
@@ -115,6 +131,17 @@ func main() {
 	cmd.Dir = engineDir // 只读资产与相对 data/ 路径随引擎目录解析
 	cmd.Stdout = nil
 	cmd.Stderr = nil
+	// 不弹控制台窗口（BUG-032）：引擎是控制台子系统程序，GUI 壳拉起它时
+	// Windows 会给它新建一个控制台 → 桌面上弹出一个黑窗。
+	// CREATE_NO_WINDOW 让子进程**不创建**控制台（比只设 HideWindow 更彻底：
+	// 后者只是把窗口藏起来，窗口仍被创建、仍会抢焦点）。
+	// ⚠️ 引擎本身保持控制台子系统是有意的：CLI 要靠 stdout 输出结果，
+	// 引擎侧 update-seed 也要输出交付报告——「不弹窗」由这里解决，
+	// 不能靠给引擎加 -H windowsgui（那会连带打死 CLI 的 stdout）。
+	cmd.SysProcAttr = &syscall.SysProcAttr{
+		HideWindow:    true,
+		CreationFlags: createNoWindow,
+	}
 	if err := cmd.Start(); err != nil {
 		log.Fatalf("引擎启动失败: %v", err)
 	}
@@ -271,7 +298,14 @@ func killEngineTree(p *os.Process) {
 		return
 	}
 	if runtime.GOOS == "windows" {
-		_ = exec.Command("taskkill", "/PID", strconv.Itoa(p.Pid), "/T", "/F").Run()
+		// taskkill 是控制台程序，直接 exec 会闪一个黑窗（BUG-033）。
+		// 加 CREATE_NO_WINDOW 后它不再创建控制台窗口，树杀语义不变。
+		tk := exec.Command("taskkill", "/PID", strconv.Itoa(p.Pid), "/T", "/F")
+		tk.SysProcAttr = &syscall.SysProcAttr{
+			HideWindow:    true,
+			CreationFlags: createNoWindow,
+		}
+		_ = tk.Run()
 	}
 	_ = p.Kill() // 兜底：树杀失败时至少杀引擎本身（已死则返回错误，忽略）
 }
@@ -295,8 +329,27 @@ func detectEngineDir() (string, bool) {
 		filepath.Join(exeDir, "engine"),
 		filepath.Join(exeDir, "..", "desktop", "engine"),
 	} {
-		if _, err := os.Stat(filepath.Join(cand, "sitelens.exe")); err == nil {
+		if _, ok := findEngineExe(cand); ok {
 			return cand, true
+		}
+	}
+	return "", false
+}
+
+// engineExeName 引擎二进制文件名（5.2 起：引擎与 CLI 拆成两个二进制）。
+//
+// 引擎只提供 serve + update-seed，由桌面壳拉起；CLI（scan/audit/update-*）
+// 是独立二进制，不随桌面安装包发布，故此处用独立文件名以示区分。
+const engineExeName = "sitelens-engine.exe"
+
+// findEngineExe 在引擎目录里定位引擎二进制；找不到返回 ("", false)。
+// 兼容：先找 sitelens-engine.exe（5.2 起的正式产物），再退回 sitelens.exe
+// （拆分前的旧引擎，便于开发态与灰度安装目录平滑过渡）。
+func findEngineExe(dir string) (string, bool) {
+	for _, name := range []string{engineExeName, "sitelens.exe"} {
+		p := filepath.Join(dir, name)
+		if st, err := os.Stat(p); err == nil && !st.IsDir() {
+			return p, true
 		}
 	}
 	return "", false

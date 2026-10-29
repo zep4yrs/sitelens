@@ -107,8 +107,8 @@ func (r *Runner) authBypassForm(ft FormTarget, done *int, total int) *Finding {
 					"注释截断使口令校验失效（双确认）",
 					userField, payload, resp.Status, base.Status),
 				Replay: formReplay(ft.Action, userField, payload),
-				Request: "POST " + ft.Action + " HTTP/1.1\r\nContent-Type: application/x-www-form-urlencoded\r\n\r\n" +
-					userField + "=" + payload + "&" + passField + "=x",
+				Request: formReqTextRaw(ft.Action,
+					formBody(userField, payload)+"&"+formBody(passField, "x")),
 				Response: &RespSnap{Status: resp.Status, Size: len(resp.Body), Snippet: snippetOf(resp.Body)},
 				Signals: []string{"注释截断 payload 认证成功（双确认）",
 					fmt.Sprintf("失败基线状态 %d / 绕过成功状态 %d", base.Status, resp.Status)},

@@ -10,7 +10,12 @@ import (
 // cvss_v3_score 实现）：解析 CVSS:3.x 向量 → 0-10 基础分 + 等级。
 // OSV 同步用：GHSA/OSV 提供 CVSS_V3 向量，本地算分，无需 NVD。
 
-var cvssAV = map[string]float64{"N": 0.85, "A": 0.62, "L": 0.39, "P": 0.2}
+// cvssAV CVSS v3.1 表 2：攻击向量权重。
+//
+// ⚠️ v3.1 的 AV:L = 0.55。0.39 是 **CVSS v2** 的 AV:L（两版取值表不同）——
+// 此前误把 v2 的值带进 v3.1 表，导致所有「本地攻击」向量的分数系统性偏低
+// （实测 29 万条 NVD v3 向量中 23.29% 的分数与官方分不符）。
+var cvssAV = map[string]float64{"N": 0.85, "A": 0.62, "L": 0.55, "P": 0.2}
 var cvssAC = map[string]float64{"L": 0.77, "H": 0.44}
 var cvssPRu = map[string]float64{"N": 0.85, "L": 0.62, "H": 0.27}
 var cvssPRc = map[string]float64{"N": 0.85, "L": 0.68, "H": 0.5}
@@ -38,7 +43,17 @@ func CVSS3Score(vector string) (float64, string, error) {
 	}
 	var av, ac, pr, ui, c, i, a float64
 	var avOK, acOK, prOK, uiOK, cOK, iOK, aOK bool
+	// Scope 预扫描：PR 的权重取决于 Scope（U 用 PRu / C 用 PRc），但 NVD 的向量串
+	// 顺序恒为 AV:AC:PR:UI:S:C:I:A——S 恒在 PR 之后。若按 token 顺序决定权重，
+	// 每个 S:C 向量都会误用 PRu 权重（PR:L 0.62 vs 0.68、PR:H 0.27 vs 0.50），
+	// 分数系统性偏低。规范不要求向量串有序，故先扫出 Scope 再进主循环。
 	scopeChanged := false
+	for _, part := range strings.Split(v, "/") {
+		if strings.TrimSpace(part) == "S:C" {
+			scopeChanged = true
+			break
+		}
+	}
 	for _, part := range strings.Split(v, "/") {
 		part = strings.TrimSpace(part)
 		if part == "" {
@@ -56,9 +71,7 @@ func CVSS3Score(vector string) (float64, string, error) {
 		_ = k
 		switch {
 		case k == "S":
-			if val == "C" {
-				scopeChanged = true
-			}
+			// Scope 已在循环外预扫描（见上）。此处仅跳过，不重复赋值。
 			continue
 		}
 		switch k {
@@ -111,7 +124,8 @@ func CVSS3Score(vector string) (float64, string, error) {
 	iss := 1 - (1-c)*(1-i)*(1-a)
 	var impact float64
 	if scopeChanged {
-		impact = 7.52*(iss-0.029) - 3.257*math.Pow(iss-0.02, 15)
+		// CVSS v3.1 §8.1.2：系数是 3.25（此前误写 3.257）。
+		impact = 7.52*(iss-0.029) - 3.25*math.Pow(iss-0.02, 15)
 	} else {
 		impact = 6.42 * iss
 	}
@@ -119,7 +133,14 @@ func CVSS3Score(vector string) (float64, string, error) {
 	if impact <= 0 {
 		return 0, "none", nil
 	}
-	score := roundup1(math.Min(impact+exploitability, 10))
+	base := impact + exploitability
+	if scopeChanged {
+		// CVSS v3.1 §8.1.3：Scope Changed 时基础分再乘 1.08。
+		// 此前漏了这一步 → 所有 S:C 向量分数系统性偏低（实测 19.92% 的
+		// NVD v3 向量算出的分与官方分不符）。补上后与官方分逐条一致。
+		base *= 1.08
+	}
+	score := roundup1(math.Min(base, 10))
 	return score, cvssLabel(score), nil
 }
 

@@ -627,6 +627,7 @@ func (r *Runner) RunForms(targets []FormTarget) []Finding {
 				probeURL := p.ft.Action + "?" + p.field + "=" + value
 				hit.Payload = value
 				hit.Replay = formReplay(p.ft.Action, p.field, value)
+				hit.Request = formReqText(p.ft.Action, p.field, value)
 				chainEvidence(hit, probeURL, resp)
 				hit.Signals = []string{pc.kind + " 表单探针命中"}
 				hits = append(hits, *hit)
@@ -784,9 +785,44 @@ func SetParam(rawURL, param, value string) string { return setParam(rawURL, para
 // RandToken 导出的 128 位随机令牌（exploit 出带通道生成 beacon 注入串用）。
 func RandToken() string { return randToken() }
 
+// shellQuote 用单引号包裹并转义内部单引号（POSIX shell 安全）。
+//
+// 复现命令会被使用者**直接复制粘贴到 shell 执行**，其中的内容可能直接来自
+// 被扫站点（表单 action 属性、控件 name 属性、注入载荷）——不转义等于把
+// 命令执行权交给目标站点（BUG-002）。
+// 与 internal/checks 的 shellQuote 同语义；两处各持一份，避免跨包耦合。
+func shellQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
+}
+
 // curlReplay DAST 探针的复现命令（GET 语义，与探测行为一致）。
 func curlReplay(u string) string {
-	return "curl -sk --path-as-is '" + strings.ReplaceAll(u, "'", `'\''`) + "'"
+	return "curl -sk --path-as-is " + shellQuote(u)
+}
+
+// formBody 表单请求体（application/x-www-form-urlencoded）：字段名与值都按
+// 表单编码规则转义，与引擎实际发出的 POST 字节一致。
+func formBody(field, payload string) string {
+	if field == "" {
+		return url.QueryEscape(payload)
+	}
+	v := url.Values{}
+	v.Set(field, payload)
+	return v.Encode()
+}
+
+// formReqText 表单通道的重放请求文本（POST 语义），单字段。
+//
+// 与真实发出的请求一致：表单通道发的是 POST 表单，若证据链里写成 GET，
+// 使用者复制后复现出来的就不是同一个请求（BUG-018）。
+func formReqText(action, field, payload string) string {
+	return formReqTextRaw(action, formBody(field, payload))
+}
+
+// formReqTextRaw 表单通道的重放请求文本（POST 语义），body 由调用方给定。
+func formReqTextRaw(action, body string) string {
+	return "POST " + action + " HTTP/1.1\r\nContent-Type: application/x-www-form-urlencoded\r\n\r\n" +
+		body
 }
 
 // reqText 重放请求文本（GET 探针语义）。
@@ -815,12 +851,20 @@ func snippetOf(body string) string {
 }
 
 // chainEvidence 为命中发现填充统一证据链（请求/响应/信号）。
+//
+// Request / Replay **只在缺失时填充**：表单通道已按 POST 语义构造好复现命令，
+// 若这里无条件覆盖，就会把 POST 的复现命令换成 GET 的——复现命令必须与真实
+// 发出的请求一致，否则「证据链可复核」这条产品红线就破了（BUG-018）。
 func chainEvidence(f *Finding, probeURL string, resp *Resp) {
 	if f == nil {
 		return
 	}
-	f.Request = reqText(probeURL)
-	f.Replay = curlReplay(probeURL)
+	if f.Request == "" {
+		f.Request = reqText(probeURL)
+	}
+	if f.Replay == "" {
+		f.Replay = curlReplay(probeURL)
+	}
 	if resp != nil {
 		f.Response = &RespSnap{Status: resp.Status, Size: len(resp.Body), Snippet: snippetOf(resp.Body)}
 	}

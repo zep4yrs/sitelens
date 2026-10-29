@@ -17,7 +17,38 @@ func (e *Error) Error() string { return e.Msg }
 // alwaysBlockedHosts 永久阻断主机名（任何开关都不放宽）：云厂商 metadata
 // 端点等 SSRF 关键攻击面。
 var alwaysBlockedHosts = map[string]bool{
-	"metadata.google.internal": true,
+	"metadata.google.internal":   true,
+	"metadata.goog":              true,
+	"instance-data.ec2.internal": true,
+}
+
+// alwaysBlockedIPs 永久阻断的 IP（任何开关都不放宽）：云厂商实例元数据端点。
+//
+// 为什么必须与 allowPrivate 解耦：allow_private 是「允许扫私网/本机」的
+// **授权**开关，而元数据端点不是授权目标，是**凭证泄漏面**——实例元数据
+// 服务里放着临时 IAM 凭证，被扫到即等于把凭证交出去。
+//
+// 此前 metadata 的永久保护只覆盖主机名（metadata.google.internal），IP 侧
+// （169.254.169.254 等）落在 isBlockedIP 里、随 allow_private 一起被跳过
+// ——授权内网扫描时就能把云凭证抓回本地（BUG-003）。
+var alwaysBlockedIPs = []netip.Prefix{
+	netip.MustParsePrefix("169.254.169.254/32"), // AWS / GCP / Azure / 阿里云
+	netip.MustParsePrefix("100.100.100.200/32"), // 阿里云 ECS 元数据
+	netip.MustParsePrefix("fd00:ec2::254/128"),  // AWS IPv6
+}
+
+// isAlwaysBlockedIP 判断地址是否落在永久阻断段（不受 allow_private 影响）。
+func isAlwaysBlockedIP(addr netip.Addr) bool {
+	if !addr.IsValid() {
+		return false
+	}
+	a := addr.Unmap()
+	for _, p := range alwaysBlockedIPs {
+		if p.Contains(a) {
+			return true
+		}
+	}
+	return false
 }
 
 // blockedHosts 本地/保留主机名（target.allow_private 开启时放宽——
@@ -90,6 +121,12 @@ func Validate(rawURL string, resolve bool) (string, string, int, error) {
 	if hostBlocked(host) {
 		return "", "", 0, &Error{"不允许扫描内网或保留主机名"}
 	}
+	// 云元数据端点：永久阻断，**不受 resolve / allow_private 任何开关影响**。
+	// 字面 IP 必须在此处单独判——下方的 IP 校验只在 resolve=true 时才走
+	// （ensurePublicHost），resolve=false 时元数据地址会整个漏过去（BUG-003）。
+	if addr, aerr := netip.ParseAddr(host); aerr == nil && isAlwaysBlockedIP(addr) {
+		return "", "", 0, &Error{"云厂商元数据端点受代码级保护，SiteLens 拒绝探测（不可通过配置关闭）"}
+	}
 	if isGovCn(host) {
 		return "", "", 0, &Error{"gov.cn 政府网站受代码级保护，SiteLens 拒绝扫描（不可通过配置关闭）"}
 	}
@@ -138,8 +175,12 @@ func ValidateHostPort(scheme, host string, port int, resolve bool) error {
 		}
 	}
 	// 字面 IP 无条件校验（零成本）；域名才受 resolve 开关控制。
-	// allow_private 开启时放宽私网/保留地址（本机靶场/授权内网）。
+	// allow_private 开启时放宽私网/保留地址（本机靶场/授权内网），
+	// 但云元数据端点永久阻断（不受任何开关影响）。
 	if addr, aerr := netip.ParseAddr(host); aerr == nil {
+		if isAlwaysBlockedIP(addr) {
+			return &Error{"云厂商元数据端点受代码级保护，SiteLens 拒绝探测（不可通过配置关闭）"}
+		}
 		if !allowPrivate && isBlockedIP(addr) {
 			return &Error{"目标是内网/保留地址，已拦截"}
 		}
@@ -163,6 +204,10 @@ func ensurePublicHost(host string) error {
 		addr, aerr := netip.ParseAddr(s)
 		if aerr != nil {
 			continue
+		}
+		// 云元数据端点：永久阻断，不随 allow_private 放宽。
+		if isAlwaysBlockedIP(addr) {
+			return &Error{"云厂商元数据端点受代码级保护，SiteLens 拒绝探测（不可通过配置关闭）"}
 		}
 		if !allowPrivate && isBlockedIP(addr) {
 			return &Error{"目标解析到内网/保留地址，已拦截"}

@@ -1,5 +1,5 @@
 // src/app.jsx
-import React, { useState, useEffect, useMemo } from "react";
+import React, { useState, useEffect } from "react";
 import { render, Box, Text, useApp, useInput } from "ink";
 import TextInput from "ink-text-input";
 import SelectInput from "ink-select-input";
@@ -29,16 +29,17 @@ function enginePkgName() {
 }
 function resolveEngine() {
   const errs = [];
-  const envBin = (process.env.SITLENS_ENGINE || "").trim();
+  const envBin = (process.env.SITELENS_ENGINE || "").trim();
   if (envBin) {
-    if (fs.existsSync(envBin)) return { bin: envBin, from: "SITLENS_ENGINE" };
-    errs.push(`SITLENS_ENGINE \u6307\u5411\u7684\u6587\u4EF6\u4E0D\u5B58\u5728\uFF1A${envBin}`);
+    if (fs.existsSync(envBin)) return { bin: envBin, from: "SITELENS_ENGINE" };
+    errs.push(`SITELENS_ENGINE \u6307\u5411\u7684\u6587\u4EF6\u4E0D\u5B58\u5728\uFF1A${envBin}`);
   }
+  let pkgDir = null;
   try {
     const req = createRequire(import.meta.url);
-    const dir = path.dirname(req.resolve(`${enginePkgName()}/package.json`));
-    const bin = path.join(dir, `SiteLens_${platToken(process.platform, process.arch)}_engine_${selfVersion()}${EXE}`);
-    if (fs.existsSync(bin)) return { bin, from: enginePkgName() };
+    pkgDir = path.dirname(req.resolve(`${enginePkgName()}/package.json`));
+    const bin = path.join(pkgDir, `SiteLens_${platToken(process.platform, process.arch)}_engine_${selfVersion()}${EXE}`);
+    if (fs.existsSync(bin)) return { bin, from: enginePkgName(), pkgDir };
     errs.push(`\u5E73\u53F0\u5305\u5DF2\u88C5\u4F46\u4E8C\u8FDB\u5236\u7F3A\u5931\uFF1A${bin}`);
   } catch (e) {
     errs.push(`\u5E73\u53F0\u5305\u672A\u5B89\u88C5\uFF08${enginePkgName()}\uFF09`);
@@ -46,13 +47,70 @@ function resolveEngine() {
   for (const dir of (process.env.PATH || "").split(path.delimiter)) {
     if (!dir) continue;
     const cand = path.join(dir, `sitelens${EXE}`);
-    if (fs.existsSync(cand)) return { bin: cand, from: "PATH" };
+    if (fs.existsSync(cand)) return { bin: cand, from: "PATH", pkgDir };
   }
   throw new Error(
     `\u672A\u627E\u5230 SiteLens \u5F15\u64CE\u4E8C\u8FDB\u5236\u3002
 ${errs.map((e) => "  - " + e).join("\n")}
-\u53EF\u8BBE SITLENS_ENGINE=<\u5F15\u64CE\u8DEF\u5F84>\uFF0C\u6216\u91CD\u88C5\u672C\u5305\uFF08npm i @fengqiao666/sitelens-cli\uFF09\u8865\u9F50\u5E73\u53F0\u5305\u3002`
+\u53EF\u8BBE SITELENS_ENGINE=<\u5F15\u64CE\u8DEF\u5F84>\uFF0C\u6216\u91CD\u88C5\u672C\u5305\uFF08npm i @fengqiao666/sitelens-cli\uFF09\u8865\u9F50\u5E73\u53F0\u5305\u3002`
   );
+}
+function userRoot() {
+  return path.join(os.homedir(), ".sitelens");
+}
+function userDataDir() {
+  return path.join(userRoot(), "data");
+}
+var posix = (p) => p.replace(/\\/g, "/");
+function configText({ listen, allowPrivate, mlAssets } = {}) {
+  const data = userDataDir();
+  const lines = [
+    "store:",
+    `  data_dir: ${posix(data)}/state`,
+    "intel:",
+    `  dump_path: ${posix(data)}/intel_dump.json.gz`,
+    `  ranges_path: ${posix(data)}/affected_ranges.json`,
+    `  nvd_path: ${posix(data)}/nvd_cves.json.gz`,
+    `  tpl_intel_path: ${posix(data)}/tpl_intel.json.gz`,
+    `  technologies_path: ${posix(data)}/go/technologies.json`,
+    `  overrides_path: ${posix(data)}/intel_overrides.json`,
+    "checks:",
+    `  nuclei_dir: ${posix(data)}/nuclei`,
+    "active:",
+    `  wordlist_dir: ${posix(data)}/wordlists`
+  ];
+  if (listen) lines.push("web:", `  listen: 127.0.0.1:${listen}`);
+  if (allowPrivate) lines.push("target:", "  allow_private: true");
+  if (mlAssets) lines.push("ml:", `  assets_dir: ${posix(mlAssets)}`, "  predict: true");
+  return lines.join("\n") + "\n";
+}
+function packageSeedDir() {
+  const { pkgDir } = resolveEngine();
+  const d = pkgDir ? path.join(pkgDir, "data") : "";
+  return d && fs.existsSync(d) ? d : "";
+}
+async function ensureSeeds(log = () => {
+}) {
+  const seedDir = packageSeedDir();
+  if (!seedDir) return false;
+  const { bin: binRaw } = resolveEngine();
+  const bin = path.resolve(binRaw);
+  const root = userRoot();
+  fs.mkdirSync(root, { recursive: true });
+  const out = await new Promise((resolve) => {
+    const child = spawn(bin, ["update-seed", "--seed-dir", seedDir, "--user-dir", root], {
+      cwd: path.dirname(bin),
+      stdio: ["ignore", "pipe", "pipe"],
+      windowsHide: true
+    });
+    let buf = "";
+    child.stdout.on("data", (d) => buf += d.toString());
+    child.stderr.on("data", (d) => buf += d.toString());
+    child.on("exit", (code) => resolve({ code, buf }));
+    child.on("error", () => resolve({ code: 1, buf: "" }));
+  });
+  if (out.code === 0) log("\u5DF2\u4EA4\u4ED8\u5E73\u53F0\u5305\u5185\u7F6E\u6307\u7EB9\u5E93\u5230\u7528\u6237\u533A");
+  return out.code === 0;
 }
 function freePort() {
   return new Promise((resolve, reject) => {
@@ -68,19 +126,20 @@ async function startServe(log = () => {
 }, { allowPrivate = false } = {}) {
   const { bin: binRaw, from } = resolveEngine();
   const bin = path.resolve(binRaw);
+  await ensureSeeds(log);
   const port = await freePort();
-  const profile = path.join(os.homedir(), ".sitelens");
+  const profile = userRoot();
   const dataDir = path.join(profile, "data");
-  fs.mkdirSync(dataDir, { recursive: true });
+  fs.mkdirSync(path.join(dataDir, "state"), { recursive: true });
+  fs.mkdirSync(path.join(dataDir, "go"), { recursive: true });
   const cfgPath = path.join(profile, `tui-${port}.yml`);
-  const lines = ["web:", `  listen: 127.0.0.1:${port}`, "store:", `  data_dir: ${dataDir.replace(/\\/g, "/")}`];
-  if (allowPrivate) lines.push("target:", "  allow_private: true");
-  const mlDir = (process.env.SITLENS_ML_ASSETS || "").trim();
-  if (mlDir && fs.existsSync(mlDir)) {
-    lines.push("ml:", `  assets_dir: ${mlDir.replace(/\\/g, "/")}`, "  predict: true");
-  }
-  fs.writeFileSync(cfgPath, lines.join("\n") + "\n");
-  if ((process.env.SITLENS_DEBUG || "").trim() === "1") {
+  const mlDir = (process.env.SITELENS_ML_ASSETS || "").trim();
+  const mlAssets = mlDir && fs.existsSync(mlDir) ? mlDir : "";
+  fs.writeFileSync(
+    cfgPath,
+    configText({ listen: port, allowPrivate, mlAssets })
+  );
+  if ((process.env.SITELENS_DEBUG || "").trim() === "1") {
     try {
       fs.writeFileSync(
         path.join(profile, "last-serve-debug.txt"),
@@ -90,7 +149,7 @@ async function startServe(log = () => {
     }
   }
   const child = spawn(bin, ["-config", cfgPath, "serve"], {
-    cwd: path.dirname(bin),
+    cwd: process.cwd(),
     stdio: ["ignore", "ignore", "pipe"],
     windowsHide: true
   });
@@ -104,6 +163,7 @@ async function startServe(log = () => {
   });
   const base = `http://127.0.0.1:${port}`;
   const deadline = Date.now() + 2e4;
+  let stopped = false;
   while (Date.now() < deadline) {
     try {
       const r = await fetch(`${base}/api/version`);
@@ -114,14 +174,24 @@ async function startServe(log = () => {
           // 等子进程真正退出（Windows 上 kill 是异步的，立即 exit 进程
           // 会撞 uv async 断言）
           async stop() {
+            if (stopped) return;
+            stopped = true;
             try {
               child.kill();
             } catch {
             }
+            try {
+              child.stderr?.destroy();
+            } catch {
+            }
             await Promise.race([
-              new Promise((r2) => child.once("exit", r2)),
-              new Promise((r2) => setTimeout(r2, 1500))
+              new Promise((r2) => child.once("close", r2)),
+              new Promise((r2) => setTimeout(r2, 2e3))
             ]);
+            try {
+              child.unref();
+            } catch {
+            }
             try {
               fs.rmSync(cfgPath, { force: true });
             } catch {
@@ -235,16 +305,36 @@ var LEVEL_DESC = {
   stealth: "\u9690\u533F\u2014\u2014\u6D4F\u89C8\u5668 UA + \u88AB\u52A8 + \u7F51\u7EDC\u5C42",
   apocalypse: "\u6BC1\u5929\u706D\u5730\u2014\u2014\u5168\u6A21\u5757 + \u5168\u91CF\u6A21\u677F\uFF08\u4EC5\u6388\u6743\u76EE\u6807\uFF09"
 };
+var MENU = [
+  { label: "\u626B\u63CF\u76EE\u6807\u7F51\u7AD9", value: "scan", hint: "\u6307\u7EB9 / \u722C\u53D6 / \u9A8C\u8BC1\u578B\u68C0\u6D4B / DAST" },
+  { label: "\u6E90\u7801\u9759\u6001\u5BA1\u8BA1", value: "audit", hint: "\u6C61\u70B9\u5206\u6790 + \u89C4\u5219\u5339\u914D\uFF08\u672C\u5730\u76EE\u5F55\uFF09" },
+  { label: "\u672C\u673A\u8BCA\u65AD", value: "doctor", hint: "\u8D44\u4EA7\u5C31\u4F4D / \u964D\u7EA7\u80FD\u529B / \u6700\u8FD1\u5931\u8D25" },
+  { label: "\u626B\u63CF\u5386\u53F2", value: "history", hint: "\u6700\u8FD1\u626B\u63CF\u4E0E\u5DF2\u9A8C\u8BC1\u53D1\u73B0\u6C47\u603B" },
+  { label: "\u9000\u51FA", value: "quit", hint: "" }
+];
 function runTUI() {
   return new Promise((resolve) => {
-    const { waitUntilExit } = render(React.createElement(App), { exitOnCtrlC: false });
-    waitUntilExit().then(resolve);
+    let unmount = null;
+    let settled = false;
+    const finish = (action) => {
+      if (settled) return;
+      settled = true;
+      try {
+        unmount?.();
+      } catch {
+      }
+      resolve(action);
+    };
+    const r = render(React.createElement(App, { onAction: finish }), { exitOnCtrlC: false });
+    unmount = r.unmount;
+    r.waitUntilExit().then(() => finish(null));
   });
 }
-function App() {
+function App({ onAction }) {
   const { exit } = useApp();
-  const [phase, setPhase] = useState("input");
+  const [phase, setPhase] = useState("menu");
   const [url, setUrl] = useState("");
+  const [dir, setDir] = useState("");
   const [serve, setServe] = useState(null);
   const [prog, setProg] = useState({ pct: 0, msg: "" });
   const [events, setEvents] = useState([]);
@@ -270,7 +360,7 @@ function App() {
   const startScan = async (target, level) => {
     setPhase("scanning");
     try {
-      const srv = await startServe({}, { allowPrivate: process.env.SITLENS_ALLOW_PRIVATE === "1" });
+      const srv = await startServe({}, { allowPrivate: process.env.SITELENS_ALLOW_PRIVATE === "1" });
       setServe(srv);
       const job = await scan(srv.baseUrl, target, {
         level,
@@ -286,6 +376,63 @@ function App() {
       await serve?.stop();
     }
   };
+  if (phase === "menu") {
+    return /* @__PURE__ */ jsxs(Box, { flexDirection: "column", padding: 1, children: [
+      /* @__PURE__ */ jsx(Text, { bold: true, color: "cyan", children: "SiteLens \u7AD9\u70B9\u900F\u89C6 \u2014\u2014 \u7EC8\u7AEF\u626B\u63CF\u53F0" }),
+      /* @__PURE__ */ jsx(Box, { marginTop: 1, flexDirection: "column", children: MENU.map((m) => /* @__PURE__ */ jsxs(Text, { color: m.value === "quit" ? "gray" : "white", children: [
+        "  " + m.label,
+        m.hint ? /* @__PURE__ */ jsx(Text, { dimColor: true, children: "  \u2014\u2014 " + m.hint }) : null
+      ] }, m.value)) }),
+      /* @__PURE__ */ jsx(Box, { marginTop: 1, children: /* @__PURE__ */ jsx(
+        SelectInput,
+        {
+          items: MENU.map((m) => ({ label: m.label, value: m.value })),
+          onSelect: (item) => {
+            if (item.value === "quit") {
+              onAction(null);
+              return;
+            }
+            if (item.value === "audit") {
+              setPhase("auditdir");
+              return;
+            }
+            if (item.value === "doctor") {
+              onAction({ cmd: "doctor", args: [] });
+              return;
+            }
+            if (item.value === "history") {
+              onAction({ cmd: "history", args: [] });
+              return;
+            }
+            setPhase("input");
+          }
+        }
+      ) }),
+      /* @__PURE__ */ jsx(Text, { dimColor: true, children: " \u2191\u2193 \u9009\u62E9 \xB7 \u56DE\u8F66\u786E\u8BA4 \xB7 Ctrl+C \u9000\u51FA" })
+    ] });
+  }
+  if (phase === "auditdir") {
+    return /* @__PURE__ */ jsxs(Box, { flexDirection: "column", padding: 1, children: [
+      /* @__PURE__ */ jsx(Text, { bold: true, children: "\u6E90\u7801\u9759\u6001\u5BA1\u8BA1 \u2014\u2014 \u8F93\u5165\u8981\u5BA1\u8BA1\u7684\u76EE\u5F55" }),
+      /* @__PURE__ */ jsxs(Box, { marginTop: 1, children: [
+        /* @__PURE__ */ jsx(Text, { color: "green", children: " \u76EE\u5F55 > " }),
+        /* @__PURE__ */ jsx(
+          TextInput,
+          {
+            value: dir,
+            placeholder: "/path/to/source \u6216 .",
+            onChange: setDir,
+            onSubmit: (v) => {
+              const d = v.trim();
+              if (!d) return;
+              onAction({ cmd: "audit", args: [d] });
+            }
+          }
+        )
+      ] }),
+      /* @__PURE__ */ jsx(Text, { dimColor: true, children: " \u56DE\u8F66\u5F00\u59CB\u5BA1\u8BA1 \xB7 Ctrl+C \u9000\u51FA" })
+    ] });
+  }
   if (phase === "input") {
     return /* @__PURE__ */ jsxs(Box, { flexDirection: "column", padding: 1, children: [
       /* @__PURE__ */ jsx(Text, { bold: true, color: "cyan", children: "SiteLens \u7AD9\u70B9\u900F\u89C6 \u2014\u2014 \u7EC8\u7AEF\u626B\u63CF\u53F0" }),
@@ -393,10 +540,10 @@ function App() {
       verified.length > 15 ? /* @__PURE__ */ jsxs(Text, { dimColor: true, children: [
         "\u2026\u5176\u4F59 ",
         verified.length - 15,
-        " \u6761\u89C1\u5386\u53F2\uFF08serve \u6570\u636E\u76EE\u5F55\uFF09"
+        " \u6761\u89C1\u5386\u53F2\uFF08sitelens history\uFF09"
       ] }) : null
     ] }),
-    /* @__PURE__ */ jsx(Text, { dimColor: true, marginTop: 1, children: "\u626B\u63CF\u5386\u53F2\u4E0E\u5B8C\u6574 JSON \u843D ~/.sitelens/data \xB7 Ctrl+C \u9000\u51FA" })
+    /* @__PURE__ */ jsx(Text, { dimColor: true, marginTop: 1, children: "\u626B\u63CF\u5386\u53F2\u4E0E\u5B8C\u6574 JSON \u843D ~/.sitelens/data/state \xB7 Ctrl+C \u9000\u51FA" })
   ] });
 }
 function ProgressBar({ pct }) {

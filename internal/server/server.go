@@ -175,6 +175,7 @@ func (s *Server) Handler() http.Handler {
 		"/history": "history.html", "/api-docs": "api-docs.html",
 		"/intel": "intel.html",
 		"/chain": "chain.html", "/settings": "settings.html",
+		"/feedback": "feedback.html",
 	}
 	for route, file := range pages {
 		mux.HandleFunc(route, func(w http.ResponseWriter, r *http.Request) {
@@ -205,6 +206,10 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/osv-sync", s.hOsvSync)
 	mux.HandleFunc("GET /api/osv-sync", s.hOsvStatus)
 	mux.HandleFunc("GET /api/categories", s.hCategories)
+	// 5.2 反馈与诊断：本机生成脱敏诊断包 + 可选提交到用户自建端点
+	// （产品不做常驻埋点——见《用户服务协议》）。
+	mux.HandleFunc("GET /api/diagnostics", s.hDiagnostics)
+	mux.HandleFunc("POST /api/feedback", s.hFeedback)
 	mux.HandleFunc("POST /api/admin/reload", s.hAdminReload)
 	// A10 自适应：长空闲释放情报常驻（惰性路径保留，下次访问自动重载）
 	mux.HandleFunc("POST /api/admin/release-intel", s.hAdminReleaseIntel)
@@ -419,7 +424,8 @@ func (s *Server) hRoot(w http.ResponseWriter, r *http.Request) {
 	if strings.HasSuffix(p, ".html") {
 		name := strings.TrimPrefix(p, "/")
 		for _, known := range []string{"app.html", "history.html",
-			"api-docs.html", "intel.html", "chain.html", "settings.html", "404.html"} {
+			"api-docs.html", "intel.html", "chain.html", "settings.html",
+			"feedback.html", "404.html"} {
 			if name == known {
 				s.serveAsset(w, name)
 				return

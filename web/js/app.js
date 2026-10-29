@@ -177,7 +177,7 @@ api.get("/api/captcha/capability").then(function (c) {
   var hint = document.getElementById("lb-cap-hint");
   if (hint) hint.innerHTML =
     '<span style="color:var(--warn)">⚠ 本机未安装 ddddocr，验证码识别模式不可用（pip install ddddocr 后重启生效）。</span>';
-}).catch(function () {});
+}).catch(function (e) { window.slReportError(e, { quiet: true }); });
 
 var liveTimer = null, liveStart = 0, liveEst = 0;
 function renderLivePanel(options) {
@@ -306,14 +306,15 @@ function cancelScan() {
   var btn = document.getElementById("cancel-btn");
   if (btn) { btn.disabled = true; btn.textContent = "取消中…"; }
   document.getElementById("st-msg").textContent = "取消中…";
-  api.post("/api/job/" + currentJobId + "/cancel", {}).catch(function () {});
+  api.post("/api/job/" + currentJobId + "/cancel", {})
+    .catch(function (e) { window.slReportError(e); });
 }
 
 /* ---------------- 结果渲染 ---------------- */
 var CAT_NAMES = {};
 api.get("/api/categories").then(function (r) {
   r.categories.forEach(function (c) { CAT_NAMES[c.id] = c.name; });
-}).catch(function () {});
+}).catch(function (e) { window.slReportError(e, { quiet: true }); });
 
 function renderResult(r, scanId) {
   var html = "";

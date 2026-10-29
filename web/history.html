@@ -212,7 +212,7 @@ function regression(id, btn) {
 var CAT_NAMES = {};
 api.get("/api/categories").then(function (r) {
   r.categories.forEach(function (c) { CAT_NAMES[c.id] = c.name; });
-}).catch(function () {});
+}).catch(function (e) { window.slReportError(e, { quiet: true }); });
 
 function openDetail(id) {
   var box = document.getElementById("detail");

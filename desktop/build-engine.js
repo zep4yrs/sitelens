@@ -1,6 +1,15 @@
 // 构建并暂存引擎载荷：Go 单二进制 + lite 数据集（与 CI lite 版同一清单）。
 // 产物落 desktop/engine/，electron-builder 经 extraResources 整体打包。
-// 用法：cd desktop && npm run engine
+// 用法：cd desktop && npm run engine            （CLI 目标，npm 线/旧 Electron 线用）
+//       cd desktop && node build-engine.js --target=engine   （引擎目标，桌面 Wails 线用）
+//
+// 5.2 起引擎与 CLI 拆成两个二进制：
+//   - target=cli    → ./cmd/sitelens        → sitelens.exe          （控制台子系统，scan/audit/update-*）
+//   - target=engine → ./cmd/sitelens-engine → sitelens-engine.exe  （控制台子系统，serve/update-seed）
+// 两者共用同一套资产装箱与硬闸；**引擎不加 -H windowsgui**——引擎侧仍需
+// 写日志与输出 update-seed 报告，"不弹控制台窗口"由桌面壳拉起时用
+// CREATE_NO_WINDOW 实现（desktop-wails/main.go），不能靠改二进制子系统
+// （那会连带打死 CLI 的 stdout 输出）。
 //
 // 平台约束（v3.0.1 修正）：引擎**必须**是 Windows PE。曾出过真实事故——
 // CI 在 Linux 上执行不带 GOOS 的 go build，产出的「sitelens.exe」实为 ELF
@@ -27,7 +36,19 @@ const path = require('path');
 const ROOT = path.join(__dirname, '..');
 const OUT = path.join(__dirname, 'engine');
 const LDFLAGS = '-s -w';
-const EXE = path.join(OUT, 'sitelens.exe');
+
+// --target=cli|engine：构建哪个入口、产出什么文件名。
+// 默认 cli —— npm 线（tui/scripts/build-engines.mjs 另建）与旧 Electron 线
+// 都用 CLI 二进制（需要 stdout 输出 scan --json 结果）。
+const targetArg = process.argv.find((a) => a.startsWith('--target='));
+const TARGET = targetArg ? targetArg.slice('--target='.length) : 'cli';
+if (TARGET !== 'cli' && TARGET !== 'engine') {
+  throw new Error('--target 只接受 cli|engine，实际：' + TARGET);
+}
+const MAIN_PKG = TARGET === 'engine' ? './cmd/sitelens-engine' : './cmd/sitelens';
+const EXE_NAME = TARGET === 'engine' ? 'sitelens-engine.exe' : 'sitelens.exe';
+const EXE = path.join(OUT, EXE_NAME);
+console.log(`[engine] 构建目标：${TARGET}（${MAIN_PKG} → ${EXE_NAME}）`);
 
 function rm(p) {
   fs.rmSync(p, { recursive: true, force: true });
@@ -46,7 +67,7 @@ function hasCmd(name) {
 // buildCGO 尝试「带 CGO（含 AST）」构建；成功返回 true。
 // 策略见文件头注释。
 function buildCGO() {
-  const buildArgs = ['build', '-tags', 'onnx', '-ldflags', LDFLAGS, '-o', EXE, './cmd/sitelens'];
+  const buildArgs = ['build', '-tags', 'onnx', '-ldflags', LDFLAGS, '-o', EXE, MAIN_PKG];
   // (a) 本机可原生 CGO（Windows 有 gcc）：直接构建。
   if (process.platform === 'win32' && hasCmd('gcc')) {
     try {
@@ -86,7 +107,7 @@ function buildCGO() {
     'cd "$(wslpath -u ' + JSON.stringify(ROOT) + ')" 2>/dev/null || cd ' + JSON.stringify(toWSLPath(ROOT)),
     'GOTOOLCHAIN=local CGO_ENABLED=1 GOOS=windows GOARCH=amd64 ' +
       'CC=x86_64-w64-mingw32-gcc GOFLAGS=-mod=vendor ' +
-      'go build -tags onnx -ldflags ' + JSON.stringify(LDFLAGS) + ' -o ' + JSON.stringify(toWSLPath(EXE)) + ' ./cmd/sitelens'
+      'go build -tags onnx -ldflags ' + JSON.stringify(LDFLAGS) + ' -o ' + JSON.stringify(toWSLPath(EXE)) + ' ' + MAIN_PKG
   ].join(' && ');
   try {
     execFileSync('wsl.exe', ['-d', process.env.SITLENS_WSL_DISTRO || 'archlinux',
@@ -116,7 +137,7 @@ if (!buildCGO()) {
   console.warn('[engine] ⚠ 未找到 C 工具链（本机 gcc 或 WSL+mingw）：' +
     '回退纯 Go 构建，桌面版**源码审计将降级为规则级（无 AST 数据流）**。' +
     '如需完整白盒能力，请安装 mingw-w64 或 WSL 交叉工具链后重跑。');
-  execFileSync('go', ['build', '-ldflags', LDFLAGS, '-o', EXE, './cmd/sitelens'], {
+  execFileSync('go', ['build', '-ldflags', LDFLAGS, '-o', EXE, MAIN_PKG], {
     cwd: ROOT,
     stdio: 'inherit',
     env: Object.assign({}, process.env, {
