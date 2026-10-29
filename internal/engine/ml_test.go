@@ -15,6 +15,48 @@ import (
 	"cnb.cool/feng-qiao/sitelens/internal/ml"
 )
 
+// TestSevAssetsDirResolvesRepoModels BUG-019 回归：ONNX 资产路径曾只用
+// cfg.ML.AssetsDir（默认 data/go/ml_assets，仓内不存在），而资产随
+// 「模型进仓库本体」迁到 models/go/ml_assets → glob 恒落空 → sev_onnx
+// 通道恒不可用并静默回退 NVD 先验。现与线性模型路径同源经
+// ml.LocateAssetsDir 解析。工作树无 ONNX 资产时 skip。
+func TestSevAssetsDirResolvesRepoModels(t *testing.T) {
+	t.Chdir("../..") // 运行时约定：模型资产相对路径相对进程 cwd（仓库根）
+	e := &Engine{cfg: config.Default()}
+	if st, err := os.Stat(e.cfg.ML.AssetsDir); err == nil && st.IsDir() {
+		// 未来若仓内补了默认目录，配置优先语义本就指向它，无需求解候选
+		t.Skipf("默认资产目录已存在（%s），本回归前提不再成立", e.cfg.ML.AssetsDir)
+	}
+	got := e.sevAssetsDir()
+	want := filepath.Join("models", "go", "ml_assets")
+	if got != want {
+		t.Fatalf("sev 资产目录 = %q，期望同源候选 %q", got, want)
+	}
+	// 解析到的目录必须真能定位 sev-prior ONNX 资产与词表（默认构建下
+	// NewSevScorer 由 onnx 构建标签提供，这里断言资产可发现性）。
+	for _, pat := range []string{"sev-prior-v3.1-[ab].onnx", "sev-prior-v3.1-[ab]-int8.onnx"} {
+		m, err := filepath.Glob(filepath.Join(got, pat))
+		if err != nil || len(m) == 0 {
+			t.Fatalf("资产目录 %q 下未找到 %q（ONNX 通道将不可用）", got, pat)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(got, "sev-prior-v3.1.vocab.txt")); err != nil {
+		t.Fatalf("资产目录 %q 缺 sev-prior 词表: %v", got, err)
+	}
+}
+
+// TestSevAssetsDirFallbackToConfigured 自定义部署可能只投放 ONNX 文件
+// （不成套线性模型资产）：候选全不合格时保持配置值原语义，不得静默改道。
+func TestSevAssetsDirFallbackToConfigured(t *testing.T) {
+	t.Chdir(t.TempDir()) // 默认候选（data/go、models/go）在此均不存在
+	e := &Engine{cfg: config.Default()}
+	custom := "custom-onnx-only"
+	e.cfg.ML.AssetsDir = custom
+	if got := e.sevAssetsDir(); got != custom {
+		t.Fatalf("候选全缺失时应退回配置值 %q，实得 %q", custom, got)
+	}
+}
+
 // TestMLNormRelevance 归一键与交集标记三档：hit / related / 空。
 func TestMLNormRelevance(t *testing.T) {
 	if mlNorm("Apache Tomcat") != "apachetomcat" || mlNorm("php/php") != "phpphp" {

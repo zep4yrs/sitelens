@@ -1,0 +1,215 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>反馈与诊断 — SiteLens</title>
+<script src="/js/turbo.js"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<script>if(localStorage.getItem("sitelens-theme")==="dark")document.documentElement.classList.add("dark")</script>
+<style>
+  .fb-note{background:var(--card);border:1px solid var(--border);border-radius:10px;padding:14px 16px;
+    font-size:13px;line-height:1.9;color:var(--muted-fg);margin-bottom:18px}
+  .fb-note b{color:var(--fg)}
+  .fb-row{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:14px}
+  .fb-sec{font-size:14px;font-weight:600;margin:22px 0 10px;color:var(--fg)}
+  .fb-pre{font-family:var(--font-mono);font-size:12px;line-height:1.75;white-space:pre-wrap;
+    word-break:break-word;background:var(--card);border:1px solid var(--border);border-radius:10px;
+    padding:12px 14px;max-height:420px;overflow:auto;margin:0}
+  .fb-ta{width:100%;min-height:300px;font-family:var(--font-mono);font-size:12px;line-height:1.7;
+    background:var(--input);color:var(--foreground);border:1px solid var(--border);border-radius:10px;
+    padding:12px 14px;outline:none;resize:vertical}
+  .fb-ta:focus{border-color:var(--ring);box-shadow:0 0 0 3px color-mix(in srgb,var(--ring) 18%,transparent)}
+  .fb-table{width:100%;border-collapse:collapse;font-size:12.5px}
+  .fb-table th{text-align:left;font-size:11px;color:var(--muted-fg);padding:6px 10px;
+    border-bottom:1px solid var(--border);font-weight:600}
+  .fb-table td{padding:7px 10px;border-bottom:1px solid color-mix(in srgb,var(--border) 55%,transparent);
+    vertical-align:top}
+  .fb-ok{color:var(--ok);font-weight:600}
+  .fb-miss{color:var(--danger);font-weight:600}
+  .fb-mono{font-family:var(--font-mono);font-size:11.5px;color:var(--muted-fg)}
+  .fb-warn{background:color-mix(in srgb,var(--warn) 12%,transparent);border:1px solid
+    color-mix(in srgb,var(--warn) 40%,transparent);border-radius:10px;padding:12px 14px;
+    font-size:12.5px;line-height:1.85;margin-bottom:14px}
+  .fb-errs{font-family:var(--font-mono);font-size:11.5px;line-height:1.8;color:var(--danger);
+    background:color-mix(in srgb,var(--danger) 8%,transparent);border-radius:8px;padding:10px 12px;
+    white-space:pre-wrap;word-break:break-word}
+</style>
+</head>
+<body>
+<script src="/js/common.js"></script>
+
+<div class="tw-app">
+  <aside class="tw-left"><div class="tw-modes tabs" id="tw-modeslot"></div></aside>
+  <div class="tw-right">
+    <div class="tw-toolbar">
+      <span class="tw-pagetitle">反馈与诊断</span>
+      <div class="tw-topslot" id="tw-topslot"></div>
+    </div>
+    <div class="tw-canvas">
+      <main class="page">
+
+  <p class="sub">生成本机诊断包，附在反馈里帮我们定位问题。<b>诊断包只在这台机器上生成</b>——你看到什么就发什么，提交与否完全由你决定。</p>
+
+  <div class="fb-note">
+    <b>关于隐私</b>：SiteLens 无账号体系、无埋点、无遥测、无崩溃上报——开发者不接收你的任何扫描数据、目标信息或使用行为。
+    本页生成的诊断包<b>不含</b> API Token、登录凭证、Cookie 与完整目标地址（路径只保留文件名）；
+    它<b>不会自动上传</b>，只有你点「提交」且配置了自己的收集地址时才会发出去。
+  </div>
+
+  <div class="fb-row">
+    <button class="btn" id="btn-gen">生成诊断包</button>
+    <button class="btn ghost" id="btn-copy" disabled>复制到剪贴板</button>
+    <button class="btn ghost" id="btn-submit" disabled>提交到我的收集端点</button>
+    <span class="fb-mono" id="gen-at"></span>
+  </div>
+
+  <div class="fb-warn" id="no-endpoint" style="display:none">
+    未配置反馈提交地址（<code>feedback.endpoint</code>）。诊断包仍可一键复制，附到
+    <a href="https://cnb.cool/feng-qiao/sitelens/-/issues" target="_blank" rel="noopener noreferrer">仓库 Issue</a> 里即可。
+    若你希望自动提交，可在自己的配置里填一个<b>自建</b>端点（内网亦可）——项目不提供、也不运营任何收集服务。
+  </div>
+
+  <div class="fb-sec">数据资产就位情况</div>
+  <p class="sub" style="margin-bottom:10px">某个资产缺失会让对应能力<b>静默降级</b>（不报错、只是没结果）。这一表能直接回答"为什么某某功能没输出"。</p>
+  <table class="fb-table" id="assets"><thead><tr><th>资产</th><th>状态</th><th>路径</th><th>缺失影响</th></tr></thead><tbody></tbody></table>
+
+  <div class="fb-sec">当前降级的能力</div>
+  <div class="fb-errs" id="degraded" style="display:none"></div>
+  <p class="sub" id="no-degraded" style="display:none">无——全部能力均处于完整状态。</p>
+
+  <div class="fb-sec">最近的失败记录</div>
+  <div class="fb-errs" id="errors" style="display:none"></div>
+  <p class="sub" id="no-errors" style="display:none">最近的扫描没有失败记录。</p>
+
+  <div class="fb-sec">诊断包内容（可编辑后再提交）</div>
+  <textarea class="fb-ta" id="ta" placeholder="点上方「生成诊断包」后，内容会出现在这里；你可以删掉不想带的内容。"></textarea>
+
+  <div class="fb-sec">反馈时请一并说明</div>
+  <ul class="sub" style="line-height:2">
+    <li>引擎版本（诊断包首行）与操作系统</li>
+    <li>想做什么、在哪一步失败（界面上的提示原文）</li>
+    <li>目标环境特征（授权靶场的类型即可，<b>不要贴未授权目标的完整数据</b>）</li>
+    <li>如果能复现：一次扫描的档位（quick/standard/deep/full 等）与是否开了主动能力</li>
+  </ul>
+
+  </main>
+    </div>
+  </div>
+</div>
+
+<script>
+(function () {
+  var ta = document.getElementById("ta");
+  var genAt = document.getElementById("gen-at");
+  var btnGen = document.getElementById("btn-gen");
+  var btnCopy = document.getElementById("btn-copy");
+  var btnSubmit = document.getElementById("btn-submit");
+  var noEndpoint = document.getElementById("no-endpoint");
+  var report = null;
+
+  function rows(tbody, items, html) {
+    tbody.innerHTML = items.length
+      ? items.map(html).join("")
+      : '<tr><td colspan="4" class="fb-mono">（无）</td></tr>';
+  }
+
+  function render(rep) {
+    report = rep;
+    ta.value = rep.text || "";
+    genAt.textContent = "生成于 " + (rep.generated_at || "");
+    btnCopy.disabled = false;
+
+    var body = document.querySelector("#assets tbody");
+    rows(body, rep.assets || [], function (a) {
+      return "<tr><td>" + esc(a.name) + "</td>" +
+        "<td>" + (a.present
+          ? '<span class="fb-ok">就位</span>' +
+            (a.size_kb ? ' <span class="fb-mono">' + a.size_kb + " KB</span>" : "")
+          : '<span class="fb-miss">缺失</span>') + "</td>" +
+        '<td class="fb-mono">' + esc(a.path || "-") + "</td>" +
+        '<td class="fb-mono">' + esc(a.note || "") + "</td></tr>";
+    });
+
+    var deg = document.getElementById("degraded");
+    var degNone = document.getElementById("no-degraded");
+    if ((rep.degraded || []).length) {
+      deg.style.display = "";
+      degNone.style.display = "none";
+      deg.textContent = rep.degraded.join("\n");
+    } else {
+      deg.style.display = "none";
+      degNone.style.display = "";
+    }
+
+    var errs = document.getElementById("errors");
+    var errNone = document.getElementById("no-errors");
+    if ((rep.recent_errors || []).length) {
+      errs.style.display = "";
+      errNone.style.display = "none";
+      errs.textContent = rep.recent_errors.join("\n");
+    } else {
+      errs.style.display = "none";
+      errNone.style.display = "";
+    }
+
+    var hasEndpoint = !!(rep.config && rep.config.feedback && rep.config.feedback.endpoint_set);
+    noEndpoint.style.display = hasEndpoint ? "none" : "";
+    btnSubmit.disabled = !hasEndpoint;
+  }
+
+  btnGen.addEventListener("click", function () {
+    btnGen.disabled = true;
+    btnGen.textContent = "生成中…";
+    api.get("/api/diagnostics").then(function (rep) {
+      render(rep);
+    }).catch(function (e) {
+      window.slReportError(e);
+    }).then(function () {
+      btnGen.disabled = false;
+      btnGen.textContent = "重新生成";
+    });
+  });
+
+  btnCopy.addEventListener("click", function () {
+    var text = ta.value;
+    if (!text) return;
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(function () {
+        window.toast("诊断包已复制到剪贴板", "ok");
+      }).catch(function () {
+        ta.select();
+        window.toast("请按 Ctrl+C 手动复制", "err");
+      });
+    } else {
+      ta.select();
+      window.toast("请按 Ctrl+C 手动复制", "err");
+    }
+  });
+
+  btnSubmit.addEventListener("click", function () {
+    var text = ta.value.trim();
+    if (!text) { window.toast("诊断包内容为空", "err"); return; }
+    btnSubmit.disabled = true;
+    btnSubmit.textContent = "提交中…";
+    api.post("/api/feedback", { text: text }).then(function (r) {
+      if (r && r.submitted) {
+        window.toast(r.message || "已提交", "ok");
+      } else {
+        window.toast((r && r.message) || "未提交", "err");
+      }
+    }).catch(function (e) {
+      window.slReportError(e);
+    }).then(function () {
+      btnSubmit.disabled = false;
+      btnSubmit.textContent = "提交到我的收集端点";
+    });
+  });
+
+  // 首屏自动生成一次（省一次点击）
+  btnGen.click();
+})();
+</script>
+</body>
+</html>

@@ -186,6 +186,20 @@
   </div>
 
   <div class="sec">
+    <div class="sec-title"><span class="method get">GET</span>/api/diagnostics</div>
+    <p>生成本机脱敏诊断包（5.2）：版本 / 平台 / 配置摘要（不含 Token 与凭证）/ 数据资产就位矩阵 /
+    当前降级能力 / 最近失败记录，另附可直接粘贴的纯文本 <code>text</code> 字段。
+    <b>只在本机生成，不外发</b>；提交与否由用户在「反馈」页决定。</p>
+  </div>
+
+  <div class="sec">
+    <div class="sec-title"><span class="method post">POST</span>/api/feedback</div>
+    <p>把用户已确认的诊断包文本转发到<b>用户自建</b>的收集端点（<code>feedback.endpoint</code>）。
+    body：<code>{"text": "..."}</code>。后端不加工内容——用户看到什么就发什么。
+    未配置端点时返回 <code>{"submitted": false, "message": "..."}</code>（提示改用 Issue）。</p>
+  </div>
+
+  <div class="sec">
     <div class="sec-title"><span class="method get">GET</span>/api/vuln-search?q=grafana</div>
     <p>漏洞情报混合检索：trgm 粗筛（GIN 索引）→ 256 维哈希 TF-IDF 向量余弦重排，limit 40。</p>
   </div>

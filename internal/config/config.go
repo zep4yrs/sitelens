@@ -35,6 +35,21 @@ type Config struct {
 	Oob        OobConfig        `yaml:"oob"`
 	Exploit    ExploitConfig    `yaml:"exploit"`
 	ML         MLConfig         `yaml:"ml"`
+	Feedback   FeedbackConfig   `yaml:"feedback"`
+}
+
+// FeedbackConfig 反馈通道（5.2）。
+//
+// 产品**不做常驻埋点**（隐私承诺见《用户服务协议》：「无账号体系、无埋点、
+// 无遥测、无崩溃上报」）——那是承诺，不是遗漏。故反馈走折中路线：
+// 诊断包在**本机**生成、内容脱敏、由用户自己决定带不带；提交目标也由用户
+// 自行配置（默认空 = 不提交，只能复制到 Issue）。
+//
+// Endpoint 指向**用户自己的**收集端点（自建/内网皆可）；本项目不提供、
+// 也不运营任何服务端，因此不存在"数据发到开发者服务器"的情况。
+type FeedbackConfig struct {
+	Endpoint string `yaml:"endpoint"` // 自建收集端点（空 = 不提交，仅本地生成/复制）
+	Timeout  int    `yaml:"timeout"`  // 提交超时秒数（0 = 默认 15）
 }
 
 // MLConfig 5.0 内嵌 ML 线性模型推理（L3 阶段 A：cve-tech + cwe-type）。
@@ -105,7 +120,7 @@ type ActiveConfig struct {
 
 // ScanConfig HTTP 采集与扫描全局阈值。
 type ScanConfig struct {
-	RateIntervalMS int    `yaml:"rate_interval_ms"` // 请求最小间隔（毫秒），0=不限速
+	RateIntervalMS int    `yaml:"rate_interval_ms"` // 请求最小间隔（毫秒）——0/负值回退默认 400，当前实现不支持 0=不限速
 	TimeoutSec     int    `yaml:"timeout_sec"`      // 单请求超时（秒）
 	MaxHops        int    `yaml:"max_hops"`         // 重定向最大跳数
 	MaxBodyMB      int    `yaml:"max_body_mb"`      // 正文留存上限（MB）
@@ -142,7 +157,7 @@ type CrawlerConfig struct {
 	MaxPages           int    `yaml:"max_pages"`            // 最多爬取的页面数
 	RespectRobots      bool   `yaml:"respect_robots"`       // 是否遵循 robots.txt
 	MaxLinksPerPage    int    `yaml:"max_links_per_page"`   // 每页最多提取的链接数
-	TimeoutSec         int    `yaml:"timeout_sec"`          // 爬取阶段总时长上限（秒），0=不限
+	TimeoutSec         int    `yaml:"timeout_sec"`          // 爬取阶段总时长上限（秒）——0/负值回退默认 60，当前实现不支持 0=不限
 	Headless           bool   `yaml:"headless"`             // 无头浏览器渲染（SPA 支持；需本机有 Chromium 系浏览器，缺失自动降级）
 	HeadlessAllPages   bool   `yaml:"headless_all_pages"`   // 无头渲染扩展到全部已爬页（默认仅首页；页面多时显著变慢）
 	HeadlessTimeoutSec int    `yaml:"headless_timeout_sec"` // 单页渲染超时（秒）
@@ -181,7 +196,7 @@ type IntelConfig struct {
 	TplIntelPath     string `yaml:"tpl_intel_path"`    // 模板情报行（update-tplintel 生成，缺失则跳过）
 	TechnologiesPath string `yaml:"technologies_path"` // 指纹规则文件路径
 	SearchLimit      int    `yaml:"search_limit"`      // /api/vuln-search 返回上限
-	UpdateHours      int    `yaml:"update_hours"`      // KEV 自动更新间隔（小时，0=关闭）
+	UpdateHours      int    `yaml:"update_hours"`      // KEV 自动更新间隔（小时）——0/负值回退默认 24，当前实现不支持 0=关闭自动更新
 	OverridesPath    string `yaml:"overrides_path"`    // OSV 同步覆盖文件（存在则启动合并）
 }
 
@@ -345,6 +360,11 @@ func Default() *Config {
 			AssetsDir: "data/go/ml_assets",
 			SevONNX:   false, // 默认关：ONNX 构建属桌面安装器形态（§10.8）
 		},
+		Feedback: FeedbackConfig{
+			// 默认不提交：产品承诺「不采集用户数据」，提交目标由用户自建。
+			Endpoint: "",
+			Timeout:  15,
+		},
 	}
 }
 
@@ -396,6 +416,7 @@ var knownTopKeys = map[string]bool{
 	"intel": true, "netsec": true, "loginbrute": true, "audit": true,
 	"batch": true, "web": true, "store": true, "active": true, "modules": true,
 	"auth": true, "ssrf": true, "oob": true, "exploit": true, "ml": true,
+	"feedback": true,
 }
 
 // LoadOrDefault 加载配置；出错时 stderr 告警并使用默认值
@@ -518,6 +539,10 @@ func (c *Config) fillDefaults() {
 	}
 	// c.ML.Predict 为布尔项，不回退（false 是合法的"关"）；
 	// 默认值 true 由 Default() 基底带入，用户显式写 predict: false 即关。
+	if c.Feedback.Timeout <= 0 {
+		c.Feedback.Timeout = d.Feedback.Timeout
+	}
+	// c.Feedback.Endpoint 刻意**不**回退到任何默认地址：默认空 = 不提交。
 }
 
 func fillInt(v *int, def int) {

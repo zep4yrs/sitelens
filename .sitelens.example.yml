@@ -4,7 +4,7 @@
 # 完整键位语义见 README「配置」节。
 
 scan:
-  rate_interval_ms: 400      # 请求最小间隔（限速）
+  rate_interval_ms: 400      # 请求最小间隔（限速）；0/负值 = 用默认 400（不支持 0=不限速）
   timeout_sec: 15            # 单请求超时
   max_hops: 6                # 重定向跳数上限
   max_body_mb: 3             # 正文留存上限
@@ -28,7 +28,7 @@ crawler:
                           # 塌缩到入口页（扫描时会有明确提示）。授权目标如需
                           # 完整爬取，置为 false。
   max_links_per_page: 80
-  timeout_sec: 60
+  timeout_sec: 60             # 爬取阶段总时长上限；0/负值 = 用默认 60（不支持 0=不限）
 
   headless: false             # 无头渲染（SPA 支持；需本机 Chrome/Chromium，缺失自动降级）
   headless_all_pages: false   # 渲染扩展到全部已爬页（默认仅首页；页面多时显著变慢）
@@ -74,7 +74,7 @@ intel:
   ranges_path: data/affected_ranges.json
   technologies_path: data/go/technologies.json
   search_limit: 40
-  update_hours: 24           # KEV 自动更新间隔（0 = 关闭）
+  update_hours: 24           # KEV 自动更新间隔；0/负值 = 用默认 24（不支持 0=关闭）
 
 netsec:
   tls_timeout_sec: 8

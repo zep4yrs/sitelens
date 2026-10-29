@@ -13,8 +13,9 @@ func TestNormalizeSource(t *testing.T) {
 		{"dns/zone-transfer.yaml", "dns"},
 		{"ssl/weak-cipher.yaml", "ssl"},
 		{"legacy/old-template.yaml", "legacy"},
-		{"http/unknown-category/x.yaml", "unknown"}, // 二级目录非白名单 → unknown
-		{"./http/cves/a.yaml", "cves"},              // 前导 ./ 归一
+		{"afrog/CNVD/2018/CNVD-2018-13393.yaml", "afrog"}, // update-afrog 独立镜像目录
+		{"http/unknown-category/x.yaml", "unknown"},       // 二级目录非白名单 → unknown
+		{"./http/cves/a.yaml", "cves"},                    // 前导 ./ 归一
 		{"", "unknown"},
 		{"cves.yaml", "unknown"}, // 根文件，无来源目录
 	}

@@ -45,7 +45,7 @@ import (
 )
 
 // Version 服务版本。
-const Version = "5.1.0"
+const Version = "5.2.0"
 
 // categoryNames 常见技术类别中文名（对齐 Wappalyzer 类别 id）。
 var categoryNames = map[string]string{
@@ -70,19 +70,20 @@ func categoryName(id string) string {
 
 // Server Web 服务。
 type Server struct {
-	cfg      *config.Config
-	cfgPath  string // 用户配置文件路径（设置页保存目标）
-	eng      *engine.Engine
-	matcher  *sitelens.Matcher
-	kb       atomic.Pointer[intel.KB] // 热替换安全：指向当前知识库快照
-	st       *store.Store
-	jobs     *store.JobManager
-	sem      chan struct{}
-	apiToken string
-	techIDs  []string // 类别全集（CSV 宽表列序）
-	techCnt  int
+	cfg     *config.Config
+	cfgPath string // 用户配置文件路径（设置页保存目标）
+	eng     *engine.Engine
+	matcher *sitelens.Matcher
+	kb      atomic.Pointer[intel.KB] // 热替换安全：指向当前知识库快照
+	st      *store.Store
+	jobs    *store.JobManager
+	sem     chan struct{}
+	// apiToken / tech 均以原子快照整体换枪：热更新写侧与请求读侧
+	// 不共享可变内存（此前 string / slice header 无锁换枪 → 撕裂）。
+	apiToken atomic.Pointer[string]
+	tech     atomic.Pointer[techMeta] // 类别全集 + 指纹条数（CSV 宽表列序）
 
-	cfgMu    sync.Mutex // 保护 cfg 与 apiToken 的设置页热更新
+	cfgMu    sync.Mutex // 保护 cfg 的设置页热更新（apiToken 见上）
 	dataMu   sync.Mutex
 	lastData map[string]int64 // 数据文件路径 → 上次加载时的 mtime（热更新基线）
 
@@ -103,13 +104,14 @@ func New(cfg *config.Config, cfgPath string) (*Server, error) {
 		sem:      make(chan struct{}, cfg.Scan.MaxConcurrent),
 		lastData: map[string]int64{}}
 	checks.ConfigurePlugins(cfg.Checks.PluginDir)
-	s.apiToken = os.Getenv("SLENS_API_TOKEN")
-	if s.apiToken == "" {
-		s.apiToken = cfg.Web.APIToken
+	tok := os.Getenv("SLENS_API_TOKEN")
+	if tok == "" {
+		tok = cfg.Web.APIToken
 	}
+	s.apiToken.Store(&tok)
 
 	if m, err := loadTechMeta(cfg); err == nil {
-		s.techIDs, s.techCnt = m.cats, m.count
+		s.tech.Store(&m)
 	} else {
 		log.Printf("指纹元数据读取失败（统计/CSV 降级）：%v", err)
 	}
@@ -164,6 +166,24 @@ func New(cfg *config.Config, cfgPath string) (*Server, error) {
 // KB 返回当前知识库快照（热替换安全）。
 func (s *Server) KB() *intel.KB { return s.kb.Load() }
 
+// token 返回当前 API 令牌快照（空串 = 未启用鉴权）。
+// 读侧无锁：令牌由设置页热更新，整体换枪避免字符串头撕裂。
+func (s *Server) token() string {
+	if p := s.apiToken.Load(); p != nil {
+		return *p
+	}
+	return ""
+}
+
+// techMetaSnap 返回当前指纹元数据快照（类别全集 + 条数）。
+// cats 一经发布不再改写，读侧可安全共享；未加载时为零值（统计降级为 0）。
+func (s *Server) techMetaSnap() techMeta {
+	if p := s.tech.Load(); p != nil {
+		return *p
+	}
+	return techMeta{}
+}
+
 // Handler 构建全部路由。
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
@@ -175,6 +195,7 @@ func (s *Server) Handler() http.Handler {
 		"/history": "history.html", "/api-docs": "api-docs.html",
 		"/intel": "intel.html",
 		"/chain": "chain.html", "/settings": "settings.html",
+		"/feedback": "feedback.html",
 	}
 	for route, file := range pages {
 		mux.HandleFunc(route, func(w http.ResponseWriter, r *http.Request) {
@@ -205,6 +226,10 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/osv-sync", s.hOsvSync)
 	mux.HandleFunc("GET /api/osv-sync", s.hOsvStatus)
 	mux.HandleFunc("GET /api/categories", s.hCategories)
+	// 5.2 反馈与诊断：本机生成脱敏诊断包 + 可选提交到用户自建端点
+	// （产品不做常驻埋点——见《用户服务协议》）。
+	mux.HandleFunc("GET /api/diagnostics", s.hDiagnostics)
+	mux.HandleFunc("POST /api/feedback", s.hFeedback)
 	mux.HandleFunc("POST /api/admin/reload", s.hAdminReload)
 	// A10 自适应：长空闲释放情报常驻（惰性路径保留，下次访问自动重载）
 	mux.HandleFunc("POST /api/admin/release-intel", s.hAdminReleaseIntel)
@@ -273,7 +298,7 @@ func (s *Server) Run() error {
 	}()
 	// SEC-8 加固：非回环监听且未设 Token 时给出醒目警告
 	//（此时全部 /api/* 对所在网络开放，包括主动扫描与爆破能力）
-	if !strings.HasPrefix(s.cfg.Web.Listen, "127.0.0.1") && !strings.HasPrefix(s.cfg.Web.Listen, "localhost") && s.apiToken == "" {
+	if !strings.HasPrefix(s.cfg.Web.Listen, "127.0.0.1") && !strings.HasPrefix(s.cfg.Web.Listen, "localhost") && s.token() == "" {
 		log.Printf("警告：监听 %s 为非回环地址且未设置 API Token，全部 API 对所在网络开放（含主动扫描能力）。生产部署请设置 SLENS_API_TOKEN 或 web.api_token", s.cfg.Web.Listen)
 	}
 	log.Printf("SiteLens %s 监听 http://%s", Version, s.cfg.Web.Listen)
@@ -322,8 +347,8 @@ func (s *Server) startKEVDaemon() {
 // 比较用常量时间实现（防时序侧信道逐字节猜 token）。
 func (s *Server) guard(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if s.apiToken != "" && strings.HasPrefix(r.URL.Path, "/api/") {
-			if subtle.ConstantTimeCompare([]byte(r.Header.Get("X-Token")), []byte(s.apiToken)) != 1 {
+		if tok := s.token(); tok != "" && strings.HasPrefix(r.URL.Path, "/api/") {
+			if subtle.ConstantTimeCompare([]byte(r.Header.Get("X-Token")), []byte(tok)) != 1 {
 				writeJSON(w, 401, map[string]any{"error": "未授权：缺少或错误的 X-Token"})
 				return
 			}
@@ -419,7 +444,8 @@ func (s *Server) hRoot(w http.ResponseWriter, r *http.Request) {
 	if strings.HasSuffix(p, ".html") {
 		name := strings.TrimPrefix(p, "/")
 		for _, known := range []string{"app.html", "history.html",
-			"api-docs.html", "intel.html", "chain.html", "settings.html", "404.html"} {
+			"api-docs.html", "intel.html", "chain.html", "settings.html",
+			"feedback.html", "404.html"} {
 			if name == known {
 				s.serveAsset(w, name)
 				return
@@ -454,8 +480,9 @@ func (s *Server) hVersion(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) hStats(w http.ResponseWriter, r *http.Request) {
+	tm := s.techMetaSnap()
 	stats := map[string]any{
-		"categories": len(s.techIDs), "technologies": s.techCnt, "curated": s.techCnt,
+		"categories": len(tm.cats), "technologies": tm.count, "curated": tm.count,
 		"vulns": 0, "tscan": 0, "vuln_by_severity": map[string]int{},
 		"intel_sources": map[string]int{}, "intel_with_ranges": 0, "intel_with_cvss": 0,
 	}
@@ -470,8 +497,9 @@ func (s *Server) hStats(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) hCategories(w http.ResponseWriter, r *http.Request) {
-	out := make([]map[string]any, 0, len(s.techIDs))
-	for _, id := range s.techIDs {
+	ids := s.techMetaSnap().cats // 单次快照：避免换枪中途 len/range 错配
+	out := make([]map[string]any, 0, len(ids))
+	for _, id := range ids {
 		out = append(out, map[string]any{"id": id, "name": categoryName(id), "icon": ""})
 	}
 	writeJSON(w, 200, map[string]any{"categories": out})
@@ -876,14 +904,14 @@ func (s *Server) hExport(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, 404, map[string]any{"error": "记录不存在（无详细结果数据）"})
 			return
 		}
-		csvText := detailCSV(rec, s.techIDs)
+		csvText := detailCSV(rec, s.techMetaSnap().cats)
 		csvResponse(w, csvText, fmt.Sprintf("sitelens-%d.csv", id))
 	case "wide":
 		if rec.Result == nil {
 			writeJSON(w, 404, map[string]any{"error": "记录不存在（无详细结果数据）"})
 			return
 		}
-		csvText := wideCSV([]*store.ScanRecord{rec}, s.techIDs)
+		csvText := wideCSV([]*store.ScanRecord{rec}, s.techMetaSnap().cats)
 		csvResponse(w, csvText, fmt.Sprintf("sitelens-wide-%d.csv", id))
 	case "html":
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")

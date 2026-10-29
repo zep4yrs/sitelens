@@ -21,6 +21,33 @@ Experiment 五级 Manifest + git 提交链），全部数字来自真实执行�
 默认数据根：`--data-root`（主仓库 `实训考核2/data`，须含 `state/history.json`），
 输出根 `data/ml/`。
 
+## 路径与环境变量（BUG-028）
+
+训练脚本不再硬编码开发机绝对路径，所有输入/输出统一走「环境变量优先 + 仓库相对默认」
+（解析实现见 `ml/config.py` 头部）。换机器时不改代码，只设环境变量：
+
+| 环境变量 | 默认（仓库相对，`<repo>`=本仓库根） | 用途 |
+|---|---|---|
+| `SITLENS_DATA_ROOT` | `<repo>/data` | 原始 KB 数据根（须含 `state/history.json`） |
+| `SITLENS_ML_OUT` | `<repo>/data/ml` | 产物根（dataset / experiments / metrics / dist） |
+| `SITLENS_ML_ASSETS` | `<repo>/data/bench/models` | 预训练底座权重根（`distilbert-base-uncased/`） |
+| `SITLENS_ML_BENCH` | `<repo>/data/bench` | 基准/外部资产根（`models/`、`external/` 的上一级） |
+| `SITLENS_ML_GO_ASSETS` | `<repo>/data/go/ml_assets` | Go 引擎资产导出目录 |
+| `SITLENS_FARM_HISTORY` | `<SITLENS_DATA_ROOT>/state/history.json` | 靶场扫描历史（EXP-1101/1102） |
+
+示例（Windows PowerShell，仓库根目录）：
+
+```powershell
+$env:SITLENS_DATA_ROOT = "D:\somewhere\实训考核2\data"
+$env:SITLENS_ML_ASSETS = "D:\somewhere\models"        # 内含 distilbert-base-uncased\
+python -m ml.train_sev_v31_deploy                      # 需 GPU；CUDA 不可用会直接 abort
+python -m ml.export_sev_v31_pair                       # CPU 可跑，需 onnx/onnxruntime
+```
+
+重新导出 Go 引擎资产（含 BUG-035 的 int8 四件）后，用
+`internal/ml/sev_onnx_int8_test.go` 实测 int8 精度损失，命令见
+`docs/release-5.2.0/ML-包体瘦身实测方案-5.2.0.md` §4。
+
 ## 实验索引
 
 | 实验 | 任务 | 状态 | 结果 |

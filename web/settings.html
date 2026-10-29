@@ -791,7 +791,7 @@
       $("dScans").textContent = h.scans != null ? h.scans : "-";
       $("dHosts").textContent = h.hosts != null ? h.hosts : "-";
       $("dAvg").textContent = h.avg_techs != null ? h.avg_techs : "-";
-    }).catch(function () {});
+    }).catch(function (e) { window.slReportError(e, { quiet: true }); });
   }
   loadStats();
   $("clearHist").addEventListener("click", function () {
@@ -853,7 +853,7 @@
     setv("scan_timeout", c.scan.timeout_sec);
     setv("nuclei_cap", c.checks.nuclei_cap);
     setv("overrides_path", c.intel.overrides_path);
-  }).catch(function () {});
+  }).catch(function (e) { window.slReportError(e, { quiet: true }); });
 
   $("save").addEventListener("click", function () {
     var b = $("save"), m = $("saveMsg");
@@ -904,14 +904,14 @@
   $("updNote").style.display = "";
   window.api.get("/api/version").then(function (v) {
     if (v && v.version) $("verBig").textContent = "SiteLens v" + v.version;
-  }).catch(function () {});
+  }).catch(function (e) { window.slReportError(e, { quiet: true }); });
   window.api.get("/api/stats").then(function (s) {
     var intel = 0;
     for (var k in (s.intel_sources || {})) intel += s.intel_sources[k];
     $("stFp").textContent = s.technologies != null ? s.technologies : "-";
     $("stIntel").textContent = (s.vulns != null ? s.vulns : intel) || "-";
     $("stNvd").textContent = s.nvd != null ? s.nvd : "-";
-  }).catch(function () {});
+  }).catch(function (e) { window.slReportError(e, { quiet: true }); });
 
   /* ---- 检查更新：桌面版经 preload 桥直连主进程更新器（真实检查），
           浏览器模式跳发布页 ---- */
@@ -989,7 +989,7 @@
       $("segClose").querySelectorAll("button").forEach(function (b) {
         b.classList.toggle("on", b.getAttribute("data-v") === info.closeAction);
       });
-    }).catch(function () {});
+    }).catch(function (e) { window.slReportError(e, { quiet: true }); });
     $("dkAutoStart").addEventListener("change", function () {
       bridge.desktopSetAutoStart(this.checked).then(function (on) {
         $("dkAutoStart").checked = !!on;

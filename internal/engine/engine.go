@@ -402,10 +402,39 @@ func (e *Engine) Scan(rawURL string, opts Options, onProgress progress, cancel f
 		onProgress(55, fmt.Sprintf("指纹识别（%d 页）…", len(pages)))
 		// favicon 指纹：整站采集一次，注入每页证据（FOFA icon_hash 通道）
 		favHash := sitelens.FaviconHashOf(client, baseURL)
-		for _, p := range pages {
-			ev := sitelens.Extract(p.resp)
-			ev.FaviconHash = favHash
-			for _, h := range matcher.Match(ev) {
+		// 页间指纹识别无依赖：按页并行（worker ≤ min(4, 页数)），把 N 页的
+		// Extract+Match 摊到多核（万级指纹库下单页匹配是扫描 CPU 热点）。
+		// 命中结果按页收集后仍按页面顺序串行累加进 acc，Technologies 的
+		// 排序/去重/置信累加与串行实现完全一致；进度回调不进并行区。
+		pageHits := make([][]sitelens.MatchHit, len(pages))
+		workers := len(pages)
+		if workers > 4 {
+			workers = 4
+		}
+		if workers <= 1 {
+			for i, p := range pages {
+				ev := sitelens.Extract(p.resp)
+				ev.FaviconHash = favHash
+				pageHits[i] = matcher.Match(ev)
+			}
+		} else {
+			var wg sync.WaitGroup
+			sem := make(chan struct{}, workers)
+			for i := range pages {
+				wg.Add(1)
+				go func(i int) {
+					defer wg.Done()
+					sem <- struct{}{}
+					defer func() { <-sem }()
+					ev := sitelens.Extract(pages[i].resp)
+					ev.FaviconHash = favHash
+					pageHits[i] = matcher.Match(ev)
+				}(i)
+			}
+			wg.Wait()
+		}
+		for _, hits := range pageHits {
+			for _, h := range hits {
 				acc.add(h.Name, h.Website, h.Version, h.Evidence, h.Conf, h.Cats)
 			}
 		}
@@ -1337,17 +1366,20 @@ func (e *Engine) nucleiSubset(techs []Tech, pageTitle string, cap int) ([]checks
 	return out, stat
 }
 
-// loadNucleiLRU 从磁盘恢复调度表（文件缺失 = 全新开始）。
+// loadNucleiLRU 从磁盘恢复调度表（文件缺失/内容损坏 = 全新开始）。
+//
+// 兜底语义（BUG-012）：JSON `null` 会把目标 map 置为 nil 且 err==nil
+// （解出空指针合法），解析失败同理不可留旧 nil。调度表必须是可写空表——
+// 否则 nucleiSubset 里 `e.nucleiLRU[ent.Path] = now` 直接 panic:
+// assignment to entry in nil map。
 func (e *Engine) loadNucleiLRU() {
-	data, err := os.ReadFile(filepath.Join(e.cfg.Store.DataDir, "nuclei_schedule.json"))
-	if err != nil {
-		e.nucleiLRU = map[string]int64{}
-		return
-	}
 	m := map[string]int64{}
-	if json.Unmarshal(data, &m) == nil {
-		e.nucleiLRU = m
+	if data, err := os.ReadFile(filepath.Join(e.cfg.Store.DataDir, "nuclei_schedule.json")); err == nil {
+		if derr := json.Unmarshal(data, &m); derr != nil || m == nil {
+			m = map[string]int64{}
+		}
 	}
+	e.nucleiLRU = m
 }
 
 // saveNucleiLRU 调度表落盘（tmp+rename 原子写，防中途崩溃损坏调度表）。
@@ -1369,6 +1401,21 @@ type dastFetcher struct{ c *httpx.Client }
 
 func (d dastFetcher) PostFormSmall(rawURL string, data map[string]string) *dast.Resp {
 	r, err := d.c.PostForm(rawURL, data)
+	if err != nil || r == nil {
+		return nil
+	}
+	return &dast.Resp{Status: r.Status, Headers: r.Headers, SetCookies: r.SetCookies, Body: r.Body}
+}
+
+// PostFormRawSmall 原始表单体 POST（dast 侧可选接口 rawFormPoster，预编码
+// 载荷通道用）。
+//
+// body 由 dast 侧按表单编码纪律显式构造：其余字段照常表单编码，仅需注入
+// 原始字节/控制符的目标字段值原样保留（%0d%0a 等）。这里必须原样发出，
+// **不能再经 url.Values.Encode**——否则 "%" 被二次编码成 "%25"，服务端
+// 单次解码只拿到字面文本，表单侧 CRLF 注入实际不生效（BUG-017 表单残留）。
+func (d dastFetcher) PostFormRawSmall(rawURL, body string) *dast.Resp {
+	r, err := d.c.PostRaw(rawURL, "application/x-www-form-urlencoded", body)
 	if err != nil || r == nil {
 		return nil
 	}

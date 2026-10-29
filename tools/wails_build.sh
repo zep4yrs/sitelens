@@ -3,12 +3,14 @@
 #
 # 产物布局（安装器 staging）：
 #   dist/wails/SiteLens/
-#     sitelens.exe         ← Wails 壳（注意：安装器里就叫 sitelens.exe，
-#                             与引擎同名会冲突，故壳落 dist 时重命名，见下）
-#     engine/sitelens.exe  ← 引擎单二进制
-#     engine/data/...      ← 只读资产（NVD/情报/指纹/字典/ML 资产/onnxruntime.dll）
+#     sitelens.exe            ← Wails 壳（安装器里就叫 sitelens.exe）
+#     engine/sitelens-engine.exe ← 引擎二进制（5.2 起与 CLI 拆开）
+#     engine/data/...         ← 只读资产（NVD/情报/指纹/字典/ML 资产/onnxruntime.dll）
 #
-# 为什么壳与引擎都叫 sitelens.exe：安装器快捷方式/注册表 DisplayIcon 指向
+# 5.2 交付边界：**CLI 不随桌面安装包发布**。CLI（scan/audit/update-* 等）
+# 是独立二进制，走 npm 线分发；桌面包只带引擎（serve + update-seed）。
+#
+# 为什么壳与引擎都叫 sitelens*.exe：安装器快捷方式/注册表 DisplayIcon 指向
 # $INSTDIR\sitelens.exe（installer.nsi），托盘/任务管理器也认这个名字。壳是
 # 用户直接启动的入口，引擎在 engine/ 子目录里、由壳拉起，两者不同目录不冲突。
 #
@@ -51,12 +53,14 @@ cp "$ROOT/installer/notice.txt" "$STAGE_ROOT/installer/notice.txt"
 # 2) 引擎：复用 desktop/build-engine.js 的构建与硬闸（PE 校验 / ML 资产硬闸 /
 #    onnxruntime.dll 装箱），保证两条壳共用同一份引擎产物契约。
 #    产物落 desktop/engine/，再拷进 staging 的 engine/。
-echo "== 构建引擎载荷（复用 desktop/build-engine.js）=="
-( cd "$ROOT/desktop" && node build-engine.js )
+#    5.2 起 --target=engine：构建 cmd/sitelens-engine（serve + update-seed），
+#    产物名 sitelens-engine.exe；**CLI（cmd/sitelens）不进桌面安装包**。
+echo "== 构建引擎载荷（复用 desktop/build-engine.js --target=engine）=="
+( cd "$ROOT/desktop" && node build-engine.js --target=engine )
 cp -r "$ROOT/desktop/engine/." "$ENGINE_DIR/"
 
 # 3) PE 魔数校验（壳 + 引擎都要过——错平台二进制进包是 v3.0.0 事故的根因）。
-for f in "$SHELL_OUT/sitelens.exe" "$ENGINE_DIR/sitelens.exe"; do
+for f in "$SHELL_OUT/sitelens.exe" "$ENGINE_DIR/sitelens-engine.exe"; do
   head2="$(head -c2 "$f")"
   if [ "$head2" != "MZ" ]; then
     echo "× $f 不是 Windows PE（文件头非 MZ，当前平台 $(uname -s)）" >&2
@@ -65,6 +69,12 @@ for f in "$SHELL_OUT/sitelens.exe" "$ENGINE_DIR/sitelens.exe"; do
   fi
 done
 echo "  ✓ 壳与引擎均为 Windows PE"
+
+# 3.5) 桌面包不得夹带 CLI（5.2 交付边界：CLI 独立分发，走 npm 线）。
+if [ -e "$ENGINE_DIR/sitelens.exe" ]; then
+  echo "× 桌面包里出现了 CLI 二进制（engine/sitelens.exe）——CLI 不随桌面版发布" >&2
+  exit 1
+fi
 
 # 4) 版本一致性硬闸：壳 Version（version.go）必须等于引擎版本
 #    （internal/server.Version）。两处都是源码常量，直接 grep 比对——

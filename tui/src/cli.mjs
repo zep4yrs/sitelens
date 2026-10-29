@@ -2,12 +2,8 @@
 // 结果 JSON 走 stdout（--json 完整结果，默认摘要），退出码 0/1。
 import { startServe } from "./engine.mjs";
 import { scan, LEVELS } from "./client.mjs";
-
-const SEV_COLOR = { critical: "\x1b[31;1m", high: "\x1b[31m", medium: "\x1b[33m", low: "\x1b[36m", info: "\x1b[90m" };
-const C = { dim: "\x1b[2m", red: "\x1b[31m", amber: "\x1b[33m", cyan: "\x1b[36m", reset: "\x1b[0m", bold: "\x1b[1m" };
-const colorOf = (kind) => (kind === "hit" ? C.red : kind === "bypass" ? C.amber : kind === "auth" ? C.cyan : C.dim);
-// 模块级：summarize 与 main 共用（曾有局部定义导致 summarize 引用未定义）
-const dim = (s) => (process.stderr.isTTY ? C.dim + s + C.reset : s);
+// 颜色/格式化统一在 ui.mjs（与 doctor.mjs 共用一份，避免各写一份漂移）
+import { SEV_COLOR, C, colorOf, dim } from "./ui.mjs";
 
 export async function main(args) {
   let url = null;

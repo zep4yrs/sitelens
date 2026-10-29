@@ -83,7 +83,7 @@ def _metrics(y_true, proba: np.ndarray) -> dict:
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--data-root", default=r"D:\fengqiao\Desktop\26-08python实训\实训考核2\data")
+    ap.add_argument("--data-root", default=None)
     ap.add_argument("--out-root", default=None)
     args = ap.parse_args()
     paths = config.resolve_paths(args.data_root, args.out_root)

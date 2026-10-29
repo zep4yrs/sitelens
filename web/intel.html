@@ -85,7 +85,7 @@ api.get("/api/stats").then(function (s) {
     return '<span class="badge">' + esc(names[k] || k) + " " +
       Number(s.intel_sources[k]).toLocaleString() + "</span>";
   }).join("");
-}).catch(function () {});
+}).catch(function (e) { window.slReportError(e, { quiet: true }); });
 
 var sevFilter = "";
 document.getElementById("sev-chips").addEventListener("click", function (e) {

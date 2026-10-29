@@ -13,13 +13,17 @@ package nuclei
 
 import (
 	"encoding/json"
+	"fmt"
 	"math"
 	"os"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
+	"sync/atomic"
 
 	"gopkg.in/yaml.v3"
 
@@ -48,40 +52,67 @@ type Entry struct {
 // v6：Entry 增 CVEs 字段（模板情报层）。
 // v7：协议模板准入（tcp/dns/ssl，Proto 字段）。
 // v8：Entry 增 Source 字段（路径归一来源类别，输出分列口径）。
-const cacheSchema = 8
+// v9：afrog rule 级 expression 接线（BUG-016，1,699 条从"全拒"变为可运行）
+//
+//   - path 列表展开（BUG-022，check 数变化）→ 旧缓存必须整库重建，
+//     否则升级后仍按旧"仅 8 个来源可转换"的结论调度。
+//
+// v10：缓存增「目录 mtime 戳」（Dirs），热路径不再全量 walk 计数，
+// 改为逐个 stat 缓存里的目录戳（见 index_hot.go）。
+//
+//   - 升级影响：v9 及更旧缓存整体失效 → 升级后首次 Index 全量重建一次
+//     （144k 满池约数秒量级），之后每次扫描走热路径；IndexCached 在重建
+//     完成前返回 nil（保持"绝不 mid-scan 重建"语义）。
+//   - 5.2 索引构建优化（worker pool 并行 + 前端形状预筛）是纯性能改动：
+//     转换产物与 entries 顺序/去重语义经全语料差分对照确认逐条等价
+//     （见 index_equiv_test.go，5,094 文件 0 差异）。
+const cacheSchema = 10
 
 type cacheFile struct {
-	Schema  int     `json:"schema"`
-	Files   int     `json:"files"` // 目录内 yaml/yml 总数（缓存有效性依据）
-	Entries []Entry `json:"entries"`
+	Schema  int        `json:"schema"`
+	Files   int        `json:"files"` // 目录内 yaml/yml 总数（诊断用；热路径校验改用 Dirs）
+	Dirs    []dirStamp `json:"dirs"`  // v10：模板目录树 mtime 戳（热路径新鲜度校验）
+	Entries []Entry    `json:"entries"`
 }
 
-// Index 建立（或读取缓存的）模板索引。缓存失效策略：模板文件总数
-// 与缓存不一致或缓存格式版本不符时重建（模板库是可再生的大目录，
-// 不追求细粒度失效）。
+// indexWorkersCap 索引构建并行度上限。模板转换是 CPU 密集型（YAML 解析
+// 占绝对大头），并行收益受核数约束；上限 8 是折中——再高收益递减，且
+// 重建索引常与扫描/服务同机运行，不宜吃满全部核。
+const indexWorkersCap = 8
+
+// tplFileResult 单模板文件的并行转换结果。只承载「与顺序无关」的逐文件
+// 产物；entries 顺序与 legacy 两轮同名去重仍在收集阶段按原下标顺序串行
+// 回放（见 Index），语义与旧的顺序实现逐条一致。
+type tplFileResult struct {
+	ok     bool // 漏斗通过，可入索引
+	rel    string
+	name   string
+	sev    string
+	tags   []string
+	cves   []string
+	source string
+	proto  string
+	mtime  int64
+	size   int64
+}
+
+// Index 建立（或读取缓存的）模板索引。缓存失效策略：缓存格式版本不符、
+// 或模板目录树变化（目录 mtime 戳不再全等）时重建（模板库是可再生的
+// 大目录，不追求细粒度失效）。
+//
+// 热路径（缓存有效）只做：缓存文件 stat + 目录戳校验（目录数 1-2k），
+// 不做全量 walk、不解码缓存 JSON（memo 命中时）——见 index_hot.go。
 func Index(dir, cachePath string) ([]Entry, error) {
-	var files []string
-	err := filepath.WalkDir(dir, func(p string, d os.DirEntry, werr error) error {
-		if werr != nil {
-			return nil
+	if cachePath != "" {
+		if entries, ok := indexLoadHot(dir, cachePath); ok {
+			return entries, nil
 		}
-		if !d.IsDir() && (strings.HasSuffix(p, ".yaml") || strings.HasSuffix(p, ".yml")) {
-			files = append(files, p)
-		}
-		return nil
-	})
+	}
+
+	// 冷路径 / 缓存失效：全量 walk（文件列表 + 目录戳一次取齐）。
+	files, stamps, err := walkTemplateFiles(dir)
 	if err != nil {
 		return nil, err
-	}
-	if data, rerr := os.ReadFile(cachePath); rerr == nil {
-		var cached cacheFile
-		// 有效性比对的是「目录内模板文件总数」——entries 只含漏斗
-		// 通过者，数目必然小于文件总数（旧缓存正是因拿 entries 数
-		// 与文件数比对而永远失配，每次都全量重建索引）
-		if json.Unmarshal(data, &cached) == nil && cached.Schema == cacheSchema &&
-			cached.Files == len(files) {
-			return cached.Entries, nil
-		}
 	}
 
 	// 两轮扫描：非 legacy 目录（官方 http/requests 形态 + afrog）优先，
@@ -100,87 +131,183 @@ func Index(dir, cachePath string) ([]Entry, error) {
 			first = append(first, f)
 		}
 	}
-	passes := [][]string{first, second}
 
+	// 每个 pass 内部并行转换（结果按下标回填），收集阶段按原顺序串行
+	// 回放两轮去重——entries 顺序、seenName 语义与旧实现逐条一致。
+	workers := indexWorkers()
 	entries := make([]Entry, 0, len(files))
 	seenName := map[string]bool{}
-	for pi, pass := range passes {
-		for _, f := range pass {
-			st, serr := os.Stat(f)
-			if serr != nil || st.Size() > 512*1024 {
+	for pi, pass := range [][]string{first, second} {
+		if len(pass) == 0 {
+			continue
+		}
+		for _, r := range convertTplFiles(dir, pass, workers) {
+			if !r.ok {
 				continue
 			}
-			rel, rerr := filepath.Rel(dir, f)
-			if rerr != nil {
-				continue
-			}
-			rel = filepath.ToSlash(rel)
-			data, rerr2 := os.ReadFile(f)
-			if rerr2 != nil {
-				continue
-			}
-			var proto string
-			checks := convertAny(data)
-			if len(checks) == 0 {
-				// HTTP 漏斗淘汰 → 协议模板旁路（3.0 非 HTTP 检测）
-				if nc := ConvertNetwork(data); nc != nil {
-					proto = nc.Proto
-				} else {
-					continue // 漏斗淘汰：只把可运行的模板纳入调度全集
-				}
-			}
-			name, sev, tags, cves := convertMeta(string(data))
-			if pi == 1 && seenName[name] {
+			if pi == 1 && seenName[r.name] {
 				continue // legacy 与新语料同名：新语料已收录，跳过
 			}
-			seenName[name] = true
+			seenName[r.name] = true
 			entries = append(entries, Entry{
-				Path:        rel,
-				Name:        name,
-				Sev:         sev,
-				Tags:        tags,
-				CVEs:        cves,
-				Source:      NormalizeSource(rel),
-				Proto:       proto,
-				MTime:       st.ModTime().Unix(),
-				Size:        st.Size(),
+				Path:        r.rel,
+				Name:        r.name,
+				Sev:         r.sev,
+				Tags:        r.tags,
+				CVEs:        r.cves,
+				Source:      r.source,
+				Proto:       r.proto,
+				MTime:       r.mtime,
+				Size:        r.size,
 				Convertible: true, // 建入索引即漏斗通过（Convert 非空或协议转换成功）
 			})
 		}
 	}
 	if cachePath != "" {
-		if data, jerr := json.Marshal(cacheFile{Schema: cacheSchema, Files: len(files), Entries: entries}); jerr == nil {
+		if data, jerr := json.Marshal(cacheFile{
+			Schema: cacheSchema, Files: len(files), Dirs: stamps, Entries: entries,
+		}); jerr == nil {
 			_ = os.WriteFile(cachePath, data, 0o644)
+			// 缓存落盘成功后写入 memo（键取落盘后的真实文件戳）。
+			if mtime, size, ok := indexCacheStat(cachePath); ok {
+				indexMemoStore(&indexMemoEntry{
+					cachePath: cachePath, mtime: mtime, size: size,
+					stamps: stamps, entries: entries,
+				})
+			}
 		}
 	}
 	return entries, nil
+}
+
+// indexWorkers 索引构建并行度：核数上限 indexWorkersCap。
+func indexWorkers() int {
+	w := runtime.NumCPU()
+	if w > indexWorkersCap {
+		w = indexWorkersCap
+	}
+	if w < 1 {
+		w = 1
+	}
+	return w
+}
+
+// convertTplFiles 并行转换一个 pass 的模板文件：results[i] 严格对应
+// files[i]（每个 worker 只写自己的下标，无共享写竞争）。批量很小时
+// 退回顺序执行，避免起协程的固定开销。
+func convertTplFiles(dir string, files []string, workers int) []tplFileResult {
+	results := make([]tplFileResult, len(files))
+	if workers <= 1 || len(files) < 32 {
+		for i, f := range files {
+			results[i] = convertTplFile(dir, f)
+		}
+		return results
+	}
+	var next atomic.Int64
+	var wg sync.WaitGroup
+	for w := 0; w < workers; w++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for {
+				i := int(next.Add(1)) - 1
+				if i >= len(files) {
+					return
+				}
+				results[i] = convertTplFile(dir, files[i])
+			}
+		}()
+	}
+	wg.Wait()
+	return results
+}
+
+// convertTplFile 单文件转换（旧顺序实现的逐文件部分，语义逐行保留）：
+// stat → 大小门禁 → 读文件 → 三前端转换 → 协议模板旁路 → 提取元信息。
+func convertTplFile(dir, f string) tplFileResult {
+	st, serr := os.Stat(f)
+	if serr != nil || st.Size() > 512*1024 {
+		return tplFileResult{}
+	}
+	rel, rerr := filepath.Rel(dir, f)
+	if rerr != nil {
+		return tplFileResult{}
+	}
+	rel = filepath.ToSlash(rel)
+	data, rerr2 := os.ReadFile(f)
+	if rerr2 != nil {
+		return tplFileResult{}
+	}
+	var proto string
+	shape := scanFrontShape(data)
+	if len(convertAnyShape(data, shape)) == 0 {
+		// HTTP 漏斗淘汰 → 协议模板旁路（3.0 非 HTTP 检测）。
+		// 形状预筛确认顶层无 tcp/dns/ssl 键时，协议转换必然为空，整段跳过。
+		if shape&frontNet == 0 {
+			return tplFileResult{}
+		}
+		nc := ConvertNetwork(data)
+		if nc == nil {
+			return tplFileResult{} // 漏斗淘汰：只把可运行的模板纳入调度全集
+		}
+		proto = nc.Proto
+	}
+	name, sev, tags, cves := convertMeta(string(data))
+	return tplFileResult{
+		ok:     true,
+		rel:    rel,
+		name:   name,
+		sev:    sev,
+		tags:   tags,
+		cves:   cves,
+		source: NormalizeSource(rel),
+		proto:  proto,
+		mtime:  st.ModTime().Unix(),
+		size:   st.Size(),
+	}
 }
 
 // IndexCached 只读缓存版 Index：缓存存在且 schema 匹配则返回条目，
 // 否则返回 nil（不触发全库重建）。供扫描热路径（模板情报层挂载 /
 // 协议扫描）使用——热路径里一次 13 万文件的漏斗重建就是一次扫描超时；
 // 全量重建只属于 serve 启动（nucleiSubset 走完整 Index）与显式 reload。
+//
+// 与 Index 共享进程内单条 memo：缓存文件未变时直接复用上次解码的
+// []Entry，免掉每次 18MB JSON 解码（引擎热路径每扫会各调一次）。
 func IndexCached(cachePath string) []Entry {
-	data, err := os.ReadFile(cachePath)
-	if err != nil {
+	if cachePath == "" {
 		return nil
 	}
-	var cached cacheFile
-	if json.Unmarshal(data, &cached) != nil || cached.Schema != cacheSchema {
+	mtime, size, ok := indexCacheStat(cachePath)
+	if !ok {
 		return nil
 	}
+	if m := indexMemoLoad(cachePath, mtime, size); m != nil {
+		return m.entries
+	}
+	cached, ok := readIndexCache(cachePath)
+	if !ok {
+		return nil
+	}
+	indexMemoStore(&indexMemoEntry{
+		cachePath: cachePath, mtime: mtime, size: size,
+		stamps: cached.Dirs, entries: cached.Entries,
+	})
 	return cached.Entries
 }
 
-// sourceTop 来源类别白名单——与 sync.go 的镜像目录一一对应（HTTP 11 类
-// + 协议 3 类），另加 legacy 与 unknown 兜底。归一化只认这一张表，
-// 保证 Source 是稳定枚举，不随模板库目录命名漂移。
+// sourceTop 来源类别白名单——与 sync.go / update-afrog 的镜像目录一一对应
+// （HTTP 11 类 + 协议 3 类 + afrog 独立目录），另加 legacy 与 unknown 兜底。
+// 归一化只认这一张表，保证 Source 是稳定枚举，不随模板库目录命名漂移。
 var sourceTop = map[string]bool{
 	"cves": true, "exposed-panels": true, "technologies": true,
 	"vulnerabilities": true, "misconfiguration": true, "exposures": true,
 	"default-logins": true, "takeovers": true, "miscellaneous": true,
 	"fuzzing": true, "cnvd": true,
 	"network": true, "dns": true, "ssl": true,
+	// afrog 独立镜像目录（update-afrog → nuclei_dir/afrog/）：5.2 起该来源
+	// 真正可运行，必须能在调度可见性里单独成列，否则全落 unknown。
+	"afrog":  true,
 	"legacy": true,
 }
 
@@ -501,21 +628,40 @@ type normReq struct {
 	matchers                              []tplMatcher
 	cond                                  string
 	extracts                              []checks.ExtractSpec
+	// expr afrog 经典 rule 级判定表达式（运行期求值，见 internal/afrogx）。
+	// 与 matchers 并存时同样必须全部满足（AND 语义）。
+	expr string
 }
 
-// Convert 单模板 → checks（多 matcher 组且 OR 时拆分为 ~gN 后缀的多条）。
+// Convert 单模板 → checks（多 matcher 组且 OR 时拆分为 ~gN 后缀的多条；
+// path 列表展开时每条路径一组，check id 带 ~pN 后缀）。
 // 不支持的形态返回 nil。
 func Convert(data []byte) []checks.Check {
 	doc, req, ok := parseTplPath(data)
 	if !ok {
 		return nil
 	}
-	nr, ok := normFromTpl(req)
+	return convertPathForm(doc, req)
+}
+
+// convertPathForm path 形态的转换主体（parseTplPath 已通过门禁）。
+// 与 convertRawForm 共享同一份已解析文档：convertAny 不再为两个前端
+// 各做一次 YAML 全量解析（首命中顺序与旧实现一致）。
+func convertPathForm(doc tplDoc, req tplHTTP) []checks.Check {
+	nrs, ok := normFromTpl(req)
 	if !ok {
 		return nil
 	}
-	return buildChecks("nuclei-"+doc.ID, "Nuclei 社区模板 "+doc.ID, doc.Info.Name,
-		doc.Info.Severity, nr)
+	prefix := "Nuclei 社区模板 " + doc.ID
+	var out []checks.Check
+	for i, nr := range nrs {
+		id := "nuclei-" + doc.ID
+		if len(nrs) > 1 {
+			id = fmt.Sprintf("nuclei-%s~p%d", doc.ID, i+1)
+		}
+		out = append(out, buildChecks(id, prefix, doc.Info.Name, doc.Info.Severity, nr)...)
+	}
+	return out
 }
 
 // parseTplPath 解析 path 形态模板的公共门禁与首请求。
@@ -543,43 +689,76 @@ func parseTplPath(data []byte) (tplDoc, tplHTTP, bool) {
 	return doc, reqs[0], true
 }
 
+// maxPathExpand 单模板 path 列表展开上限（BUG-022）。
+//
+// 真实语料统计（packs/nuclei-templates.tar.gz 分层抽样各 3000 条）：
+//   - community-wordfence：10.0% 模板多 path，最多 4 条（301/2999）；
+//   - community-40k：7.1% 多 path，最长 64；
+//   - http（官库）：14.4% 多 path，最长 64；
+//   - legacy：9.0% 多 path，最长 57。
+//
+// 全量展开会让长尾模板（最多 64 路径）按 64 倍消耗探测预算；而多 path
+// 模板整体约 10%，取 4 已覆盖 wordfence 的全部形态与其余来源的主流形态，
+// 长尾截断是**覆盖率损失**（宁少报），不是误报风险。
+// 预算影响：按样本估算，展开后请求量约 +17%~36%（各来源），可接受。
+const maxPathExpand = 4
+
 // normFromTpl path 形态归一化：方法白名单 + {{BaseURL}} 后缀提取。
-func normFromTpl(req tplHTTP) (normReq, bool) {
+// 返回 1..maxPathExpand 个请求语义（path 列表展开，每个 candidate 一条）。
+func normFromTpl(req tplHTTP) ([]normReq, bool) {
 	method := strings.ToUpper(req.Method)
 	if method != "GET" && method != "POST" {
-		return normReq{}, false
-	}
-	var path string
-	if len(req.Path) > 0 {
-		path = req.Path[0]
-	}
-	if path == "" || !strings.Contains(path, "{{BaseURL}}") {
-		return normReq{}, false
-	}
-	suffix := strings.SplitN(path, "{{BaseURL}}", 2)[1]
-	if strings.Contains(suffix, "{{") {
-		return normReq{}, false
-	}
-	if suffix == "" {
-		suffix = "/" // 根探测
+		return nil, false
 	}
 	if len(req.Matchers) == 0 {
-		return normReq{}, false
+		return nil, false
 	}
-	cond := strings.ToLower(req.MatchersCondition)
-	cond = strings.TrimSpace(cond)
+	// path 列表里的每一项都是"候选探测路径"（多数模板以 stop-at-first-match
+	// 语义依次尝试），旧实现只取第 0 项，其余全丢（BUG-022）。
+	var suffixes []string
+	seenSuffix := map[string]bool{}
+	for _, p := range req.Path {
+		p = strings.TrimSpace(p)
+		if !strings.Contains(p, "{{BaseURL}}") {
+			continue
+		}
+		suffix := strings.SplitN(p, "{{BaseURL}}", 2)[1]
+		if strings.Contains(suffix, "{{") {
+			continue // 含其余占位符（需变量注入）的候选路径跳过
+		}
+		if suffix == "" {
+			suffix = "/" // 根探测
+		}
+		if seenSuffix[suffix] {
+			continue
+		}
+		seenSuffix[suffix] = true
+		suffixes = append(suffixes, suffix)
+		if len(suffixes) >= maxPathExpand {
+			break
+		}
+	}
+	if len(suffixes) == 0 {
+		return nil, false
+	}
+	cond := strings.ToLower(strings.TrimSpace(req.MatchersCondition))
 	if cond == "" {
 		cond = "or"
 	}
-	return normReq{
-		method:      method,
-		pathSuffix:  suffix,
-		body:        req.Body,
-		contentType: req.Headers["Content-Type"],
-		matchers:    req.Matchers,
-		cond:        cond,
-		extracts:    extractSpecs(req.Extractors),
-	}, true
+	extracts := extractSpecs(req.Extractors)
+	out := make([]normReq, 0, len(suffixes))
+	for _, suffix := range suffixes {
+		out = append(out, normReq{
+			method:      method,
+			pathSuffix:  suffix,
+			body:        req.Body,
+			contentType: req.Headers["Content-Type"],
+			matchers:    req.Matchers,
+			cond:        cond,
+			extracts:    extracts,
+		})
+	}
+	return out, true
 }
 
 // extractSpecs 从模板 extractors 块抽取命名变量定义（regex 形态，
@@ -658,6 +837,11 @@ func ConvertRaw(data []byte) []checks.Check {
 	if !ok {
 		return nil
 	}
+	return convertRawForm(doc, req)
+}
+
+// convertRawForm raw 请求形态的转换主体（parseTplPath 已通过门禁）。
+func convertRawForm(doc tplDoc, req tplHTTP) []checks.Check {
 	if len(req.Raw) == 0 || strings.TrimSpace(req.Raw[0]) == "" || len(req.Matchers) == 0 {
 		return nil
 	}
@@ -789,6 +973,16 @@ func buildChecks(checkID, advicePrefix, name, sevStr string, nr normReq) []check
 		}
 	}
 
+	// 纯表达式（afrog rule 级 expression）：没有静态 matcher 组时补一个空组，
+	// 由 checks.Match.Expr 在运行期判定。内容判定闸门已在 afrogNorm（afrogx
+	// 编译准入 + PositiveGround）把过，这里不再重复。
+	if len(groups) == 0 {
+		if nr.expr == "" {
+			return nil
+		}
+		groups = []group{{}}
+	}
+
 	sev := strings.ToLower(sevStr)
 	switch sev {
 	case "critical", "high", "medium", "low":
@@ -802,8 +996,10 @@ func buildChecks(checkID, advicePrefix, name, sevStr string, nr normReq) []check
 	for i, g := range groups {
 		// 纯状态码组不转换：只看状态码不看内容的 check 在 CDN/WAF
 		// 环境下任意路径即可命中（靶场回归实测 wp-json/server-status
-		// 类模板 404/403 误报），验证型扫描器要求至少一个内容条件
-		if len(g.wall) == 0 && len(g.wany) == 0 && len(g.h) == 0 && len(g.rx) == 0 && len(g.dsl) == 0 {
+		// 类模板 404/403 误报），验证型扫描器要求至少一个内容条件。
+		// afrog rule 级表达式自带内容判定（afrogNorm 已把关），放行。
+		if len(g.wall) == 0 && len(g.wany) == 0 && len(g.h) == 0 && len(g.rx) == 0 && len(g.dsl) == 0 &&
+			nr.expr == "" {
 			continue
 		}
 		id := checkID
@@ -822,6 +1018,7 @@ func buildChecks(checkID, advicePrefix, name, sevStr string, nr normReq) []check
 				HeaderContains: g.h,
 				RegexBody:      g.rx,
 				DSL:            g.dsl,
+				Expr:           nr.expr,
 				Method:         nr.method,
 				Body:           nr.body,
 				ContentType:    nr.contentType,
@@ -842,18 +1039,35 @@ func firstOrZero(list []int) int {
 	return 0 // 多状态码走 StatusAny
 }
 
-// LoadFile 解析单个模板文件。
 // convertAny 三前端依次尝试：path 形态 → raw 请求形态 → afrog 经典形态。
+// 形状预筛（scanFrontShape）只跳过「已确认必然返回空」的前端，首个成功
+// 前端与旧顺序逐条一致；path/raw 共享同一份解析结果，afrog 语料由 3 次
+// YAML 全量解析降到 1 次。
 func convertAny(data []byte) []checks.Check {
-	if cs := Convert(data); len(cs) > 0 {
-		return cs
-	}
-	if cs := ConvertRaw(data); len(cs) > 0 {
-		return cs
-	}
-	return ConvertAfrog(data)
+	return convertAnyShape(data, scanFrontShape(data))
 }
 
+// convertAnyShape 同 convertAny，形状位图由调用方给出（Index 复用同一份
+// 扫描结果决定是否走协议模板旁路）。
+func convertAnyShape(data []byte, shape frontShape) []checks.Check {
+	if shape&frontHTTP != 0 {
+		doc, req, ok := parseTplPath(data)
+		if ok {
+			if cs := convertPathForm(doc, req); len(cs) > 0 {
+				return cs
+			}
+			if cs := convertRawForm(doc, req); len(cs) > 0 {
+				return cs
+			}
+		}
+	}
+	if shape&frontAfrog != 0 {
+		return ConvertAfrog(data)
+	}
+	return nil
+}
+
+// LoadFile 解析单个模板文件（读文件 + convertAny）。
 func LoadFile(path string) ([]checks.Check, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {

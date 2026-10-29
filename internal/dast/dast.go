@@ -192,6 +192,21 @@ type MultipartCTFetcher interface {
 	PostMultipartSmallCT(rawURL, fileField, fileName, content, contentType string, extra map[string]string) *Resp
 }
 
+// rawFormPoster 可选扩展：以「原始表单体」发送 POST（预编码载荷通道）。
+//
+// 为什么需要：普通表单探针经 PostFormSmall 发出时会对字段值做
+// url.Values.Encode，把预编码载荷里的 "%" 再编码成 "%25"
+// （%0d%0a → %250d%250a），服务端单次解码只拿到字面文本——表单侧 CRLF
+// 注入实际不生效（BUG-017 表单通道残留）。
+//
+// 实现方（engine 的 dastFetcher）必须把 body 原样作为
+// application/x-www-form-urlencoded 请求体发出，不得再做表单编码。
+// 可选实现：拿不到该通道时表单 CRLF 探针直接跳过（宁少报，不发一个
+// 注定无效、只会浪费目标请求额的探针）。
+type rawFormPoster interface {
+	PostFormRawSmall(rawURL, body string) *Resp
+}
+
 // Target 带参数的探测目标。
 type Target struct {
 	URL         string // 完整 URL（含 query）
@@ -610,12 +625,27 @@ func (r *Runner) RunForms(targets []FormTarget) []Finding {
 				if r.stopped() || (r.opts.MaxProbesPerClass > 0 && i >= r.opts.MaxProbesPerClass) {
 					break
 				}
-				data := map[string]string{}
-				for f := range baseData {
-					data[f] = "sl-dast-base"
+				// 预编码 CRLF 载荷必须走「原始表单体」通道：经 PostFormSmall 会
+				// 被 url.Values.Encode 二次编码（%0d%0a → %250d%250a），服务端
+				// 单次解码只拿到字面文本，注入实际不生效（BUG-017 表单通道残留）。
+				// 拿不到原始通道时不发该探针——宁少报，不发注定无效的请求。
+				var resp *Resp
+				rawBody := ""
+				if pc.kind == "crlf" {
+					raw, ok := r.fetch.(rawFormPoster)
+					if !ok {
+						continue
+					}
+					rawBody = rawFormBody(p.ft.Fields, p.field, value)
+					resp = raw.PostFormRawSmall(p.ft.Action, rawBody)
+				} else {
+					data := map[string]string{}
+					for f := range baseData {
+						data[f] = "sl-dast-base"
+					}
+					data[p.field] = value
+					resp = r.fetch.PostFormSmall(p.ft.Action, data)
 				}
-				data[p.field] = value
-				resp := r.fetch.PostFormSmall(p.ft.Action, data)
 				tick(label)
 				if resp == nil {
 					continue
@@ -624,10 +654,20 @@ func (r *Runner) RunForms(targets []FormTarget) []Finding {
 				if hit == nil {
 					continue
 				}
-				probeURL := p.ft.Action + "?" + p.field + "=" + value
 				hit.Payload = value
-				hit.Replay = formReplay(p.ft.Action, p.field, value)
-				chainEvidence(hit, probeURL, resp)
+				if pc.kind == "crlf" {
+					// 证据链与真实发出的原始表单体逐字节一致：Request/Replay 用
+					// 实际 body，不能再经 formBody 编码（否则复现命令又变回二次
+					// 编码形态，违反「证据链可复核」红线）。
+					hit.Request = formReqTextRaw(p.ft.Action, rawBody)
+					hit.Replay = formReplayRaw(p.ft.Action, rawBody)
+					chainEvidence(hit, "", resp)
+				} else {
+					probeURL := formProbeURL(p.ft.Action, p.field, value)
+					hit.Replay = formReplay(p.ft.Action, p.field, value)
+					hit.Request = formReqText(p.ft.Action, p.field, value)
+					chainEvidence(hit, probeURL, resp)
+				}
 				hit.Signals = []string{pc.kind + " 表单探针命中"}
 				hits = append(hits, *hit)
 				break // 该类命中即停
@@ -784,9 +824,99 @@ func SetParam(rawURL, param, value string) string { return setParam(rawURL, para
 // RandToken 导出的 128 位随机令牌（exploit 出带通道生成 beacon 注入串用）。
 func RandToken() string { return randToken() }
 
+// shellQuote 用单引号包裹并转义内部单引号（POSIX shell 安全）。
+//
+// 复现命令会被使用者**直接复制粘贴到 shell 执行**，其中的内容可能直接来自
+// 被扫站点（表单 action 属性、控件 name 属性、注入载荷）——不转义等于把
+// 命令执行权交给目标站点（BUG-002）。
+// 与 internal/checks 的 shellQuote 同语义；两处各持一份，避免跨包耦合。
+func shellQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
+}
+
 // curlReplay DAST 探针的复现命令（GET 语义，与探测行为一致）。
 func curlReplay(u string) string {
-	return "curl -sk --path-as-is '" + strings.ReplaceAll(u, "'", `'\''`) + "'"
+	return "curl -sk --path-as-is " + shellQuote(u)
+}
+
+// formBody 表单请求体（application/x-www-form-urlencoded）：字段名与值都按
+// 表单编码规则转义，与引擎实际发出的 POST 字节一致。
+func formBody(field, payload string) string {
+	if field == "" {
+		return url.QueryEscape(payload)
+	}
+	v := url.Values{}
+	v.Set(field, payload)
+	return v.Encode()
+}
+
+// rawFormBody 构造原始表单体：除目标字段外的其余字段按表单编码填惰性基线值，
+// 目标字段的值**原样写入**（预编码载荷不能被二次编码）。
+//
+// 与普通表单探针的请求体保持同一语义（其余字段同样填 sl-dast-base），差别只在
+// 目标字段值：普通探针交给 url.Values.Encode，这里逐字节保留调用方给定的
+// 预编码载荷（如 %0d%0aX-Sitelens-Crlf:%20…）。
+func rawFormBody(fields []string, field, rawValue string) string {
+	var b strings.Builder
+	for _, f := range fields {
+		if f == "" || f == field {
+			continue
+		}
+		if b.Len() > 0 {
+			b.WriteByte('&')
+		}
+		b.WriteString(url.QueryEscape(f))
+		b.WriteByte('=')
+		b.WriteString(url.QueryEscape("sl-dast-base"))
+	}
+	if b.Len() > 0 {
+		b.WriteByte('&')
+	}
+	b.WriteString(url.QueryEscape(field))
+	b.WriteByte('=')
+	b.WriteString(rawValue)
+	return b.String()
+}
+
+// formProbeURL 表单探针的 URL 形态（证据链文本/展示用）：query 串按表单
+// 编码规则转义，与真实发出的 POST 体字节一致。
+//
+// 不能裸拼 action+"?"+field+"="+value——载荷里的 & / = / 空格 / % 会把
+// query 结构改坏，证据链里看到的「请求」与实际请求就不是一回事（BUG-029）。
+// action 已有的 query 原样保留（逐字节追加，不重排）。
+func formProbeURL(action, field, value string) string {
+	body := formBody(field, value)
+	u, err := url.Parse(action)
+	if err != nil {
+		return action + "?" + body
+	}
+	if u.RawQuery == "" {
+		u.RawQuery = body
+	} else {
+		u.RawQuery += "&" + body
+	}
+	return u.String()
+}
+
+// formReqText 表单通道的重放请求文本（POST 语义），单字段。
+//
+// 与真实发出的请求一致：表单通道发的是 POST 表单，若证据链里写成 GET，
+// 使用者复制后复现出来的就不是同一个请求（BUG-018）。
+func formReqText(action, field, payload string) string {
+	return formReqTextRaw(action, formBody(field, payload))
+}
+
+// formReqTextRaw 表单通道的重放请求文本（POST 语义），body 由调用方给定。
+func formReqTextRaw(action, body string) string {
+	return "POST " + action + " HTTP/1.1\r\nContent-Type: application/x-www-form-urlencoded\r\n\r\n" +
+		body
+}
+
+// formReplayRaw 原始表单体的复现命令（POST 语义）：body 原样传入，与真实
+// 发出的请求字节一致。预编码载荷不能交给 formBody 再编码一次，否则复现
+// 命令发出的字节和探测时不一致（证据链可复核红线）。
+func formReplayRaw(action, body string) string {
+	return "curl -sk --path-as-is -d " + shellQuote(body) + " " + shellQuote(action)
 }
 
 // reqText 重放请求文本（GET 探针语义）。
@@ -815,12 +945,20 @@ func snippetOf(body string) string {
 }
 
 // chainEvidence 为命中发现填充统一证据链（请求/响应/信号）。
+//
+// Request / Replay **只在缺失时填充**：表单通道已按 POST 语义构造好复现命令，
+// 若这里无条件覆盖，就会把 POST 的复现命令换成 GET 的——复现命令必须与真实
+// 发出的请求一致，否则「证据链可复核」这条产品红线就破了（BUG-018）。
 func chainEvidence(f *Finding, probeURL string, resp *Resp) {
 	if f == nil {
 		return
 	}
-	f.Request = reqText(probeURL)
-	f.Replay = curlReplay(probeURL)
+	if f.Request == "" {
+		f.Request = reqText(probeURL)
+	}
+	if f.Replay == "" {
+		f.Replay = curlReplay(probeURL)
+	}
 	if resp != nil {
 		f.Response = &RespSnap{Status: resp.Status, Size: len(resp.Body), Snippet: snippetOf(resp.Body)}
 	}
@@ -870,6 +1008,52 @@ func setParam(rawURL, key, value string) string {
 	q := u.Query()
 	q.Set(key, value)
 	u.RawQuery = q.Encode()
+	return u.String()
+}
+
+// rawSetParam 替换（或追加）query 参数值，**不做二次 URL 编码**：rawValue
+// 视为已按 URL 编码规则写好的原始字节序列，原样拼进 RawQuery。
+//
+// 为什么需要单独一条路径：setParam 走 url.Values.Encode，会把值里每个 "%"
+// 再编码成 "%25"（%0d%0a → %250d%250a、%AC%ED → %25AC%ED）。预编码载荷到
+// 服务端只经一次解码，拿到的是字面文本而不是 CR/LF 字节或序列化魔数——
+// CRLF 与反序列化两条通道因此实际注入不进去（BUG-017）。
+//
+// 使用纪律：只给「必须注入原始字节/控制符」的探针（crlfInject / 反序列化
+// 魔数）用；普通文本探针仍走 setParam——那里对值的编码是正确行为，换成裸拼
+// 反而会把普通字符（空格 / + / & / 中文）原样写进 URL，引入新的误报。
+func rawSetParam(rawURL, key, rawValue string) string {
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return rawURL
+	}
+	var pairs []string
+	replaced := false
+	for _, pair := range strings.Split(u.RawQuery, "&") {
+		if pair == "" {
+			continue
+		}
+		rawKey := pair
+		if i := strings.IndexByte(pair, '='); i >= 0 {
+			rawKey = pair[:i]
+		}
+		decodedKey, derr := url.QueryUnescape(rawKey)
+		if derr != nil {
+			decodedKey = rawKey
+		}
+		if decodedKey == key {
+			if !replaced {
+				pairs = append(pairs, url.QueryEscape(key)+"="+rawValue)
+				replaced = true
+			}
+			continue
+		}
+		pairs = append(pairs, pair) // 其余参数原样保留：不重排、不重编码
+	}
+	if !replaced {
+		pairs = append(pairs, url.QueryEscape(key)+"="+rawValue)
+	}
+	u.RawQuery = strings.Join(pairs, "&")
 	return u.String()
 }
 

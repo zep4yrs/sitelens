@@ -108,6 +108,7 @@
     var btn = document.getElementById("batch-cancel");
     btn.disabled = true;
     btn.textContent = "取消中…";
-    api.post("/api/job/" + window.__batchJobId + "/cancel", {}).catch(function () {});
+    api.post("/api/job/" + window.__batchJobId + "/cancel", {})
+      .catch(function (e) { window.slReportError(e); });
   };
 })();

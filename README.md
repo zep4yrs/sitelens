@@ -29,7 +29,7 @@
 
 ## 产品架构
 
-SiteLens 是**单二进制、零外部依赖**的验证器：CLI、Web 控制台、扫描引擎、数据资产与前端全部打进一个可执行文件，下载即跑。
+SiteLens 是**单二进制引擎 + 零构建前端**的验证器：CLI、Web 控制台、扫描引擎、数据资产与前端全部打进一个可执行文件，下载即跑。引擎侧零外部运行时依赖（无数据库、无外部服务、无 Node/Python 运行时），前端无构建步骤、静态资源随二进制内嵌（Turbo 也已本地内嵌为 `/js/turbo.js`）；唯一的外部请求是网页外壳的字体（Google Fonts 的 Noto Sans SC + jsDelivr 的霞鹜文楷样式表），不可达时回退系统字体栈，不影响扫描能力。
 
 ### 分层结构
 
@@ -93,7 +93,7 @@ SiteLens 不是只报"可能有问题"的扫描器——每条发现都做**二�
 
 ## 五分钟上手
 
-**方式一：桌面安装包（推荐）** —— 从 [Releases](../../releases) 下载 `SiteLens-Setup-5.1.0.exe`，向导安装，完成即启动。交付壳为 Wails（Go + 系统 WebView2），单文件壳约 12MB。详见 [desktop-wails/README.md](desktop-wails/README.md)。
+**方式一：桌面安装包（推荐）** —— 从 [Releases](../../releases) 下载 `SiteLens-Setup-5.2.0.exe`，向导安装，完成即启动。交付壳为 Wails（Go + 系统 WebView2），单文件壳约 12MB。详见 [desktop-wails/README.md](desktop-wails/README.md)。
 
 **方式二：源码**
 
@@ -108,10 +108,10 @@ go build -o sitelens.exe ./cmd/sitelens
 配置文件从示例复制：把 [`.sitelens.example.yml`](.sitelens.example.yml) 复制为 `.sitelens.yml`，放在工作目录即可被自动加载；不改也能跑，默认零外部依赖。
 
 - **完整键位语义见该示例文件内的注释**（`scan` / `target` / `checks` / `crawler` / `dast` / `auth` 等段）；
-- **监听非 localhost 时必须配 API Token**：`serve --addr 0.0.0.0:5000` 需要一个 token 才允许启动，否则进程直接退出（见 `internal/server/server.go`）。这是硬校验，不是可选项；
+- **监听非回环地址时务必配 API Token**：把 `web.listen` 改成 `0.0.0.0:5000` 这类非回环地址、且未配置 token 时，启动只会打一条醒目告警并照常监听（`internal/server/server.go` 的 SEC-8 加固）——**告警不是硬闸**，但此时全部 `/api/*`（含主动扫描能力）对所在网络开放，生产部署请设 `SLENS_API_TOKEN` 或 `web.api_token`；配了 token 后 `/api/*` 一律要求 `X-Token` 头（常量时间比较），鉴权行为与既往版本一致；
 - 主动验证能力默认关闭，只有显式开启才会发包（且带硬上限）；
 - `target.allow_private` 是私网/本机扫描的安全闸，默认关，仅授权靶场开启；
-- 5.0 ML 预测由 `ml.predict`（默认开）控制总闸、`ml.assets_dir`（默认 `data/go/ml_assets`）指定模型资产目录：资产缺失静默跳过预测，损坏则本进程禁用——预测是先验参考字段（结果 JSON 的 `predictions`），不改变任何扫描判定。
+- 5.0 ML 预测由 `ml.predict`（默认开）控制总闸、`ml.assets_dir`（默认 `data/go/ml_assets`，仓内缺失时自动回退仓库内建 `models/go/ml_assets`）指定模型资产目录：资产缺失静默跳过预测，损坏则本进程禁用；预测呈现为先验参考字段（结果 JSON 的 `predictions`，前置先验信息在 `extras.ml_prior`）——**ML 先验只调整执行顺序与核心档位下的扩展集纳入（只增不删，all 档全集已跑、无增量），不改变任何 check 的命中判定、不凭模型直接产生发现**。
 
 ## 七种扫描模式
 
@@ -192,7 +192,7 @@ go build -o sitelens.exe ./cmd/sitelens
 | **2.0 验证器**（已发布） | VERIFICATION | 证明漏洞真实存在 | 证据链（请求/响应/命中）· 盲注/出带验证 · 认证态复用 · 可复现报告 |
 | **3.0 利用器**（已发布） | EXPLOIT VALIDATION | 证明漏洞能够影响 | 非 HTTP 协议检测（214 协议模板）· 利用级无害验证四通道 · 验证回归 replay · 数据扩容 · 桌面安装版唯一交付形态 |
 | **4.0 攻击链·黑白盒验证**（已发布） | ATTACK CHAIN | 把结果连成证据链 | 事实图与证据关联 · 黑白盒关联 · AST/Data Flow · CWE 关联 · 攻击链还原（证据驱动，不做自动路径推理）· 内存治理 |
-| **5.0 安全推理器·ML**（已发布，当前 5.x 线 · v5.1.0） | ML REASONING | 让机器理解安全关系 | 风险评分 · 漏洞关联预测 · 攻击路径评分 · 验证目标排序 · 异常行为识别 · 模板调度 CVE 通道 |
+| **5.0 安全推理器·ML**（已发布，当前 5.x 线 · v5.2.0） | ML REASONING | 让机器理解安全关系 | 风险评分 · 漏洞关联预测 · 攻击路径评分 · 验证目标排序 · 异常行为识别 · 模板调度 CVE 通道 |
 | **6.0 红蓝对抗验证** | RED-BLUE VALIDATION | 验证攻击，也验证防御 | 攻击验证 · 检测结果 · 防御结果 · 攻防效果对比 · 重新验证 |
 | **7.0 安全知识系统** | SECURITY INTELLIGENCE | 积累安全经验 | 漏洞 · 证据 · 攻击链 · 代码关系 · 历史案例 |
 | **8.0 ML 智能攻防引擎** | 从工具到决策 | 下一步做什么？ | ML 模型 · 决策引擎 · 状态管理 · Planner · 工具编排 |
@@ -223,5 +223,5 @@ go build -o sitelens.exe ./cmd/sitelens
 ---
 
 <div align="center">
-<sub>SiteLens 站点透视 · fengqiao · 单二进制 · 零外部依赖</sub>
+<sub>SiteLens 站点透视 · fengqiao · 单二进制 · 引擎零外部依赖 · 前端零构建</sub>
 </div>

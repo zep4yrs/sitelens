@@ -91,7 +91,7 @@ func (k *KB) nvdPossible(techName string, seen map[int64]bool, out *[]Finding, i
 			CVSSScore:  e.Score, CVSSSev: e.Sev,
 			Desc:    e.Descr,
 			Verdict: "possible",
-			KEV:     k.kev[strings.ToUpper(e.CVE)],
+			KEV:     k.IsKEV(e.CVE),
 		})
 		n++
 	}

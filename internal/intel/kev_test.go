@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 )
@@ -90,5 +91,49 @@ func TestIsKEVAndCVSSFor(t *testing.T) {
 	// 未挂 NVD 时 CVSSFor 返回 0（不臆造）。
 	if kb.CVSSFor("CVE-2021-44228") != 0 {
 		t.Error("未挂 NVD 时 CVSS 应为 0")
+	}
+}
+
+// TestMergeKEVIsKEVConcurrentSafe BUG-004 回归：KEV 守护 goroutine 的写
+// （MergeKEV）与扫描线程的读（IsKEV / kevCount）并发。旧实现 map 无锁，
+// 并发读写是 Go fatal error（不可 recover，整个 serve 进程崩溃）；本用例
+// 必须在 -race 下干净，且写完的条目对读侧可见。
+//
+// 注：本机 CGO_ENABLED=0 且无 C 编译器，-race 无法运行（-race requires
+// cgo）；用例按 -race 友好设计（读线程只读、写线程独占 MergeKEV），需在
+// 带 CGO 的环境用 `CGO_ENABLED=1 go test -race ./internal/intel` 复核。
+func TestMergeKEVIsKEVConcurrentSafe(t *testing.T) {
+	kb := &KB{}
+	const iters = 500
+	var wg sync.WaitGroup
+	// 写：模拟 KEV 守护 goroutine 周期轮询合并
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for i := 0; i < iters; i++ {
+			kb.MergeKEV([]KevEntry{
+				{CVE: fmt.Sprintf("CVE-2024-%04d", i)},
+				{CVE: fmt.Sprintf("CVE-2025-%04d", i)},
+			})
+		}
+	}()
+	// 读：模拟扫描线程逐条查 KEV / 情报行镶嵌 KEV 标注
+	wg.Add(2)
+	for r := 0; r < 2; r++ {
+		go func() {
+			defer wg.Done()
+			for i := 0; i < iters; i++ {
+				_ = kb.IsKEV(fmt.Sprintf("CVE-2024-%04d", i))
+				_ = kb.IsKEV(fmt.Sprintf("cve-2025-%04d", i))
+				_ = kb.kevCount()
+			}
+		}()
+	}
+	wg.Wait()
+	if n := kb.kevCount(); n != 2*iters {
+		t.Fatalf("并发合并后 KEV 条数 = %d，期望 %d", n, 2*iters)
+	}
+	if !kb.IsKEV("CVE-2024-0499") || !kb.IsKEV("cve-2025-0000") {
+		t.Fatal("并发合并后的条目应对读侧可见")
 	}
 }

@@ -9,13 +9,16 @@ MAE 1.07）当时未持久化权重，导致发布件误挂 EXP-1015 权重。�
 HuberLoss(delta=0.1)，2 epochs，batch 32，seq 192，bf16 autocast，
 双种子 20260928/20260929，预测平均集成。
 
-运行（ml5 根目录）：.venv/Scripts/python.exe -m ml.train_sev_v31_deploy
-产物：data/ml/dist/models/sev-prior-v3.1/s<seed>.pt ×2 +
-      data/ml/dist/models/sev-prior-v3.1/deploy-metrics.json
+运行（仓库根目录）：python -m ml.train_sev_v31_deploy
+路径（BUG-028）：环境变量优先，未设则用仓库相对默认（见 ml/config.py 头部）
+      SITLENS_DATA_ROOT  原始 KB 数据根（默认 <repo>/data，须含 state/history.json）
+      SITLENS_ML_OUT     产物根（默认 <repo>/data/ml）
+      SITLENS_ML_ASSETS  底座权重根（默认 <repo>/data/bench/models）
+产物：<SITLENS_ML_OUT>/dist/models/sev-prior-v3.1/s<seed>.pt ×2 +
+      <SITLENS_ML_OUT>/dist/models/sev-prior-v3.1/deploy-metrics.json
 """
 import json
 import time
-from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -25,15 +28,15 @@ from torch.utils.data import DataLoader
 from . import config
 from .train_sev_mae import CLASSES, DATA_VERSION, MAX_LEN, BATCH, SEED, infer
 
-BASE_MODEL = r"data\bench\models\distilbert-base-uncased"
+
 SEEDS = (SEED, SEED + 1)
 EPOCHS = 2
 
 
 def main() -> int:
-    ap_args = type("A", (), {"data_root": r"D:\fengqiao\Desktop\26-08python实训\实训考核2\data",
-                             "base_model": BASE_MODEL, "out_root": None})()
-    paths = config.resolve_paths(ap_args.data_root, ap_args.out_root)
+    # BUG-028：路径统一「环境变量优先 + 仓库相对默认」，见 ml/config.py 头部。
+    paths = config.resolve_paths()
+    base_model = str(config.base_model_dir())
 
     if not torch.cuda.is_available():
         print("[abort] CUDA 不可用")
@@ -41,7 +44,7 @@ def main() -> int:
     device = torch.device("cuda")
 
     from transformers import AutoModelForSequenceClassification, AutoTokenizer
-    tok = AutoTokenizer.from_pretrained(BASE_MODEL)
+    tok = AutoTokenizer.from_pretrained(base_model)
     kb = paths.out_root / "dataset" / DATA_VERSION / "kb_cve.jsonl.gz"
     print(f"[data] {kb}", flush=True)
 
@@ -99,7 +102,7 @@ def main() -> int:
         t0 = time.time()
         loader = make_loader(tr24["descr"], tr24["score"] / 10.0, shuffle=True)
         model = AutoModelForSequenceClassification.from_pretrained(
-            BASE_MODEL, num_labels=1).to(device)
+            base_model, num_labels=1).to(device)
         opt = torch.optim.AdamW(model.parameters(), lr=2e-5, weight_decay=0.01)
         sched = torch.optim.lr_scheduler.OneCycleLR(
             opt, max_lr=2e-5, total_steps=max(1, len(loader)) * EPOCHS,

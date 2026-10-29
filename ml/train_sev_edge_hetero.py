@@ -98,13 +98,15 @@ def build_exploit_signals(paths: config.Paths, msf_path: Path) -> dict[str, dict
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--data-root", default=r"D:\fengqiao\Desktop\26-08python实训\实训考核2\data")
-    ap.add_argument("--primary-model",
-                    default=r"data\ml\experiments\EXP-1015-sev-prior-v3\model.pt")
-    ap.add_argument("--msf-json", default=r"data\bench\external\msf_metadata.json")
+    ap.add_argument("--data-root", default=None)
+    ap.add_argument("--primary-model", default=None)
+    ap.add_argument("--msf-json", default=None)
     ap.add_argument("--out-root", default=None)
     args = ap.parse_args()
     paths = config.resolve_paths(args.data_root, args.out_root)
+    args.primary_model = str(config.ml_artifact(
+        args.primary_model or "experiments/EXP-1015-sev-prior-v3/model.pt"))
+    args.msf_json = str(config.bench_asset(args.msf_json or "external/msf_metadata.json"))
 
     if not torch.cuda.is_available():
         print("[abort] CUDA 不可用")

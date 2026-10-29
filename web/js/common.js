@@ -204,6 +204,7 @@
     history: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 3"/></svg>',
     intel: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v14c0 1.7 3.6 3 8 3s8-1.3 8-3V5"/><path d="M4 12c0 1.7 3.6 3 8 3s8-1.3 8-3"/></svg>',
     chain: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="5" cy="6" r="2.5"/><circle cx="19" cy="12" r="2.5"/><circle cx="5" cy="18" r="2.5"/><path d="M7.3 7.2 16.7 11M7.3 16.8 16.7 13"/></svg>',
+    feedback: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>',
     settings: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0 .33-1.82l.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33h.09a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82v.09a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>'
   };
   // 顶栏导航（视觉升级 2026-09-16）：只放**被动/管理页**；主动功能
@@ -211,6 +212,7 @@
   // 不占顶栏。品牌 logo 点击即回工作台。
   var NAV = [
     ["settings", "/settings", "设置", "nav_settings"],
+    ["feedback", "/feedback", "反馈", "nav_feedback"],
     ["intel", "/intel", "情报库", "nav_intel"],
     ["history", "/history", "历史", "nav_history"],
     ["chain", "/chain", "攻击链", "nav_chain"]
@@ -222,6 +224,7 @@
     if (p.indexOf("/chain") === 0) return "chain";
     if (p.indexOf("/intel") === 0) return "intel";
     if (p.indexOf("/settings") === 0) return "settings";
+    if (p.indexOf("/feedback") === 0) return "feedback";
     return ""; // 工作台及其模式页：顶栏不高亮（左栏模式行自行高亮）
   }
   function slUpdateNav() {
@@ -246,10 +249,36 @@
     try { t = localStorage.getItem("sitelens-token") || ""; } catch (e) {}
     return t ? { "X-Token": t } : {};
   }
-  function asJson(r) {
-    return r.json().then(function (j) {
-      if (!r.ok) throw new Error(j.error || "HTTP " + r.status);
+  /* ---------------- API 与错误分级（BUG-034）----------------
+     三类失败必须可区分，且必须带上下文：
+       1) 网络失败（引擎未启动 / 已退出 / 端口不通）→ 浏览器原生 "Failed to fetch"
+       2) HTTP 错误（非 2xx）→ 服务端的 {error: "..."}
+       3) 响应非 JSON（网关/代理替换了响应）→ "Unexpected token '<'"
+     此前三者都只抛一句没有上下文的英文，界面还常被 .catch(function(){}) 静默
+     吞掉——用户只看到"Failed to fetch"一行红字，界面毫无反应。 */
+  function apiError(url, kind, detail) {
+    var head = {
+      network: "无法连接引擎服务（引擎可能未启动、已退出，或端口被占用）",
+      http: "引擎返回错误",
+      parse: "引擎响应格式异常（可能被网关/代理替换）"
+    }[kind] || "请求失败";
+    return new Error(head + " @ " + url + (detail ? "：" + detail : ""));
+  }
+  function asJson(r, url) {
+    return r.text().then(function (txt) {
+      var j = null;
+      try { j = JSON.parse(txt); } catch (e) { j = null; }
+      if (!r.ok) {
+        throw apiError(url, "http", (j && j.error) || ("HTTP " + r.status));
+      }
+      if (j === null) {
+        throw apiError(url, "parse", txt.slice(0, 120));
+      }
+      clearEngineDown(); // 引擎恢复可达 → 撤掉"无响应"界面态
       return j;
+    }, function () {
+      // fetch 本身失败：连接被拒 / 引擎未监听 / 页面跨源被拦
+      throw apiError(url, "network", "");
     });
   }
   function request(method, u, d) {
@@ -257,16 +286,63 @@
       method: method,
       headers: Object.assign({ "Content-Type": "application/json" }, tok()),
       body: d === undefined ? undefined : JSON.stringify(d)
-    }).then(asJson);
+    }).then(function (r) { return asJson(r, u); });
   }
   window.api = {
-    get: function (u) { return fetch(u, { headers: tok() }).then(asJson); },
+    get: function (u) { return fetch(u, { headers: tok() }).then(function (r) { return asJson(r, u); }); },
     post: function (u, d) { return request("POST", u, d || {}); },
     put: function (u, d) { return request("PUT", u, d || {}); },
     del: function (u, d) { return request("DELETE", u, d); }
   };
   // 供无法走 api 封装的裸 fetch（如 FormData 上传）手动补 X-Token 头
   window.apiTok = tok;
+
+  /* 引擎不可达时的界面态：明确告诉用户"引擎没响应"，而不是一片空白。 */
+  function showEngineDown(msg) {
+    if (!document.body || document.getElementById("sl-engine-down")) return;
+    var d = document.createElement("div");
+    d.id = "sl-engine-down";
+    d.setAttribute("role", "alert");
+    d.style.cssText = "position:fixed;inset:0;z-index:9999;background:rgba(16,16,20,.94);" +
+      "color:#e8e8ee;display:flex;align-items:center;justify-content:center;padding:24px;" +
+      "font:14px/1.75 system-ui,-apple-system,'Segoe UI',sans-serif";
+    var box = document.createElement("div");
+    box.style.cssText = "max-width:560px;padding:26px 30px;border-radius:14px;background:#25252e;" +
+      "border:1px solid #3a3a46";
+    box.innerHTML =
+      "<h3 style='margin:0 0 10px;font-size:16px'>引擎服务无响应</h3>" +
+      "<p style='margin:0 0 10px;color:#c9c9d4'>" + esc(msg) + "</p>" +
+      "<p style='margin:0 0 16px;color:#8f8f9c;font-size:13px'>可能原因：引擎进程已退出 / " +
+      "端口被占用 / 数据目录不可写。命令行形态请确认 <code>sitelens serve</code> 仍在运行。</p>" +
+      "<button id='sl-engine-reload' style='padding:7px 16px;border-radius:8px;" +
+      "border:1px solid #55555f;background:#33333d;color:#eee;cursor:pointer'>重新加载</button>";
+    d.appendChild(box);
+    document.body.appendChild(d);
+    var btn = document.getElementById("sl-engine-reload");
+    if (btn) btn.onclick = function () { location.reload(); };
+  }
+  function clearEngineDown() {
+    var el = document.getElementById("sl-engine-down");
+    if (el && el.parentNode) el.parentNode.removeChild(el);
+  }
+
+  /* 全局错误出口：toast 提示 + 引擎不可达时给出界面态。
+     quiet=true 用于「失败可接受」的场景（如取消按钮、版本号角标），
+     但引擎不可达一律给界面态——那是用户真正需要知道的故障。 */
+  window.slReportError = function (err, opts) {
+    var quiet = opts && opts.quiet;
+    var msg = (err && err.message) ? err.message : String(err || "未知错误");
+    if (/无法连接引擎服务/.test(msg)) {
+      showEngineDown(msg);
+      if (!quiet && window.toast) window.toast("引擎服务无响应：" + msg, "err");
+      return;
+    }
+    if (!quiet && window.toast) window.toast(msg, "err");
+  };
+  // 未捕获的 Promise 异常一律上报，不再无声失败。
+  window.addEventListener("unhandledrejection", function (ev) {
+    window.slReportError(ev.reason);
+  });
 
   /* 带 X-Token 的下载：location.href 导航无法携带自定义头，token 模式下
      /api/* 导航必 401，故统一 fetch→Blob→a.download。preferOpen 为真且
@@ -455,7 +531,7 @@
     api.get("/api/version").then(function (v) {
       var el = document.getElementById("sl-ver");
       if (el && v && v.version) el.textContent = "v" + v.version;
-    }).catch(function () {});
+    }).catch(function (e) { window.slReportError(e, { quiet: true }); });
   }
   function buildShell() {
     var app = document.querySelector(".tw-app");

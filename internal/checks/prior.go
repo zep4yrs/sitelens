@@ -5,8 +5,10 @@
 // 剔除任何 check——ML 只增不删，4.0 的判定语义原样保留。
 package checks
 
-import "strings"
-import "sync"
+import (
+	"strings"
+	"sync/atomic"
+)
 
 // Prior check 调度先验：check id → 提权权重（0-1]，值越大越先执行。
 // 仅影响执行顺序；nil 等价于空先验（严格清单序，与 4.0 行为一致）。
@@ -63,21 +65,38 @@ func MLProductChecks(class string) []string {
 	return out
 }
 
-// checkIndex check id → Check（惰性建一次；AllChecks 含插件注入件）。
+// checkIndex 是 check id → Check 的只读快照，随插件集版本换代。
+//
+// BUG-013：原实现用 sync.Once 只建一次索引，ConfigurePlugins 热重载
+// userPlugins 后从不失效 → 新投放的插件在 IsExtended 里永久 false，
+// 引擎低档位增量纳入静默漏掉该 check（静默漏检）。现改为「插件集版本 +
+// 原子快照」：ConfigurePlugins/RegisterPlugins 变更集合时推进 pluginGen，
+// 读侧发现版本不符才重建（稳态读无锁）。
+type checkIndexSnapshot struct {
+	gen   int64
+	index map[string]Check
+}
+
 var (
-	checkIndexOnce sync.Once
-	checkIndex     map[string]Check
+	pluginGen      atomic.Int64
+	checkIndexSnap atomic.Pointer[checkIndexSnapshot]
 )
 
 // IsExtended check 是否扩展集（Lv1）——引擎低档位增量纳入的判断依据。
 // 未收录的 id（nuclei 转换件等外部 check）返回 false。
 func IsExtended(id string) bool {
-	checkIndexOnce.Do(func() {
-		checkIndex = map[string]Check{}
+	gen := pluginGen.Load()
+	snap := checkIndexSnap.Load()
+	if snap == nil || snap.gen != gen {
+		built := map[string]Check{}
 		for _, c := range AllChecks() {
-			checkIndex[c.ID] = c
+			built[c.ID] = c
 		}
-	})
-	c, ok := checkIndex[id]
+		// gen 先于 AllChecks 读取：若构建期间插件集又变更，快照版本会
+		// 落后于当前 pluginGen，下次调用自动重建，绝不会永久驻留旧集合。
+		snap = &checkIndexSnapshot{gen: gen, index: built}
+		checkIndexSnap.Store(snap)
+	}
+	c, ok := snap.index[id]
 	return ok && c.Lv == 1
 }

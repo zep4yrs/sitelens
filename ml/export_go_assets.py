@@ -9,7 +9,8 @@
   fixtures.json          parity 夹具：500 条描述 + Python 侧预测结果
 用途：internal/ml 的 Go 移植必须与 Python 侧预测对拍一致（>=99.5%）。
 
-自包含：BASE 取本文件位置（sitelens-ml5 仓库根），与 cwd 无关。
+路径（BUG-028）：产物根 SITLENS_ML_OUT、导出目录 SITLENS_ML_GO_ASSETS，
+默认均为仓库相对路径（<repo>/data/ml、<repo>/data/go/ml_assets），见 ml/config.py。
 """
 
 from __future__ import annotations
@@ -20,15 +21,17 @@ from pathlib import Path
 import joblib
 import numpy as np
 
-BASE = Path(__file__).resolve().parents[1]
-OUT = Path(r"D:\fengqiao\Desktop\26-08python实训\实训考核2\data\go\ml_assets")
+from . import config
+
+ML_OUT = config.ml_out_root()
+OUT = config.go_assets_dir()
 MODELS = {
-    "cve-tech": BASE / "data" / "ml" / "experiments"
+    "cve-tech": ML_OUT / "experiments"
     / "EXP-1002-product-relation-model" / "model.joblib",
-    "cwe-type": BASE / "data" / "ml" / "experiments"
+    "cwe-type": ML_OUT / "experiments"
     / "EXP-1005-cwe-model" / "model.joblib",
 }
-DATASET = BASE / "data" / "ml" / "dataset" / "kb-5.0.2" / "kb_cve.jsonl.gz"
+DATASET = ML_OUT / "dataset" / "kb-5.0.2" / "kb_cve.jsonl.gz"
 
 
 def _clf(art: dict):

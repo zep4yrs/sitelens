@@ -8,6 +8,10 @@ import (
 // Stats 知识库统计（对齐 Python /api/stats 中 intel 侧字段）。
 func (k *KB) Stats() map[string]any {
 	k.ensureDecoded()
+	// 统计在一致快照上完成（BUG-014）：覆盖合并/释放换代期间不得看到
+	// 半新半旧的 vuln 表。
+	k.vulnsMu.RLock()
+	defer k.vulnsMu.RUnlock()
 	bySev := map[string]int{}
 	sources := map[string]int{}
 	withRanges, withCVSS := 0, 0
@@ -40,7 +44,7 @@ func (k *KB) Stats() map[string]any {
 		"intel_with_ranges": withRanges,
 		"intel_with_cvss":   withCVSS,
 		"cve_ms":            len(k.cveMs),
-		"kev":               len(k.kev),
+		"kev":               k.kevCount(),
 		"nvd":               k.NVDCount(),
 	}
 }
@@ -72,6 +76,7 @@ func (k *KB) Search(q string, limit int) []SearchResult {
 		score int
 	}
 	var hits []scored
+	k.vulnsMu.RLock()
 	for i := range k.vulns {
 		e := &k.vulns[i]
 		s := 0
@@ -92,6 +97,7 @@ func (k *KB) Search(q string, limit int) []SearchResult {
 			}, s})
 		}
 	}
+	k.vulnsMu.RUnlock()
 	sort.SliceStable(hits, func(i, j int) bool {
 		if hits[i].score != hits[j].score {
 			return hits[i].score > hits[j].score

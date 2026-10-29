@@ -32,6 +32,9 @@ func LoadTplIntel(path string) ([]Entry, error) {
 
 // AttachTplIntel 合并模板情报行进 vuln_kb 主索引（负 ID 段避开精选行的
 // 正 ID 空间），并重建关键词索引。调用须在首次 Match 之前。
+//
+// 与扫描/覆盖合并并发时按 BUG-014 的同一把写锁换代：append+重建索引
+// 整体完成，读侧不会看到「元素已加、索引未建」的中间态。
 func (k *KB) AttachTplIntel(rows []Entry) {
 	if len(rows) == 0 {
 		return
@@ -41,6 +44,8 @@ func (k *KB) AttachTplIntel(rows []Entry) {
 		k.pendingTpl = append(k.pendingTpl, rows...)
 		return
 	}
+	k.vulnsMu.Lock()
+	defer k.vulnsMu.Unlock()
 	next := int64(-1)
 	for _, r := range rows {
 		next--

@@ -122,13 +122,13 @@ def _cls_metrics(pooled: pd.DataFrame, name: str) -> dict:
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--farm-history",
-                    default=r"D:\fengqiao\Desktop\26-08python实训\实训考核2\build\farm-state\state\history.json")
-    ap.add_argument("--data-root", default=r"D:\fengqiao\Desktop\26-08python实训\实训考核2\data")
+    ap.add_argument("--farm-history", default=None)
+    ap.add_argument("--data-root", default=None)
     ap.add_argument("--out-root", default=None)
     ap.add_argument("--seed", type=int, default=20260928)
     args = ap.parse_args()
     paths = config.resolve_paths(args.data_root, args.out_root)
+    args.farm_history = str(config.farm_history(args.farm_history, paths))
 
     farm_records = load_farm_records(Path(args.farm_history))
     catalog = dataset.load_catalog()

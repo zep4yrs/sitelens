@@ -23,10 +23,12 @@ func Available() bool { return true }
 
 // newParser 按语言取 grammar 并装配解析器。
 //
-// 注：PHP 未纳入——其 grammar 依赖 `php/tree_sitter/*.h` 子目录，而该目录
-// 无 Go 文件、会被 `go mod vendor` 丢弃（CI 有 vendor 一致性门禁），
-// 故 PHP 的 AST 解析暂缓，白盒 PHP 仍走 audit 的行级正则（无回归）。
-// 启用路径见 docs/开发文档-4.0.md 第 26.10 节。
+// 注：PHP **已纳入** AST 解析。其 upstream grammar 的 C 源依赖
+// `tree_sitter/*.h` 子目录，而该目录无 Go 文件、会被 `go mod vendor` 丢弃
+// （CI 有 vendor 一致性门禁），故 grammar 源码与 cgo 绑定由本仓第一方自持
+// 在 internal/astx/phpgram（tree-sitter-php binding，MIT），此处用
+// phpgram.GetLanguage() 取 Language——不再走 vendor 里的上游 php 包。
+// 实施记录见 docs/开发文档-4.0.md 第 26.12 节（P3 深化：PHP AST）。
 func newParser(l Lang) (*sitter.Parser, bool) {
 	var g *sitter.Language
 	switch l {

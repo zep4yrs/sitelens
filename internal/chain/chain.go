@@ -6,12 +6,13 @@
 //
 //  1. 把图内已有的真实事实（发现 / 入口 / 影响 / 权限变化 / 黑白盒关联）
 //     组织为链节点与链边；
-//  2. 只连「同一次扫描中真实共现」的节点（同 host + 存在证据链）；
+//  2. 只连「同一次扫描中真实共现」的节点（经 EntryID 的因果链 + 证据共现）；
+//     **不按 host 归组**——同一 host 上的两个节点不等于存在攻击路径；
 //  3. 无证据的候选边一律不建（宁缺不造）。
 //
 // 三类合法边（与文档一致）：
 //
-//	sequence        攻击面时序：recon → entry → exploit（同 host，证据共现）
+//	sequence        攻击面时序：recon → entry → exploit（入口点 EntryID 因果，非 host 相邻）
 //	exploit_impact  exploit 已证明的影响：vuln_node → impact（proven/observed）
 //	evidence_link   黑白盒关联边（P4 产出，此处纳入链）
 //	priv_change     权限变化边（P7 产出，此处纳入链）

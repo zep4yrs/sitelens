@@ -169,6 +169,40 @@ func TestSubmatch(t *testing.T) {
 	}
 }
 
+// TestBudgetSharedAcrossStarts BUG-027 回归：步数预算按一次匹配调用
+// 共享，不再按每个起始位置重置。默认预算下同一输入照常命中（正常
+// 路径零回归）；预算收紧到 100 后，累计步数在命中起点之前耗尽，
+// 必须整体放弃——这正是「总开销 ≤ Budget」的实现语义（旧实现每起点
+// 重置预算，会在第 12 个起点命中；共享预算会发生在这一位置之前）。
+func TestBudgetSharedAcrossStarts(t *testing.T) {
+	const pattern = `a{5,8}b`
+	s := strings.Repeat("a", 20) + "b"
+
+	// 默认预算：晚起点命中不受影响（正常路径不得回归）
+	re := must(t, pattern)
+	if re.Budget != defaultBudget {
+		t.Fatalf("默认预算 = %d, 期望 %d", re.Budget, defaultBudget)
+	}
+	if !re.MatchString(s) {
+		t.Fatal("默认预算下应命中第 12 个起点（正常路径回归）")
+	}
+
+	// 收紧预算：逐起点重置的实现（每起点 100 步）仍会在起点 12 命中；
+	// 共享预算实现累计超限后整体放弃 → 不命中。断言这是有界放弃而非
+	// 误报：MatchString 只给存在性，不得凭空命中。
+	re2 := must(t, pattern)
+	re2.Budget = 100
+	if re2.MatchString(s) {
+		t.Fatal("预算共享后累计步数超限应整体放弃（每起点重置的旧实现会命中）")
+	}
+
+	// 预算耗尽后仍需能正常匹配「近起点」输入（放弃的是本次查找，
+	// 不是把正则标记为失效）。
+	if !re2.MatchString("aaaaab") {
+		t.Fatal("短输入在预算内应正常命中")
+	}
+}
+
 func TestBudgetBounded(t *testing.T) {
 	// 灾难性回溯形态：预算内必须有界退出，不挂死
 	re := must(t, `(a+)+b`)

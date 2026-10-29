@@ -10,7 +10,7 @@ func TestCmp(t *testing.T) {
 		{"6.4.2", "6.4.2", 0},
 		{"6.4.2", "6.4.3", -1},
 		{"6.4.3", "6.4.2", 1},
-		{"8.3", "8.3.7", -1}, // 短版本补零：8.3.0 < 8.3.7
+		{"8.3", "8.3.7", -1}, // 短版本：公共前缀下短者为小（8.3 < 8.3.7）
 		{"14.2.25", "14.1.1", 1},
 		{"10", "9.5", 1},
 		{"7-jre", "7", 0}, // 后缀忽略
@@ -72,6 +72,56 @@ func TestVersionInHashSegmentNotComparable(t *testing.T) {
 		{"8.2.5", "<=8.2.7", true},
 		{"8.2.5", "<=8.2.5.RELEASE", false}, // 含字母段：宁少报
 		{"8.2.5", ">=c798c0e", false},
+	}
+	for _, c := range cases {
+		if got := VersionIn(c.version, c.affected); got != c.want {
+			t.Errorf("VersionIn(%q, %q) = %v; want %v", c.version, c.affected, got, c.want)
+		}
+	}
+}
+
+// TestCmpSegmentCount BUG-007 回归：4 段版本号不得被截断成 3 段后判等。
+// 逐段比较、公共前缀相等时短者为小（Python 元组语义）。
+func TestCmpSegmentCount(t *testing.T) {
+	cases := []struct {
+		a, b string
+		want int
+	}{
+		{"1.2.3.4", "1.2.3", 1},
+		{"1.2.3", "1.2.3.4", -1},
+		{"1.2.3.0", "1.2.3", 1}, // 不零补齐：多一段即更晚
+		{"10.0.19041.1234", "10.0.19041", 1},
+		{"4.17.3.0", "4.17.3", 1},
+		{"v10.0.19041.1234", "10.0.19041.1234", 0},
+		{"6.4.2", "6.4.2", 0},
+		{"8.3", "8.3.7", -1},
+	}
+	for _, c := range cases {
+		if got := Cmp(c.a, c.b); got != c.want {
+			t.Errorf("Cmp(%q, %q) = %d, want %d", c.a, c.b, got, c.want)
+		}
+	}
+}
+
+// TestVersionInFourSegment BUG-007 验收：4 段补丁号在「受影响区间」判定中
+// 不得再被误判为受影响（误报 confirmed 是产品最忌讳的错误类型）。
+func TestVersionInFourSegment(t *testing.T) {
+	cases := []struct {
+		version, affected string
+		want              bool
+	}{
+		{"1.2.3.4", "<=1.2.3", false},
+		{"10.0.19041.1234", "<=10.0.19041", false},
+		{"4.17.3.0", "<=4.17.3", false},
+		{"10.0.19041.1234", ">=10.0.19041", true},
+		{"1.2.3.4", ">=1.2.3", true},
+		{"1.2.3.4", ">1.2.3", true},
+		// 4 段基版本 + 4 段区间：正常逐段比较
+		{"10.0.19041.1234", ">=10.0.19041.1000,<10.0.19041.2000", true},
+		{"10.0.19041.987", ">=10.0.19041.1000,<10.0.19041.2000", false},
+		{"10.0.19041", ">=10.0.19041.1000,<10.0.19041.2000", false}, // 3 段短于 4 段下界
+		// 短版本 vs 长短不一的上界：公共前缀下短者更小
+		{"8.3", ">=8.3,<8.3.7", true},
 	}
 	for _, c := range cases {
 		if got := VersionIn(c.version, c.affected); got != c.want {

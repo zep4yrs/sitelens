@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"syscall"
 
 	"sitelens-wails/internal/usercfg"
 )
@@ -47,6 +48,13 @@ func deliverSeeds(engineExe, seedDir, userData string) {
 	cmd := exec.Command(engineExe,
 		"update-seed", "--seed-dir", seedDir, "--user-dir", userData)
 	cmd.Dir = filepath.Dir(engineExe) // 与引擎 serve 同 cwd，相对路径语义一致
+	// 同 BUG-032：引擎是控制台子系统程序，不加这行会在启动时闪一个黑窗。
+	// 输出仍走 CombinedOutput 的管道，不受影响（子进程不创建控制台，
+	// 但 stdout/stderr 句柄照常经管道传给父进程）。
+	cmd.SysProcAttr = &syscall.SysProcAttr{
+		HideWindow:    true,
+		CreationFlags: createNoWindow,
+	}
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		log.Printf("种子交付未完成（%v）：%s", err, string(out))

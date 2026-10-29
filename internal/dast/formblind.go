@@ -9,7 +9,6 @@ package dast
 
 import (
 	"fmt"
-	"strings"
 )
 
 // formBoolBudget 单次扫描表单字段布尔盲注的最大字段数与通道数。
@@ -112,9 +111,8 @@ func (r *Runner) formBoolBlindField(ft FormTarget, field string, done *int, tota
 			Payload:  ch.t,
 			Evidence: fmt.Sprintf("表单字段 %s 注入上下文 %s：真 payload 尺寸 %dB 与基线 %dB 相似，假 payload %dB 显著偏离（双确认）",
 				field, ch.name, sizeT, size0, sizeF),
-			Replay: formReplay(ft.Action, field, ch.t),
-			Request: "POST " + ft.Action + " HTTP/1.1\r\nContent-Type: application/x-www-form-urlencoded\r\n\r\n" +
-				field + "=" + ch.t,
+			Replay:   formReplay(ft.Action, field, ch.t),
+			Request:  formReqText(ft.Action, field, ch.t),
 			Response: &RespSnap{Status: tResp.Status, Size: sizeT, Snippet: snippetOf(tResp.Body)},
 			Signals: []string{"表单真/假差分成立（" + ch.name + "）",
 				fmt.Sprintf("基线 %dB / 真 %dB / 假 %dB", size0, sizeT, sizeF)},
@@ -125,8 +123,12 @@ func (r *Runner) formBoolBlindField(ft FormTarget, field string, done *int, tota
 	return nil
 }
 
-// formReplay 表单字段注入的复现命令（payload 内单引号按 shell 语义转义）。
+// formReplay 表单字段注入的复现命令（POST 语义）。
+//
+// action / field / payload 三者**全部来自被扫站点的 HTML**（表单 action 属性、
+// 控件 name 属性），而复现命令会被使用者直接粘贴到 shell 执行——不做 shell
+// 转义等于把命令执行权交给目标站点（BUG-002）。故三者一律经 shellQuote。
+// 请求体用表单编码，与引擎实际发出的 POST 字节一致。
 func formReplay(action, field, payload string) string {
-	return "curl -sk --path-as-is -d '" + field + "=" +
-		strings.ReplaceAll(payload, "'", `'\''`) + "' '" + action + "'"
+	return "curl -sk --path-as-is -d " + shellQuote(formBody(field, payload)) + " " + shellQuote(action)
 }

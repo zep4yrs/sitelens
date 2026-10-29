@@ -1,10 +1,17 @@
 #!/usr/bin/env node
-// sitelens 命令入口：
-//   sitelens                     交互式 TUI（TTY 下）
-//   sitelens scan <url>          非交互扫描（管道/CI；--json 出完整结果）
-//   sitelens serve [args...]     引擎 serve 直通（复用包内引擎二进制）
+// sitelens 命令入口（命令表驱动）。
+//
+//   sitelens                     交互式 TUI（选功能 → 扫描 / 审计 / 诊断 / 历史）
+//   sitelens <命令> [参数...]    见 sitelens --help
 //   sitelens --version | help
-import { main } from "../src/cli.mjs";
+//
+// 命令清单的唯一事实源在 src/commands.mjs —— help 文本也由它生成，
+// 不在这里另写一份（两处维护必然漂移）。
+//
+// 退出码一律用 process.exitCode 而非 process.exit()：强制退出会打断 Node
+// 的 libuv 清理，Windows 上会抛 "Assertion failed: !(handle->flags &
+// UV_HANDLE_CLOSING)"（0xC0000409）——表现为进程中止、退出码全丢。
+import { COMMAND_MAP, renderHelp } from "../src/commands.mjs";
 
 const argv = process.argv.slice(2);
 const cmd = argv[0];
@@ -12,44 +19,38 @@ const cmd = argv[0];
 if (cmd === "--version" || cmd === "-v") {
   const v = (await import("../package.json", { with: { type: "json" } })).default.version;
   console.log(`sitelens-cli v${v}`);
-  process.exit(0);
-}
-if (cmd === "help" || cmd === "--help" || cmd === "-h") {
-  help();
-  process.exit(0);
-}
-if (cmd === "scan") {
-  process.exit(await main(argv.slice(1)));
-}
-if (cmd === "serve") {
-  const { passthroughServe } = await import("../src/engine.mjs");
-  process.exit(await passthroughServe(argv.slice(1)));
-}
-if (cmd === undefined) {
+  process.exitCode = 0;
+} else if (cmd === "help" || cmd === "--help" || cmd === "-h") {
+  console.log(renderHelp());
+  process.exitCode = 0;
+} else if (cmd === undefined) {
+  // 无子命令：TTY 下进交互式 TUI；管道/CI 下打 help（不做无意义的扫描）
   if (!process.stdin.isTTY || !process.stdout.isTTY) {
-    help();
-    process.exit(2);
+    console.log(renderHelp());
+    process.exitCode = 2;
+  } else {
+    const { runTUI } = await import("../dist/app.mjs");
+    const action = await runTUI();
+    if (!action) {
+      process.exitCode = 0;
+    } else {
+      const def = COMMAND_MAP.get(action.cmd);
+      if (!def) {
+        console.error(`未知命令：${action.cmd}`);
+        console.log(renderHelp());
+        process.exitCode = 2;
+      } else {
+        process.exitCode = await def.run(action.args ?? []);
+      }
+    }
   }
-  const { runTUI } = await import("../dist/app.mjs");
-  process.exit(await runTUI());
-}
-help();
-process.exit(2);
-
-function help() {
-  console.log(`SiteLens 站点透视 —— 终端扫描台
-
-用法：
-  sitelens                     交互式 TUI
-  sitelens scan <url>          非交互扫描
-      --level <L>              quick|standard|deep|full|assets|stealth|apocalypse（默认 standard）
-      --json                   结果以完整 JSON 输出到 stdout（摘要走 stderr）
-      --allow-private          允许内网/保留地址目标（本机靶场/授权内网；等价 SITLENS_ALLOW_PRIVATE=1）
-      --timeout <秒>           扫描超时（默认 1800）
-  sitelens serve [args...]     引擎 serve 直通（参数原样传递）
-  sitelens --version
-
-引擎二进制解析顺序：环境变量 SITLENS_ENGINE → 随包平台包
-（@fengqiao666/sitelens-<平台>-engine）→ PATH 中的 sitelens。
-扫描历史与状态落 ~/.sitelens/；引擎完整能力见项目主页。`);
+} else {
+  const def = COMMAND_MAP.get(cmd);
+  if (!def) {
+    console.error(`未知命令：${cmd}`);
+    console.log(renderHelp());
+    process.exitCode = 2;
+  } else {
+    process.exitCode = await def.run(argv.slice(1));
+  }
 }

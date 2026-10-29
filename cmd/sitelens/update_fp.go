@@ -1,11 +1,12 @@
 // update-fp 子命令：镜像 enthec/webappanalyzer（GPL-3.0）社区指纹库，
 // 与精编 technologies.json 合并（精编优先），同时导出 name→CPE 映射。
 // 公开数据可再生，不进仓库；合并后自动用 LoadTechnologies 全量编译验证。
+//
+// 下载闸：强制 https + 实测 sha256 留痕/可钉校验（见 update_guard.go）。
 package main
 
 import (
 	"fmt"
-	"net/http"
 	"os"
 	"path/filepath"
 	"time"
@@ -24,19 +25,20 @@ func updateFPCommand(cfg *config.Config, url string) int {
 		url = fpmerge.FetchURL
 	}
 	fmt.Fprintf(os.Stderr, "下载社区指纹库：%s\n", url)
-	client := &http.Client{Timeout: 10 * time.Minute}
-	resp, err := client.Get(url)
+	path, _, cleanup, err := downloadUpdate(url, 10*time.Minute, 0)
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "下载失败：", err)
+		fmt.Fprintln(os.Stderr, err)
 		return 1
 	}
-	defer resp.Body.Close()
-	if resp.StatusCode != 200 {
-		fmt.Fprintln(os.Stderr, "下载失败：HTTP", resp.StatusCode)
+	defer cleanup()
+	f, err := os.Open(path)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "读取下载内容失败：", err)
 		return 1
 	}
+	defer f.Close()
 	cpePath := filepath.Join(filepath.Dir(techPath), "tech_cpe.json")
-	st, err := fpmerge.MergeFromTar(resp.Body, techPath, cpePath)
+	st, err := fpmerge.MergeFromTar(f, techPath, cpePath)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "合并失败：", err)
 		return 1

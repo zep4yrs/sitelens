@@ -1,0 +1,2 @@
+go test fuzz v1
+[]byte("id: 00\ninfo: \n  name: 0\rhttp:\n  - method: GET\n    path: 0{{BaseURL}}0\n    matchers:\n      - type: word\n        words:\n        - 0")

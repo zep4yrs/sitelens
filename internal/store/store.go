@@ -140,12 +140,15 @@ func (s *Store) Save(res *engine.Result, options map[string]any) int64 {
 }
 
 // archive 把被裁剪的记录追加到归档文件（JSON Lines）。
+// 0600（BUG-024）：归档含目标响应片段/命中详情，按最小权限落盘。
 func (s *Store) archive(recs []ScanRecord) {
-	f, err := os.OpenFile(s.archivePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	f, err := os.OpenFile(s.archivePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
 	if err != nil {
 		return
 	}
 	defer f.Close()
+	// 历史遗留的 0644 归档文件同样收紧（Windows 下仅只读位生效）。
+	_ = f.Chmod(0o600)
 	enc := json.NewEncoder(f)
 	for _, r := range recs {
 		_ = enc.Encode(r)
@@ -260,12 +263,18 @@ func (s *Store) HistoryStats() map[string]any {
 }
 
 // TopTechs 历史扫描中最常见技术 TOP N（对齐 Python top_techs）。
+// result 为 null 的历史记录（导入迁移/写库中断都可能产生）直接跳过：
+// 此前无判空 → GET /api/stats 触发 nil 指针 panic（BUG-009）。
 func (s *Store) TopTechs(limit int) []map[string]any {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	count := map[string]int{}
 	for i := range s.h.Scans {
-		for _, t := range s.h.Scans[i].Result.Technologies {
+		r := s.h.Scans[i]
+		if r.Result == nil {
+			continue
+		}
+		for _, t := range r.Result.Technologies {
 			count[t.Name]++
 		}
 	}
@@ -319,15 +328,24 @@ func (s *Store) Verified(limit int) []map[string]any {
 	return out
 }
 
-// flush 落盘（调用方须持锁）。失败静默：存储异常不阻塞扫描主流程。
+// flush 落盘（调用方须持锁）。0600（BUG-024）：history.json 含目标响应
+// 片段与登录爆破命中，按最小权限写。
+//
+// 失败不再静默（BUG-031）：磁盘满/权限异常会让历史静默丢失，此前无任何
+// 痕迹可查。只在失败路径打 stderr（成功路径零输出，不引入噪声）。
 func (s *Store) flush() {
 	data, err := json.Marshal(&s.h)
 	if err != nil {
+		fmt.Fprintf(os.Stderr, "警告：扫描历史序列化失败，本次未落盘（%s）：%v\n", s.path, err)
 		return
 	}
 	tmp := s.path + ".tmp"
-	if os.WriteFile(tmp, data, 0o644) == nil {
-		_ = os.Rename(tmp, s.path)
+	if err := os.WriteFile(tmp, data, 0o600); err != nil {
+		fmt.Fprintf(os.Stderr, "警告：扫描历史落盘失败（%s）：%v\n", tmp, err)
+		return
+	}
+	if err := os.Rename(tmp, s.path); err != nil {
+		fmt.Fprintf(os.Stderr, "警告：扫描历史替换失败（%s）：%v\n", s.path, err)
 	}
 }
 

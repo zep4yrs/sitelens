@@ -10,6 +10,7 @@ import (
 	"sync"
 	"sync/atomic"
 
+	"cnb.cool/feng-qiao/sitelens/internal/afrogx"
 	"cnb.cool/feng-qiao/sitelens/internal/dsl"
 	"cnb.cool/feng-qiao/sitelens/internal/httpx"
 	"cnb.cool/feng-qiao/sitelens/internal/versioncmp"
@@ -495,6 +496,23 @@ func matchBodyReason(m Match, status int, body string, headers map[string]string
 	}
 	if len(m.DSL) > 0 {
 		why = append(why, "dsl 表达式为真")
+	}
+	// afrog 经典 expression（运行时求值，见 internal/afrogx）。编译失败
+	// （含不支持的原子）一律不命中——宁少报不误报。
+	if m.Expr != "" {
+		prog, cerr := afrogx.Get(m.Expr)
+		if cerr != nil || prog == nil {
+			return false, ""
+		}
+		ok, reason := prog.Eval(afrogx.Response{
+			Status:  status,
+			Body:    body,
+			Headers: headers,
+		})
+		if !ok {
+			return false, ""
+		}
+		why = append(why, "afrog 表达式命中（"+reason+"）")
 	}
 	if len(why) == 0 {
 		if len(m.Contains) > 0 {
