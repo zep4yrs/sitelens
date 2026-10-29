@@ -10,13 +10,56 @@ package server
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"os"
+	"path/filepath"
+	"strings"
 	"time"
 
 	"cnb.cool/feng-qiao/sitelens/internal/config"
 	"cnb.cool/feng-qiao/sitelens/internal/intel"
 )
+
+// defaultOverridesName overrides_path 缺省文件名（相对数据目录）。
+const defaultOverridesName = "intel_overrides.json"
+
+// resolveOverridesPath 校验并归一设置页提交的 overrides_path。
+//
+// 安全约束（BUG-006）：该键运行期会被 OSV 同步写盘
+// （POST /api/osv-sync → intel.SaveOverrides），此前 PUT /api/settings
+// 零校验 → 可把落盘点改到任意路径（含重启后仍生效）。现限定在固定
+// 数据目录 cfg.Store.DataDir 内：
+//   - 空值 → 数据目录下的默认文件；
+//   - 相对路径 → 相对数据目录解析（归一为绝对路径）；
+//   - 绝对路径 → 允许，但必须位于数据目录内；
+//   - 越界（.. 穿越 / 其它目录或盘符）→ 返回错误，调用方回 400。
+//
+// 判定用 filepath.Rel 而非字符串前缀：Windows 下卷标大小写与 / \ 分隔符
+// 差异都会让 HasPrefix 误判（C:\Data 与 c:/data 应视为同一目录）。
+func resolveOverridesPath(dataDir, raw string) (string, error) {
+	if strings.TrimSpace(raw) == "" {
+		return filepath.Join(dataDir, defaultOverridesName), nil
+	}
+	absDir, err := filepath.Abs(dataDir)
+	if err != nil {
+		return "", fmt.Errorf("数据目录不可解析：%w", err)
+	}
+	p := strings.TrimSpace(raw)
+	if !filepath.IsAbs(p) {
+		p = filepath.Join(absDir, p)
+	}
+	absPath, err := filepath.Abs(p)
+	if err != nil {
+		return "", fmt.Errorf("路径不可解析：%w", err)
+	}
+	rel, err := filepath.Rel(absDir, absPath)
+	if err != nil || rel == "." || rel == ".." ||
+		strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return "", fmt.Errorf("必须位于数据目录内（%s）", absDir)
+	}
+	return absPath, nil
+}
 
 // settingsConfig 设置页可读写的配置投影（只含允许远程修改的键）。
 type settingsConfig struct {
@@ -57,7 +100,7 @@ func (s *Server) settingsCfg() settingsConfig {
 	defer s.cfgMu.Unlock()
 	var v settingsConfig
 	v.Web.Listen = s.cfg.Web.Listen
-	v.Web.APIToken = s.apiToken
+	v.Web.APIToken = s.token()
 	v.Crawler.MaxPages = s.cfg.Crawler.MaxPages
 	v.Crawler.RespectRobots = s.cfg.Crawler.RespectRobots
 	v.Crawler.MaxLinksPerPage = s.cfg.Crawler.MaxLinksPerPage
@@ -78,7 +121,8 @@ func (s *Server) applySettings(v settingsConfig) {
 	s.cfgMu.Lock()
 	defer s.cfgMu.Unlock()
 	s.cfg.Web.APIToken = v.Web.APIToken
-	s.apiToken = v.Web.APIToken
+	tok := v.Web.APIToken
+	s.apiToken.Store(&tok) // 原子换枪：guard 读侧无锁
 	if v.Crawler.MaxPages > 0 {
 		s.cfg.Crawler.MaxPages = v.Crawler.MaxPages
 	}
@@ -146,7 +190,14 @@ func (s *Server) persistSettings(v settingsConfig) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(s.cfgPath, out, 0o644)
+	// 0644 → 0600（BUG-024）：新文件时配置里含 web.api_token 明文；
+	// 落盘后显式 Chmod 也收紧历史遗留的 0644 文件（Windows 下仅只读位生效，
+	// 属平台限制，代码仍按最小权限写）。
+	if err := os.WriteFile(s.cfgPath, out, 0o600); err != nil {
+		return err
+	}
+	_ = os.Chmod(s.cfgPath, 0o600)
+	return nil
 }
 
 func (s *Server) hSettingsGet(w http.ResponseWriter, r *http.Request) {
@@ -167,6 +218,15 @@ func (s *Server) hSettingsPut(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 400, map[string]any{"error": "listen 与 max_pages 必填"})
 		return
 	}
+	// BUG-006：overrides_path 会被 OSV 同步当落盘路径使用，必须限定在
+	// 数据目录内；非法值整单拒绝（不落 yml、不改内存），避免"写盘路径
+	// 已生效但配置没保存"的半生效状态。
+	ovPath, err := resolveOverridesPath(s.cfg.Store.DataDir, v.Intel.OverridesPath)
+	if err != nil {
+		writeJSON(w, 400, map[string]any{"error": "overrides_path 非法：" + err.Error()})
+		return
+	}
+	v.Intel.OverridesPath = ovPath
 	if err := s.persistSettings(v); err != nil {
 		writeJSON(w, 500, map[string]any{"error": "写回失败：" + err.Error()})
 		return

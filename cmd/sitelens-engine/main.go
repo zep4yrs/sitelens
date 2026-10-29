@@ -31,6 +31,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"strings"
 
 	"cnb.cool/feng-qiao/sitelens/internal/config"
 	"cnb.cool/feng-qiao/sitelens/internal/seedcmd"
@@ -56,6 +57,15 @@ func main() {
 	}
 	flag.Parse()
 	args := flag.Args()
+
+	// 子命令之后的全局 flag 补扫（与 cmd/sitelens 的 BUG-005 同型修复）：
+	// flag.Parse() 遇第一个非 flag 参数（子命令名）即停止，于是
+	// `sitelens-engine serve -config x.yml` 的 -config 落进 args 被忽略，
+	// 静默用默认配置。桌面壳用前置写法不受影响，但手跑排障按自然直觉写
+	// 就会踩到。引擎只关心 -config，补扫这一项即可，其余参数原样保留。
+	if len(args) > 0 {
+		args = append([]string{args[0]}, rescanConfigFlag(args[1:], cfgPath)...)
+	}
 
 	// update-seed 是「路径参数」型子命令（--seed-dir/--user-dir），而
 	// flag.Parse() 遇到子命令名即停止解析——参数落进 flag.Args()，这里
@@ -87,4 +97,43 @@ func main() {
 		fmt.Fprintln(os.Stderr, "服务退出:", err)
 		os.Exit(1)
 	}
+}
+
+// rescanConfigFlag 在子命令之后的参数里补扫 -config（BUG-005 同型修复）。
+//
+// 支持 -config v / --config v / -config=v / --config=v 四种形态；未知参数
+// 原样保留（update-seed 的 --seed-dir 等子命令自有 flag 不能吞掉）。
+// 看到 "--" 终止符后不再扫描，其余参数逐字保留。
+func rescanConfigFlag(argv []string, cfg *string) []string {
+	out := make([]string, 0, len(argv))
+	for i := 0; i < len(argv); i++ {
+		tok := argv[i]
+		if tok == "--" {
+			out = append(out, argv[i:]...)
+			break
+		}
+		if len(tok) < 2 || tok[0] != '-' {
+			out = append(out, tok)
+			continue
+		}
+		body := tok[1:]
+		if strings.HasPrefix(body, "-") {
+			body = body[1:]
+		}
+		name, val, hasVal := strings.Cut(body, "=")
+		if name != "config" {
+			out = append(out, tok)
+			continue
+		}
+		if !hasVal {
+			if i+1 >= len(argv) {
+				fmt.Fprintln(os.Stderr, "全局开关 -config 缺少取值")
+				os.Exit(2)
+			}
+			i++
+			val = argv[i]
+		}
+		*cfg = val
+	}
+	return out
 }

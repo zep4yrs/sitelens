@@ -52,6 +52,27 @@ func (e *Engine) mlFor() *ml.Assets {
 	return a
 }
 
+// sevAssetsDir 解析 sev-prior ONNX 资产目录：与 mlFor 同源候选
+// （配置优先 → 运行时常规路径 → 仓库内建 models/）。
+//
+// BUG-019：原实现直接用 e.cfg.ML.AssetsDir——默认值 data/go/ml_assets
+// 在仓内不存在（资产随「模型进仓库本体」迁到 models/go/ml_assets），
+// 于是 ONNX glob 恒落空、sev_onnx 通道恒不可用并静默回退 NVD 先验。
+// 与 mlFor 一样收敛到 ml.LocateAssetsDir，避免两处各自维护候选表。
+// 候选全不合格时退回配置值：自定义部署可能只投放 ONNX 文件（无线性
+// 模型成套资产），保持其原路径语义。
+func (e *Engine) sevAssetsDir() string {
+	if e.cfg == nil {
+		return ""
+	}
+	if dir := ml.LocateAssetsDir(e.cfg.ML.AssetsDir,
+		filepath.Join("data", "go", "ml_assets"),
+		filepath.Join("models", "go", "ml_assets")); dir != "" {
+		return dir
+	}
+	return e.cfg.ML.AssetsDir
+}
+
 // mlSevScorer 惰性取 sev-prior ONNX 打分器（阶段 B，§10.8）。一次尝试：
 // 未启用/无 onnx 构建标签/资产或共享库缺失，返回 nil 并带降级原因
 // （引擎回退 NVD CVSS 先验；原因落 extras["ml_sev"] 可解释）。
@@ -66,7 +87,7 @@ func (e *Engine) mlSevScorer() *ml.SevScorer {
 		e.mlSevReason = "sev_onnx 未启用"
 		return nil
 	}
-	assets := e.cfg.ML.AssetsDir
+	assets := e.sevAssetsDir()
 	// 集成清单：双种子 fp32 对 → int8 对 → 旧单文件（兼容既往资产布局）
 	var onnx []string
 	for _, pat := range []string{"sev-prior-v3.1-[ab].onnx", "sev-prior-v3.1-[ab]-int8.onnx"} {

@@ -90,15 +90,16 @@ def _pk_mrr5(ranked5: list[list[int]], true_sets: list[set[int]]) -> dict:
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--data-root", default=r"D:\fengqiao\Desktop\26-08python实训\实训考核2\data")
-    ap.add_argument("--base-model",
-                    default=r"data\bench\models\distilbert-base-uncased")
-    ap.add_argument("--prev-model",
-                    default=r"data\ml\experiments\EXP-1002-product-relation-model\model.joblib")
+    ap.add_argument("--data-root", default=None)
+    ap.add_argument("--base-model", default=None)
+    ap.add_argument("--prev-model", default=None)
     ap.add_argument("--out-root", default=None)
     ap.add_argument("--epochs", type=int, default=2)
     args = ap.parse_args()
     paths = config.resolve_paths(args.data_root, args.out_root)
+    args.base_model = str(config.base_model_dir(args.base_model))
+    args.prev_model = str(config.ml_artifact(
+        args.prev_model or "experiments/EXP-1002-product-relation-model/model.joblib"))
 
     if not torch.cuda.is_available():
         print("[abort] CUDA 不可用——按纪律不假跑")

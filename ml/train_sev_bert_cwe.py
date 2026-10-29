@@ -79,12 +79,12 @@ def _eval(y_true, proba) -> dict:
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--data-root", default=r"D:\fengqiao\Desktop\26-08python实训\实训考核2\data")
-    ap.add_argument("--base-model",
-                    default=r"data\bench\models\distilbert-base-uncased")
+    ap.add_argument("--data-root", default=None)
+    ap.add_argument("--base-model", default=None)
     ap.add_argument("--out-root", default=None)
     args = ap.parse_args()
     paths = config.resolve_paths(args.data_root, args.out_root)
+    args.base_model = str(config.base_model_dir(args.base_model))
 
     if not torch.cuda.is_available():
         print("[abort] CUDA 不可用——按纪律不假跑")

@@ -45,7 +45,14 @@ func FetchKEV(feedURL string, timeout time.Duration) ([]KevEntry, error) {
 }
 
 // MergeKEV 把条目并入内存 KEV 索引，返回新增条数。
+//
+// 并发纪律（BUG-004）：KEV 守护 goroutine 会周期性调用本方法，而同进程
+// 扫描线程在 Match/ServiceProbe 路径上读 KEV 表；map 无锁并发读写会让
+// Go 直接 fatal error（不可 recover，整个 serve 进程退出）。写侧统一持
+// kevMu 写锁，读侧持读锁（见 IsKEV / kevCount）。
 func (k *KB) MergeKEV(entries []KevEntry) int {
+	k.kevMu.Lock()
+	defer k.kevMu.Unlock()
 	if k.kev == nil {
 		k.kev = map[string]bool{}
 	}
@@ -104,11 +111,26 @@ func LoadKEVExtra(path string) ([]KevEntry, error) {
 
 // IsKEV 查询 CVE 是否在 CISA KEV（在野利用）清单内。
 // 供 4.0 impact 先验标注（P10）等外部消费方使用；未挂载/未知返回 false。
+// 并发安全：与 MergeKEV 的写并发（BUG-004）。
 func (k *KB) IsKEV(cve string) bool {
 	if k == nil || cve == "" {
 		return false
 	}
-	return k.kev[strings.ToUpper(strings.TrimSpace(cve))]
+	key := strings.ToUpper(strings.TrimSpace(cve))
+	k.kevMu.RLock()
+	ok := k.kev[key]
+	k.kevMu.RUnlock()
+	return ok
+}
+
+// kevCount KEV 表条数（并发安全；供 Stats 使用）。
+func (k *KB) kevCount() int {
+	if k == nil {
+		return 0
+	}
+	k.kevMu.RLock()
+	defer k.kevMu.RUnlock()
+	return len(k.kev)
 }
 
 // CVSSFor 查询 CVE 的 CVSS base score（NVD 投影；未挂载/未知返回 0）。

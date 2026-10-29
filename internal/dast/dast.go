@@ -624,7 +624,7 @@ func (r *Runner) RunForms(targets []FormTarget) []Finding {
 				if hit == nil {
 					continue
 				}
-				probeURL := p.ft.Action + "?" + p.field + "=" + value
+				probeURL := formProbeURL(p.ft.Action, p.field, value)
 				hit.Payload = value
 				hit.Replay = formReplay(p.ft.Action, p.field, value)
 				hit.Request = formReqText(p.ft.Action, p.field, value)
@@ -811,6 +811,26 @@ func formBody(field, payload string) string {
 	return v.Encode()
 }
 
+// formProbeURL 表单探针的 URL 形态（证据链文本/展示用）：query 串按表单
+// 编码规则转义，与真实发出的 POST 体字节一致。
+//
+// 不能裸拼 action+"?"+field+"="+value——载荷里的 & / = / 空格 / % 会把
+// query 结构改坏，证据链里看到的「请求」与实际请求就不是一回事（BUG-029）。
+// action 已有的 query 原样保留（逐字节追加，不重排）。
+func formProbeURL(action, field, value string) string {
+	body := formBody(field, value)
+	u, err := url.Parse(action)
+	if err != nil {
+		return action + "?" + body
+	}
+	if u.RawQuery == "" {
+		u.RawQuery = body
+	} else {
+		u.RawQuery += "&" + body
+	}
+	return u.String()
+}
+
 // formReqText 表单通道的重放请求文本（POST 语义），单字段。
 //
 // 与真实发出的请求一致：表单通道发的是 POST 表单，若证据链里写成 GET，
@@ -914,6 +934,52 @@ func setParam(rawURL, key, value string) string {
 	q := u.Query()
 	q.Set(key, value)
 	u.RawQuery = q.Encode()
+	return u.String()
+}
+
+// rawSetParam 替换（或追加）query 参数值，**不做二次 URL 编码**：rawValue
+// 视为已按 URL 编码规则写好的原始字节序列，原样拼进 RawQuery。
+//
+// 为什么需要单独一条路径：setParam 走 url.Values.Encode，会把值里每个 "%"
+// 再编码成 "%25"（%0d%0a → %250d%250a、%AC%ED → %25AC%ED）。预编码载荷到
+// 服务端只经一次解码，拿到的是字面文本而不是 CR/LF 字节或序列化魔数——
+// CRLF 与反序列化两条通道因此实际注入不进去（BUG-017）。
+//
+// 使用纪律：只给「必须注入原始字节/控制符」的探针（crlfInject / 反序列化
+// 魔数）用；普通文本探针仍走 setParam——那里对值的编码是正确行为，换成裸拼
+// 反而会把普通字符（空格 / + / & / 中文）原样写进 URL，引入新的误报。
+func rawSetParam(rawURL, key, rawValue string) string {
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return rawURL
+	}
+	var pairs []string
+	replaced := false
+	for _, pair := range strings.Split(u.RawQuery, "&") {
+		if pair == "" {
+			continue
+		}
+		rawKey := pair
+		if i := strings.IndexByte(pair, '='); i >= 0 {
+			rawKey = pair[:i]
+		}
+		decodedKey, derr := url.QueryUnescape(rawKey)
+		if derr != nil {
+			decodedKey = rawKey
+		}
+		if decodedKey == key {
+			if !replaced {
+				pairs = append(pairs, url.QueryEscape(key)+"="+rawValue)
+				replaced = true
+			}
+			continue
+		}
+		pairs = append(pairs, pair) // 其余参数原样保留：不重排、不重编码
+	}
+	if !replaced {
+		pairs = append(pairs, url.QueryEscape(key)+"="+rawValue)
+	}
+	u.RawQuery = strings.Join(pairs, "&")
 	return u.String()
 }
 

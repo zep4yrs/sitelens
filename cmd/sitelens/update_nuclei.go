@@ -1,9 +1,10 @@
 // update-nuclei 子命令：把官方模板库镜像到本地（1.0 运营链路）。
+//
+// 下载闸：强制 https + 实测 sha256 留痕/可钉校验（见 update_guard.go）。
 package main
 
 import (
 	"fmt"
-	"net/http"
 	"os"
 	"time"
 
@@ -21,18 +22,19 @@ func updateNucleiCommand(cfg *config.Config, url string) int {
 		url = nuclei.FetchURL
 	}
 	fmt.Fprintf(os.Stderr, "下载模板库：%s\n", url)
-	client := &http.Client{Timeout: 30 * time.Minute}
-	resp, err := client.Get(url)
+	path, _, cleanup, err := downloadUpdate(url, 30*time.Minute, 0)
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "下载失败：", err)
+		fmt.Fprintln(os.Stderr, err)
 		return 1
 	}
-	defer resp.Body.Close()
-	if resp.StatusCode != 200 {
-		fmt.Fprintln(os.Stderr, "下载失败：HTTP", resp.StatusCode)
+	defer cleanup()
+	f, err := os.Open(path)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "读取下载内容失败：", err)
 		return 1
 	}
-	kept, removed, err := nuclei.SyncFromTar(resp.Body, dir)
+	defer f.Close()
+	kept, removed, err := nuclei.SyncFromTar(f, dir)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "镜像失败：", err)
 		return 1

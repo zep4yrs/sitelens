@@ -2,7 +2,11 @@
 // 且不受 resolve 开关影响；非 gov.cn 域名不受波及。
 package target
 
-import "testing"
+import (
+	"context"
+	"net/netip"
+	"testing"
+)
 
 func TestValidateBlocksGovCn(t *testing.T) {
 	for _, raw := range []string{
@@ -104,5 +108,50 @@ func TestValidateAllowPrivateStillRelaxesPrivate(t *testing.T) {
 	}
 	if _, _, _, err := Validate("http://10.0.0.5/", true); err == nil {
 		t.Errorf("allow_private=false 时私网地址应被拒")
+	}
+}
+
+// TestValidateIPsAllOrNothing 拨号层全量校验：解析结果里混入私网/保留地址
+// 即整体拒绝（BUG-021 防 DNS 重绑定：不能挑一个合规 IP 拨号）。
+func TestValidateIPsAllOrNothing(t *testing.T) {
+	old := allowPrivate
+	defer func() { allowPrivate = old }()
+
+	allowPrivate = false
+	if err := ValidateIPs([]netip.Addr{
+		netip.MustParseAddr("203.0.113.9"), // TEST-NET-3，本身合规
+		netip.MustParseAddr("127.0.0.1"),   // 混入回环 → 整体拒绝
+	}); err == nil {
+		t.Error("答案集混入回环地址时应整体拒绝")
+	}
+	if err := ValidateIPs([]netip.Addr{
+		netip.MustParseAddr("203.0.113.9"),
+		netip.MustParseAddr("198.51.100.7"),
+	}); err != nil {
+		t.Errorf("全公网地址不应被拒：%v", err)
+	}
+	if err := ValidateIPs(nil); err == nil {
+		t.Error("空答案集应报解析失败")
+	}
+
+	// allow_private 只放宽私网/本机，不放宽云元数据端点。
+	allowPrivate = true
+	if err := ValidateIPs([]netip.Addr{netip.MustParseAddr("127.0.0.1")}); err != nil {
+		t.Errorf("allow_private=true 时私网应放行：%v", err)
+	}
+	if err := ValidateIPs([]netip.Addr{netip.MustParseAddr("169.254.169.254")}); err == nil {
+		t.Error("allow_private=true 时云元数据端点仍必须拒绝")
+	}
+}
+
+// TestResolveHostIPsLiteral 字面 IP 解析（拨号层对字面 IP 直接走 ValidateIP，
+// 这里确认 ResolveHostIPs 单次解析语义可用于域名分支）。
+func TestResolveHostIPsLiteral(t *testing.T) {
+	ips, err := ResolveHostIPs(context.Background(), "127.0.0.1")
+	if err != nil {
+		t.Fatalf("字面 IP 解析不应依赖外部 DNS：%v", err)
+	}
+	if len(ips) != 1 || ips[0].String() != "127.0.0.1" {
+		t.Fatalf("解析结果异常：%v", ips)
 	}
 }

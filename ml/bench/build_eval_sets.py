@@ -119,7 +119,7 @@ def build_e3(paths: config.Paths, out_dir: Path) -> tuple[pd.DataFrame, pd.DataF
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--data-root", default=r"D:\fengqiao\Desktop\26-08python实训\实训考核2\data",
+    ap.add_argument("--data-root", default=None,
                     help="主仓库数据根（含 state/history.json）")
     ap.add_argument("--out-root", default=None)
     args = ap.parse_args()

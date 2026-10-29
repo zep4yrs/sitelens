@@ -8,6 +8,7 @@
 >
 > **总计 31 条**：P0 严重 3 · P1 高 5 · P2 中 13 · P3 低 10；另附 13 条文档漂移（DOC-xxx）与 9 条已排除误报（排除项）。
 > **规划期追加**（2026-10-28 用户反馈，编号续排）：5 条缺陷（BUG-032 ~ BUG-036）+ 2 条需求项（FEAT-001 ~ FEAT-002），见 §4.5。
+> **5.2 修复集状态**（2026-10-29，分支 `feat/sitelens-5.2.0`）：36 条缺陷中 **35 条已修**（BUG-035 为包体瘦身专项，待实测拍板）；13 条文档漂移已对齐；另新发现并修复 4 条同类静默缺陷（NEW-001~004）。**完整修复实录、分批证据与遗留见 §0.5**。
 
 ---
 
@@ -31,26 +32,74 @@
 
 ---
 
-## 0.5 本轮已修复项的实测记录（2026-10-29）
+## 0.5 5.2.0 修复实录（2026-10-29）
 
-> 本节记录**已落地并验证**的修复。逐条的根因/修法/验收标准见后文各条目。
-> 所有 ✅ 均为本地实跑结果，非推断。
+> 本节是 **5.2.0 修复集**的实测记录。工作快照：分支 `feat/sitelens-5.2.0`（检查点 commit `2d03f01` 之后）。
+> 证据分级沿用全文口径（✅ 实测 · 🔍 读证 · 📄 口径 · ❓ 未验证）；逐条根因/修法/验收标准见后文各条目。
+> 本轮另**新发现 4 条同类静默缺陷**（NEW-001~004），一并修复记录。
 
-### 修复状态总览
+### 0.5.1 修复状态总览
 
 | ID | 状态 | 验证方式与结果 |
 |---|---|---|
-| BUG-001 | ✅ 已修 | 新增门禁 `internal/intel/cvss_nvd_parity_test.go`：**292,036 / 292,036（100.00%）** NVD 官方向量逐条一致，耗时 1.99s。顺带补了顺序无关性与 AV:L 两条断言 |
-| BUG-002 | ✅ 已修 | 新增 `internal/dast/replay_test.go`：以 **POSIX 引号往返解析**验证转义可逆——含注入的 action/field/payload 均原样还原为单个引号参数，参数数恒为 6（逃逸即多参） |
-| BUG-003 | ✅ 已修 | 新增 `internal/target/validator_test.go`：metadata IP 在 `allow_private` × `resolve` 四种组合下**全部被拒**；`allow_private` 仍正常放宽普通私网/本机 |
-| BUG-018 | ✅ 已修 | 同上文件：表单通道的 POST 语义 Request/Replay 不再被 `chainEvidence` 覆盖 |
-| BUG-032 | ✅ 已修 | 壳侧拉引擎加 `CREATE_NO_WINDOW` + `HideWindow`；引擎保持控制台子系统（CLI 要 stdout） |
-| BUG-033 | ✅ 已修 | 树杀用的 `taskkill` 同样加 `CREATE_NO_WINDOW`；种子交付子进程也一并处理（启动期第三个弹窗源） |
-| BUG-034 | ✅ 已修 | 新增 `web/js/api-error.test.mjs`（5 例）+ 11 处静默 catch 全部改为 `window.slReportError`；新增「引擎无响应」界面态 |
-| FEAT-001 | ✅ 已落地 | 新增 `internal/diag`（本机脱敏诊断包）+ `internal/server/feedback.go` + `web/feedback.html`；含脱敏守卫测试 |
-| FEAT-002 | ✅ 定案 | **不做常驻埋点**，走 FEAT-001 的「本地诊断包 + 用户自建端点」；新增 `feedback.endpoint` 配置（默认空=不提交） |
+| BUG-001 | ✅ 已修 | `internal/intel/cvss_nvd_parity_test.go`：**292,036 / 292,036（100.00%）** NVD 官方向量逐条一致（1.99s），另含顺序无关性 / AV:L 断言 |
+| BUG-002 | ✅ 已修 | `internal/dast/replay_test.go` 以 POSIX 引号往返解析验证转义可逆；表单证据链 POST 语义由 BUG-018 用例覆盖 |
+| BUG-003 | ✅ 已修 | metadata IP 在 `allow_private` × `resolve` 四组合全拒；BUG-021 的拨号层再做二次收口 |
+| BUG-004 | ✅ 已修 | `intel` KEV 表加 `RWMutex`；`TestMergeKEVIsKEVConcurrentSafe`（写 500 轮 + 2 读线程，末态全可见） |
+| BUG-005 | ✅ 已修 | 子命令后补扫全局开关（`-config/-env/-version/-graph/-ast`）；`TestRescanGlobalFlags` / `TestGlobalFlagPrefixSuffixEquivalent`；二进制端到端两种写法均监听 cfg 端口；引擎二进制同型修复 + `TestRescanConfigFlag` |
+| BUG-006 | ✅ 已修 | `overrides_path` 限定数据目录内（`filepath.Rel` 判界）；4 类越界 400 且配置不变、目标文件未创建 + 合法用例 |
+| BUG-007 | ✅ 已修 | `Parse` 改不定长、逐段比较（公共前缀相等时短者为小 = Python 元组语义）；清单 3 条验收用例 + 边界用例 |
+| BUG-008 | ✅ 已修 | 重定向中间跳 `drainAndClose`；8 轮 × 5 跳新增连接 ≤1（修前 +40），goroutine 不增长 |
+| BUG-009 | ✅ 已修 | `TopTechs` nil 守卫 + `/api/stats` 兼容 `result:null`；临时回退守卫验证必 panic |
+| BUG-010 | ✅ 已修 | `techIDs/techCnt` → `atomic.Pointer[techMeta]` 整体换枪；并发 reload × categories 用例 |
+| BUG-011 | ✅ 已修 | `apiToken` → `atomic.Pointer[string]`；并发设置保存 × `/api` 鉴权用例 |
+| BUG-012 | ✅ 已修 | `nuclei_schedule.json` 的 null / 损坏 / 空文件三态都落可写空表 |
+| BUG-013 | ✅ 已修 | 插件索引改版本化原子快照（pluginGen）；热加载后 `IsExtended` 命中用例 |
+| BUG-014 | ✅ 已修 | `vulns/cveMs/index` 加 `RWMutex`，覆盖合并副本上完成再换代；并发合并 × 扫描一致性用例 |
+| BUG-015 | ✅ 已修 | 403 绕过请求计数改原子；并发下不超硬上限 |
+| BUG-016 | ✅ 已修 | afrog rule 级 expression 接线（`internal/afrogx` 编译/求值 + `checks.Match.Expr`）；真实语料 **878/1699（51.7%）通过**、转出 1,051 条 check（修前 0）；12 条真实模板夹具判定断言 + 来源覆盖门禁 |
+| BUG-017 | ✅ 已修（URL 通道） | `rawSetParam` 原始注入；真实 httptest 服务端**字节级断言**（收到真 CR/LF 与 `aced0005`）；⚠️ 表单侧 CRLF 仍待 engine 原始表单体通道（见 0.5.6） |
+| BUG-018 | ✅ 已修 | `chainEvidence` 不再覆盖表单 POST 语义；`TestRunFormsEvidenceStaysPOST` |
+| BUG-019 | ✅ 已修 | ONNX 资产路径改 `ml.LocateAssetsDir` 同源候选；`TestSevAssetsDir*`（本机无 CGO 未跑真实推理，见 0.5.5） |
+| BUG-020 | ✅ 已修 | Dockerfile 补 `intel_dump / nvd_cves / tpl_intel`；模板池与 ML 资产按体积走挂载，文件头写明降级矩阵；`/api/diagnostics` 可查资产就位 |
+| BUG-021 | ✅ 已修（httpx） | `Transport.DialContext` 一次解析→全量校验→按已校验 IP 拨号，Host/SNI 保持；6 条用例（`.invalid` 注入解析、混合答案整体拒绝、字面私网拒绝、逐跳校验）；netx CNAME 缺口保留（已知限制） |
+| BUG-022 | ✅ 已修 | path 列表展开（上限 4，check id 带 `~pN` 后缀）；4 条用例；分层抽样实测展开后请求量 +17%~36% |
+| BUG-023 | ✅ 已修 | 强制 https + 实测 sha256 留痕 + 可选 `SLENS_UPDATE_SHA256` 钉值硬校验；先下载校验再解包；4 条用例（上游无官方 checksum，见 0.5.6） |
+| BUG-024 | ✅ 已修 | history / archive / 配置写回 0644→0600（并对遗留文件 `Chmod` 收紧）；Linux 严格断言、Windows 分支注明 |
+| BUG-025 | ✅ 已修 | `.gitattributes` 加 `* text=auto eol=lf`；`git check-attr` 验证生效 |
+| BUG-026 | ✅ 已修 | 删除 `versioncmp.Round1` 死代码；build / vet / grep 验收 |
+| BUG-027 | ✅ 已修 | rex 预算改为全次调用共享（单次查找总步数 ≤ Budget）；golden 702 模式 / 5,469 用例 0 差异 |
+| BUG-028 | ✅ 已修 | `ml/requirements.txt` 补 torch/transformers；训练与导出脚本路径改「环境变量优先 + 相对仓库默认」（见 `ml/README.md`） |
+| BUG-029 | ✅ 已修 | 表单 probeURL 按表单编码规则构造；`TestFormProbeURLEncodesQuery` |
+| BUG-030 | ✅ 已修 | DSN 不再含口令（经 `*pgx.ConnConfig.Password` 注入）、sslmode 走 `SLENS_DB_SSLMODE`（默认 prefer）；3 条用例 |
+| BUG-031 | ✅ 已修 | `Store.flush` 三处失败告警 stderr（成功零输出）；同名目录占位注入故障用例 |
+| BUG-032 | ✅ 已修 | 壳拉引擎 `CREATE_NO_WINDOW` + `HideWindow`；引擎保持控制台子系统（CLI 要 stdout） |
+| BUG-033 | ✅ 已修 | 树杀 `taskkill` 同样 `CREATE_NO_WINDOW`；种子交付子进程一并处理 |
+| BUG-034 | ✅ 已修 | 前端三类失败分级 + 11 处静默 catch 收口 + 「引擎无响应」界面态；`web/js/api-error.test.mjs` 5 例 |
+| BUG-035 | ⏳ 待实测拍板 | 包体瘦身：体积逐文件实测（`ml_assets` 合计 748.93 MiB，4 个 ONNX 643.29 MiB = fp32 511.05 + int8 132.24）+ 三方案对比与决策矩阵（`docs/release-5.2.0/ML-包体瘦身实测方案-5.2.0.md`）+ int8 vs fp32 一键实测脚手架（`internal/ml/sev_onnx_int8_test.go`，build tag onnx）。关键发现：**引擎 glob 已是 fp32→int8 回退，只带 int8 零 Go 改动**（891.4 → ≈380 MiB）；**需 CGO + onnxruntime 环境实测精度后才能拍板**，打包脚本一行未改 |
+| FEAT-001 | ✅ 已落地 | `internal/diag` + `/api/diagnostics` + `/api/feedback` + `web/feedback.html`；脱敏守卫测试 |
+| FEAT-002 | ✅ 定案 | 不做常驻埋点；`feedback.endpoint` 默认空（用户自建端点，默认只能复制到 Issue） |
+| NEW-001 | ✅ 本轮新发现并修复 | 启动期 `MergeKEV(kev_extra)` 被首次解码换表覆盖 → 首次扫描前 KEV 标注丢失；换表前并入旧表 + `TestLoadLazyPreservesPreDecodeKEV` |
+| NEW-002 | ✅ 本轮新发现并修复 | `techCPE` 同型：解码把启动期 `AttachTechCPE` 挂载清空 → CPE possible 通道静默失效；改为仅新表非 nil 时覆盖 + 用例 |
+| NEW-003 | ✅ 本轮新发现并修复 | `Release()` → 重载丢 KEV 增量；`pendingKEV` 重放 + `TestReleaseReplaysKEVExtras` |
+| NEW-004 | ✅ 本轮新发现并修复 | `MatchCVEMs` 无锁读 `cveMs`；纳入 `vulnsMu` 读锁 + 重载前后自洽用例 |
 
-### 关键实测数据
+### 0.5.2 分批实测证据（摘要）
+
+**批次 A（engine / intel / versioncmp / rex）**：BUG-004/007/012/013/014/019/026/027 + NEW-001~004。
+`go test ./internal/{intel,versioncmp,engine,checks,rex}` 全绿（intel 11.5s / engine 10.0s）；并发用例按 race 友好设计。
+
+**批次 B（dast / httpx / target）**：BUG-008/017/021/029。三条做了「临时回退 → 测试必红 → 恢复 → 绿」实测：
+BUG-017 修前服务端只收到 `q=%250d%250a…`、BUG-008 修前 5 跳 × 8 轮新增 40 条连接、BUG-021 修前 `GetDirect` 能直连回环字面 IP。
+
+**批次 C（server / store / cmd）**：BUG-005/006/009/010/011/023/024/025/030/031。
+二进制端到端：`sitelens serve -config cfg` 与 `sitelens -config cfg serve` 都监听 cfg 里的端口（修复前后置写法会用默认 5000）；`sitelens scan ftp://x -config cfg` 与前置写法行为一致。
+
+**模板层（BUG-016 / BUG-022）**：见 0.5.3 两组实测数据。
+
+**交付与前端（已有 P0 + 桌面 + FEAT）**：exe 拆分、TUI 单入口、诊断反馈、前端错误分级；`web/js/api-error.test.mjs` 5/5、`tui` esbuild + `--version`/`--help`、desktop-wails 模块测试均通过。
+
+### 0.5.3 关键实测数据
 
 **BUG-001（CVSS）——三处缺陷叠加的量化归因**
 
@@ -73,54 +122,76 @@
 
 **为什么 CI 之前是绿的**：仓库自带的 `internal/intel/cvss_test.go` 把**错误输出写成了期望值**（`AV:N/AC:L/PR:L/UI:R/S:C/C:L/I:L/A:N` 期望 4.8，官方 5.4；`AV:L/AC:L/PR:L/UI:N/S:U/C:H/I:N/A:N` 期望 4.9，官方 5.5）。断言已按 NVD 官方分订正，并**新增 29 万条对拍门禁**——这类「整体偏移」靠抽样测试发现不了。
 
-### 本轮新增的回归门禁
+**BUG-016（afrog 来源）——修复前后**
+
+| 指标 | 修复前 | 修复后 |
+|---|---|---|
+| 通过漏斗 | **0 / 1,699** | **878 / 1,699（51.7%）** |
+| 转出 check | 0 | 1,051 |
+| 拒收 | 1,699 | 821 |
+
+821 条拒收分布：AND 链某 rule 归一化失败 676（表达式编译失败/不可判定/无内容判定/路径占位符）、文档级表达式非纯 `rN()` 链 49、OR 全部分支拒收 48、多请求 AND 无法降为单请求 41、YAML 解析失败 4、文件过大 2、引用不存在的 rule 1。
+
+**误报评估**（放行前必做）：放行集合全部含**正文内容判定**（编译期 `PositiveGround`：纯状态码/纯响应头/纯取反一律拒收）；单 rule 放行模板的最短正文 needle 中位 **12 字符**（p10=5），仅 4.4% 含 ≤3 字符短词且多在 AND 链中——无系统性泛匹配风险；仍待靶场回归复核。
+
+**BUG-022（path 列表）——预算评估**（模板包分层抽样各 3,000 条）
+
+| 来源 | 多 path 模板比例 | 最长列表 | 展开后请求量 |
+|---|---|---|---|
+| community-wordfence | 10.0% | 4 | 1.30× |
+| community-40k | 7.1% | 64 | 1.30× |
+| http（官方库） | 14.4% | 64 | 1.36× |
+| legacy | 9.0% | 57 | 1.17× |
+
+→ 展开上限取 **4**：覆盖 wordfence 全部形态与其余来源主流形态；长尾截断是覆盖率损失（宁少报），不是误报风险。
+
+### 0.5.4 本轮新增的回归门禁
 
 | 门禁 | 文件 | 作用 |
 |---|---|---|
 | CVSS × NVD 全量对拍 | `internal/intel/cvss_nvd_parity_test.go` | 计分偏移零容忍（1.99s） |
-| CVSS 顺序无关性 | `internal/intel/cvss_test.go` | 向量串换序必须同分 |
+| KEV / vuln 表并发安全 | `internal/intel/kev_test.go`、`internal/intel/concurrency_test.go` | map 并发读写 / 覆盖合并竞态（-race 目标） |
+| 惰性解码挂载不丢 | `internal/intel/lazy_attach_test.go` | KEV / techCPE / Release 重放 |
+| 四段版本号 | `internal/versioncmp/versioncmp_test.go` | 清单 3 条验收 + 边界 |
+| ONNX 资产路径 | `internal/engine/ml_test.go`、`internal/engine/nuclei_schedule_test.go` | 路径回退 / 调度表 null |
+| 插件热加载索引 | `internal/checks/hotreload_test.go` | 新插件不被静默漏检 |
+| rex 共享预算 | `internal/rex/rex_test.go` | 步数上界 |
 | 复现命令 shell 转义 | `internal/dast/replay_test.go` | 往返解析验证可逆性 |
-| 表单证据链不被覆盖 | `internal/dast/replay_test.go` | POST 语义必须保留 |
+| 证据链 POST 语义 | `internal/dast/replay_test.go` / `preencoded_wire_test.go` | 表单语义 / 原始字节注入 |
+| 重定向连接不泄漏 | `internal/httpx/client_test.go` | 5 跳 × 8 轮连接数 |
+| DNS 重绑定拨号层闸 | `internal/httpx/client_test.go`、`internal/target/validator_test.go` | 一次解析/全量校验/按 IP 拨号 |
 | metadata 永久阻断 | `internal/target/validator_test.go` | 四个开关组合全拒 |
+| 任意文件写 | `internal/server/settings_test.go` | overrides_path 越界 400 |
+| server 并发快照 | `internal/server/*_test.go` | techIDs / apiToken 换枪 |
+| 历史残缺记录 | `internal/store/*_test.go` | `result:null` 不 panic |
+| 更新通道 https | `cmd/sitelens/*_test.go` | http:// 拒绝 + sha256 钉值 |
+| CLI 全局 flag 位置等价 | `cmd/sitelens/main_test.go`、`cmd/sitelens-engine/main_test.go` | 前置/后置同效 |
 | 诊断包脱敏 | `internal/diag/diag_test.go` | token/凭证/绝对路径零泄露 |
 | 前端错误分级 | `web/js/api-error.test.mjs` | 三类失败必须带上下文 |
+| afrog 表达式求值 | `internal/afrogx/expr_test.go` | 支持/拒收/缓存 |
+| afrog 接线与真实模板 | `internal/nuclei/afrog_rule_expr_test.go` | 12 条真实模板判定 + 来源覆盖门禁 |
+| path 列表展开 | `internal/nuclei/path_expand_test.go` | 展开/上限/去重/缺省 |
+| 模板来源归一 | `internal/nuclei/source_test.go` | afrog 独立来源 |
+| 运行时 Match.Expr | `internal/checks/expr_match_test.go` | 表达式不命中/编译失败不误报 |
 
-### 同时落地的架构改动：exe 拆分 + CLI 融入 TUI
+### 0.5.5 执行结果与环境限制
 
-**动机一（exe 拆分）**：此前**一个 exe 既是引擎又是 CLI**，导致 ① 桌面壳拉起它时必弹控制台窗口；② CLI 能力被整个塞进桌面安装包。
+- `go build ./...` ✅ 通过；`go test ./internal/... ./cmd/...` **40 个包全绿** ✅（engine 10.0s / intel 11.5s / nuclei 8.5s / server 11.4s / cmd/sitelens 5.2s / cmd/sitelens-engine 4.4s）。
+- `go build -o bin/sitelens.exe ./cmd/sitelens` → `SiteLens 5.2.0` ✅；`cmd/sitelens-engine` 构建 ✅。
+- `web/js/api-error.test.mjs` 5/5 ✅；`tui` esbuild 构建 + `--version`/`--help` ✅；desktop-wails 模块测试 ✅。
+- ⚠️ **本机 CGO_ENABLED=0、无 gcc/mingw**：`go test -race` 与 `-tags onnx` 无法在本地执行。并发用例按 race 友好设计，需 CI / 有 CGO 的环境复核 `CGO_ENABLED=1 go test -race ./internal/intel ./internal/server`；ONNX int8/fp32 精度实测需 `CGO_ENABLED=1` + `onnxruntime.dll`。
+- ⚠️ 本机 `core.autocrlf=true` 的 gofmt 假阳性：格式判定在 LF 归一化副本上完成；`.gitattributes` 已修（BUG-025）。
 
-**动机二（CLI 融入 TUI）**：拆分后发现 npm 线有**两个 CLI**——Node 的 `sitelens`（只有 scan/serve）与平台包里的 Go 二进制（十四个子命令），用户面对两个入口、两套帮助、两处数据目录。
+### 0.5.6 明确遗留（本版不做 / 需拍板）
 
-**落地结果**：
-
-| 层 | 职责 |
+| 项 | 说明 |
 |---|---|
-| `tui/`（Node + Ink 7） | **唯一用户入口**：交互式 TUI（首屏「选功能」）+ 全部非交互命令；命令表 `src/commands.mjs` 是唯一事实源，`--help` 由它生成 |
-| `cmd/sitelens`（Go） | 退回**内部实现**（npm 平台包装它），用户不再直接面对 |
-| `cmd/sitelens-engine`（Go） | 桌面线内部引擎：`serve` + `update-seed`；未知子命令**直接报错退出 2**（此前会静默当 serve 跑） |
-| `~/.sitelens/` | npm 线的统一用户区：`config.yml`（TUI 管理）· `data/`（资产）· `data/state/`（历史） |
-
-命令实现分两种形态：**编排型**（TUI 起 serve 走 HTTP API：scan / doctor / history / verified）与**直通型**（spawn 引擎执行原生命令，stdio 与退出码透传：serve / audit / correlate / graph-read / regression / migrate-pg / update-*）。
-
-### 本轮连带修掉的两处既有缺陷
-
-| 缺陷 | 位置 | 说明 |
-|---|---|---|
-| **退出时 libuv 断言** | `tui/src/engine.mjs` `stop()` | Windows 上必现：`Assertion failed: !(handle->flags & UV_HANDLE_CLOSING)` → 进程以 0xC0000409 中止、**退出码全丢**。修法：`child.stderr.destroy()` 立即释放管道句柄 + 等 `'close'` 而非 `'exit'` + 入口改用 `process.exitCode` 而非 `process.exit()`（强制退出会打断 libuv 清理） |
-| **相对路径按引擎目录解析** | `tui/src/engine.mjs` 子进程 cwd | 引擎 cwd 原为「二进制所在目录」（node_modules 里），用户敲 `sitelens audit ./src` 会找不到路径。改为 **`process.cwd()`**——数据路径已由 `-config` 指向用户区绝对路径，不依赖 cwd |
-
-### 端到端验证（真实 npm 平台包布局）
-
-模拟 `@fengqiao666/sitelens-win32-x64-engine` 平台包（平台包二进制 + `data/go/technologies.json`），用独立 HOME 模拟全新安装：
-
-```
-sitelens doctor
-  → "已交付平台包内置指纹库到用户区"
-  → 指纹库 就位 3321 KB
-  → 用户区产出：~/.sitelens/.seed-manifest.json + ~/.sitelens/data/go/technologies.json
-```
-
-命令冒烟（退出码）：`--version` 0 · `--help` 0 · `doctor` 0 · `history` 0 · `verified` 0 · `update`（缺参）2 · `graph-read`（缺参）2 · `audit`（缺参）2。
+| **BUG-035 包体瘦身** | 待有 CGO + onnxruntime 的机器跑 int8/fp32 对拍后拍板；本轮交付实测脚手架 + 方案对比 + 决策矩阵，未改打包脚本 |
+| **表单侧 CRLF 探针** | URL 通道已真实注入；表单 POST 通道仍经 `url.Values.Encode` 二次编码，需 engine 的 dastFetcher 增加「原始表单体」可选通道（跨包改动，单独排期） |
+| **netx CNAME→私网** | 已知缺口（代码注释自认），release-body 已列为已知限制，本轮未动 |
+| **多 IP 串行拨号** | 为消除 DNS 重绑定窗口，httpx 按已校验 IP 串行拨号，失去 Happy Eyeballs；AAAA 黑洞场景首包可能吃满 Timeout，后续可加并行/分片超时拨号 |
+| **上游更新无官方 checksum** | 无官方校验值时只强制 https + 实测 sha256 留痕 + 可选钉值，不伪造校验 |
+| **两处行为变化** | `overrides_path` 收紧到数据目录内（旧配置指向目录外时设置页保存 400）；`sslmode` 默认 `disable`→`prefer`（本地无 TLS 自动回退）。发版说明需提及 |
 
 ---
 

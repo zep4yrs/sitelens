@@ -18,7 +18,7 @@ import threading
 import time
 from pathlib import Path
 
-from .. import metrics
+from .. import config, metrics
 from . import metrics_shared
 
 E1_OPTIONS = {"critical": "critical", "high": "high",
@@ -46,11 +46,11 @@ def _e3_state(row: dict) -> str:
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--model-dir",
-                    default=r"data\bench\models\jev-v3")
+    ap.add_argument("--model-dir", default=None)
     ap.add_argument("--tasks", default="e1,e2,e3")
     ap.add_argument("--out-root", default="data/ml")
     args = ap.parse_args()
+    args.model_dir = str(config.bench_asset(args.model_dir or "models/jev-v3"))
 
     import psutil
     import torch

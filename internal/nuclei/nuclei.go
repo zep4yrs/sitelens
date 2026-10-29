@@ -13,6 +13,7 @@ package nuclei
 
 import (
 	"encoding/json"
+	"fmt"
 	"math"
 	"os"
 	"path/filepath"
@@ -48,7 +49,11 @@ type Entry struct {
 // v6：Entry 增 CVEs 字段（模板情报层）。
 // v7：协议模板准入（tcp/dns/ssl，Proto 字段）。
 // v8：Entry 增 Source 字段（路径归一来源类别，输出分列口径）。
-const cacheSchema = 8
+// v9：afrog rule 级 expression 接线（BUG-016，1,699 条从"全拒"变为可运行）
+//
+//   - path 列表展开（BUG-022，check 数变化）→ 旧缓存必须整库重建，
+//     否则升级后仍按旧"仅 8 个来源可转换"的结论调度。
+const cacheSchema = 9
 
 type cacheFile struct {
 	Schema  int     `json:"schema"`
@@ -172,15 +177,18 @@ func IndexCached(cachePath string) []Entry {
 	return cached.Entries
 }
 
-// sourceTop 来源类别白名单——与 sync.go 的镜像目录一一对应（HTTP 11 类
-// + 协议 3 类），另加 legacy 与 unknown 兜底。归一化只认这一张表，
-// 保证 Source 是稳定枚举，不随模板库目录命名漂移。
+// sourceTop 来源类别白名单——与 sync.go / update-afrog 的镜像目录一一对应
+// （HTTP 11 类 + 协议 3 类 + afrog 独立目录），另加 legacy 与 unknown 兜底。
+// 归一化只认这一张表，保证 Source 是稳定枚举，不随模板库目录命名漂移。
 var sourceTop = map[string]bool{
 	"cves": true, "exposed-panels": true, "technologies": true,
 	"vulnerabilities": true, "misconfiguration": true, "exposures": true,
 	"default-logins": true, "takeovers": true, "miscellaneous": true,
 	"fuzzing": true, "cnvd": true,
 	"network": true, "dns": true, "ssl": true,
+	// afrog 独立镜像目录（update-afrog → nuclei_dir/afrog/）：5.2 起该来源
+	// 真正可运行，必须能在调度可见性里单独成列，否则全落 unknown。
+	"afrog":  true,
 	"legacy": true,
 }
 
@@ -501,21 +509,33 @@ type normReq struct {
 	matchers                              []tplMatcher
 	cond                                  string
 	extracts                              []checks.ExtractSpec
+	// expr afrog 经典 rule 级判定表达式（运行期求值，见 internal/afrogx）。
+	// 与 matchers 并存时同样必须全部满足（AND 语义）。
+	expr string
 }
 
-// Convert 单模板 → checks（多 matcher 组且 OR 时拆分为 ~gN 后缀的多条）。
+// Convert 单模板 → checks（多 matcher 组且 OR 时拆分为 ~gN 后缀的多条；
+// path 列表展开时每条路径一组，check id 带 ~pN 后缀）。
 // 不支持的形态返回 nil。
 func Convert(data []byte) []checks.Check {
 	doc, req, ok := parseTplPath(data)
 	if !ok {
 		return nil
 	}
-	nr, ok := normFromTpl(req)
+	nrs, ok := normFromTpl(req)
 	if !ok {
 		return nil
 	}
-	return buildChecks("nuclei-"+doc.ID, "Nuclei 社区模板 "+doc.ID, doc.Info.Name,
-		doc.Info.Severity, nr)
+	prefix := "Nuclei 社区模板 " + doc.ID
+	var out []checks.Check
+	for i, nr := range nrs {
+		id := "nuclei-" + doc.ID
+		if len(nrs) > 1 {
+			id = fmt.Sprintf("nuclei-%s~p%d", doc.ID, i+1)
+		}
+		out = append(out, buildChecks(id, prefix, doc.Info.Name, doc.Info.Severity, nr)...)
+	}
+	return out
 }
 
 // parseTplPath 解析 path 形态模板的公共门禁与首请求。
@@ -543,43 +563,76 @@ func parseTplPath(data []byte) (tplDoc, tplHTTP, bool) {
 	return doc, reqs[0], true
 }
 
+// maxPathExpand 单模板 path 列表展开上限（BUG-022）。
+//
+// 真实语料统计（packs/nuclei-templates.tar.gz 分层抽样各 3000 条）：
+//   - community-wordfence：10.0% 模板多 path，最多 4 条（301/2999）；
+//   - community-40k：7.1% 多 path，最长 64；
+//   - http（官库）：14.4% 多 path，最长 64；
+//   - legacy：9.0% 多 path，最长 57。
+//
+// 全量展开会让长尾模板（最多 64 路径）按 64 倍消耗探测预算；而多 path
+// 模板整体约 10%，取 4 已覆盖 wordfence 的全部形态与其余来源的主流形态，
+// 长尾截断是**覆盖率损失**（宁少报），不是误报风险。
+// 预算影响：按样本估算，展开后请求量约 +17%~36%（各来源），可接受。
+const maxPathExpand = 4
+
 // normFromTpl path 形态归一化：方法白名单 + {{BaseURL}} 后缀提取。
-func normFromTpl(req tplHTTP) (normReq, bool) {
+// 返回 1..maxPathExpand 个请求语义（path 列表展开，每个 candidate 一条）。
+func normFromTpl(req tplHTTP) ([]normReq, bool) {
 	method := strings.ToUpper(req.Method)
 	if method != "GET" && method != "POST" {
-		return normReq{}, false
-	}
-	var path string
-	if len(req.Path) > 0 {
-		path = req.Path[0]
-	}
-	if path == "" || !strings.Contains(path, "{{BaseURL}}") {
-		return normReq{}, false
-	}
-	suffix := strings.SplitN(path, "{{BaseURL}}", 2)[1]
-	if strings.Contains(suffix, "{{") {
-		return normReq{}, false
-	}
-	if suffix == "" {
-		suffix = "/" // 根探测
+		return nil, false
 	}
 	if len(req.Matchers) == 0 {
-		return normReq{}, false
+		return nil, false
 	}
-	cond := strings.ToLower(req.MatchersCondition)
-	cond = strings.TrimSpace(cond)
+	// path 列表里的每一项都是"候选探测路径"（多数模板以 stop-at-first-match
+	// 语义依次尝试），旧实现只取第 0 项，其余全丢（BUG-022）。
+	var suffixes []string
+	seenSuffix := map[string]bool{}
+	for _, p := range req.Path {
+		p = strings.TrimSpace(p)
+		if !strings.Contains(p, "{{BaseURL}}") {
+			continue
+		}
+		suffix := strings.SplitN(p, "{{BaseURL}}", 2)[1]
+		if strings.Contains(suffix, "{{") {
+			continue // 含其余占位符（需变量注入）的候选路径跳过
+		}
+		if suffix == "" {
+			suffix = "/" // 根探测
+		}
+		if seenSuffix[suffix] {
+			continue
+		}
+		seenSuffix[suffix] = true
+		suffixes = append(suffixes, suffix)
+		if len(suffixes) >= maxPathExpand {
+			break
+		}
+	}
+	if len(suffixes) == 0 {
+		return nil, false
+	}
+	cond := strings.ToLower(strings.TrimSpace(req.MatchersCondition))
 	if cond == "" {
 		cond = "or"
 	}
-	return normReq{
-		method:      method,
-		pathSuffix:  suffix,
-		body:        req.Body,
-		contentType: req.Headers["Content-Type"],
-		matchers:    req.Matchers,
-		cond:        cond,
-		extracts:    extractSpecs(req.Extractors),
-	}, true
+	extracts := extractSpecs(req.Extractors)
+	out := make([]normReq, 0, len(suffixes))
+	for _, suffix := range suffixes {
+		out = append(out, normReq{
+			method:      method,
+			pathSuffix:  suffix,
+			body:        req.Body,
+			contentType: req.Headers["Content-Type"],
+			matchers:    req.Matchers,
+			cond:        cond,
+			extracts:    extracts,
+		})
+	}
+	return out, true
 }
 
 // extractSpecs 从模板 extractors 块抽取命名变量定义（regex 形态，
@@ -789,6 +842,16 @@ func buildChecks(checkID, advicePrefix, name, sevStr string, nr normReq) []check
 		}
 	}
 
+	// 纯表达式（afrog rule 级 expression）：没有静态 matcher 组时补一个空组，
+	// 由 checks.Match.Expr 在运行期判定。内容判定闸门已在 afrogNorm（afrogx
+	// 编译准入 + PositiveGround）把过，这里不再重复。
+	if len(groups) == 0 {
+		if nr.expr == "" {
+			return nil
+		}
+		groups = []group{{}}
+	}
+
 	sev := strings.ToLower(sevStr)
 	switch sev {
 	case "critical", "high", "medium", "low":
@@ -802,8 +865,10 @@ func buildChecks(checkID, advicePrefix, name, sevStr string, nr normReq) []check
 	for i, g := range groups {
 		// 纯状态码组不转换：只看状态码不看内容的 check 在 CDN/WAF
 		// 环境下任意路径即可命中（靶场回归实测 wp-json/server-status
-		// 类模板 404/403 误报），验证型扫描器要求至少一个内容条件
-		if len(g.wall) == 0 && len(g.wany) == 0 && len(g.h) == 0 && len(g.rx) == 0 && len(g.dsl) == 0 {
+		// 类模板 404/403 误报），验证型扫描器要求至少一个内容条件。
+		// afrog rule 级表达式自带内容判定（afrogNorm 已把关），放行。
+		if len(g.wall) == 0 && len(g.wany) == 0 && len(g.h) == 0 && len(g.rx) == 0 && len(g.dsl) == 0 &&
+			nr.expr == "" {
 			continue
 		}
 		id := checkID
@@ -822,6 +887,7 @@ func buildChecks(checkID, advicePrefix, name, sevStr string, nr normReq) []check
 				HeaderContains: g.h,
 				RegexBody:      g.rx,
 				DSL:            g.dsl,
+				Expr:           nr.expr,
 				Method:         nr.method,
 				Body:           nr.body,
 				ContentType:    nr.contentType,

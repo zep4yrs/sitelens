@@ -117,6 +117,15 @@ type KB struct {
 	fingerDir  []FingerDirRow
 	serviceFP  []ServiceFPRow
 	nvd        *NVDStore // 旁路挂载，可 nil
+	// kevMu 守护 kev 表：KEV 守护 goroutine（MergeKEV 写）与扫描线程
+	// （IsKEV / 情报行 KEV 标注读）并发。BUG-004：map 无锁并发读写是
+	// Go fatal error，会带走整个 serve 进程。
+	kevMu sync.RWMutex
+	// vulnsMu 守护常驻漏洞表（vulns/cveMs/index/ranges）快照：写侧
+	// （覆盖合并、模板行并入、惰性换入、释放）整体换代，扫描线程持读锁
+	// 取一致视图。BUG-014：原实现原地 sort.Slice/改字段，与扫描并发时
+	// 会产出「CVE 与区间/评分错配」的静默错误结论。
+	vulnsMu sync.RWMutex
 	// A5 惰性解码：intel_dump 启动不解码，首次真正用到（Match/检索/统计）才解。
 	dumpPath   string
 	rangesPath string
@@ -127,7 +136,14 @@ type KB struct {
 	pendingTpl []Entry             // AttachTplIntel 待并入（Release 后亦存回模板行待重并）
 	pendingOv  map[string]Override // 待应用的覆盖（Release 后存回最近覆盖待重放）
 	lastOv     map[string]Override // 最近一次 ApplyOverrides 的数据（Release 重放的来源）
-	techCPE    map[string]string   // 技术名 → CPE（NVD 通道），可 nil
+	// pendingKEV 释放前 KEV 整表留存量：Release 清表（内存释放目标不变）
+	// 后由 ensureDecoded 在换表完成时重放，否则 kev_extra/守护协程拉到的
+	// 增量会丢到下次 KEV 轮询（Release→重载静默丢数据）。
+	// 选择整表拷贝而非精确增量追踪：KEV 只进 bool 集合，重放幂等（dump
+	// 自带条目重复写入无副作用），省去维护「哪些键是增量」的口径；代价仅
+	// 一次 O(KEV 条数)（≈1.7k 键）的合并。
+	pendingKEV map[string]bool
+	techCPE    map[string]string // 技术名 → CPE（NVD 通道），可 nil
 
 	// A3 惰性加载：只记路径，**首次真正用到 NVD 数据时**才解码索引。
 	// 背景：NVD 全量索引实测占 HeapSys ≈1.7GB，是引擎空闲 RSS 的主因；
@@ -224,10 +240,31 @@ func (k *KB) ensureDecoded() {
 		k.decoded = true
 		return
 	}
-	k.vulns, k.cveMs, k.kev = nk.vulns, nk.cveMs, nk.kev
+	// 常驻表整体换入：kev 与 vulns 各自持写锁替换，读侧持读锁取一致快照
+	// （BUG-004 / BUG-014）。index 由 decodeAll 建好直接换入——旧实现置 nil
+	// 让首个 Match 重建，并发首扫会竞态写 k.index。
+	//
+	// 换表前把解码前已合并的 KEV 增量并进新表：serve 启动期是
+	// LoadLazy →（KEV 缓存/守护协程）MergeKEV → 首次扫描才解码，
+	// 直接换表会用 dump 的 KEV 表覆盖这批增量——首次扫描到下次轮询前
+	// 漏 KEV 标注（静默丢数据，决策点C）。
+	k.kevMu.Lock()
+	for cve := range k.kev {
+		nk.kev[cve] = true
+	}
+	k.kev = nk.kev
+	k.kevMu.Unlock()
+	k.vulnsMu.Lock()
+	k.vulns, k.cveMs, k.index = nk.vulns, nk.cveMs, nk.index
 	k.ranges, k.tscanCount = nk.ranges, nk.tscanCount
-	k.fingerDir, k.serviceFP, k.techCPE = nk.fingerDir, nk.serviceFP, nk.techCPE
-	k.index = nil // 留给 buildIndex 重建
+	k.vulnsMu.Unlock()
+	k.fingerDir, k.serviceFP = nk.fingerDir, nk.serviceFP
+	// techCPE 由启动期/热重载 AttachTechCPE 显式挂载，decodeAll 不产出该表：
+	// 只在解码确实产出时覆盖，否则会把已挂载映射清成 nil → CPE 通道静默
+	// 失效（与 KEV 增量被覆盖同类的「换表覆盖」，决策点C）。
+	if nk.techCPE != nil {
+		k.techCPE = nk.techCPE
+	}
 	k.decoded = true
 	// 应用挂起的附加操作（顺序：先并入模板情报，再打覆盖；
 	// Release 后的模板行/覆盖重放也走这两步）
@@ -238,6 +275,20 @@ func (k *KB) ensureDecoded() {
 	if len(k.pendingOv) > 0 {
 		k.ApplyOverrides(k.pendingOv)
 		k.pendingOv = nil
+	}
+	// Release 后重载：KEV 表在释放时整表留存在 pendingKEV，换表完成后重放
+	// （与 pendingTpl/pendingOv 同一挂起-重放机制）。见字段注释：整表拷贝
+	// + 幂等重放，不做增量口径区分。
+	if len(k.pendingKEV) > 0 {
+		k.kevMu.Lock()
+		if k.kev == nil {
+			k.kev = map[string]bool{}
+		}
+		for cve := range k.pendingKEV {
+			k.kev[cve] = true
+		}
+		k.pendingKEV = nil
+		k.kevMu.Unlock()
 	}
 }
 
@@ -307,6 +358,26 @@ var stopwords = map[string]bool{
 	"proxy": true, "framework": true, "library": true, "script": true,
 	"cms": true, "cdn": true, "kit": true, "pro": true, "plus": true,
 	"soft": true, "the": true, "and": true,
+}
+
+// ensureIndex 确保关键词索引已建（幂等；并发调用只在缺失时建一次）。
+// 扫描线程持读锁前先调用，避免多个「首个 Match」并发重建索引时写 k.index
+// 与读侧竞态。
+func (k *KB) ensureIndex() {
+	if k == nil {
+		return
+	}
+	k.vulnsMu.RLock()
+	ok := k.index != nil
+	k.vulnsMu.RUnlock()
+	if ok {
+		return
+	}
+	k.vulnsMu.Lock()
+	if k.index == nil {
+		k.buildIndex()
+	}
+	k.vulnsMu.Unlock()
 }
 
 // buildIndex 建立 lower(产品关键词) → 情报 的内存索引（扫描主路径）。
@@ -388,9 +459,11 @@ func (k *KB) Match(techs []TechHit) []Finding {
 // MatchWithNVD 同 Match，但显式指定 NVD 富化是否可拉起索引（见 nvdIntent）。
 func (k *KB) MatchWithNVD(techs []TechHit, intent nvdIntent) []Finding {
 	k.ensureDecoded()
-	if k.index == nil {
-		k.buildIndex()
-	}
+	k.ensureIndex()
+	// 整次匹配持读锁：覆盖合并/释放等换代操作在写锁内完成，扫描侧不会
+	// 读到半新半旧的常驻表（BUG-014 一致性）。
+	k.vulnsMu.RLock()
+	defer k.vulnsMu.RUnlock()
 	out, seen := []Finding{}, map[int64]bool{}
 	for _, tech := range techs {
 		ranges := k.ranges[strings.ToLower(tech.Name)]
@@ -447,7 +520,7 @@ func (k *KB) MatchWithNVD(techs []TechHit, intent nvdIntent) []Finding {
 				SeverityZh: severityZhOf(v.Severity), Ref: v.Ref,
 				CVSSScore: v.CVSSScore, CVSSSev: v.CVSSSev,
 				Desc: v.Descr, Verdict: verdict, Affected: affected,
-				KEV: k.kev[strings.ToUpper(v.CVE)],
+				KEV: k.IsKEV(v.CVE),
 			})
 			k.nvdFill(&out[len(out)-1], intent)
 		}
@@ -474,11 +547,10 @@ var lookupAliases = map[string][]string{
 	"akamai bot manager": {"akamai"},                  // 指纹命中即平台在用，缓存投毒 XSS 适用
 }
 
+// vulnsFor 按技术名取候选情报行（调用方须已 ensureDecoded+ensureIndex，
+// 并持有 vulnsMu 读锁——本函数只在 Match 内使用）。索引已在锁外确保建好，
+// 这里不得再触发惰性解码/建索引：否则可能在持读锁时请求写锁（自死锁）。
 func (k *KB) vulnsFor(techName string) []*Entry {
-	k.ensureDecoded()
-	if k.index == nil {
-		k.buildIndex()
-	}
 	var out []*Entry
 	seen := map[*Entry]bool{}
 	names := append([]string{techName}, lookupAliases[strings.ToLower(strings.TrimSpace(techName))]...)
@@ -520,6 +592,12 @@ type CVEMsFinding struct {
 // MatchCVEMs 微软安全公告关联（按组件名包含匹配，双向别名）。
 func (k *KB) MatchCVEMs(techs []TechHit, limit int) []CVEMsFinding {
 	k.ensureDecoded()
+	// cveMs 与 vulns 同在 vulnsMu 守护的常驻表快照内：Release/惰性重载会在
+	// 写锁内整体换表，无锁遍历可能读到正在被换掉的 slice（与 BUG-014 同类，
+	// 只是表不同）。持读锁期间不得再调 ensureDecoded/ensureIndex（会请求
+	// 写锁）——本函数只在锁外先 ensureDecoded。
+	k.vulnsMu.RLock()
+	defer k.vulnsMu.RUnlock()
 	out := []CVEMsFinding{}
 	seen := map[string]bool{}
 	for _, tech := range techs {
@@ -576,6 +654,7 @@ func (k *KB) Release() {
 	k.ensureDecoded() // 若尚未解码则无事发生（保持 decoded，不丢挂起队列）
 	// 附加物存回待应用队列，重载后经 ensureDecoded 重放：
 	// 模板行 = 负 ID 段；覆盖 = 最近一次 ApplyOverrides 的数据。
+	k.vulnsMu.Lock()
 	var tpl []Entry
 	for _, v := range k.vulns {
 		if v.ID < 0 {
@@ -585,7 +664,22 @@ func (k *KB) Release() {
 	k.pendingTpl = tpl
 	k.pendingOv = k.lastOv
 	k.vulns, k.cveMs, k.index = nil, nil, nil
-	k.kev, k.ranges = map[string]bool{}, map[string][]CuratedRange{}
+	k.ranges = map[string][]CuratedRange{}
+	k.vulnsMu.Unlock()
+	// KEV 表随释放清空（内存释放目标不变），但先把整表留存到 pendingKEV：
+	// 重载后由 ensureDecoded 重放。不这样做的话 kev_extra/守护协程拉到的
+	// 增量会在 Release→重载后丢到下次 KEV 轮询（静默丢数据）。
+	k.kevMu.Lock()
+	if len(k.kev) > 0 {
+		if k.pendingKEV == nil {
+			k.pendingKEV = make(map[string]bool, len(k.kev))
+		}
+		for cve := range k.kev {
+			k.pendingKEV[cve] = true
+		}
+	}
+	k.kev = map[string]bool{}
+	k.kevMu.Unlock()
 	k.tscanCount = 0
 	k.decoded = false
 	k.nvd = nil        // NVD 亦释放；nvdPath 保留

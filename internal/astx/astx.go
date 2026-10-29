@@ -61,8 +61,8 @@ func ASTSupported(l Lang) bool {
 	return false
 }
 
-// extLangs 源文件后缀 → 语言（仅含 AST 可解析语言；PHP 走后缀判定为
-// 不支持 → audit 回退行级正则）。
+// extLangs 源文件后缀 → 语言（仅含 AST 可解析语言；PHP 也已纳入 AST——
+// grammar 由 internal/astx/phpgram 第一方自持，见该包 binding.go）。
 var extLangs = map[string]Lang{
 	".py":   LangPython,
 	".js":   LangJS,

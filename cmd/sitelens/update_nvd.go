@@ -19,15 +19,9 @@ import (
 )
 
 // updateNVDCommand 按参数分派 API / feed 模式。
-// args 为 update-nvd 之后的剩余参数（如 ["feed","2018","2024"]）。
-func updateNVDCommand(cfg *config.Config) int {
-	args := os.Args[1:]
-	for i, a := range args {
-		if a == "update-nvd" {
-			args = args[i+1:]
-			break
-		}
-	}
+// args 为 update-nvd 之后的剩余参数（如 ["feed","2018","2024"]），
+// 全局开关已由 main 的补扫剔除（BUG-005）。
+func updateNVDCommand(cfg *config.Config, args []string) int {
 	if len(args) > 0 && args[0] == "feed" {
 		return updateNVDFeedCommand(cfg, args[1:])
 	}

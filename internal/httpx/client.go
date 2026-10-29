@@ -3,8 +3,11 @@
 package httpx
 
 import (
+	"context"
 	"io"
+	"net"
 	"net/http"
+	"net/netip"
 	"net/url"
 	"strings"
 	"sync"
@@ -36,6 +39,10 @@ func (r *Response) Header(name string) string {
 
 const defaultMaxBodyBytes = 3_000_000 // 与 Python 端一致：超 3MB 不留正文
 
+// baseDialer 与 http.DefaultTransport 内置拨号参数对齐（30s 拨号超时 /
+// 30s keepalive），避免自建 Transport 后底层行为漂移。
+var baseDialer = net.Dialer{Timeout: 30 * time.Second, KeepAlive: 30 * time.Second}
+
 // ClientOptions 客户端参数（全部来自 config.ScanConfig 的装配）。
 type ClientOptions struct {
 	Interval     time.Duration // 相邻请求最小间隔（限速），0=不限速
@@ -44,7 +51,10 @@ type ClientOptions struct {
 	MaxBodyBytes int           // 正文留存上限，0=3MB
 	UserAgent    string        // 空 = SiteLens 自报 UA
 	AuthCookie   string        // 附加到每个请求的 Cookie 头（授权扫描用）
-	Resolve      bool          // 重定向逐跳校验是否解析并拒绝私网（继承引擎 resolve 姿态；本地靶场矩阵设 false）
+	// Resolve=true 时在拨号层执行「一次解析 → 校验 IP 集合 → 按已校验 IP
+	// 拨号」，覆盖初始请求与重定向逐跳（BUG-021）。继承引擎 resolve 姿态；
+	// 本地/内网靶场矩阵设 false（不做 DNS 级拦截）。
+	Resolve bool
 }
 
 // Client 限速 HTTP 客户端（自动重定向禁用，逐跳校验后手动跟随）。
@@ -58,6 +68,9 @@ type Client struct {
 	maxHops   int
 	maxBody   int
 	cookie    string
+	// lookupIP 域名解析钩子（nil = target.ResolveHostIPs）。仅测试注入：
+	// 生产路径必须走系统解析，且同一份结果只用于本次「校验 + 拨号」。
+	lookupIP func(ctx context.Context, host string) ([]netip.Addr, error)
 }
 
 // NewWithOptions 按参数创建客户端。
@@ -82,13 +95,67 @@ func NewWithOptions(o ClientOptions) *Client {
 		cookie:    o.AuthCookie,
 		resolve:   o.Resolve,
 	}
+	// 拨号层接管域名解析：一次解析、全量校验、按已校验 IP 拨号（BUG-021）。
+	tr := http.DefaultTransport.(*http.Transport).Clone()
+	tr.DialContext = c.dialContext
 	c.http = &http.Client{
-		Timeout: o.Timeout,
+		Timeout:   o.Timeout,
+		Transport: tr,
 		CheckRedirect: func(*http.Request, []*http.Request) error {
 			return http.ErrUseLastResponse // 禁自动重定向，逐跳手动校验
 		},
 	}
 	return c
+}
+
+// dialContext 一次解析 + 全量校验 + 按已校验 IP 拨号（SSRF 防 DNS 重绑定）。
+//
+// 背景（BUG-021）：旧链路里 ensurePublicHost / target.Validate 用系统解析器
+// 校验完就丢弃结果，真正的连接由 transport 再次调用系统解析器解析——两次
+// DNS 查询之间，攻击者可用 TTL≈0 的 DNS 重绑定（校验时回公网、拨号时回
+// 127.0.0.1/10.x）绕过私网闸。现在解析只做一次，校验的 IP 集合就是随后
+// 拨号的目标（写 IP 字面量），不存在「校验过的名字被重新解析成别的地址」。
+//
+// Host 头与 TLS SNI 不受影响：这里只改底层连接地址，请求身份仍由
+// http.Transport 按 URL 主机名生成（Host/SNI 保持原域名）。
+// Resolve=false（本地/内网靶场姿态）不做 DNS 级拦截，与原行为一致。
+func (c *Client) dialContext(ctx context.Context, network, addr string) (net.Conn, error) {
+	if !c.resolve {
+		return baseDialer.DialContext(ctx, network, addr)
+	}
+	host, port, err := net.SplitHostPort(addr)
+	if err != nil {
+		return nil, err
+	}
+	// 字面 IP：直接按 IP 规则校验（元数据永久阻断；私网随 allow_private）。
+	if ip, perr := netip.ParseAddr(host); perr == nil {
+		if verr := target.ValidateIP(ip); verr != nil {
+			return nil, verr
+		}
+		return baseDialer.DialContext(ctx, network, net.JoinHostPort(host, port))
+	}
+	lookup := c.lookupIP
+	if lookup == nil {
+		lookup = target.ResolveHostIPs
+	}
+	ips, lerr := lookup(ctx, host)
+	if lerr != nil {
+		return nil, lerr
+	}
+	// 全量校验：任一 IP 是私网/保留地址即整体拒绝（不挑一个合规的去拨）。
+	if verr := target.ValidateIPs(ips); verr != nil {
+		return nil, verr
+	}
+	// 只拨已校验的 IP 字面量：即使此刻 DNS 已变，也连不到未校验地址。
+	var lastErr error
+	for _, ip := range ips {
+		conn, derr := baseDialer.DialContext(ctx, network, net.JoinHostPort(ip.String(), port))
+		if derr == nil {
+			return conn, nil
+		}
+		lastErr = derr
+	}
+	return nil, lastErr
 }
 
 // New 创建客户端；interval 为相邻请求最小间隔（限速）。
@@ -182,17 +249,40 @@ func (c *Client) MethodFollowWith(method, rawURL string, extra map[string]string
 		if perr != nil {
 			break
 		}
-		// 逐跳校验继承配置的 resolve 姿态：公网默认 true（防重定向 SSRF）；
-		// 本地/内网靶场矩阵 resolve=false 时重定向不再被私网拦截
-		if _, _, _, verr := target.Validate(next, c.resolve); verr != nil {
-			return nil, verr // 重定向目标未过校验：拒绝跟随
+		// 逐跳静态校验（协议白名单 / 主机黑名单 / 元数据字面 IP / gov.cn / 端口）。
+		// DNS 级私网校验不再在这里做——交给拨号层 c.dialContext：每次真正
+		// 建连时「一次解析 → 全量校验 → 按已校验 IP 拨号」（BUG-021），因此
+		// 每一跳校验的都是即将拨号的那份解析结果，DNS 重绑定拿不到窗口。
+		// resolve=false（本地/内网靶场矩阵）时拨号层不做 DNS 级拦截。
+		if _, _, _, verr := target.Validate(next, false); verr != nil {
+			// 拒绝跟随：当前跳 body 必须先排空并关闭，否则连接与
+			// transport readLoop goroutine 泄漏（BUG-008）。
+			drainAndClose(resp.Body)
+			return nil, verr
 		}
+		// 进入下一跳前释放上一跳响应体：不排空会让连接无法复用，不关闭
+		// 则每跳泄漏一个连接 + 一个 goroutine，长扫描下 fd 单调增长（BUG-008）。
+		drainAndClose(resp.Body)
 		cur = next
 	}
 	return toResponse(resp, cur), nil
 }
 
-// GetDirect 单请求 GET：不跟随重定向、不做 SSRF 逐跳校验（URL 需预先 Validate）。
+// drainAndClose 排空并关闭中间跳响应体。
+//
+// 排空（有上限）是为了让 keep-alive 连接回到空闲池可复用；只 Close 不读，
+// Go transport 会直接丢弃该连接（下一次请求重新握手，且旧连接读完残留数据
+// 前不会释放）。上限 64KB：重定向 body 通常极小，超限就放弃复用直接关。
+func drainAndClose(body io.ReadCloser) {
+	if body == nil {
+		return
+	}
+	_, _ = io.Copy(io.Discard, io.LimitReader(body, 64<<10))
+	_ = body.Close()
+}
+
+// GetDirect 单请求 GET：不跟随重定向、不做重定向逐跳校验（URL 需预先 Validate；
+// resolve=true 时拨号层仍会做「一次解析 + IP 集合校验 + 按已校验 IP 拨号」，BUG-021）。
 // 供 DAST 开放重定向判定等需要看原始 30x 响应的探测使用；正文上限 1MB。
 func (c *Client) GetDirect(rawURL string) (*Response, error) {
 	c.wait()

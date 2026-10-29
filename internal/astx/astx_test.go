@@ -20,7 +20,8 @@ func TestSupportedLangs(t *testing.T) {
 	}
 }
 
-// TestDetectLang：后缀 → 语言映射。PHP 返回不支持（audit 将回退行级正则）。
+// TestDetectLang：后缀 → 语言映射。PHP 已纳入 AST（grammar 第一方自持于
+// internal/astx/phpgram），不再回退行级正则。
 func TestDetectLang(t *testing.T) {
 	cases := map[string]Lang{
 		"a.py": LangPython, "a.PY": LangPython, "b.js": LangJS, "b.mjs": LangJS,

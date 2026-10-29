@@ -1,4 +1,25 @@
+# SiteLens ML 训练/导出依赖（BUG-028：补齐 sev-prior 训练所需的 torch/transformers）。
+#
+# 仓库没有 lock 文件，以下只写最低版本、不锁死小版本——TRAINING_PARAMS.md 第 1 节已如实
+# 记录「深度学习线依赖未在 requirements.txt 中固定版本」。训练侧 GPU/CUDA 环境不在本文件
+# 约束内，按 PyTorch 官方安装说明装对应 CUDA 版本即可（脚本在 CUDA 不可用时直接 abort）。
+
+# ---- 线性模型线（cve-tech / cwe-type / sev 档位/堆叠：ml/train_cve*.py、train_cwe*.py、
+#      train_sev_{big,v2,stack,exploit,edge_hetero}.py）----
 numpy>=2.0
 pandas>=2.2
 scikit-learn>=1.5
 pytest>=8.0
+
+# ---- sev-prior 深度学习线（DistilBERT；ml/train_sev_{bert,bert_cwe,mae,score}.py、
+#      ml/train_sev_v31_deploy.py）----
+# torch：训练循环与 checkpoint 持久化（torch.save/load）
+# transformers：AutoTokenizer / AutoModelForSequenceClassification 加载
+#   distilbert-base-uncased 底座。底座权重不进 git，用 --base-model 或
+#   SITLENS_ML_ASSETS 指定（默认 <repo>/data/bench/models，见 ml/config.py）
+torch>=2.4
+transformers>=4.44
+
+# ---- 可选：ONNX 导出 / int8 量化 / 三方对拍（BUG-035 包体瘦身实测用）----
+# ml/export_sev_v31_pair.py 需要 onnx + onnxruntime；只训练或只跑线性模型时不必安装。
+#   pip install "onnx>=1.16" "onnxruntime>=1.18"

@@ -17,22 +17,22 @@ import (
 
 // Match 单条 check 的匹配条件。
 type Match struct {
-	Status         int           `json:"s"`                // 期望状态码（0 = 不限定）
-	StatusAny      []int         `json:"sany,omitempty"`   // 状态码任一命中（Nuclei 组转换用）
-	Contains       []string      `json:"c"`                // 正文须全部包含（AND）
-	ContainsAny    []string      `json:"cany,omitempty"`   // 正文任一包含（OR，Nuclei 组转换用）
-	HeaderContains []string      `json:"h,omitempty"`      // 响应头区须全部包含（Nuclei 头匹配）
-	RegexBody      []string      `json:"rxbody,omitempty"` // 正文任一正则命中（OR，Nuclei regex 转换）
-	DSL            []string      `json:"dsl,omitempty"`    // dsl 表达式须全部为真（安全子集，见 internal/dsl）
+	Status         int      `json:"s"`                // 期望状态码（0 = 不限定）
+	StatusAny      []int    `json:"sany,omitempty"`   // 状态码任一命中（Nuclei 组转换用）
+	Contains       []string `json:"c"`                // 正文须全部包含（AND）
+	ContainsAny    []string `json:"cany,omitempty"`   // 正文任一包含（OR，Nuclei 组转换用）
+	HeaderContains []string `json:"h,omitempty"`      // 响应头区须全部包含（Nuclei 头匹配）
+	RegexBody      []string `json:"rxbody,omitempty"` // 正文任一正则命中（OR，Nuclei regex 转换）
+	DSL            []string `json:"dsl,omitempty"`    // dsl 表达式须全部为真（安全子集，见 internal/dsl）
 	// Expr afrog 经典 rules+expression 表达式（运行时求值，见 internal/afrogx）。
 	// 与其它条件并存时同样必须全部满足；编译失败/求值失败一律不命中——
 	// 宁少报不误报。仅 afrog 来源的模板会带这个字段。
-	Expr           string        `json:"expr,omitempty"`
-	Extracts       []ExtractSpec `json:"exs,omitempty"`    // 命名抽取变量（供 dsl 引用）
-	Method         string        `json:"method,omitempty"` // POST 模板请求方法
-	Body           string        `json:"body,omitempty"`   // POST 请求体
-	ContentType    string        `json:"ctype,omitempty"`  // POST Content-Type
-	Extract        *struct {
+	Expr        string        `json:"expr,omitempty"`
+	Extracts    []ExtractSpec `json:"exs,omitempty"`    // 命名抽取变量（供 dsl 引用）
+	Method      string        `json:"method,omitempty"` // POST 模板请求方法
+	Body        string        `json:"body,omitempty"`   // POST 请求体
+	ContentType string        `json:"ctype,omitempty"`  // POST Content-Type
+	Extract     *struct {
 		Keyword string `json:"keyword"`
 	} `json:"extract"`
 }
@@ -181,6 +181,9 @@ func ConfigurePlugins(dir string) {
 	pluginMTime = mt
 	pluginLoaded = true
 	userPlugins = LoadPlugins(dir)
+	// 插件集换代：推进版本号使 IsExtended 的 checkIndex 快照失效
+	// （BUG-013：不失效则新插件永久不被识别，静默漏检）。
+	pluginGen.Add(1)
 }
 
 // dirMaxMTime 目录内 .json 文件的最大 mtime；目录缺失/无文件返回 0。
@@ -208,6 +211,8 @@ func RegisterPlugins(checks []Check) {
 	checkMu.Lock()
 	defer checkMu.Unlock()
 	userPlugins = append(userPlugins, checks...)
+	// 同 ConfigurePlugins：插件集变更须让 IsExtended 索引快照失效。
+	pluginGen.Add(1)
 }
 
 // AllChecks 返回当前全量 check 集（内置 + 用户插件）。

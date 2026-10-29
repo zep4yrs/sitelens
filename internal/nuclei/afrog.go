@@ -17,10 +17,17 @@ import (
 
 	"gopkg.in/yaml.v3"
 
+	"cnb.cool/feng-qiao/sitelens/internal/afrogx"
 	"cnb.cool/feng-qiao/sitelens/internal/checks"
 )
 
 // afrogRule 经典 afrog 的单条子请求 + 响应判定。
+//
+// ⚠️ afrog 的判定**主要写在 rule 级 expression 上**（真实语料 1,687/1,699
+// 条模板有 rule 级 expression，0 条写 response 块）。此前本结构体没有
+// Expression 字段，yaml.v3 静默丢弃未知字段 → afrogNorm 拼不出 matcher →
+// 整个 afrog 来源 100% 过不了漏斗（BUG-016）。
+// 现由 internal/afrogx 在**转换期**编译准入、**运行期**求值。
 type afrogRule struct {
 	Request struct {
 		Path    string            `yaml:"path"`
@@ -33,6 +40,10 @@ type afrogRule struct {
 		Body       []string          `yaml:"body"`
 		Headers    map[string]string `yaml:"headers"`
 	} `yaml:"response"`
+	// Expression rule 级判定表达式（afrog 经典形态，如
+	// `response.status == 200 && response.body.bcontains(b"xxx")`）。
+	// 编译失败/不可判定 → 整条模板拒收（宁少报不误报）。
+	Expression string `yaml:"expression"`
 }
 
 type afrogDoc struct {
@@ -79,8 +90,12 @@ func parseAfrogExpr(expr string) (atoms []string, allAnd bool, ok bool) {
 	return atoms, allAnd, true
 }
 
-// afrogNorm 单条 rule → 归一化请求（matchers 由 response 判定合成）。
-// afrog 的 response.body 关键词列表默认全命中（AND 语义）。
+// afrogNorm 单条 rule → 归一化请求。
+//
+// 判定来源有两条，优先 rule 级 expression（真实语料全部如此）：
+//   - expression 非空：编译准入（不可判定/无内容判定即拒收），matchers 取
+//     response 块（真实语料为空，但两者并存时按 AND 语义更保守）；
+//   - expression 为空：退回 response 块合成 matchers（历史行为）。
 func afrogNorm(r afrogRule) (normReq, bool) {
 	method := strings.ToUpper(strings.TrimSpace(r.Request.Method))
 	if method == "" {
@@ -100,7 +115,19 @@ func afrogNorm(r afrogRule) (normReq, bool) {
 	if len(r.Response.Body) > 0 {
 		matchers = append(matchers, tplMatcher{Type: "word", Words: r.Response.Body, Condition: "and"})
 	}
-	if len(matchers) == 0 {
+	expr := strings.TrimSpace(r.Expression)
+	if expr != "" {
+		// 编译准入：含不支持原子（oobCheck/latency/随机标记等）即整条拒收。
+		prog, err := afrogx.Get(expr)
+		if err != nil || prog == nil {
+			return normReq{}, false
+		}
+		// 内容判定闸门：纯状态码/恒真/纯取反的表达式放行会退化成"路径存在
+		// 即命中"——与 buildChecks「纯状态码组不转换」同哲学（宁少报不误报）。
+		if !prog.PositiveGround() {
+			return normReq{}, false
+		}
+	} else if len(matchers) == 0 {
 		return normReq{}, false
 	}
 	return normReq{
@@ -110,7 +137,20 @@ func afrogNorm(r afrogRule) (normReq, bool) {
 		contentType: r.Request.Headers["Content-Type"],
 		matchers:    matchers,
 		cond:        "and",
+		expr:        expr,
 	}, true
+}
+
+// andExpr 合并两条 AND 语义的表达式（空串视为无该条件）。
+// 同请求的多个 rule 拿到的是同一份响应，故 && 合并是诚实的。
+func andExpr(a, b string) string {
+	switch {
+	case a == "":
+		return b
+	case b == "":
+		return a
+	}
+	return "(" + a + ") && (" + b + ")"
 }
 
 // sameRequest 两条归一化请求是否等价（AND 合并的前提）。
@@ -185,6 +225,8 @@ func ConvertAfrog(data []byte) []checks.Check {
 				return nil
 			}
 			matchers = append(matchers, nr.matchers...)
+			// 同请求 → 同一份响应，表达式按 && 合并是诚实的。
+			base.expr = andExpr(base.expr, nr.expr)
 		}
 		base.matchers = append(base.matchers, matchers...)
 		return buildChecks("afrog-"+doc.ID, prefix, doc.Info.Name, doc.Info.Severity, base)

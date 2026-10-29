@@ -2,8 +2,8 @@
 量化 + 集成对拍 + Go 夹具再生成。
 
 前置：ml/train_sev_v31_deploy.py 已产出
-  sitelens-ml5/data/ml/dist/models/sev-prior-v3.1/s<20260928|20260929>.pt
-产物（实训考核2/data/go/ml_assets/）：
+  <SITLENS_ML_OUT>/dist/models/sev-prior-v3.1/s<20260928|20260929>.pt（SITLENS_ML_OUT 默认 <repo>/data/ml）
+产物（SITLENS_ML_GO_ASSETS，默认 <repo>/data/go/ml_assets/）：
   sev-prior-v3.1-a.onnx / -b.onnx（fp32，opset17，动态 batch）
   sev-prior-v3.1-a-int8.onnx / -b-int8.onnx（quantize_dynamic）
   sev-fixtures.json（集成 ONNX 打分，供 Go parity 对拍）
@@ -17,10 +17,11 @@ import numpy as np
 import torch
 from transformers import AutoModelForSequenceClassification, AutoTokenizer
 
-ML5 = Path(r"D:\fengqiao\Desktop\26-08python实训\sitelens-ml5")
-OUT_DIR = Path(r"D:\fengqiao\Desktop\26-08python实训\实训考核2\data\go\ml_assets")
-CKPT_DIR = ML5 / "data" / "ml" / "dist" / "models" / "sev-prior-v3.1"
-BASE = ML5 / "data" / "bench" / "models" / "distilbert-base-uncased"
+from . import config
+
+OUT_DIR = config.go_assets_dir()
+CKPT_DIR = config.ml_artifact("dist/models/sev-prior-v3.1")
+BASE = config.base_model_dir()
 SEQ, OPSET, BATCH = 192, 17, 16
 SEEDS = [20260928, 20260929]
 SLUG = {20260928: "a", 20260929: "b"}

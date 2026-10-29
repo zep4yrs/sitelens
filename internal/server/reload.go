@@ -90,7 +90,7 @@ func (s *Server) reloadData() (techN, vulnN int) {
 		}
 	}
 	if m, err := loadTechMeta(s.cfg); err == nil {
-		s.techIDs, s.techCnt = m.cats, m.count
+		s.tech.Store(&m) // 原子换枪：并发读 /api/categories、CSV 宽表不受影响
 	}
 	s.checksReload()
 	s.markDataBaseline()

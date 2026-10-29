@@ -3,6 +3,7 @@
 package target
 
 import (
+	"context"
 	"net"
 	"net/netip"
 	"net/url"
@@ -196,25 +197,72 @@ func ValidateHostPort(scheme, host string, port int, resolve bool) error {
 
 // ensurePublicHost DNS 解析后逐 IP 校验：任一地址落在私网/保留段即拒绝。
 func ensurePublicHost(host string) error {
-	ips, err := net.LookupHost(host)
+	ips, err := ResolveHostIPs(context.Background(), host)
 	if err != nil {
-		return &Error{"域名解析失败：" + host}
+		return err
 	}
-	for _, s := range ips {
+	return ValidateIPs(ips)
+}
+
+// ResolveHostIPs 解析主机名为 IP 列表（单次系统解析，本身不做安全判定）。
+//
+// 供「一次解析 → 校验 IP 集合 → 按已校验 IP 拨号」链路复用（httpx 的
+// DialContext，BUG-021）：校验与拨号必须基于同一份解析结果。此前的
+// ensurePublicHost 解析校验完即丢弃结果，实际连接由 transport 再次调用
+// 系统解析器解析，中间的 DNS 查询窗口可被 DNS 重绑定（先回公网、再回私网）
+// 绕过 SSRF 闸。
+//
+// ctx 透传解析器：拨号层用它承接单请求超时，避免挂起的 DNS 拖过 Timeout。
+func ResolveHostIPs(ctx context.Context, host string) ([]netip.Addr, error) {
+	raw, err := net.DefaultResolver.LookupHost(ctx, host)
+	if err != nil {
+		return nil, &Error{"域名解析失败：" + host}
+	}
+	out := make([]netip.Addr, 0, len(raw))
+	for _, s := range raw {
 		addr, aerr := netip.ParseAddr(s)
 		if aerr != nil {
 			continue
 		}
-		// 云元数据端点：永久阻断，不随 allow_private 放宽。
-		if isAlwaysBlockedIP(addr) {
-			return &Error{"云厂商元数据端点受代码级保护，SiteLens 拒绝探测（不可通过配置关闭）"}
-		}
-		if !allowPrivate && isBlockedIP(addr) {
-			return &Error{"目标解析到内网/保留地址，已拦截"}
+		out = append(out, addr)
+	}
+	if len(out) == 0 {
+		return nil, &Error{"域名解析失败：" + host}
+	}
+	return out, nil
+}
+
+// ValidateIP 校验单个 IP 是否允许连接：云厂商元数据端点**永久**阻断
+// （不受 allow_private 影响）；allow_private 关闭时拒绝私网/保留地址。
+func ValidateIP(addr netip.Addr) error {
+	if isAlwaysBlockedIP(addr) {
+		return &Error{"云厂商元数据端点受代码级保护，SiteLens 拒绝探测（不可通过配置关闭）"}
+	}
+	if !allowPrivate && isBlockedIP(addr) {
+		return &Error{"目标解析到内网/保留地址，已拦截"}
+	}
+	return nil
+}
+
+// ValidateIPs 全量校验一组解析结果：任一 IP 不合规即整体拒绝。
+//
+// 不能「挑一个合规的 IP 去拨」：DNS 轮询/重绑定场景下，答案集合里混入
+// 私网地址本身就说明目标不可信（宁少报不误报），放过一个等于给攻击者
+// 留一条确定性可用路径。
+func ValidateIPs(addrs []netip.Addr) error {
+	if len(addrs) == 0 {
+		return &Error{"域名解析失败：无有效 IP"}
+	}
+	for _, addr := range addrs {
+		if err := ValidateIP(addr); err != nil {
+			return err
 		}
 	}
 	return nil
 }
+
+// AllowPrivate 返回当前 allow_private 姿态（拨号层与测试复用）。
+func AllowPrivate() bool { return allowPrivate }
 
 func isBlockedIP(addr netip.Addr) bool {
 	if !addr.IsValid() {

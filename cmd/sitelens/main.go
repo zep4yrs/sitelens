@@ -29,11 +29,8 @@ import (
 )
 
 func main() {
-	cfgPath := flag.String("config", ".sitelens.yml", "配置文件路径")
-	showVersion := flag.Bool("version", false, "输出版本号并退出")
-	envFile := flag.String("env", ".env", "环境变量文件（PG 连接参数来源）")
-	graphFlag := flag.Bool("graph", false, "收集结构化事实图 graph（4.0，默认关；开启时结果 JSON 增 graph 字段）")
-	astFlag := flag.Bool("ast", false, "源码审计启用 AST 污点分析（4.0，默认关；需 CGO 构建，非 CGO 自动回退行级）")
+	var g globalFlags
+	bindGlobalFlags(flag.CommandLine, &g)
 	flag.Usage = func() {
 		fmt.Fprintf(os.Stderr, `SiteLens Go 引擎
 
@@ -70,11 +67,11 @@ func main() {
 扫描/审计 4.0 开关：
   -graph   扫描结果增结构化事实图（默认关）
   -ast     源码审计启用 AST 污点分析（默认关；需 CGO 构建）
-`, *cfgPath)
+`, g.Config)
 		flag.PrintDefaults()
 	}
 	flag.Parse()
-	if *showVersion {
+	if g.Version {
 		fmt.Println("SiteLens " + server.Version)
 		return
 	}
@@ -83,6 +80,20 @@ func main() {
 		flag.Usage()
 		os.Exit(2)
 	}
+	// BUG-005：flag.Parse() 在子命令名处停止，子命令之后的全局开关会落进
+	// flag.Args()。这里补扫一次已知全局开关（前置写法行为不变），未知参数
+	// 原样留给子命令/直通。
+	rest, rerr := rescanGlobalFlags(args[1:], &g)
+	if rerr != nil {
+		fmt.Fprintln(os.Stderr, rerr)
+		flag.Usage()
+		os.Exit(2)
+	}
+	if g.Version { // `sitelens scan -version` 与前置写法同语义
+		fmt.Println("SiteLens " + server.Version)
+		return
+	}
+	args = append(args[:1], rest...)
 	// update-seed 是「路径参数」型子命令（--seed-dir/--user-dir），
 	// 而 flag.Parse() 在遇到子命令名时已停止解析——参数落进 flag.Args()。
 	// 这里局部再解析一次，只认这两个开关，其余命令零影响。
@@ -96,7 +107,7 @@ func main() {
 		os.Exit(updateSeedCommand(*seed, *usr))
 	}
 
-	cfg := config.LoadOrDefault(*cfgPath)
+	cfg := config.LoadOrDefault(g.Config)
 
 	// 4.0 Track A / A1：GC 软上限（零行为变化，仅让 GC 在尖峰前更早介入）。
 	// 放在所有子命令之前——serve 常驻与 scan 一次性调用都受益。
@@ -105,10 +116,10 @@ func main() {
 		resource.Apply(resource.DefaultGCConfig())
 	}
 
-	if *graphFlag {
+	if g.Graph {
 		cfg.Scan.Graph = true // CLI 开关覆盖配置
 	}
-	if *astFlag {
+	if g.AST {
 		cfg.Audit.ASTEnabled = true // CLI 开关覆盖配置
 	}
 
@@ -128,11 +139,13 @@ func main() {
 	case "update-osv":
 		os.Exit(updateOSVCommand(cfg, 8))
 	case "update-nvd":
-		os.Exit(updateNVDCommand(cfg))
+		// 参数已由 main 的全局开关补扫清理过，避免 updateNVDCommand 自己
+		// 再从 os.Args 里捞（那样子命令后跟全局开关时 feed 模式会被错判）
+		os.Exit(updateNVDCommand(cfg, args[1:]))
 	case "update-tplintel":
 		os.Exit(updateTplIntelCommand(cfg))
 	case "update-ehole":
-		os.Exit(updateEHoleCommand(cfg, flag.Arg(1)))
+		os.Exit(updateEHoleCommand(cfg, argAt(args, 1)))
 	case "graph-read":
 		os.Exit(graphReadCommand(args[1:]))
 	case "regression":
@@ -142,16 +155,16 @@ func main() {
 		}
 		os.Exit(regressionCommand(cfg, args[1]))
 	case "update-nuclei":
-		os.Exit(updateNucleiCommand(cfg, flag.Arg(1)))
+		os.Exit(updateNucleiCommand(cfg, argAt(args, 1)))
 	case "update-afrog":
-		os.Exit(updateAfrogCommand(cfg, flag.Arg(1)))
+		os.Exit(updateAfrogCommand(cfg, argAt(args, 1)))
 	case "update-fp":
-		os.Exit(updateFPCommand(cfg, flag.Arg(1)))
+		os.Exit(updateFPCommand(cfg, argAt(args, 1)))
 	case "migrate-pg":
-		loadEnvFile(*envFile)
-		os.Exit(migratePGCommand(*cfgPath))
+		loadEnvFile(g.Env)
+		os.Exit(migratePGCommand(g.Config))
 	case "serve":
-		srv, err := server.New(cfg, *cfgPath)
+		srv, err := server.New(cfg, g.Config)
 		if err != nil {
 			fmt.Fprintln(os.Stderr, "服务装配失败:", err)
 			os.Exit(1)

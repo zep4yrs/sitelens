@@ -161,7 +161,10 @@ func (r *Runner) deepResidual(tgt Target, baseHeaders map[string]bool, done *int
 
 	// 1) CRLF 头注入：注入 \r\n 后响应头集合新增
 	if r.opts.CRLF {
-		u := setParam(tgt.URL, tgt.Param, crlfInject)
+		// crlfInject 是预编码形态（%0d%0a…），必须原样上线，不能走 setParam
+		// 的 url.Values.Encode——否则 "%" 被二次编码成 "%25"，服务端只解码
+		// 出字面 %0d%0a 文本，注入实际不生效（BUG-017）。
+		u := rawSetParam(tgt.URL, tgt.Param, crlfInject)
 		if len(u) <= r.opts.MaxURLLen {
 			resp := probeGet(r, u, label, done, total)
 			if resp != nil {

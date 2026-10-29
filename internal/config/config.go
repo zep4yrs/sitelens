@@ -120,7 +120,7 @@ type ActiveConfig struct {
 
 // ScanConfig HTTP 采集与扫描全局阈值。
 type ScanConfig struct {
-	RateIntervalMS int    `yaml:"rate_interval_ms"` // 请求最小间隔（毫秒），0=不限速
+	RateIntervalMS int    `yaml:"rate_interval_ms"` // 请求最小间隔（毫秒）——0/负值回退默认 400，当前实现不支持 0=不限速
 	TimeoutSec     int    `yaml:"timeout_sec"`      // 单请求超时（秒）
 	MaxHops        int    `yaml:"max_hops"`         // 重定向最大跳数
 	MaxBodyMB      int    `yaml:"max_body_mb"`      // 正文留存上限（MB）
@@ -157,7 +157,7 @@ type CrawlerConfig struct {
 	MaxPages           int    `yaml:"max_pages"`            // 最多爬取的页面数
 	RespectRobots      bool   `yaml:"respect_robots"`       // 是否遵循 robots.txt
 	MaxLinksPerPage    int    `yaml:"max_links_per_page"`   // 每页最多提取的链接数
-	TimeoutSec         int    `yaml:"timeout_sec"`          // 爬取阶段总时长上限（秒），0=不限
+	TimeoutSec         int    `yaml:"timeout_sec"`          // 爬取阶段总时长上限（秒）——0/负值回退默认 60，当前实现不支持 0=不限
 	Headless           bool   `yaml:"headless"`             // 无头浏览器渲染（SPA 支持；需本机有 Chromium 系浏览器，缺失自动降级）
 	HeadlessAllPages   bool   `yaml:"headless_all_pages"`   // 无头渲染扩展到全部已爬页（默认仅首页；页面多时显著变慢）
 	HeadlessTimeoutSec int    `yaml:"headless_timeout_sec"` // 单页渲染超时（秒）
@@ -196,7 +196,7 @@ type IntelConfig struct {
 	TplIntelPath     string `yaml:"tpl_intel_path"`    // 模板情报行（update-tplintel 生成，缺失则跳过）
 	TechnologiesPath string `yaml:"technologies_path"` // 指纹规则文件路径
 	SearchLimit      int    `yaml:"search_limit"`      // /api/vuln-search 返回上限
-	UpdateHours      int    `yaml:"update_hours"`      // KEV 自动更新间隔（小时，0=关闭）
+	UpdateHours      int    `yaml:"update_hours"`      // KEV 自动更新间隔（小时）——0/负值回退默认 24，当前实现不支持 0=关闭自动更新
 	OverridesPath    string `yaml:"overrides_path"`    // OSV 同步覆盖文件（存在则启动合并）
 }
 

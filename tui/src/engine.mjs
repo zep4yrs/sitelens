@@ -225,7 +225,9 @@ function freePort() {
 // 目录——平台包内捆绑的 data/go/technologies.json（指纹库）按引擎默认
 // 相对路径就地生效。情报库/NVD/ML 资产不随 npm 分发，serve 按引擎既有
 // 语义降级（相应功能跳过），不影响指纹/验证型 check/DAST 主流程。
-// 注意：-config 是顶层 flag，必须放在 serve 子命令之前。
+// 注意：-config 是顶层 flag；5.2（BUG-005）起放子命令前后都生效，
+// 但本模块统一用前置写法（"-config", cfg, ...argv）——最稳、且不依赖
+// 引擎侧的补扫逻辑。
 // allowPrivate=true 时配置 target.allow_private（本机靶场/授权内网）；
 // gov.cn 目标的硬保护在引擎侧，不受此开关影响。
 export async function startServe(log = () => {}, { allowPrivate = false } = {}) {

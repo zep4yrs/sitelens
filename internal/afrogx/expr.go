@@ -51,6 +51,8 @@ func (r Response) header(name string) string {
 // node 表达式节点。
 type node interface {
 	eval(r Response) (bool, string)
+	// ground 报告该子树是否含**正向内容判定**（neg 表示当前处于取反下）。
+	ground(neg bool) bool
 }
 
 // Program 编译后的表达式。
@@ -76,6 +78,20 @@ func (p *Program) String() string {
 		return ""
 	}
 	return p.expr
+}
+
+// PositiveGround 报告表达式是否含至少一个**正向内容判定**原子。
+//
+// 与 internal/dsl 的 PositiveGround 同哲学：纯状态码、恒真、纯取反的判定
+// 不具备"内容证据"，放行会退化成"路径存在即命中"（CDN/WAF 环境大面积误报）。
+// 口径刻意保守：只认**未处于取反下**的 response.body / response.raw 包含
+// 与正文正则。响应头 / content-type 包含不算——单独用它判存在性对任意
+// 站点都可能恒真（如 `Server: nginx`）。
+func (p *Program) PositiveGround() bool {
+	if p == nil || p.root == nil {
+		return false
+	}
+	return p.root.ground(false)
 }
 
 // cache 编译结果缓存（表达式文本 → 编译产物）。
@@ -565,6 +581,8 @@ func (n *orNode) eval(r Response) (bool, string) {
 	return n.r.eval(r)
 }
 
+func (n *orNode) ground(neg bool) bool { return n.l.ground(neg) || n.r.ground(neg) }
+
 type andNode struct{ l, r node }
 
 func (n *andNode) eval(r Response) (bool, string) {
@@ -579,12 +597,16 @@ func (n *andNode) eval(r Response) (bool, string) {
 	return true, why + " 且 " + why2
 }
 
+func (n *andNode) ground(neg bool) bool { return n.l.ground(neg) || n.r.ground(neg) }
+
 type notNode struct{ x node }
 
 func (n *notNode) eval(r Response) (bool, string) {
 	ok, _ := n.x.eval(r)
 	return !ok, ""
 }
+
+func (n *notNode) ground(neg bool) bool { return n.x.ground(!neg) }
 
 type constNode struct{ v bool }
 
@@ -594,6 +616,8 @@ func (n *constNode) eval(Response) (bool, string) {
 	}
 	return false, ""
 }
+
+func (n *constNode) ground(bool) bool { return false }
 
 type cmpNode struct {
 	name string
@@ -627,6 +651,10 @@ func (n *cmpNode) eval(r Response) (bool, string) {
 	}
 	return true, fmt.Sprintf("%s %s %d", n.name, n.op, n.num)
 }
+
+// ground 状态码比较不是内容判定：纯状态码 check 在 CDN/WAF 下任意路径
+// 都可能命中（与 buildChecks 的既有闸门同哲学）。
+func (n *cmpNode) ground(bool) bool { return false }
 
 type containsNode struct {
 	value       string
@@ -662,6 +690,15 @@ func (n *containsNode) eval(r Response) (bool, string) {
 	return true, fmt.Sprintf("%s 包含 %q", n.value, n.needle)
 }
 
+// ground 只有**正文**包含算内容判定；响应头 / content-type 单独使用对任意
+// 站点都可能恒真（如 `Server: nginx`），不足以作为"存在性"证据。
+func (n *containsNode) ground(neg bool) bool {
+	if neg {
+		return false // 纯取反（"不含某内容"）几乎恒真，不算内容证据
+	}
+	return n.value == "response.body" || n.value == "response.raw"
+}
+
 type regexNode struct {
 	pattern string
 	re      *regexp.Regexp
@@ -673,3 +710,6 @@ func (n *regexNode) eval(r Response) (bool, string) {
 	}
 	return true, fmt.Sprintf("正文匹配正则 %q", n.pattern)
 }
+
+// ground 正文正则匹配算内容判定；取反下的正则（"不匹配"）不算。
+func (n *regexNode) ground(neg bool) bool { return !neg }

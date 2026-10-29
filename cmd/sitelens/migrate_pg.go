@@ -42,10 +42,76 @@ func loadEnvFile(path string) error {
 	return nil
 }
 
+// pgConnParams PG 连接参数（全部来源：环境变量，凭证不写入代码/输出）。
+type pgConnParams struct {
+	Host     string
+	Port     string
+	User     string
+	Password string
+	DBName   string
+	SSLMode  string
+}
+
+// pgParamsFromEnv 从环境变量收集连接参数（.env 由 main 的 -env 先行装入）。
+func pgParamsFromEnv() pgConnParams {
+	return pgConnParams{
+		Host:     envOr("SLENS_DB_HOST", "127.0.0.1"),
+		Port:     envOr("SLENS_DB_PORT", "5432"),
+		User:     envOr("SLENS_DB_USER", "postgres"),
+		Password: os.Getenv("SLENS_DB_PASSWORD"),
+		DBName:   envOr("SLENS_DB_NAME", "sitelens"),
+		SSLMode:  envOr("SLENS_DB_SSLMODE", "prefer"),
+	}
+}
+
+// normalizeSSLMode 校验 sslmode 取值：合法值原样返回（小写），非法/空回退
+// prefer。prefer = 优先 TLS、服务器不支持时回退明文，对本地无 TLS 的 PG
+// 保持向后兼容；显式 disable 仍可用（由调用方告警），但不再是硬编码默认。
+func normalizeSSLMode(mode string) string {
+	switch m := strings.ToLower(strings.TrimSpace(mode)); m {
+	case "disable", "allow", "prefer", "require", "verify-ca", "verify-full":
+		return m
+	default:
+		return "prefer"
+	}
+}
+
+// dsn 构造不含口令的 pgx DSN（BUG-030）。
+//
+// 口令**不进 DSN 字符串**：连接参数解析成 *pgx.ConnConfig 后直接写
+// Password 字段，避免 DSN 被错误信息/调试输出带出到日志。
+// sslmode 由配置（SLENS_DB_SSLMODE）决定，不再硬编码 disable。
+// 含空格/引号的口令也不再需要转义（此前拼进 DSN 会直接解析失败）。
+func (p pgConnParams) dsn() string {
+	parts := []string{
+		"host=" + p.Host,
+		"port=" + p.Port,
+		"user=" + p.User,
+		"dbname=" + p.DBName,
+		"sslmode=" + normalizeSSLMode(p.SSLMode),
+	}
+	return strings.Join(parts, " ")
+}
+
+// connConfig 解析 DSN 并把口令注入 ConnConfig（口令不经 DSN 字符串）。
+func (p pgConnParams) connConfig() (*pgx.ConnConfig, error) {
+	cfg, err := pgx.ParseConfig(p.dsn())
+	if err != nil {
+		// dsn 不含口令，可安全回显解析错误
+		return nil, fmt.Errorf("PG 连接参数非法：%w", err)
+	}
+	cfg.Password = p.Password // 口令只存在于进程内存，不进 DSN
+	return cfg, nil
+}
+
 // runMigratePG 执行历史迁移，返回导入/跳过条数。
-func runMigratePG(cfg *config.Config, dsn string) (imported, skipped int, err error) {
+func runMigratePG(cfg *config.Config, p pgConnParams) (imported, skipped int, err error) {
 	ctx := context.Background()
-	conn, err := pgx.Connect(ctx, dsn)
+	pcfg, err := p.connConfig()
+	if err != nil {
+		return 0, 0, err
+	}
+	conn, err := pgx.ConnectConfig(ctx, pcfg)
 	if err != nil {
 		return 0, 0, fmt.Errorf("连接 PG 失败：%w", err)
 	}
@@ -115,21 +181,14 @@ func runMigratePG(cfg *config.Config, dsn string) (imported, skipped int, err er
 // migratePGCommand `sitelens migrate-pg` 入口。返回进程退出码。
 func migratePGCommand(cfgPath string) int {
 	cfg := config.LoadOrDefault(cfgPath)
-	loadEnvFile(cfgPath) // .env 里的 SLENS_DB_* 装入环境（不覆盖已有变量）
-
-	// pgx DSN 键名拆分写法为本仓库扫描器对该键名字面量的规避，
-	// 实际凭据值完全来自环境变量，代码中不含任何凭据。
-	pwKey := "pass" + "word"
-	parts := []string{
-		"host=" + envOr("SLENS_DB_HOST", "127.0.0.1"),
-		"port=" + envOr("SLENS_DB_PORT", "5432"),
-		"user=" + envOr("SLENS_DB_USER", "postgres"),
-		pwKey + "=" + envOr("SLENS_DB_PASSWORD", ""),
-		"dbname=" + envOr("SLENS_DB_NAME", "sitelens"),
-		"sslmode=disable",
+	// 连接参数只从环境变量读（.env 已由 main 的 -env 装入进程环境）。
+	// 此前这里误把 cfgPath（yml 配置）当 .env 解析，属口径错误，已移除。
+	p := pgParamsFromEnv()
+	if normalizeSSLMode(p.SSLMode) == "disable" {
+		fmt.Fprintln(os.Stderr, "警告：SLENS_DB_SSLMODE=disable，PG 连接为明文传输（仅限隔离/本机环境）")
 	}
 
-	imported, skipped, err := runMigratePG(cfg, strings.Join(parts, " "))
+	imported, skipped, err := runMigratePG(cfg, p)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "迁移失败：", err)
 		return 1

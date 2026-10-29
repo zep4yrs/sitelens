@@ -8,11 +8,12 @@ type Regexp struct {
 	root     node
 	ncap     int  // 捕获组数
 	anchored bool // 根节点以 ^/\A 开头，只需尝试起点 0
-	// Budget 每次匹配尝试（单个起点）的步数上限；匹配前可调，默认 100000。
+	// Budget 一次匹配调用（全部起点扫描共享）的步数上限；匹配前可调，
+	// 默认 100000。共享语义防止总开销随输入长度放大（BUG-027）。
 	Budget int
 }
 
-// defaultBudget 单次匹配尝试的默认步数预算。
+// defaultBudget 一次匹配调用的默认步数预算（全部起点共享）。
 // 服务指纹模式均为短模式短 banner，10 万步足够正常匹配；
 // 灾难性回溯形态在此预算下有界退出，不挂死扫描协程。
 const defaultBudget = 100000
@@ -82,14 +83,22 @@ func (re *Regexp) find(s string) (int, int, bool) {
 }
 
 // findImpl 执行扫描；成功时返回 (起点, 终点, 捕获组快照)。
+//
+// 预算按「一次匹配调用」共享（BUG-027）：旧实现每个起始位置各建一个
+// matcher、各带 Budget 步预算，单次查找的最坏开销 = Budget × len(s)——
+// 短模式遇到恶意/超长 banner 即可把扫描协程拖到不可接受。共享后单次
+// 查找总步数恒 ≤ Budget，耗尽立即整体放弃（与既有语义一致：
+// 宁少报，不挂死；预算耗尽只会漏报，绝不产生误报）。
 func (re *Regexp) findImpl(s string) (int, int, []int) {
 	lo, hi := 0, len(s)
 	if re.anchored {
 		hi = 0 // 仅起点 0
 	}
+	// 捕获组槽位复用（每起点重置为 -1）：失败尝试可能残留环视捕获，
+	// 起点之间不得串味。顺带省掉每起点的切片分配。
+	m := &matcher{s: s, budget: re.Budget}
+	m.caps = make([]int, 2*(re.ncap+1))
 	for start := lo; start <= hi; start++ {
-		m := &matcher{s: s, budget: re.Budget}
-		m.caps = make([]int, 2*(re.ncap+1))
 		for i := range m.caps {
 			m.caps[i] = -1
 		}

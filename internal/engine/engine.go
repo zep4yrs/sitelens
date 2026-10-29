@@ -1337,17 +1337,20 @@ func (e *Engine) nucleiSubset(techs []Tech, pageTitle string, cap int) ([]checks
 	return out, stat
 }
 
-// loadNucleiLRU 从磁盘恢复调度表（文件缺失 = 全新开始）。
+// loadNucleiLRU 从磁盘恢复调度表（文件缺失/内容损坏 = 全新开始）。
+//
+// 兜底语义（BUG-012）：JSON `null` 会把目标 map 置为 nil 且 err==nil
+// （解出空指针合法），解析失败同理不可留旧 nil。调度表必须是可写空表——
+// 否则 nucleiSubset 里 `e.nucleiLRU[ent.Path] = now` 直接 panic:
+// assignment to entry in nil map。
 func (e *Engine) loadNucleiLRU() {
-	data, err := os.ReadFile(filepath.Join(e.cfg.Store.DataDir, "nuclei_schedule.json"))
-	if err != nil {
-		e.nucleiLRU = map[string]int64{}
-		return
-	}
 	m := map[string]int64{}
-	if json.Unmarshal(data, &m) == nil {
-		e.nucleiLRU = m
+	if data, err := os.ReadFile(filepath.Join(e.cfg.Store.DataDir, "nuclei_schedule.json")); err == nil {
+		if derr := json.Unmarshal(data, &m); derr != nil || m == nil {
+			m = map[string]int64{}
+		}
 	}
+	e.nucleiLRU = m
 }
 
 // saveNucleiLRU 调度表落盘（tmp+rename 原子写，防中途崩溃损坏调度表）。

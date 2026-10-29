@@ -8,19 +8,20 @@
 package versioncmp
 
 import (
-	"math"
 	"regexp"
 	"strings"
 )
 
-// Parse 版本字符串 → 数字三元组（每段取前导数字，忽略非数字后缀）。
-func Parse(v string) [3]int {
-	var out [3]int
+// Parse 版本字符串 → 数字段切片（每段取前导数字，忽略非数字后缀）。
+//
+// 段数不设上限（BUG-007）：Windows 补丁号 10.0.19041.1234、Java/Oracle
+// 方案号等是 4 段版本，旧实现只取前 3 段会把「4 段补丁号」与「3 段基版本」
+// 判为相等，进而把不在受影响区间的目标误报成 confirmed。
+func Parse(v string) []int {
 	v = strings.TrimPrefix(strings.ToLower(strings.TrimSpace(v)), "v")
-	for i, seg := range strings.Split(v, ".") {
-		if i >= 3 {
-			break
-		}
+	segs := strings.Split(v, ".")
+	out := make([]int, len(segs))
+	for i, seg := range segs {
 		out[i] = parseSeg(seg)
 	}
 	return out
@@ -45,16 +46,29 @@ func parseSeg(seg string) int {
 	return n
 }
 
-// Cmp a<b 返回 -1，相等 0，a>b 返回 1（逐段比较，与 Python 元组比较一致）。
+// Cmp a<b 返回 -1，相等 0，a>b 返回 1（逐段比较，与 Python 元组比较一致：
+// 公共前缀相等时短者为小，即 4.17.3.0 > 4.17.3、1.2.3.4 > 1.2.3）。
+//
+// 不做零补齐——这是 BUG-007 验收表的直接要求（docs/bug清单-5.1.0.md
+// BUG-007）：`1.2.3.4 <=1.2.3`、`10.0.19041.1234 <=10.0.19041`、
+// `4.17.3.0 <=4.17.3` 期望均 false（不误报 confirmed）；若改成零补齐，
+// 4.17.3.0 会与 4.17.3 判等 → `<=` 成立 → 与验收表相反。前缀语义下
+// 多出的段一律视为「更晚」，宁可漏报受影响（少报）也不误报 confirmed。
 func Cmp(a, b string) int {
 	pa, pb := Parse(a), Parse(b)
-	for i := 0; i < 3; i++ {
+	for i := 0; i < len(pa) && i < len(pb); i++ {
 		if pa[i] < pb[i] {
 			return -1
 		}
 		if pa[i] > pb[i] {
 			return 1
 		}
+	}
+	switch {
+	case len(pa) < len(pb):
+		return -1
+	case len(pa) > len(pb):
+		return 1
 	}
 	return 0
 }
@@ -148,7 +162,7 @@ func ExtractVersion(text, keyword string) string {
 
 var verRe = regexp.MustCompile(`\d{1,5}(?:\.\d{1,5}){1,3}`)
 
-// Round1 CVSS 类分数的一位小数舍入（ Go math.Round 即银行家舍入之外的常规四舍五入）。
-func Round1(f float64) float64 {
-	return math.Round(f*10) / 10
-}
+// 注：CVSS 分数的一位小数取整按 CVSS 3.1 规范是 Roundup（向上取整），
+// 实现见 intel.roundup1（internal/intel/cvss.go）。本包曾导出一个用
+// math.Round 的 Round1（语义错误且全仓无调用方），BUG-026 已删除；
+// 需要 CVSS 取整的消费方请走 intel 的规范实现，勿在本包重新引入。

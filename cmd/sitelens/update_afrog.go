@@ -1,12 +1,12 @@
 // update-afrog 子命令：镜像 afrog 社区 POC 库到 nuclei_dir/afrog/。
 // 引擎索引对同目录 YAML 统一走三前端漏斗（path/raw/afrog），
 // 无需单独索引链路；索引缓存随文件数变化自动重建。
+//
+// 下载闸：强制 https + 实测 sha256 留痕/可钉校验（见 update_guard.go）。
 package main
 
 import (
 	"fmt"
-	"io"
-	"net/http"
 	"os"
 	"time"
 
@@ -24,20 +24,16 @@ func updateAfrogCommand(cfg *config.Config, url string) int {
 		url = nuclei.AfrogFetchURL
 	}
 	fmt.Fprintf(os.Stderr, "下载 afrog POC 库：%s\n", url)
-	client := &http.Client{Timeout: 30 * time.Minute}
-	resp, err := client.Get(url)
+	// 256MB 上限沿用旧口径（zip 解压前的输入预算）
+	path, _, cleanup, err := downloadUpdate(url, 30*time.Minute, 256<<20)
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "下载失败：", err)
+		fmt.Fprintln(os.Stderr, err)
 		return 1
 	}
-	defer resp.Body.Close()
-	if resp.StatusCode != 200 {
-		fmt.Fprintln(os.Stderr, "下载失败：HTTP", resp.StatusCode)
-		return 1
-	}
-	buf, err := io.ReadAll(io.LimitReader(resp.Body, 256<<20))
+	defer cleanup()
+	buf, err := os.ReadFile(path)
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "读取失败：", err)
+		fmt.Fprintln(os.Stderr, "读取下载内容失败：", err)
 		return 1
 	}
 	kept, removed, err := nuclei.SyncAfrogFromZip(buf, dir)

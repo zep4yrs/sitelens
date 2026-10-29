@@ -9,6 +9,13 @@ EXP-1005  CVE 描述 → CWE 弱点类型分类（top-25 类，时间切分 trai
 
 KB 版本：kb-5.0.1 写独立子目录 dataset/kb-5.0.1/（kb-5.0.0 及其已验证实验链
 原样保留，不受覆盖影响）。
+
+运行（仓库根目录）：python -m ml.train_cwe
+路径（BUG-028）：--data-root / --out-root 缺省时按「环境变量优先 + 仓库相对默认」
+解析（见 ml/config.py 头部）：
+    SITLENS_DATA_ROOT  原始 KB 数据根（默认 <repo>/data，须含 state/history.json）
+    SITLENS_ML_OUT     产物根（默认 <repo>/data/ml）
+换机器时只设这两个环境变量（或传 --data-root/--out-root）即可重训，无需改代码。
 """
 
 from __future__ import annotations
@@ -137,7 +144,7 @@ def exp1005_cwe_relation(kb: dict[str, pd.DataFrame], kb_man: Path,
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--data-root", default=r"D:\fengqiao\Desktop\26-08python实训\实训考核2\data")
+    ap.add_argument("--data-root", default=None)
     ap.add_argument("--out-root", default=None)
     args = ap.parse_args()
     paths = config.resolve_paths(args.data_root, args.out_root)
