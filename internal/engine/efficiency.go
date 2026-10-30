@@ -246,6 +246,11 @@ type pageStream struct {
 
 	wg  sync.WaitGroup
 	sem chan struct{}
+
+	// mu 保护 pages/passiveHits/fpHits 的追加与元素回填：crawler 的 pageHook
+	// 可能在并发 goroutine 中回调（-race 实抓：append 扩容与 worker 写元素
+	// 竞争），因此追加、CSP 首命中记录、被动检查与指纹结果回填都在锁内串行。
+	mu sync.Mutex
 }
 
 func newPageStream(matcher *sitelens.Matcher, favHash int64, passiveOn bool, workers int) *pageStream {
@@ -262,8 +267,10 @@ func newPageStream(matcher *sitelens.Matcher, favHash int64, passiveOn bool, wor
 	return s
 }
 
-// push 收入一页并启动该页分析。仅从引擎主 goroutine 调用（首页一次 + 爬虫
-// pageHook 串行回调），因此 pages/passiveHits 追加无需加锁。
+// push 收入一页并启动该页分析。crawler 的 pageHook 可能在并发 goroutine 中
+// 回调，因此 pages/passiveHits/fpHits 追加、CSP 首命中记录与被动检查都在
+// s.mu 下串行执行；指纹匹配派发 worker，但结果回填同样在锁内（避免 append
+// 扩容与元素写入的数据竞争）。顺序仍按 push 调用顺序（= 页序）。
 func (s *pageStream) push(resp *httpx.Response, doc *htmlx.Doc) {
 	if resp == nil {
 		return
@@ -272,6 +279,7 @@ func (s *pageStream) push(resp *httpx.Response, doc *htmlx.Doc) {
 	if cp.doc == nil {
 		cp.doc = htmlx.Parse(resp.Body)
 	}
+	s.mu.Lock()
 	idx := len(s.pages)
 	s.pages = append(s.pages, cp)
 	s.passiveHits = append(s.passiveHits, nil)
@@ -286,6 +294,7 @@ func (s *pageStream) push(resp *httpx.Response, doc *htmlx.Doc) {
 	if s.passiveOn {
 		s.passiveHits[idx] = passive.RunDedup(resp, cp.doc, resp.FinalURL, s.deduper)
 	}
+	s.mu.Unlock()
 
 	// 指纹匹配：CPU 热点，派发 worker（结果按 idx 回填，合并仍按页序）。
 	if s.matcher != nil {
@@ -296,7 +305,10 @@ func (s *pageStream) push(resp *httpx.Response, doc *htmlx.Doc) {
 			defer func() { <-s.sem }()
 			ev := sitelens.Extract(r)
 			ev.FaviconHash = s.favHash
-			s.fpHits[i] = s.matcher.Match(ev)
+			hits := s.matcher.Match(ev)
+			s.mu.Lock()
+			s.fpHits[i] = hits
+			s.mu.Unlock()
 		}(idx, resp)
 	}
 }
