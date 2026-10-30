@@ -336,7 +336,7 @@ func (e *Engine) Scan(rawURL string, opts Options, onProgress progress, cancel f
 	if opts.DAST || opts.JSMap {
 		dtJS, dsJS := diag.begin()
 		onProgress(38, "JS 攻击面提取…")
-	live.setPhase("jsmap", "JS 攻击面")
+		live.setPhase("jsmap", "JS 攻击面")
 		var jsFind []jsmap.Finding
 		// jsmap 走拦截隔离 fetcher：WAF 挑战页正文不参与 SourceMap/API 端点提取。
 		jsFind, jsEndpoints = jsmap.Run(blockedAwareFetcher{c: client, blocked: blocked, live: live}, baseURL, doc, 4)
@@ -361,7 +361,7 @@ func (e *Engine) Scan(rawURL string, opts Options, onProgress progress, cancel f
 	if opts.Deep {
 		dtCrawl, dsCrawl := diag.begin()
 		onProgress(40, "同域浅爬取…")
-	live.setPhase("crawl", "同域爬取")
+		live.setPhase("crawl", "同域爬取")
 		cc := e.cfg.Crawler
 		if overBudget() {
 			cc.MaxPages /= 2
@@ -468,7 +468,7 @@ func (e *Engine) Scan(rawURL string, opts Options, onProgress progress, cancel f
 	dtFP, dsFP := diag.begin()
 	if matcher != nil {
 		onProgress(55, fmt.Sprintf("指纹识别（%d 页）…", len(pages)))
-	live.setPhase("fingerprint", "指纹识别")
+		live.setPhase("fingerprint", "指纹识别")
 		for _, hits := range stream.fpHits {
 			for _, h := range hits {
 				acc.add(h.Name, h.Website, h.Version, h.Evidence, h.Conf, h.Cats)
@@ -551,7 +551,7 @@ func (e *Engine) Scan(rawURL string, opts Options, onProgress progress, cancel f
 		}
 		if len(cmsIDs) > 0 {
 			onProgress(75, "CMS 联动专项 check…")
-	live.setPhase("checks", "专项检测")
+			live.setPhase("checks", "专项检测")
 		}
 		// 5.0 深度融合·前置：cve-tech 产品先验 → 相关 check 提权排序 +
 		// 核心档位扩展集增量纳入（只增不删）；中段家族联动在 runner 内由
@@ -609,7 +609,7 @@ func (e *Engine) Scan(rawURL string, opts Options, onProgress progress, cancel f
 	if opts.Checks == "all" && !cancelled() && e.cfg.Checks.NucleiCap > 0 && e.cfg.Checks.NucleiDir != "" {
 		dtNuc, dsNuc := diag.begin()
 		onProgress(84, "运行 Nuclei 社区模板子集…")
-	live.setPhase("nuclei", "模板检测")
+		live.setPhase("nuclei", "模板检测")
 		if overBudget() {
 			// 先解析有效值：未显式指定（0）时降档须作用于配置默认上限，
 			// 否则 0/2=0 会被 nucleiSubset 重置回全量配置上限（降档空操作）
@@ -662,7 +662,7 @@ func (e *Engine) Scan(rawURL string, opts Options, onProgress progress, cancel f
 	if opts.Passive {
 		dtPas, dsPas := diag.begin()
 		onProgress(80, "被动安全检测…")
-	live.setPhase("passive", "被动检测")
+		live.setPhase("passive", "被动检测")
 		hygieneChecks := passive.Hygiene()
 		var hygiene []map[string]any
 		for idx := range pages {
@@ -696,7 +696,7 @@ func (e *Engine) Scan(rawURL string, opts Options, onProgress progress, cancel f
 		dtDAST, dsDAST := diag.begin()
 		dedupBefore := roCache.Hits()
 		onProgress(85, "参数级 DAST 探测…")
-	live.setPhase("dast", "参数级 DAST")
+		live.setPhase("dast", "参数级 DAST")
 		var dastAll []dast.Finding
 		var dastMaps []map[string]any
 		// SSRF 出带：配置启用且扫描器 beacon 可被目标触达时才生效。
@@ -815,7 +815,7 @@ func (e *Engine) Scan(rawURL string, opts Options, onProgress progress, cancel f
 		// 设置页「利用级验证」控制总闸）；目标合规责任在使用者
 		if opts.Exploit && e.cfg.Exploit.Enabled && len(dastAll) > 0 {
 			onProgress(86, "利用级无害验证…")
-	live.setPhase("exploit", "利用级验证")
+			live.setPhase("exploit", "利用级验证")
 			// exploit 层不复用只读缓存（proven 证据必须来自本次新鲜请求），
 			// 但仍做拦截隔离（WAF 回显 payload 不能算 proven）。
 			proven, observed := e.runExploit(host, dastAll, dastMaps,
@@ -861,7 +861,7 @@ func (e *Engine) Scan(rawURL string, opts Options, onProgress progress, cancel f
 		}
 		if opts.Subdomain {
 			onProgress(86, "子域名枚举…")
-	live.setPhase("active", "主动模块")
+			live.setPhase("active", "主动模块")
 			subs := modules.SubdomainEnum(res.Host, ac, nil, cancelled)
 			res.Extras["subdomain"] = subs
 			if opts.Takeover && len(subs) > 0 {
