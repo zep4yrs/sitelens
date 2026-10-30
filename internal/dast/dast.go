@@ -221,7 +221,28 @@ type Runner struct {
 	opts   Options
 	cancel func() bool
 	prog   func(done, total int, msg string)
+	// baseCache benign 基线响应复用表（key = method + URL + body）。
+	//
+	// 只缓存「作为差分基准的良性请求」：同一 target 的基线会被 Run /
+	// deepResidual / cmdEchoInject / boolBlind 等多个通道各取一次，复用一份即可
+	// （想定/网络抖动窗口内实际是同一个请求）。
+	//
+	// 纪律（红线）：payload 请求绝不入缓存/绝不复用——动态站点上把某次
+	// payload 响应当成另一次 payload 的结果会改变判定语义（宁少报不误报）。
+	// 时间差分（timeBlind / cmdInject）的基线允许复用，但必须携带**首次真实
+	// 请求实测的 RTT**（baseLatency）——不能把复用命中测成 ~0，否则会把
+	// 「基线其实很慢」误报成延迟注入。
+	baseCache map[string]*Resp
+	// baseLatency 各 benign 基线首次真实请求的 RTT（key 同 baseCache）。
+	baseLatency map[string]time.Duration
+	// baseCacheOff 仅测试注入：关闭基线复用，用于「复用 vs 不复用」等价性断言。
+	baseCacheOff bool
+	// cacheHits benign 基线复用命中数（诊断输出用；Runner 单 goroutine 访问）。
+	cacheHits int64
 }
+
+// BaseCacheHits benign 基线复用命中数（引擎 diagnostics 读取）。
+func (r *Runner) BaseCacheHits() int64 { return r.cacheHits }
 
 // New 创建 DAST 探测器。
 func New(f Fetcher, opts Options) *Runner {
@@ -234,7 +255,78 @@ func New(f Fetcher, opts Options) *Runner {
 	if opts.MaxProbesPerClass <= 0 {
 		opts.MaxProbesPerClass = 12
 	}
-	return &Runner{fetch: f, opts: opts}
+	return &Runner{
+		fetch:       f,
+		opts:        opts,
+		baseCache:   map[string]*Resp{},
+		baseLatency: map[string]time.Duration{},
+	}
+}
+
+// benignGETTimed 同 benignGET，并返回该基线首次真实请求的 RTT：
+// 命中缓存时直接取首次实测值（时间差分通道复用同一请求的耗时，不重发）。
+func (r *Runner) benignGETTimed(rawURL string) (*Resp, time.Duration) {
+	key := "G\x00" + rawURL
+	if r.baseCacheOff {
+		start := time.Now()
+		resp := r.fetch.GetSmall(rawURL)
+		return resp, time.Since(start)
+	}
+	if resp, ok := r.baseCache[key]; ok {
+		r.cacheHits++
+		return resp, r.baseLatency[key]
+	}
+	start := time.Now()
+	resp := r.fetch.GetSmall(rawURL)
+	rtt := time.Since(start)
+	if resp != nil {
+		r.baseCache[key] = resp
+		r.baseLatency[key] = rtt
+	}
+	return resp, rtt
+}
+
+// benignGET benign 基线 GET：同一 URL 在本次探测内只实际发送一次，其余通道
+// 复用同一份响应（payload 请求不得走此路径）。
+func (r *Runner) benignGET(rawURL string) *Resp {
+	resp, _ := r.benignGETTimed(rawURL)
+	return resp
+}
+
+// cachedGET 只查缓存、不发请求（用于「该 benign 请求此前已由其它通道发过」时
+// 复用响应，例如 authz 通道的取值 1 就是 target 原值）。未命中返回 ok=false。
+func (r *Runner) cachedGET(rawURL string) (*Resp, bool) {
+	if r.baseCacheOff {
+		return nil, false
+	}
+	resp, ok := r.baseCache["G\x00"+rawURL]
+	if ok {
+		r.cacheHits++
+	}
+	return resp, ok
+}
+
+// benignFormPost benign 基线表单 POST：同一 action+请求体在本次探测内只实际
+// 发送一次（RunForms 基线 / 表单布尔盲注基线同体复用）。
+// 其余字段编码与原请求完全一致（url.Values.Encode），不放宽任何判定。
+func (r *Runner) benignFormPost(action string, data map[string]string) *Resp {
+	v := url.Values{}
+	for k, val := range data {
+		v.Set(k, val)
+	}
+	key := "P\x00" + action + "\x00" + v.Encode()
+	if r.baseCacheOff {
+		return r.fetch.PostFormSmall(action, data)
+	}
+	if resp, ok := r.baseCache[key]; ok {
+		r.cacheHits++
+		return resp
+	}
+	resp := r.fetch.PostFormSmall(action, data)
+	if resp != nil {
+		r.baseCache[key] = resp
+	}
+	return resp
 }
 
 // SetCancel 设置取消钩子（阶段边界检查）。
@@ -274,7 +366,7 @@ func (r *Runner) Run(links []string) []Finding {
 		// 基线：原 URL 响应。页面天然含有的报错/系统特征不算命中。
 		// 同时记基线状态码：报错状态差分通道要拿它判断"注入把页面打崩了"。
 		baseBody := ""
-		if base := r.fetch.GetSmall(tgt.URL); base != nil {
+		if base := r.benignGET(tgt.URL); base != nil {
 			baseBody = strings.ToLower(base.Body)
 			tgt.Status = base.Status
 		}
@@ -288,7 +380,7 @@ func (r *Runner) Run(links []string) []Finding {
 		// probeSequences 的类表覆盖，不重复发请求。
 		if r.deepEnabled() && !r.stopped() {
 			var baseHeaders map[string]bool
-			if base := r.fetch.GetSmall(tgt.URL); base != nil {
+			if base := r.benignGET(tgt.URL); base != nil {
 				baseHeaders = headerNameSet(base)
 			}
 			done++
@@ -598,7 +690,7 @@ func (r *Runner) RunForms(targets []FormTarget) []Finding {
 			}
 		}
 		baseBody := ""
-		if base := r.fetch.PostFormSmall(p.ft.Action, baseData); base != nil {
+		if base := r.benignFormPost(p.ft.Action, baseData); base != nil {
 			baseBody = strings.ToLower(base.Body)
 		}
 		tick(label)
@@ -715,9 +807,14 @@ func (r *Runner) timeBlind(tgt Target, done *int, total int) *Finding {
 		return nil
 	}
 
-	start := time.Now()
-	r.fetch.GetSmall(setParam(tgt.URL, tgt.Param, "1"))
-	baseMS := time.Since(start).Milliseconds()
+	// 基线计时：目标原值已是 1（或该 URL 已被其它通道作 benign 基线取过）时，
+	// 复用那次真实请求实测的 RTT，不再重发同一请求；复用命中不会把
+	// 「基线其实很慢」误判成延迟注入（RTT 来自真实请求）。
+	if r.stopped() {
+		return nil
+	}
+	_, baseRTT := r.benignGETTimed(setParam(tgt.URL, tgt.Param, "1"))
+	baseMS := baseRTT.Milliseconds()
 	*done++
 	if r.prog != nil {
 		r.prog(*done, total, label)
@@ -726,7 +823,7 @@ func (r *Runner) timeBlind(tgt Target, done *int, total int) *Finding {
 		return nil
 	}
 
-	start = time.Now()
+	start := time.Now()
 	inj := r.fetch.GetSmall(injURL)
 	injMS := time.Since(start).Milliseconds()
 	*done++

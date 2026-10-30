@@ -241,6 +241,62 @@ BUG-017 修前服务端只收到 `q=%250d%250a…`、BUG-008 修前 5 跳 × 8 �
 - `-race` 仍需 CGO 环境（本机无 gcc；新增并行代码建议 CI 补 `go test -race ./internal/{sitelens,engine,nuclei,httpx}`）。
 - 仍可继续做的：litindex 换 AC 自动机再省 ~1ms/页；`convertMeta` 的 `(?i)` CVE 正则（冷构建剩余最大单文件开销 ~30µs）；src/header 通道接条件树。
 
+### 0.7 第三轮：效率轮实录（2026-10-30，WAF-aware 自适应限速 + 请求去重）
+
+> 目标：第二轮把 CPU 成本压掉后，扫描墙钟 ≈99.6% 是限速睡眠（本地 775 请求 /
+> 400ms 配置 155s、1ms 后 0.6s）——从「算得快」转向「单位时间产出更多，且不伤害
+> 被扫目标」。完整设计与实测见 `docs/release-5.2.0/效率轮-5.2.0.md`。
+
+#### 0.7.1 前后数字（同 fixture：4 页带表单/带参 + 2 个可命中点，deep+DAST）
+
+| 组 | 请求数 | 墙钟 | findings |
+|---|---|---|---|
+| 旧实现 af60716（worktree 独立测） | 799 | 159.95s | 2（sqli-error / xss-reflect） |
+| 新 balanced（默认 `scan.rate_mode`） | **776（-2.88%）** | **156.09s（-2.4%）** | 2，逐字节等价 |
+| 新 polite | 776 | 310.01s | 2，逐字节等价 |
+
+- balanced vs 新 polite 墙钟 **↓49.6%**（自适应 400ms→200ms 硬下限）。
+- 相对旧实现墙钟只快 2.4%：旧 `wait()` 的 pairing 缺陷让实际速率恰好 ≈5 rps，与
+  balanced 下限同速——墙钟收益只能来自请求数下降，这是「不伤害目标」前提下的必然结果。
+- 目标侧负载：balanced 平均 **≤5 req/s/主机**（峰值 1s=6，与旧实现同口径）、
+  最大并发 1（未增加并发）；RTT 恶化/WAF 信号自动退避并锁定低速。
+- 想要更快：`scan.rate_max_rps` 可调高（如 8 → 约 -35% 墙钟、平均 8 req/s），
+  **默认 5 保持保守，只建议自控靶场调高**。
+
+#### 0.7.2 改了什么
+
+- **httpx**：旧 `wait()`（先设 last 再睡 → 并发齐发 N/interval）重做为 **per-host 共享
+  令牌桶**（容量 1、全进程共享、空闲 5min TTL）；polite 档语义修正为真实固定间隔
+  （400ms=2.5 rps）；balanced 档 400ms 起步→连续成功减半→**硬下限 200ms**（间隔高于
+  下限才 ±20% 抖动）；RTT EWMA 恶化自动退避；429/503/Retry-After/WAF 特征头/挑战页/
+  2xx→403 降级 → `Resp.Blocked/BlockReason` + 锁定低速（400ms→1s→2s 只增不减）；
+  `Stats()` 指标；SSRF/解析链路零改动。
+- **engine/dast/crawler**：DAST benign 基线跨通道复用（payload 绝不复用；时间差分复用
+  携带真实 RTT 防误报）、只读页面响应单扫描复用、crawler additive `SetPageHook` 逐页
+  流式指纹/被动（默认 nil 逐字段等价）、主页/robots/favicon/种子页去重、blocked 隔离
+  （首页被拦终止/爬取页不进分析集/jsmap 拦截隔离/DAST 被拦不判定/checks 命中按 URL 过滤）、
+  `Result.Diagnostics` 诊断账本（additive）。
+- **config**：`scan.rate_mode: balanced|polite`（默认 balanced；未知值按 polite 保守
+  处理）、`scan.rate_max_rps`（默认 5）；`.sitelens.example.yml` 同步。
+
+#### 0.7.3 新增门禁
+
+| 门禁 | 文件 | 作用 |
+|---|---|---|
+| 令牌桶/上限/polite 不夹 | `internal/httpx/ratelimit_test.go` | 跨 Client 共享、目标侧峰值、polite 0/1ms 不被夹、WAF 识别、RTT 退避 |
+| 基线复用等价 | `internal/dast/baseline_reuse_test.go` | 同一请求只发一次 + 复用 vs 不复用 findings 等价 |
+| 流式/blocked/账本 | `internal/engine/efficiency_test.go`、`engine_parallel_test.go` | 页序一致/回调串行/favicon 一次/blocked 不判定/diagnostics additive |
+| crawler hook 等价 | `internal/crawler/pagehook_test.go` | 默认 nil 逐字段等价 + 零额外请求 |
+
+#### 0.7.4 遗留
+
+- 模板/DAST 未并行：共享令牌桶下并行不提高 RPS，却引入 Verified 合并顺序与 `-race`
+  风险，收益为 0，故保持串行。
+- blocked URL 过滤覆盖 checks/nuclei；默认关闭的目录/子域模块内部请求未做 URL 过滤
+  （其响应不进 DAST 判定，影响面小）。
+- 本机无 CGO/gcc，`-race` 需 CI 复核（本轮新增共享令牌桶/流式并发，CI 会跑）。
+- 目录探测/登录爆破沿用各自模块限速节奏，未纳入 host 令牌桶语义变更。
+
 ---
 
 ---

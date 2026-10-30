@@ -83,8 +83,18 @@ func (r *Runner) boolBlind(tgt Target, done *int, total int) *Finding {
 		}
 		return resp
 	}
+	// 基线 GET 属 benign 差分基准：同一 target 的其他通道（Run baseline 等）
+	// 已取过则直接复用，不再重复发同一请求。
+	rbBase := func() *Resp {
+		resp := r.benignGET(tgt.URL)
+		*done++
+		if r.prog != nil {
+			r.prog(*done, total, label)
+		}
+		return resp
+	}
 	// 基线只取一次：三通道共用（通道自身不改变原值语义）
-	base := rb(tgt.URL)
+	base := rbBase()
 	if base == nil || r.stopped() {
 		return nil
 	}
@@ -107,7 +117,7 @@ func (r *Runner) boolBlind(tgt Target, done *int, total int) *Finding {
 			continue
 		}
 		// 双确认：同一组 payload 再跑一轮，两轮都成立才报
-		base2, t2, f2 := rb(tgt.URL), rb(uT), rb(uF)
+		base2, t2, f2 := rbBase(), rb(uT), rb(uF)
 		if base2 == nil || t2 == nil || f2 == nil {
 			continue
 		}

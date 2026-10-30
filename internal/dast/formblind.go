@@ -70,13 +70,23 @@ func (r *Runner) formBoolBlindField(ft FormTarget, field string, done *int, tota
 		}
 		return resp
 	}
+	// 惰性空提交属 benign 基线（与 RunForms 基线同体）：跨字段/跨通道复用一次
+	// 实际请求；payload 提交仍走 post（绝不缓存）。
+	postBase := func() *Resp {
+		resp := r.benignFormPost(ft.Action, base(""))
+		*done++
+		if r.prog != nil {
+			r.prog(*done, total, label)
+		}
+		return resp
+	}
 
 	// 表单字段无已知原值：数字型与引号闭合型各试一遍（原值为 "1"）
 	channels := boolChannels("1")
 	if len(channels) > formBoolChanPerArgs {
 		channels = channels[:formBoolChanPerArgs]
 	}
-	baseResp := post("")
+	baseResp := postBase()
 	if baseResp == nil || r.stopped() {
 		return nil
 	}
@@ -94,7 +104,7 @@ func (r *Runner) formBoolBlindField(ft FormTarget, field string, done *int, tota
 			continue
 		}
 		// 双确认
-		b2, t2, f2 := post(""), post(ch.t), post(ch.f)
+		b2, t2, f2 := postBase(), post(ch.t), post(ch.f)
 		if b2 == nil || t2 == nil || f2 == nil {
 			continue
 		}

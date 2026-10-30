@@ -218,8 +218,8 @@ func (r *Runner) cmdEchoInject(tgt Target, label string, done *int, total int) *
 	if len(probes) > budget {
 		probes = probes[:budget]
 	}
-	// 基线：正常值响应，取正文做差
-	base := probeGet(r, tgt.URL, label, done, total)
+	// 基线：正常值响应，取正文做差（benign 基线，可跨通道复用；payload 不复用）
+	base := probeGetBenign(r, tgt.URL, label, done, total)
 	if base == nil || r.stopped() {
 		return nil
 	}
@@ -452,13 +452,16 @@ func (r *Runner) cmdInject(tgt Target, label string, done *int, total int) *Find
 	if sleep <= 0 {
 		sleep = 4
 	}
-	// 基线计时
-	start := time.Now()
+	// 基线计时（复用 Run 阶段已取过的 benign 基线及其真实 RTT，不重发同一请求）
 	if r.stopped() {
 		return nil
 	}
-	probeGet(r, tgt.URL, label, done, total)
-	baseMS := time.Since(start).Milliseconds()
+	_, baseRTT := r.benignGETTimed(tgt.URL)
+	*done++
+	if r.prog != nil {
+		r.prog(*done, total, label)
+	}
+	baseMS := baseRTT.Milliseconds()
 	if baseMS >= r.opts.BlindThresholdMS {
 		return nil // 基线慢，判不准
 	}
@@ -479,7 +482,7 @@ func (r *Runner) cmdInject(tgt Target, label string, done *int, total int) *Find
 		if len(u) > r.opts.MaxURLLen {
 			continue
 		}
-		start = time.Now()
+		start := time.Now()
 		resp := probeGet(r, u, label, done, total)
 		injMS := time.Since(start).Milliseconds()
 		if resp == nil || injMS < r.opts.BlindThresholdMS {
@@ -513,6 +516,18 @@ func (r *Runner) cmdInject(tgt Target, label string, done *int, total int) *Find
 // probeGet 单次探测请求 + 进度/取消处理（deep.go 内复用）。
 func probeGet(r *Runner, u, label string, done *int, total int) *Resp {
 	resp := r.fetch.GetSmall(u)
+	*done++
+	if r.prog != nil {
+		r.prog(*done, total, label)
+	}
+	return resp
+}
+
+// probeGetBenign 同 probeGet 的进度/取消语义，但请求是 benign 基线：
+// 走 Runner 的基线复用（同一 target 的基线在 Run/deepResidual/cmdEchoInject/
+// boolBlind 等通道间只实际发一次）。仅限「差分基准」类请求。
+func probeGetBenign(r *Runner, u, label string, done *int, total int) *Resp {
+	resp := r.benignGET(u)
 	*done++
 	if r.prog != nil {
 		r.prog(*done, total, label)

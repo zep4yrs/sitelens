@@ -5,6 +5,9 @@
 
 scan:
   rate_interval_ms: 400      # 请求最小间隔（限速）；0/负值 = 用默认 400（不支持 0=不限速）
+  rate_mode: balanced        # 限速档位：balanced=自适应（默认，连续成功才提速、WAF/RTT 变差自动退避，
+                             #   硬上限 5 req/s/主机）；polite=固定 rate_interval_ms（兼容旧行为，最保守）
+  rate_max_rps: 5            # balanced 档硬上限（req/s/主机）；只建议自控靶场调高（越高对目标压力越大）
   timeout_sec: 15            # 单请求超时
   max_hops: 6                # 重定向跳数上限
   max_body_mb: 3             # 正文留存上限

@@ -120,7 +120,9 @@ type ActiveConfig struct {
 
 // ScanConfig HTTP 采集与扫描全局阈值。
 type ScanConfig struct {
-	RateIntervalMS int    `yaml:"rate_interval_ms"` // 请求最小间隔（毫秒）——0/负值回退默认 400，当前实现不支持 0=不限速
+	RateIntervalMS int    `yaml:"rate_interval_ms"` // 请求最小间隔（毫秒）——0/负值回退默认 400；polite 档固定间隔
+	RateMode       string `yaml:"rate_mode"`        // 限速档位：balanced（自适应，默认）/ polite（固定 rate_interval_ms，兼容旧行为）
+	RateMaxRPS     int    `yaml:"rate_max_rps"`     // balanced 档硬上限（req/s/主机，默认 5；越大越快但目标负载越高，仅建议自控靶场调高）
 	TimeoutSec     int    `yaml:"timeout_sec"`      // 单请求超时（秒）
 	MaxHops        int    `yaml:"max_hops"`         // 重定向最大跳数
 	MaxBodyMB      int    `yaml:"max_body_mb"`      // 正文留存上限（MB）
@@ -274,6 +276,8 @@ func Default() *Config {
 	return &Config{
 		Scan: ScanConfig{
 			RateIntervalMS: 400,
+			RateMode:       "balanced",
+			RateMaxRPS:     5,
 			TimeoutSec:     15,
 			MaxHops:        6,
 			MaxBodyMB:      3,
@@ -435,6 +439,13 @@ func LoadOrDefault(path string) *Config {
 func (c *Config) fillDefaults() {
 	d := Default()
 	fillInt(&c.Scan.RateIntervalMS, d.Scan.RateIntervalMS)
+	fillInt(&c.Scan.RateMaxRPS, d.Scan.RateMaxRPS)
+	if c.Scan.RateMode == "" {
+		c.Scan.RateMode = d.Scan.RateMode
+	} else if c.Scan.RateMode != "balanced" && c.Scan.RateMode != "polite" {
+		// 未知档位按最保守处理：宁慢不扰民（polite）
+		c.Scan.RateMode = "polite"
+	}
 	fillInt(&c.Scan.TimeoutSec, d.Scan.TimeoutSec)
 	fillInt(&c.Scan.MaxHops, d.Scan.MaxHops)
 	fillInt(&c.Scan.MaxBodyMB, d.Scan.MaxBodyMB)
