@@ -207,12 +207,16 @@ func (d *diagRecorder) result(start time.Time) *ScanDiagnostics {
 type blockedAwareFetcher struct {
 	c       *httpx.Client
 	blocked *blockedTracker
+	live    *liveTracker
 }
 
 func (f blockedAwareFetcher) FetchBytes(rawURL string) ([]byte, error) {
 	r, err := f.c.GetDirect(rawURL)
 	if r == nil {
 		return nil, err
+	}
+	if f.live != nil {
+		f.live.touch()
 	}
 	if f.blocked != nil && f.blocked.note(r) {
 		return nil, errBlockedResponse

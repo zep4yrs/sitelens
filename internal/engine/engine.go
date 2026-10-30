@@ -64,6 +64,7 @@ type Options struct {
 	AuthCookie    string                  // 授权扫描 Cookie
 	Graph         bool                    // 收集结构化事实图（4.0 P2，默认关；关时与 3.0 行为一致）
 	OnEvent       func(kind, text string) // 实时事件回调（阶段/命中/认证，nil = 不回调）
+	OnLive        func(LiveStats)         // 实时统计回调（请求/页面/拦截/速率，节流 ~250ms，nil = 不回调）
 }
 
 // DefaultOptions 对齐 Python 默认：deep 开、checks 关、其余关。
@@ -161,9 +162,13 @@ func (e *Engine) Scan(rawURL string, opts Options, onProgress progress, cancel f
 	}
 	// 请求账本（client 建好后赋值；finish 时写入 result.Diagnostics）。
 	var diag *diagRecorder
+	var live *liveTracker
 	finish := func() {
 		// 毫秒精度（原 10ms 舍入会把 <5ms 的扫描记成 0.00）
 		res.Duration = float64(int(time.Since(start).Seconds()*1000)) / 1000
+		if live != nil {
+			live.done()
+		}
 		if diag != nil {
 			res.Diagnostics = diag.result(start)
 		}
@@ -223,6 +228,12 @@ func (e *Engine) Scan(rawURL string, opts Options, onProgress progress, cancel f
 	blocked := newBlockedTracker()
 	roCache := newReadOnlyCache()
 	diag = newDiagRecorder(client, blocked, opts.Deep, e.cfg.Scan.RateMode, e.cfg.Scan.RateMaxRPS)
+	// 实时统计：请求数/拦截数取自 client.Stats()，页面数由爬虫钩子累加；
+	// 节流推送给服务端 job（前端实时面板消费），不参与任何判定。
+	live = newLiveTracker(func() httpx.Stats { return client.Stats() }, opts.OnLive)
+	if live != nil {
+		live.setPhase("prepare", "准备")
+	}
 	// 实时事件流：阶段/命中/认证/绕过 统一经此推给 job 事件环
 	emit := func(kind, text string) {
 		if opts.OnEvent != nil {
@@ -250,8 +261,10 @@ func (e *Engine) Scan(rawURL string, opts Options, onProgress progress, cancel f
 
 	// 2) 采集首页（带种子路径/query 时采集该页面本身）
 	dtHome, dsHome := diag.begin()
+	live.setPhase("home", "首页采集")
 	t0 := time.Now()
 	home, ferr := client.GetFollow(seedURL)
+	live.touch()
 	rtMS := time.Since(t0).Milliseconds()
 	if ferr != nil || home == nil {
 		// 底层错误带出（refused/timeout/SSRF 拒绝原因一目了然）
@@ -323,9 +336,10 @@ func (e *Engine) Scan(rawURL string, opts Options, onProgress progress, cancel f
 	if opts.DAST || opts.JSMap {
 		dtJS, dsJS := diag.begin()
 		onProgress(38, "JS 攻击面提取…")
+	live.setPhase("jsmap", "JS 攻击面")
 		var jsFind []jsmap.Finding
 		// jsmap 走拦截隔离 fetcher：WAF 挑战页正文不参与 SourceMap/API 端点提取。
-		jsFind, jsEndpoints = jsmap.Run(blockedAwareFetcher{c: client, blocked: blocked}, baseURL, doc, 4)
+		jsFind, jsEndpoints = jsmap.Run(blockedAwareFetcher{c: client, blocked: blocked, live: live}, baseURL, doc, 4)
 		for _, f := range jsFind {
 			res.Verified = append(res.Verified, verifiedMap(map[string]any{
 				"check": f.Check, "title": f.Title, "severity": f.Severity,
@@ -347,6 +361,7 @@ func (e *Engine) Scan(rawURL string, opts Options, onProgress progress, cancel f
 	if opts.Deep {
 		dtCrawl, dsCrawl := diag.begin()
 		onProgress(40, "同域浅爬取…")
+	live.setPhase("crawl", "同域爬取")
 		cc := e.cfg.Crawler
 		if overBudget() {
 			cc.MaxPages /= 2
@@ -376,6 +391,8 @@ func (e *Engine) Scan(rawURL string, opts Options, onProgress progress, cancel f
 			}
 			roCache.put(p)
 			stream.push(p, nil)
+			live.notePage()
+			live.touch()
 		})
 		cr := c.Crawl(home, seeds)
 		if cr.RobotsAll {
@@ -451,6 +468,7 @@ func (e *Engine) Scan(rawURL string, opts Options, onProgress progress, cancel f
 	dtFP, dsFP := diag.begin()
 	if matcher != nil {
 		onProgress(55, fmt.Sprintf("指纹识别（%d 页）…", len(pages)))
+	live.setPhase("fingerprint", "指纹识别")
 		for _, hits := range stream.fpHits {
 			for _, h := range hits {
 				acc.add(h.Name, h.Website, h.Version, h.Evidence, h.Conf, h.Cats)
@@ -466,6 +484,7 @@ func (e *Engine) Scan(rawURL string, opts Options, onProgress progress, cancel f
 	// 5) 安全响应头评分（逐页 CSP 候选已在流水线 push 时记录）
 	dtSec, dsSec := diag.begin()
 	onProgress(70, "评估安全响应头…")
+	live.setPhase("security", "安全响应头")
 	res.Security = security.Assess(home.Headers)
 	// CSP 是**逐路径**策略：DVWA 只在 `vulnerabilities/csp/` 上设 CSP 头，
 	// 首页没有。只评首页会让「有策略但策略可绕过」整块漏掉——实测漏报。
@@ -532,6 +551,7 @@ func (e *Engine) Scan(rawURL string, opts Options, onProgress progress, cancel f
 		}
 		if len(cmsIDs) > 0 {
 			onProgress(75, "CMS 联动专项 check…")
+	live.setPhase("checks", "专项检测")
 		}
 		// 5.0 深度融合·前置：cve-tech 产品先验 → 相关 check 提权排序 +
 		// 核心档位扩展集增量纳入（只增不删）；中段家族联动在 runner 内由
@@ -589,6 +609,7 @@ func (e *Engine) Scan(rawURL string, opts Options, onProgress progress, cancel f
 	if opts.Checks == "all" && !cancelled() && e.cfg.Checks.NucleiCap > 0 && e.cfg.Checks.NucleiDir != "" {
 		dtNuc, dsNuc := diag.begin()
 		onProgress(84, "运行 Nuclei 社区模板子集…")
+	live.setPhase("nuclei", "模板检测")
 		if overBudget() {
 			// 先解析有效值：未显式指定（0）时降档须作用于配置默认上限，
 			// 否则 0/2=0 会被 nucleiSubset 重置回全量配置上限（降档空操作）
@@ -641,6 +662,7 @@ func (e *Engine) Scan(rawURL string, opts Options, onProgress progress, cancel f
 	if opts.Passive {
 		dtPas, dsPas := diag.begin()
 		onProgress(80, "被动安全检测…")
+	live.setPhase("passive", "被动检测")
 		hygieneChecks := passive.Hygiene()
 		var hygiene []map[string]any
 		for idx := range pages {
@@ -674,6 +696,7 @@ func (e *Engine) Scan(rawURL string, opts Options, onProgress progress, cancel f
 		dtDAST, dsDAST := diag.begin()
 		dedupBefore := roCache.Hits()
 		onProgress(85, "参数级 DAST 探测…")
+	live.setPhase("dast", "参数级 DAST")
 		var dastAll []dast.Finding
 		var dastMaps []map[string]any
 		// SSRF 出带：配置启用且扫描器 beacon 可被目标触达时才生效。
@@ -687,7 +710,7 @@ func (e *Engine) Scan(rawURL string, opts Options, onProgress progress, cancel f
 		errStatusOn := e.cfg.DAST.ErrorStatus
 		// 只读页面复用：cache 里只有首页/种子/爬取页（DAST payload URL 不会命中）；
 		// 被 WAF/限流拦截的响应在 fetcher 层直接按「无响应」处理。
-		df := dastFetcher{c: client, cache: roCache, blocked: blocked}
+		df := dastFetcher{c: client, cache: roCache, blocked: blocked, live: live}
 		r := dast.New(df, dast.Options{
 			MaxParams:         e.cfg.DAST.MaxParams,
 			TimeBlind:         e.cfg.DAST.TimeBlind,
@@ -792,10 +815,11 @@ func (e *Engine) Scan(rawURL string, opts Options, onProgress progress, cancel f
 		// 设置页「利用级验证」控制总闸）；目标合规责任在使用者
 		if opts.Exploit && e.cfg.Exploit.Enabled && len(dastAll) > 0 {
 			onProgress(86, "利用级无害验证…")
+	live.setPhase("exploit", "利用级验证")
 			// exploit 层不复用只读缓存（proven 证据必须来自本次新鲜请求），
 			// 但仍做拦截隔离（WAF 回显 payload 不能算 proven）。
 			proven, observed := e.runExploit(host, dastAll, dastMaps,
-				dastFetcher{c: client, blocked: blocked}, emit)
+				dastFetcher{c: client, blocked: blocked, live: live}, emit)
 			res.Extras["exploit"] = map[string]any{
 				"proven": proven, "observed": observed, "gate": "enabled",
 			}
@@ -837,6 +861,7 @@ func (e *Engine) Scan(rawURL string, opts Options, onProgress progress, cancel f
 		}
 		if opts.Subdomain {
 			onProgress(86, "子域名枚举…")
+	live.setPhase("active", "主动模块")
 			subs := modules.SubdomainEnum(res.Host, ac, nil, cancelled)
 			res.Extras["subdomain"] = subs
 			if opts.Takeover && len(subs) > 0 {
@@ -1459,12 +1484,16 @@ type dastFetcher struct {
 	c       *httpx.Client
 	cache   *readOnlyCache
 	blocked *blockedTracker
+	live    *liveTracker
 }
 
 // wrap 拦截隔离 + 适配：Blocked 响应登记后返回 nil（不参与任何判定）。
 func (d dastFetcher) wrap(r *httpx.Response) *dast.Resp {
 	if r == nil {
 		return nil
+	}
+	if d.live != nil {
+		d.live.touch()
 	}
 	if d.blocked != nil && d.blocked.note(r) {
 		return nil

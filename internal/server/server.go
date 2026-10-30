@@ -635,6 +635,15 @@ func (s *Server) runScanJob(jobID, urlStr string, opts engine.Options) {
 	opts.OnEvent = func(kind, text string) {
 		s.jobs.AppendEvent(jobID, kind, text)
 	}
+	// 实时统计：请求数/页面数/拦截数/瞬时速率（引擎节流 ~250ms 推送）。
+	opts.OnLive = func(st engine.LiveStats) {
+		s.jobs.Update(jobID, func(j *store.Job) {
+			j.Live = &store.LiveStats{
+				Phase: st.Phase, PhaseName: st.PhaseName, Requests: st.Requests,
+				Pages: st.Pages, Blocked: st.Blocked, Rate: st.Rate, ElapsedMS: st.ElapsedMS,
+			}
+		})
+	}
 
 	res := s.eng.Scan(urlStr, opts, func(p int, msg string) {
 		s.jobs.Update(jobID, func(j *store.Job) { j.Progress = p; j.Message = msg })
@@ -677,6 +686,10 @@ func (s *Server) jobOut(w http.ResponseWriter, id string, withResults bool) {
 	out := map[string]any{
 		"job_id": j.ID, "status": j.Status, "progress": j.Progress,
 		"message": j.Message, "done": j.Done, "total": j.Total,
+	}
+	// 扫描实时统计（请求/页面/拦截/速率）——前端实时面板消费，additive。
+	if j.Live != nil {
+		out["live"] = j.Live
 	}
 	// 实时事件流：最多带最近 40 条（前端实时动态面板）
 	if n := len(j.Events); n > 0 {

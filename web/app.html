@@ -207,6 +207,7 @@
 <body>
 <script src="/js/common.js"></script>
 <script src="/js/scan-options.js"></script>
+<script src="/js/scan-live.js"></script>
 
 <div class="tw-app">
   <!-- ============ 左：控制台 ============ -->
@@ -361,6 +362,7 @@
     <div class="tw-canvas">
       <!-- 综合扫描：输出画布（空载留白，引导在左栏） -->
       <section class="tw-canvaspane active" data-pane="scan">
+        <div id="plan" class="plan-card" hidden></div>
         <div id="result"></div>
       </section>
       <!-- 网络层检测：输出 -->
