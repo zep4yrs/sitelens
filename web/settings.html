@@ -243,9 +243,14 @@
         <span class="hint inline">开启后：cve-tech 产品先验实时调度检测项（提权+核心档位增量纳入，只增不删）、扫描收尾输出 AI 预测。关闭即回到 4.0 扫描行为。</span>
       </div>
       <div class="row">
+        <label>线性严重度兜底（sev_linear）</label>
+        <input type="checkbox" id="ml_sev_linear">
+        <span class="hint inline">默认开：NVD/情报行查不到 CVSS 分时，用 0.7MB 线性回归给 sev_score（±1.19 区间呈现，来源徽章「线性模型」）。资产缺失时静默跳过；关闭后无 NVD 分的条目不再给严重度先验。</span>
+      </div>
+      <div class="row">
         <label>严重度模型推理（sev_onnx）</label>
         <input type="checkbox" id="ml_sev_onnx">
-        <span class="hint inline">sev-prior 双种子集成模型直接给出 sev_score（±1.07 区间呈现，来源徽章「模型推理」）。需桌面版（模型与 onnxruntime 已内嵌）；关闭或推理失败自动回退 NVD 先验并在结果中标注。</span>
+        <span class="hint inline">可选高级包：sev-prior 双种子集成模型给出 sev_score（±1.07 区间呈现，来源徽章「模型推理」）。默认安装包不含 ONNX 模型与运行时，此项默认关；仅在装了 ONNX 高级包的机器上打开才生效，关闭或推理失败自动回退线性/NVD。</span>
       </div>
     </div>
 
@@ -848,6 +853,7 @@
     $("respect_robots").checked = !!c.crawler.respect_robots;
     $("exploit_enabled").checked = !!(c.exploit && c.exploit.enabled);
     $("ml_predict").checked = !!(c.ml && c.ml.predict);
+    $("ml_sev_linear").checked = !!(c.ml && c.ml.sev_linear);
     $("ml_sev_onnx").checked = !!(c.ml && c.ml.sev_onnx);
     setv("rate_interval_ms", c.scan.rate_interval_ms);
     setv("scan_timeout", c.scan.timeout_sec);
@@ -869,7 +875,11 @@
       scan: { rate_interval_ms: num("rate_interval_ms"), timeout_sec: num("scan_timeout") },
       checks: { nuclei_cap: num("nuclei_cap") },
       exploit: { enabled: $("exploit_enabled").checked },
-      ml: { predict: $("ml_predict").checked, sev_onnx: $("ml_sev_onnx").checked },
+      ml: {
+        predict: $("ml_predict").checked,
+        sev_linear: $("ml_sev_linear").checked,
+        sev_onnx: $("ml_sev_onnx").checked
+      },
       intel: { overrides_path: getv("overrides_path") }
     }).then(function () {
       b.disabled = false;

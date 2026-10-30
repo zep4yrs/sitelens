@@ -156,3 +156,32 @@ func TestUpsertYAMLTypes(t *testing.T) {
 		t.Fatalf("未纳管键应保留: %d", cfg.Scan.RateIntervalMS)
 	}
 }
+
+// TestMLSevDefaultsAndYAML 5.2 阶段 1：严重度默认后端是查表 + sev-linear
+// （默认开），ONNX 降为可选高级包（默认关）；两个开关都必须能从 yml 覆盖。
+func TestMLSevDefaultsAndYAML(t *testing.T) {
+	c := Default()
+	if !c.ML.SevLinear {
+		t.Fatal("默认 ml.sev_linear 应为 true（阶段 1 默认兜底）")
+	}
+	if c.ML.SevONNX {
+		t.Fatal("默认 ml.sev_onnx 应为 false（可选高级包）")
+	}
+	dir := t.TempDir()
+	p := filepath.Join(dir, "sitelens.yml")
+	yml := "ml:\n  sev_linear: false\n  sev_onnx: true\n"
+	if err := os.WriteFile(p, []byte(yml), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	c2, err := Load(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c2.ML.SevLinear || !c2.ML.SevONNX {
+		t.Fatalf("ml 开关覆盖未生效: sev_linear=%v sev_onnx=%v",
+			c2.ML.SevLinear, c2.ML.SevONNX)
+	}
+	if unknown := unknownTopKeys([]byte(yml)); len(unknown) != 0 {
+		t.Fatalf("sev_linear/sev_onnx 是合法键，不应报未知: %v", unknown)
+	}
+}

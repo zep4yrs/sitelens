@@ -4,7 +4,9 @@
 
 > 主题：**把扫描结果里会误导人的地方修准**。不新增扫描能力；会改变部分历史结论，
 > 升级前请读 [`docs/release-5.2.0/release-body-5.2.0.md`](docs/release-5.2.0/release-body-5.2.0.md)
-> 的「升级前必读」。36 条缺陷修 35 条（BUG-035 包体瘦身为专项，待 int8 精度实测拍板），
+> 的「升级前必读」。36 条缺陷修 35 条（BUG-035 包体瘦身已落**阶段 1**：ONNX 退出默认
+> 分发、严重度改「NVD 查表 + 0.7MB 线性回归」兜底，ML 资产 748.9 → 约 106 MiB；
+> 同轮仓库瘦身：ONNX 资产与 LFS/git 历史已清理，完整 clone 约 1.35 GB → 0.5 GB），
 > 13 条文档漂移对齐，另新发现并修复 4 条同类静默缺陷。完整实测记录见
 > [`docs/bug清单-5.1.0.md`](docs/bug清单-5.1.0.md) §0.5。
 
@@ -35,6 +37,22 @@
 
 ### 交付与体验
 
+- **包体瘦身（阶段 1）**：默认安装包不再带 sev-prior ONNX（643.3 MiB）与
+  onnxruntime.dll（15.7 MiB）；严重度默认「NVD/情报行查表（误差 0）→
+  `ml.sev_linear` 0.7MB 线性回归兜底（留出 MAE 1.180；同一 600 抽样对照 1.079）」，
+  ML 资产 748.9 → 约 106 MiB，引擎载荷实测 173.8 MB。ONNX 降为可选高级包
+  （`SITLENS_BUNDLE_ONNX=1` 出包 + 设置页 `ml.sev_onnx` 开关），旧能力可回退；
+  详见[阶段 1 落地记录](docs/release-5.2.0/阶段1-线性severity与ONNX下线-5.2.0.md)。
+- **ML 数据快照刷新（2026-10-30）**：NVD 字典 372,542 → **398,118 条**（内容到
+  2026-10-30；v3 格式 + 字段精简/去重，37.8 → **30.7 MiB**）；指纹库 +16 条
+  （13,727 → 13,743）；词表文件内去重 1,446 行；OSV 补全 206 条区间/评分；
+  `sev-linear` 按新快照复训（留出 MAE 1.1802 / 夹具 1.0858）。详见
+  [数据快照刷新记录](docs/release-5.2.0/数据快照刷新-2026-10-30.md)。
+- **ML 查表优先（阶段 2）**：`predictions` 的产品/CWE/严重度改为「NVD CPE / NVD
+  weaknesses / CVSS 分 / 情报行字段 → 模型兜底」，查表全覆盖时不加载 94MB 模型；
+  前置先验通道改为「指纹技术名 → 产品映射」确定性路径（不依赖模型资产）；新增
+  `tech_source`/`cwe_source` 来源标注，查表结果的 `tech_top5[].prob` 固定为 1（非概率）。
+  详见[阶段 2 落地记录](docs/release-5.2.0/阶段2-查表优先与指纹先验-5.2.0.md)。
 - **引擎与 CLI 拆成两个二进制**：桌面壳只拉起引擎（`serve` + `update-seed`），
   CLI 独立分发；桌面端启动/退出不再弹控制台窗口（`CREATE_NO_WINDOW`）。
 - **CLI 收口到 TUI 单一入口**；`~/.sitelens/` 统一用户区；全局 flag 放在子命令前后都生效。
@@ -82,22 +100,22 @@
 - **限速层重做**：修掉旧 `wait()` 的 pairing 缺陷（并发调用者齐发 → 实际速率
   N/interval，400ms 配置实际 ≈5 rps）；改为 **per-host 共享令牌桶**（全进程共享、
   容量 1、空闲 5min TTL）。新增 `scan.rate_mode`：`balanced`（默认，400ms 起步 →
-  连续干净成功减半 → 硬下限 200ms ≈ 平均 ≤5 req/s/主机，间隔高于下限才抖动）与
-  `polite`（固定 `rate_interval_ms`，修正后 400ms = 真实 2.5 rps）。RTT 恶化自动
-  退避；429/503/Retry-After/WAF 特征头/挑战页/2xx→403 降级 → `Resp.Blocked` +
-  锁定低速；`Stats()` 暴露请求数/间隔/平均 RPS/blocked/backoffs。
+  连续干净成功减半 → **默认硬下限 125ms ≈ 平均 ≤8 req/s/主机**；代码级绝对上限
+  10 req/s，配置无法突破；间隔高于下限才抖动）与 `polite`（固定 `rate_interval_ms`，
+  修正后 400ms = 真实 2.5 rps）。RTT 恶化自动退避；429/503/Retry-After/WAF 特征头/
+  挑战页/2xx→403 降级 → `Resp.Blocked` + 锁定低速；`Stats()` 暴露请求数/间隔/
+  平均 RPS/blocked/backoffs。
 - **请求去重**：DAST benign 基线跨通道复用（payload 绝不复用；时间差分复用携带
   首次真实 RTT 防误报）、只读页面响应单扫描复用、crawler additive `SetPageHook`
   逐页流式指纹/被动、主页/robots/favicon/种子页去重；WAF 拦截响应不参与任何判定
   （防回显假阳性）。
 - **诊断账本**：`Result.Diagnostics`（JSON `diagnostics`，additive）——总请求/
   blocked/backoffs/WAF 原因/去重命中/平均 RPS/实际间隔/流式标记 + 每阶段明细。
-- **实测**（4 页带表单/带参 + 2 个可命中点，deep+DAST）：旧 799 请求/159.95s →
-  新 balanced **776 请求（-2.88%）/ 156.09s**，findings 逐字节等价；balanced vs
-  polite 墙钟 **↓49.6%**。相对旧实现墙钟仅快 2.4%（旧 pairing 缺陷实际速率恰好
-  ≈5 rps，与 balanced 下限同速）；要更快可调 `scan.rate_max_rps`（默认 5，只建议
-  自控靶场调高）。目标侧平均 ≤5 req/s/主机、并发不增（最大并发 1）、RTT/WAF 信号
-  自动退避；详见 `docs/release-5.2.0/效率轮-5.2.0.md`。
+- **实测**（4 页带表单/带参，deep+DAST）：旧实现 775 请求/155.1s → 新默认
+  **771 请求/98.1s（-36.8%）**，发现结果等价（dast 层复用对照 + 旧/新逐字节等价
+  用例）；保守档 `rate_max_rps: 5` 与旧实现同速（156.09s），polite 400ms 为
+  310.01s。目标侧默认平均 7.9 req/s/主机、峰值 1s=9、并发不增（最大并发 1）、
+  RTT/WAF 信号自动退避；详见 `docs/release-5.2.0/效率轮-5.2.0.md`。
 
 ### 已知限制 / 待拍板
 

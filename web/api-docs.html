@@ -133,9 +133,10 @@
   <div class="sec">
     <div class="sec-title"><span class="method get">GET</span>/api/history/&lt;scan_id&gt;</div>
     <p>完整结果：technologies（含证据与版本）、verified（已验证漏洞）、vulnerabilities（情报三级判定）、
-      security（安全头评分）、extras（可选模块结果）、predictions（5.0 ML 先验预测：
-      每条 CVE 的 tech_top5 产品概率 / cwe_type 弱点类型 / sev_score CVSS 先验，
-      模型不可用或缺描述时该字段缺席）。</p>
+      security（安全头评分）、extras（可选模块结果）、predictions（ML 先验预测，5.2 阶段 2 起查表优先：
+      每条 CVE 的 tech_top5 产品（含 tech_source=nvd/intel/model）、cwe_type（cwe_source=nvd/model）、
+      sev_score + sev_source（nvd/linear/onnx）。查表结果 prob 固定为 1（非概率）；
+      无查表字段且模型不可用或缺描述时对应字段缺席）。</p>
   </div>
 
   <div class="sec">

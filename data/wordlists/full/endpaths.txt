@@ -30,12 +30,8 @@
 ..;
 ..\;
 ./
-/
-//
 0
 1
-?
-??
 ???
 ?WSDL
 ?debug=1
@@ -47,4 +43,3 @@ debug
 false
 null
 true
-~

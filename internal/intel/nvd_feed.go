@@ -21,7 +21,7 @@ import (
 //	sitelens update-nvd feed [起始年] [结束年]
 //
 // 未给年份默认 2002..当前年（NVD 从 2002 起有数据）。产出文件与 API 模式一致，
-// 且**新增 CWEs 字段**（v2 格式）。
+// 且**新增 CWEs 字段**（v2 格式；v3 起 prods 只留 vendor/product）。
 
 // nvdFeedURL 年度 feed 模板（{year} 占位）。测试可注入替换。
 var nvdFeedURL = "https://nvd.nist.gov/feeds/json/cve/2.0/nvdcve-2.0-%d.json.gz"

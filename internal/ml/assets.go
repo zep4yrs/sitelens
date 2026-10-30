@@ -33,13 +33,20 @@ func (m *Model) Classes() []string { return m.classes }
 // Dims 返回 (nClasses, nFeatures)。
 func (m *Model) Dims() (int, int) { return m.nClasses, m.nFeatures }
 
-// Assets 内嵌引擎所需的两个模型。
+// Assets 内嵌引擎所需的模型资产。
 type Assets struct {
 	Tech *Model // cve-tech：CVE 描述 → 受影响产品 Top-5（196 类）
 	Cwe  *Model // cwe-type：CVE 描述 → CWE 弱点类型（25 类）
+	// Sev 可选 sev-linear：CVE 描述 → CVSS 分数回归（0-10）。5.2 阶段 1 起
+	// 为默认严重度后端（NVD 查表优先、查不到用它兜底）；资产缺失时为 nil
+	// （未就绪，不报错），文件存在但损坏时 SevErr 记录原因，仅禁用该后端，
+	// 不影响 cve-tech/cwe-type。
+	Sev    *Model
+	SevErr string
 }
 
-// LoadAssets 从 dir 加载 cve-tech 与 cwe-type 两套模型资产。
+// LoadAssets 从 dir 加载 cve-tech 与 cwe-type 两套必备模型资产，
+// 并尽力加载可选的 sev-linear 严重度回归模型。
 func LoadAssets(dir string) (*Assets, error) {
 	tech, err := LoadModel(dir, "cve-tech")
 	if err != nil {
@@ -49,7 +56,31 @@ func LoadAssets(dir string) (*Assets, error) {
 	if err != nil {
 		return nil, fmt.Errorf("ml: 加载 cwe-type: %w", err)
 	}
-	return &Assets{Tech: tech, Cwe: cwe}, nil
+	sev, sevErr := loadOptionalModel(dir, "sev-linear")
+	return &Assets{Tech: tech, Cwe: cwe, Sev: sev, SevErr: sevErr}, nil
+}
+
+// loadOptionalModel 加载可选模型（5.2 阶段 1：sev-linear）。
+//
+// 两种失败语义与 mlFor 的静默纪律一致：
+//   - 文件不齐（任一缺失）→ (nil, "")：未就绪，不算损坏，后续可补；
+//   - 文件齐全但加载失败/不是单输出回归 → (nil, reason)：损坏，仅禁用
+//     该后端，不置死整个 ML 资产（cve-tech/cwe-type 仍可用）。
+func loadOptionalModel(dir, name string) (*Model, string) {
+	for _, ext := range []string{"meta.json", "vocab.txt", "idf.f32", "coef.f32"} {
+		if _, err := os.Stat(filepath.Join(dir, name+"."+ext)); err != nil {
+			return nil, ""
+		}
+	}
+	m, err := LoadModel(dir, name)
+	if err != nil {
+		return nil, err.Error()
+	}
+	if m.nClasses != 1 {
+		return nil, fmt.Sprintf("ml: %s 是 %d 类分类模型，线性 severity 需要单输出回归（n_classes=1）",
+			name, m.nClasses)
+	}
+	return m, ""
 }
 
 // Predict 一次完成双模型推理：返回产品 Top-5 与 CWE 弱点类型。

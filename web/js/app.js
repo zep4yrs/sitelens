@@ -408,15 +408,20 @@ function renderResult(r, scanId) {
   var gradeCls = (grade === "F" || grade === "D") ? "danger" : (grade === "C" ? "warn" : "ok");
   /* extras 提前取出：摘要区 ml_prior 与 ml_sev 说明都要读（下方通用 extras 循环同用） */
   var ex = r.extras || {};
-  /* AI 产品先验（extras.ml_prior）：摘要区一行——top 产品（概率）→ 提权 N 项、增量纳入 M 项。
-     字段缺席（未配置资产/无有效先验）时整块隐藏，不留空壳。 */
+  /* 产品先验（extras.ml_prior）：摘要区一行——top 产品 → 提权 N 项、增量纳入 M 项。
+     5.2 阶段 2 起优先「指纹技术名 → 产品映射」（source=fingerprint，确定性，
+     不展示概率）；指纹无命中时才回退模型（source=model，展示概率）。
+     字段缺席（无有效先验）时整块隐藏，不留空壳。 */
   var priorCell = "";
   var prior = ex.ml_prior;
   if (prior && prior.products && prior.products.length) {
     var pTop = prior.products[0] || {};
     var pProm = Array.isArray(prior.promoted) ? prior.promoted.length : 0;
-    priorCell = '<div class="cell" style="grid-column:1/-1"><span>AI 产品先验</span><b>' +
-      esc(pTop.product || "-") + "（" + Number(pTop.prob || 0).toFixed(3) + "）→ 提权 " +
+    var fpSource = prior.source === "fingerprint";
+    var pLabel = fpSource ? "产品先验（指纹）" : "AI 产品先验";
+    var pProb = fpSource ? "" : "（" + Number(pTop.prob || 0).toFixed(3) + "）";
+    priorCell = '<div class="cell" style="grid-column:1/-1"><span>' + pLabel + '</span><b>' +
+      esc(pTop.product || "-") + pProb + " → 提权 " +
       esc(String(prior.boosted || 0)) + " 项、增量纳入 " + pProm + " 项</b></div>";
   }
   html += '<div class="summary">' +
@@ -425,13 +430,20 @@ function renderResult(r, scanId) {
     cell("耗时", (r.duration || 0) + " s") +
     '<div class="cell"><span>安全响应头</span><b><span class="badge ' + gradeCls + '">' +
     esc(grade) + " " + (sec.score || 0) + "分</span></b></div>" + priorCell + "</div>";
-  /* ml_sev 非正常态：一行降级说明（sev_score 已回退 NVD CVSS 先验）。
-     正常 active 不占版面；ml_sev 缺席 = sev_onnx 总闸未开，同样不占。 */
+  /* ml_sev 严重度来源摘要（5.2 阶段 1）：按来源分条计数——NVD 查表（权威）、
+     线性模型（兜底）、可选 ONNX（高级包）、无先验。全为 NVD 查表时不占版面；
+     有模型/缺先验时给一行可解释说明。 */
   var mlSev = ex.ml_sev;
-  if (mlSev && mlSev.active === false) {
-    var fbN = Number(mlSev.nvd_fallback || 0);
-    html += '<p class="hint">AI 预测说明：严重度模型未生效（' + esc(String(mlSev.reason || "未知原因")) +
-      "），sev_score 以 NVD CVSS 先验填充" + (fbN > 0 ? "（" + fbN + " 条）" : "") + "。</p>";
+  if (mlSev) {
+    var sevParts = [];
+    if (mlSev.nvd > 0) sevParts.push("NVD 查表 " + mlSev.nvd + " 条");
+    if (mlSev.linear > 0) sevParts.push("线性模型 " + mlSev.linear + " 条");
+    if (mlSev.onnx > 0) sevParts.push("ONNX " + mlSev.onnx + " 条");
+    if (mlSev.none > 0) sevParts.push("无先验 " + mlSev.none + " 条");
+    var sevNote = mlSev.reason ? "（" + mlSev.reason + "）" : "";
+    // 全为 NVD 查表（权威数据）时不占版面；有模型兜底/无先验时才提示。
+    if (sevParts.length && (mlSev.linear > 0 || mlSev.onnx > 0 || mlSev.none > 0))
+      html += '<p class="hint">AI 预测说明：严重度来源 ' + sevParts.join(" · ") + sevNote + "。</p>";
   }
 
   var techs = r.technologies || [];
@@ -524,10 +536,13 @@ function renderResult(r, scanId) {
     html += '<p class="muted" style="font-size:13px">未命中已知漏洞情报。</p>';
   }
 
-  /* AI 预测（Result.Predictions，5.0 L3）：逐 CVE 模型先验——受影响产品 Top-3、
-     CWE 弱点类型、严重度区间（sev_score ± 1.07，替代硬档位）、来源徽章
-     （onnx = 模型推理用强调色；nvd = NVD 先验回退用灰）。先验参考，
-     不参与扫描判定；无预测时整块不渲染。 */
+  /* AI 预测（Result.Predictions，5.0 L3；5.2 阶段 1/2 起查表优先）：
+     逐 CVE 先验——受影响产品 Top-3、CWE 弱点类型、严重度区间与来源徽章：
+       - sev_source：nvd 查表（分数精确）/linear（±1.19）/onnx（可选高级包，±1.07）
+       - tech_source：nvd（NVD CPE）/intel（情报行 product）/model（cve-tech 模型）
+       - cwe_source：nvd（NVD weaknesses）/model（cwe-type 模型）
+     查表结果的 prob 固定为 1（非概率），故仅 model 来源显示概率。
+     先验参考，不参与扫描判定；无预测时整块不渲染。 */
   var preds = r.predictions || [];
   if (preds.length) {
     html += '<div class="sec-title">AI 预测 <span class="count">' + preds.length +
@@ -535,23 +550,39 @@ function renderResult(r, scanId) {
     html += '<div class="tbl-wrap"><table class="vulns"><tr><th>CVE</th><th>受影响产品 Top 3</th><th>弱点类型</th><th>严重度区间</th><th>来源</th></tr>';
     preds.slice(0, 40).forEach(function (p) {
       var tp = p.tech_top5 || [];
+      var techSrc = p.tech_source || "";
       var t3 = tp.length
         ? tp.slice(0, 3).map(function (t) {
-            return esc(t.product) + " " + Number(t.prob || 0).toFixed(3);
+            var s = esc(t.product);
+            // 查表结果不是概率（prob=1），只有模型推理才展示概率。
+            return techSrc === "model" ? s + " " + Number(t.prob || 0).toFixed(3) : s;
           }).join(" · ")
         : "-";
       var sevTxt = "-";
+      var src = p.sev_source || "";
       if (p.sev_score > 0) {
-        var lo = Math.max(0, p.sev_score - 1.07), hi = Math.min(10, p.sev_score + 1.07);
-        sevTxt = Number(p.sev_score).toFixed(1) + " ± 1.07（" + lo.toFixed(1) + " – " + hi.toFixed(1) + "）";
+        if (src === "nvd") {
+          sevTxt = Number(p.sev_score).toFixed(1) + "（NVD CVSS）";
+        } else {
+          var band = src === "linear" ? 1.19 : 1.07;
+          var lo = Math.max(0, p.sev_score - band), hi = Math.min(10, p.sev_score + band);
+          sevTxt = Number(p.sev_score).toFixed(1) + " ± " + band.toFixed(2) +
+            "（" + lo.toFixed(1) + " – " + hi.toFixed(1) + "）";
+        }
       }
-      var src = p.sev_source === "onnx"
+      var badges = [];
+      badges.push(src === "onnx"
         ? '<span class="badge acc">模型推理</span>'
-        : '<span class="badge">NVD 先验</span>';
+        : (src === "linear" ? '<span class="badge">线性模型</span>'
+          : (src === "nvd" ? '<span class="badge">NVD 查表</span>'
+            : '<span class="badge">无先验</span>')));
+      if (techSrc === "nvd") badges.push('<span class="badge">产品查表</span>');
+      if (techSrc === "intel") badges.push('<span class="badge">产品情报</span>');
+      if (p.cwe_source === "nvd") badges.push('<span class="badge">CWE 查表</span>');
       html += '<tr><td class="mono">' + esc(p.cve) + "</td>" +
         '<td class="mono" style="font-size:12.5px">' + t3 + "</td>" +
         '<td class="mono">' + esc(p.cwe_type || "-") + "</td>" +
-        "<td>" + sevTxt + "</td><td>" + src + "</td></tr>";
+        "<td>" + sevTxt + "</td><td>" + badges.join(" ") + "</td></tr>";
     });
     html += "</table></div>";
     if (preds.length > 40)

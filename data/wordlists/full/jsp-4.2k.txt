@@ -4156,12 +4156,9 @@ zzajt/zzajt.jsp
 1/sx/login.jsp
 2/sjtj/login.jsp
 admin/fxx.jsp
-admin/index.jsp
-admin/login.jsp
 admin/protected/index.jsp
 adminroot/common/downLoadFile.jsp
 admin/select.jsp
-admin/upload.jsp
 a/pwn.jsp
 business/notifyView.jsp
 ca/ma3.jsp
@@ -4173,7 +4170,6 @@ commfront/tzzx/uploadImageFiledo.jsp
 console/login/LoginForm.jsp
 content/topicdeal.jsp
 coremail/index.jsp
-defaultroot/login.jsp
 df/index.jsp
 download/download.jsp
 edoas2/oa.jsp
@@ -4190,7 +4186,6 @@ jmxroot/jmxroot.jsp
 kingdee/login/loginpage2.jsp
 kingdee/login/loginpage.jsp
 live800/downlog.jsp
-login/login.jsp
 login/Login.jsp
 manage/content/docmanage/download.jsp
 myname/index.jsp

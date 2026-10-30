@@ -264,7 +264,6 @@ admin.html
 admin.jsp
 admin.php
 Admin.php
-admin.php
 admin.phpx
 admin/%23m_x%23data.php
 admin/01.php
@@ -290,7 +289,6 @@ admin/admin_add.php
 admin/admin_addnews.php
 admin/admin_admin.php
 Admin/Admin_Admin.php
-admin/admin_admin.php
 admin/admin_ads.php
 admin/admin_allnews.php
 admin/admin_aspcheck.php
@@ -319,9 +317,6 @@ admin/admin_h.php
 admin/admin_head.php
 Admin/Admin_Index.php
 admin/admin_index.php
-Admin/Admin_Index.php
-admin/admin_index.php
-Admin/Admin_Index.php
 admin/Admin_indexx.php
 admin/admin_iplock.php
 admin/admin_league.php
@@ -533,7 +528,6 @@ admin/htmedit/db/ewebeditor.php
 admin/HTML/admin_login.php
 admin/htmledit/admin_login.php
 admin/htmledit/Admin_Login.php
-admin/htmledit/admin_login.php
 admin/htmledit/Example/test.php
 admin/htmleditor/admin_login.php
 admin/htmleditor/ewebeditor.php
@@ -568,7 +562,6 @@ admin/login
 admin/login.html
 admin/login.php
 admin/Login.php
-admin/login.php
 admin/login1.php
 admin/login83.php
 admin/logina.php
@@ -672,7 +665,6 @@ admin/SouthidcEditor/PopUp.php
 admin/southidceditor/popup.php
 admin/Southidceditor/upload.php
 admin/SouthidcEditor/Upload.php
-admin/Southidceditor/upload.php
 admin/sql.php
 admin/sql_test.php
 admin/sub_upload.php
@@ -693,7 +685,6 @@ admin/txt.php
 admin/unloadimg.php
 admin/up.php
 admin/Up.php
-admin/up.php
 admin/up/upfile.php
 admin/up/upfile_ok.php
 admin/Up_BookPic.php
@@ -753,7 +744,6 @@ admin/Upload_Dialog.php
 admin/upload_flash.php
 admin/Upload_Image.php
 admin/upload_image.php
-admin/Upload_Image.php
 admin/upload_inc.php
 admin/Upload_Pic.php
 admin/Upload_Product.php
@@ -811,7 +801,6 @@ admin/webedit/admin_login.php
 Admin/WebEdit/Upload.php
 admin/WebEditor/admin_login.php
 admin/webeditor/admin_login.php
-admin/WebEditor/admin_login.php
 admin/WebEditor/db/ewebeditor.mdb
 admin/webeditor/Upfile_Article.php
 admin/webmaster.php
@@ -847,7 +836,6 @@ Admin_Bak
 admin_bak.php
 Admin_BatchLink.php
 admin_batchlink.php
-Admin_BatchLink.php
 Admin_BlogData.php
 admin_body.asa
 admin_body.php
@@ -935,7 +923,6 @@ admin_soft.phpx
 Admin_SoftCateMenu.php
 Admin_SoftInfo.php
 admin_softinfo.php
-Admin_SoftInfo.php
 Admin_SoftLink.php
 Admin_SoftList.php
 Admin_sql.php
@@ -950,8 +937,6 @@ admin_upfile.php
 admin_upfile.php	
 admin_upload.php
 admin_uploadF.php
-admin_uploadfile.php
-Admin_UploadFile.php
 admin_uploadfile.php
 Admin_UploadFile.php
 Admin_UploadFile_Style.php
@@ -1339,7 +1324,6 @@ config
 config.inc
 config.php
 Config.php
-config.php
 config.php.bak
 configs.php
 configuration
@@ -1617,7 +1601,6 @@ diy.php
 DIY2.php
 diy3.php
 DIY3.php
-diy3.php
 dl
 dl.php
 dm.php
@@ -1669,7 +1652,6 @@ edit/admin_conn.php
 Edit/Admin_Del.php
 edit/admin_login.php
 Edit/admin_login.php
-edit/admin_login.php
 edit/Admin_login.php
 edit/admin_style.php
 edit/db/%23ewebeditor.php
@@ -1687,7 +1669,6 @@ editor.php
 editor/add.php
 editor/admin_login.php
 Editor/admin_login.php
-editor/admin_login.php
 editor/admin_login.php?
 Editor/admin_style.php
 editor/db/ewebeditor.mdb
@@ -1727,7 +1708,6 @@ ESYSManager/Confie/Conn.php
 event
 eWeb/admin_login.php
 eweb/admin_login.php
-eWeb/admin_login.php
 eWeb/db/ewebeditor.mdb
 ewebedit/db/ewebeditor.mdb
 ewebedit/ewebeditor.php
@@ -2104,7 +2084,6 @@ index
 index.html
 index.php
 Index.php
-index.php
 index.php.bak
 index_admin
 index_admin.php
@@ -2136,7 +2115,6 @@ InSide
 inside.php
 install.php
 Install.php
-install.php
 install/install.php
 intraAdmin/admin.php
 intraAdmin/imagemanager.php
@@ -2214,7 +2192,6 @@ login.html
 login.jsp
 login.php
 Login.php
-login.php
 login.phpx
 Login/Admin
 login/admin.php
@@ -2345,7 +2322,6 @@ manage/WebEditor/admin_login.php
 manage/WebEditor/db/ewebeditor.mdb
 Manage_backup.php
 manage_backup.php
-Manage_backup.php
 Manage_backup.php?action=Backup
 manage_index
 manage_index.php
@@ -2466,7 +2442,6 @@ NBA_lanqiu/index.php
 NBArticle.php
 Neeao.php
 neeao.php
-Neeao.php
 neeao.txt
 neeao_admin.php
 Neeao_sql_admin.php
@@ -2771,7 +2746,6 @@ ShowHost.php
 showimg.php
 ShowNews.php
 shownews.php
-ShowNews.php
 ShowOnline.php
 ShowPost.php
 ShowReTopic.php
@@ -2989,7 +2963,6 @@ Upfile_AdPic.php
 Upfile_Articla.php
 Upfile_Article.php
 upfile_article.php
-Upfile_Article.php
 Upfile_Dialog.php
 upfile_Dialog.php
 upfile_flash.php
@@ -3003,8 +2976,6 @@ Upfile_Pic.php
 Upfile_pics.php
 Upfile_Product.php
 Upfile_ProductPic.php
-upfile_soft.php
-Upfile_Soft.php
 upfile_soft.php
 Upfile_Soft.php
 upfile_soft.php	
@@ -3087,7 +3058,6 @@ UploadImage3_upload.php
 uploadphoto.php
 uploadPic.php
 uploadpic.php
-uploadPic.php
 UploadProductPic.php
 uploads/include/dialog/select_soft_post.php
 uploadsave.php
@@ -3139,8 +3109,6 @@ useradmin.php
 userDefault.php?
 usergroup_0.php
 UserJoin.php
-UserList.php
-userlist.php
 UserList.php
 userlist.php
 UserLogin.php

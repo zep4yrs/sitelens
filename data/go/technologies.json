@@ -1,6 +1,6 @@
 {
  "version": 1,
- "count": 13727,
+ "count": 13743,
  "technologies": [
   {
    "name": "11ty (Eleventy)",
@@ -191824,6 +191824,262 @@
     "icon_hash": [
      1380907357
     ]
+   }
+  },
+  {
+   "name": "AvantisVideo",
+   "cats": [
+    "advertising"
+   ],
+   "conf": 70,
+   "website": "https://www.avantisvideo.com",
+   "rules": {
+    "scripts": {
+     "src": [
+      "//cdn\\.avantisvideo\\.com"
+     ]
+    }
+   }
+  },
+  {
+   "name": "ArtsAI",
+   "cats": [
+    "advertising"
+   ],
+   "conf": 70,
+   "website": "https://artsai.com",
+   "rules": {
+    "html": {
+     "html": [
+      "arttrk\\.com/pixel"
+     ]
+    }
+   }
+  },
+  {
+   "name": "Cloudbac",
+   "cats": [
+    "cms",
+    "page-builders"
+   ],
+   "conf": 70,
+   "website": "https://www.cloudbac.com",
+   "rules": {
+    "headers": {
+     "x-powered-by": [
+      "^Cloudbac$"
+     ]
+    },
+    "meta": {
+     "generator": "^Cloudbac$"
+    }
+   }
+  },
+  {
+   "name": "Encharge",
+   "cats": [
+    "marketing-automation",
+    "email"
+   ],
+   "conf": 70,
+   "website": "https://encharge.io",
+   "rules": {
+    "cookies": [
+     "encheventsnippet"
+    ]
+   }
+  },
+  {
+   "name": "Flexmail",
+   "cats": [
+    "email",
+    "marketing-automation"
+   ],
+   "conf": 70,
+   "website": "https://flexmail.be",
+   "rules": {
+    "headers": {
+     "content-security-policy": [
+      "(?:^|[^a-z])flexmail\\.eu"
+     ]
+    }
+   }
+  },
+  {
+   "name": "Flyads",
+   "cats": [
+    "advertising"
+   ],
+   "conf": 70,
+   "website": "https://displayfly.com",
+   "rules": {
+    "cookies": [
+     "flyid"
+    ]
+   }
+  },
+  {
+   "name": "Hackle",
+   "cats": [
+    "a-b-testing",
+    "feature-management",
+    "analytics",
+    "marketing-automation",
+    "crm"
+   ],
+   "conf": 70,
+   "website": "https://hackle.io",
+   "rules": {
+    "html": {
+     "html": [
+      "HACKLE_SDK_KEY"
+     ]
+    }
+   }
+  },
+  {
+   "name": "Orbit Commerce",
+   "cats": [
+    "ecommerce"
+   ],
+   "conf": 70,
+   "website": "https://orbitcommerce.net",
+   "rules": {
+    "headers": {
+     "x-powered-by": [
+      "^Orbit Commerce$"
+     ]
+    },
+    "meta": {
+     "generator": "^Orbit Commerce$"
+    }
+   }
+  },
+  {
+   "name": "Peer39",
+   "cats": [
+    "advertising"
+   ],
+   "conf": 70,
+   "website": "https://www.peer39.com",
+   "rules": {
+    "html": {
+     "html": [
+      "tags\\.peer39\\.com"
+     ]
+    }
+   }
+  },
+  {
+   "name": "ShopWise",
+   "cats": [
+    "ecommerce"
+   ],
+   "conf": 70,
+   "website": "https://shopwise.now",
+   "rules": {
+    "headers": {
+     "x-powered-by": [
+      "ShopWise"
+     ]
+    },
+    "meta": {
+     "generator": "ShopWise"
+    }
+   }
+  },
+  {
+   "name": "SociableKIT",
+   "cats": [
+    "widgets"
+   ],
+   "conf": 70,
+   "website": "https://www.sociablekit.com/",
+   "rules": {
+    "html": {
+     "html": [
+      "\u003ciframe[^\u003e]*src=[^\u003e]*widgets\\.sociablekit\\.com",
+      "\u003cimg[^\u003e]*src=[^\u003e]*images\\.sociablekit\\.com"
+     ]
+    }
+   }
+  },
+  {
+   "name": "SmartFrame",
+   "cats": [
+    "digital-asset-management"
+   ],
+   "conf": 70,
+   "website": "https://smartframe.io",
+   "rules": {
+    "html": {
+     "html": [
+      "\u003clink rel=\"dns-prefetch\" href=\"//static\\.smartframe\\.io\""
+     ]
+    }
+   }
+  },
+  {
+   "name": "streaMonkey",
+   "cats": [
+    "livestreaming"
+   ],
+   "conf": 70,
+   "website": "https://streamonkey.de",
+   "rules": {
+    "html": {
+     "html": [
+      "\\.streamonkey\\.net/"
+     ]
+    }
+   }
+  },
+  {
+   "name": "Sonares",
+   "cats": [
+    "widgets"
+   ],
+   "conf": 70,
+   "website": "https://sonares.org/",
+   "rules": {
+    "html": {
+     "html": [
+      "\u003ciframe [^\u003e]*src=[^\u003e]*content\\.sonares\\.org/[^\"/]+"
+     ]
+    }
+   }
+  },
+  {
+   "name": "YouDraw",
+   "cats": [
+    "ecommerce"
+   ],
+   "conf": 70,
+   "website": "https://youdraw.com.br",
+   "rules": {
+    "headers": {
+     "x-generator": [
+      "^YouDraw"
+     ]
+    },
+    "meta": {
+     "generator": "^YouDraw"
+    }
+   }
+  },
+  {
+   "name": "Zoomd",
+   "cats": [
+    "advertising"
+   ],
+   "conf": 70,
+   "website": "https://zoomd.com",
+   "rules": {
+    "scripts": {
+     "src": [
+      "sphereup\\.com/zoomd"
+     ]
+    }
    }
   }
  ]

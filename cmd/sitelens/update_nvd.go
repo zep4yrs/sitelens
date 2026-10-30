@@ -5,7 +5,7 @@
 //	update-nvd              API 2.0 逐页拉取（无 key 限速，全库约数小时，可后台跑）
 //	update-nvd feed [起] [止] 年度批量 feed（CDN 分发，按年打包，快得多；推荐）
 //
-// 两种模式的产出文件格式一致（含 P5 新增的 cwes 字段，版本 v2）。
+// 两种模式的产出文件格式一致（含 P5 新增的 cwes 字段；v3 起 prods 只留 vendor/product）。
 package main
 
 import (

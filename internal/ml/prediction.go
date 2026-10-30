@@ -28,17 +28,28 @@ type TechPred struct {
 }
 
 // Prediction 一条 CVE 的 ML 推理结果（先验参考，不参与扫描判定）。
-// SevScore 量级为 CVSS 0-10：sev-prior ONNX 启用时为模型推理分
-// （SevSource=onnx），否则以 NVD CVSS 先验填充（SevSource=nvd）。
-// 无先验（NVD 缺该 CVE）时为 0，omitempty 不输出。
+// 5.2 阶段 2 起各字段都带来源标注（查表优先、模型兜底）：
+//   - TechSource：nvd = NVD CPE 查表；intel = 情报行自带 product；
+//     model = cve-tech 线性模型推理；空 = 无先验/旧记录。
+//   - CWESource：nvd = NVD weaknesses（或 finding 回填 CWEs）查表；
+//     model = cwe-type 线性模型；空 = 无先验/旧记录。
+//   - SevSource：nvd = 查表；linear = sev-linear 回归；onnx = 可选高级包；
+//     空 = 无先验/旧记录。
+//
+// 查表结果的 Prob 固定为 1（不是概率），消费方以 TechSource 区分语义；
+// 无先验时对应字段为 0/空并由 omitempty 省略。
 type Prediction struct {
 	CVE      string     `json:"cve"`
 	TechTop5 []TechPred `json:"tech_top5"`
 	CWEType  string     `json:"cwe_type,omitempty"`
 	SevScore float64    `json:"sev_score,omitempty"`
-	// SevSource 分数来源：onnx = sev-prior 模型推理；nvd = NVD CVSS 先验
-	// 回退。空 = 旧记录（阶段 A 无此字段）。
+	// SevSource 分数来源：nvd = 查表；linear = 线性回归兜底；
+	// onnx = sev-prior 模型推理。空 = 无先验/旧记录（阶段 A 无此字段）。
 	SevSource string `json:"sev_source,omitempty"`
+	// TechSource 产品 Top-5 来源（nvd/intel/model，空 = 无先验/旧记录）。
+	TechSource string `json:"tech_source,omitempty"`
+	// CWESource 弱点类型来源（nvd/model，空 = 无先验/旧记录）。
+	CWESource string `json:"cwe_source,omitempty"`
 }
 
 // sigmoid 逐类逻辑斯蒂：p = 1/(1+e^-s)。

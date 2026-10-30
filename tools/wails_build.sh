@@ -5,7 +5,7 @@
 #   dist/wails/SiteLens/
 #     sitelens.exe            ← Wails 壳（安装器里就叫 sitelens.exe）
 #     engine/sitelens-engine.exe ← 引擎二进制（5.2 起与 CLI 拆开）
-#     engine/data/...         ← 只读资产（NVD/情报/指纹/字典/ML 资产/onnxruntime.dll）
+#     engine/data/...         ← 只读资产（NVD/情报/指纹/字典/ML 线性模型；默认不含 ONNX/onnxruntime）
 #
 # 5.2 交付边界：**CLI 不随桌面安装包发布**。CLI（scan/audit/update-* 等）
 # 是独立二进制，走 npm 线分发；桌面包只带引擎（serve + update-seed）。
@@ -50,8 +50,7 @@ cp "$ROOT/installer/notice.txt" "$STAGE_ROOT/installer/notice.txt"
   CGO_ENABLED=0 GOOS=windows GOARCH=amd64 \
   go build -ldflags "-s -w -H windowsgui" -o "$SHELL_OUT/sitelens.exe" . )
 
-# 2) 引擎：复用 desktop/build-engine.js 的构建与硬闸（PE 校验 / ML 资产硬闸 /
-#    onnxruntime.dll 装箱），保证两条壳共用同一份引擎产物契约。
+# 2) 引擎：复用 desktop/build-engine.js 的构建与硬闸（PE 校验 / ML 资产硬闸 / 默认不含 ONNX；高级包 SITLENS_BUNDLE_ONNX=1 才装箱 onnxruntime.dll），保证两条壳共用同一份引擎产物契约。
 #    产物落 desktop/engine/，再拷进 staging 的 engine/。
 #    5.2 起 --target=engine：构建 cmd/sitelens-engine（serve + update-seed），
 #    产物名 sitelens-engine.exe；**CLI（cmd/sitelens）不进桌面安装包**。
@@ -94,3 +93,4 @@ fi
 
 echo "== 完成：$OUT =="
 du -sh "$OUT" 2>/dev/null || true
+

@@ -23,12 +23,19 @@
 //   - 两者皆无 → 回退 CGO_ENABLED=0 纯 Go 构建（AST 自动降级，不报错），
 //     并在日志中**明确告警**（不静默丢失能力）。
 //
-// 方案 Aa（5.0 桌面全量内嵌）：CGO 构建带 `-tags onnx`（sev-prior v3.1
-// ONNX 推理），ML 资产（models/go/ml_assets → 装箱为 data/go/ml_assets）与
-// onnxruntime.dll 随包进
-// engine/data；桌面壳默认配置 ml.sev_onnx: true。纯 Go 回退构建**不带**
-// onnx 标签（yalue/onnxruntime_go 依赖 cgo，CGO_ENABLED=0 编不过），
-// 该形态 sev_onnx 自动回退 NVD 先验。
+// 方案 Aa（5.0 桌面全量内嵌）→ 5.2 阶段 1 起改为「默认不带 ONNX」：
+//   - 默认：CGO 构建（含白盒 AST，若工具链可用）但**不加 -tags onnx**，
+//     ML 资产只装 cve-tech/cwe-type/sev-linear 线性模型（约 105MB），
+//     不装 sev-prior*.onnx 与 onnxruntime.dll；严重度默认走
+//     「NVD/情报行查表 → sev-linear 线性回归兜底」（见 internal/engine/ml.go）。
+//   - 可选高级包：SITLENS_BUNDLE_ONNX=1 恢复旧形态（-tags onnx +
+//     onnxruntime.dll + 双种子 fp32 ONNX），需 CGO 工具链；桌面设置页
+//     把 ml.sev_onnx 打开即启用（默认关）。
+//   纯 Go 回退构建不带 onnx 标签（yalue/onnxruntime_go 依赖 cgo，
+//   CGO_ENABLED=0 编不过）——该形态下 sev_onnx 配置不生效，自动回退线性/NVD。
+//   仓库瘦身（5.2）：ONNX 资产与 onnxruntime.dll 已不再入库（默认分发不带）；
+//   要出可选高级包，先把它们手动放入 models/go/ml_assets/ 与 models/onnxruntime/
+//   （见 docs/release-5.2.0/仓库瘦身-5.2.0.md），否则本脚本的 ONNX 硬闸会拦下。
 const { execFileSync } = require('child_process');
 const fs = require('fs');
 const path = require('path');
@@ -36,6 +43,9 @@ const path = require('path');
 const ROOT = path.join(__dirname, '..');
 const OUT = path.join(__dirname, 'engine');
 const LDFLAGS = '-s -w';
+// 可选高级包开关：1 = 带 ONNX（-tags onnx + onnxruntime.dll + sev-prior 模型）。
+const BUNDLE_ONNX = process.env.SITLENS_BUNDLE_ONNX === '1';
+const BUILD_TAGS = BUNDLE_ONNX ? ['-tags', 'onnx'] : [];
 
 // --target=cli|engine：构建哪个入口、产出什么文件名。
 // 默认 cli —— npm 线（tui/scripts/build-engines.mjs 另建）与旧 Electron 线
@@ -67,7 +77,7 @@ function hasCmd(name) {
 // buildCGO 尝试「带 CGO（含 AST）」构建；成功返回 true。
 // 策略见文件头注释。
 function buildCGO() {
-  const buildArgs = ['build', '-tags', 'onnx', '-ldflags', LDFLAGS, '-o', EXE, MAIN_PKG];
+  const buildArgs = ['build', ...BUILD_TAGS, '-ldflags', LDFLAGS, '-o', EXE, MAIN_PKG];
   // (a) 本机可原生 CGO（Windows 有 gcc）：直接构建。
   if (process.platform === 'win32' && hasCmd('gcc')) {
     try {
@@ -77,7 +87,8 @@ function buildCGO() {
           GOOS: 'windows', GOARCH: 'amd64', CGO_ENABLED: '1'
         })
       });
-      console.log('[engine] CGO 构建成功（本机 gcc）——含白盒 AST + sev ONNX');
+      console.log('[engine] CGO 构建成功（本机 gcc）——含白盒 AST' +
+        (BUNDLE_ONNX ? ' + sev ONNX' : '（默认不带 ONNX）'));
       return true;
     } catch (e) {
       console.warn('[engine] 本机 CGO 构建失败，尝试 WSL 交叉编译：' + e.message);
@@ -95,7 +106,8 @@ function buildCGO() {
           CC: 'x86_64-w64-mingw32-gcc'
         })
       });
-      console.log('[engine] CGO 构建成功（' + process.platform + ' + mingw 交叉编译）——含白盒 AST + sev ONNX');
+      console.log('[engine] CGO 构建成功（' + process.platform + ' + mingw 交叉编译）——含白盒 AST' +
+        (BUNDLE_ONNX ? ' + sev ONNX' : '（默认不带 ONNX）'));
       return true;
     } catch (e) {
       console.warn('[engine] mingw 交叉编译失败，尝试 WSL：' + e.message);
@@ -107,7 +119,8 @@ function buildCGO() {
     'cd "$(wslpath -u ' + JSON.stringify(ROOT) + ')" 2>/dev/null || cd ' + JSON.stringify(toWSLPath(ROOT)),
     'GOTOOLCHAIN=local CGO_ENABLED=1 GOOS=windows GOARCH=amd64 ' +
       'CC=x86_64-w64-mingw32-gcc GOFLAGS=-mod=vendor ' +
-      'go build -tags onnx -ldflags ' + JSON.stringify(LDFLAGS) + ' -o ' + JSON.stringify(toWSLPath(EXE)) + ' ' + MAIN_PKG
+      'go build ' + (BUNDLE_ONNX ? '-tags onnx ' : '') + '-ldflags ' +
+      JSON.stringify(LDFLAGS) + ' -o ' + JSON.stringify(toWSLPath(EXE)) + ' ' + MAIN_PKG
   ].join(' && ');
   try {
     execFileSync('wsl.exe', ['-d', process.env.SITLENS_WSL_DISTRO || 'archlinux',
@@ -134,10 +147,14 @@ fs.mkdirSync(path.join(OUT, 'data'), { recursive: true });
 
 // 1) 引擎单二进制：优先带 CGO（含 AST），失败回退纯 Go（AST 降级并告警）。
 if (!buildCGO()) {
+  if (BUNDLE_ONNX) {
+    throw new Error('SITLENS_BUNDLE_ONNX=1 需要 CGO 工具链（本机 gcc 或 WSL+mingw）：' +
+      'ONNX 高级包依赖 onnxruntime_go（cgo），纯 Go 构建无法包含 ONNX 推理。');
+  }
   console.warn('[engine] ⚠ 未找到 C 工具链（本机 gcc 或 WSL+mingw）：' +
     '回退纯 Go 构建，桌面版**源码审计将降级为规则级（无 AST 数据流）**。' +
     '如需完整白盒能力，请安装 mingw-w64 或 WSL 交叉工具链后重跑。');
-  execFileSync('go', ['build', '-ldflags', LDFLAGS, '-o', EXE, MAIN_PKG], {
+  execFileSync('go', ['build', ...BUILD_TAGS, '-ldflags', LDFLAGS, '-o', EXE, MAIN_PKG], {
     cwd: ROOT,
     stdio: 'inherit',
     env: Object.assign({}, process.env, {
@@ -184,7 +201,7 @@ cp('data/tpl_intel.json.gz', 'data/tpl_intel.json.gz');
 cpOptional('data/nvd_cves.json.gz', 'data/nvd_cves.json.gz');
 cp('README.md', 'README.md');
 
-// 2.5) ML 资产与 ONNX Runtime（方案 Aa：桌面全量内嵌，sev_onnx 桌面默认开）。
+// 2.5) ML 资产（5.2 阶段 1：默认不带 ONNX）。
 //      资产源位置：模型自「模型进仓库本体」（2026-09-29）迁移到 models/go/ml_assets/
 //      （data/ 下只剩指纹库，且 data/ 被 .gitignore 忽略——干净 clone 里没有）。
 //      本脚本曾硬编码读 data/go/ml_assets，迁移后未跟改：**5.0.0 之后的干净仓库
@@ -195,13 +212,15 @@ cp('README.md', 'README.md');
 //      默认 ml.assets_dir=data/go/ml_assets 恰好命中（包内布局保持不变，不改
 //      引擎默认路径）。
 //
-//      硬闸而非静默跳过：方案 Aa 承诺「带 onnx 标签 + 模型随包」，资产缺失出
-//      残包只会把降级藏到用户机器上（引擎静默回退 NVD 先验），必须在打包现场拦下。
-//      onnxruntime.dll 不在 ml_assets 内，须显式装箱：引擎按 ml.onnxrt_dll
-//      （桌面默认 data/onnxruntime/onnxruntime.dll，相对引擎 cwd）加载共享库，
-//      缺库等同 sev_onnx 永远不生效。
-// v3.1 部署形态 = 双种子 fp32 对（a/b，各约 268MB，引擎双 session 取平均）；
-// 兼容旧单文件资产布局（sev-prior-v3.1.onnx）。
+//      默认随包（约 105MB）：cve-tech / cwe-type 线性模型 + sev-linear 线性
+//      严重度回归（约 0.7MB）+ 词表/夹具。**不装** sev-prior*.onnx（643MB）
+//      与 onnxruntime.dll（16MB）——严重度默认走「NVD/情报行查表 →
+//      sev-linear 兜底」，精度代价实测 MAE +0.11 分（1.19 vs 1.08）。
+//      硬闸：线性资产缺失一律拦下（残包会把降级藏到用户机器上）。
+//
+//      可选高级包：SITLENS_BUNDLE_ONNX=1 时恢复旧契约——-tags onnx 构建 +
+//      双种子 fp32 ONNX（a/b，各约 268MB，引擎双 session 取平均）+ 
+//      onnxruntime.dll 随包；用户需在设置页把 ml.sev_onnx 打开（默认关）。
 function pickMLAssetsDir() {
   for (const rel of ['models/go/ml_assets', 'data/go/ml_assets']) {
     const d = path.join(ROOT, rel);
@@ -216,44 +235,68 @@ function pickMLAssetsDir() {
 const ML_SRC = pickMLAssetsDir();
 if (!ML_SRC) {
   throw new Error('ML 资产缺失：models/go/ml_assets 与 data/go/ml_assets 均无全套' +
-    '模型资产（cve-tech/cwe-type 的 meta+coef）。方案 Aa 要求桌面版全量内嵌 ML 资产，' +
-    '请先补齐 models/go/ml_assets（克隆即得；LFS 大文件需 git lfs pull）。');
+    '模型资产（cve-tech/cwe-type 的 meta+coef）。桌面包要求线性模型资产随包，' +
+    '请先补齐 models/go/ml_assets（线性模型随仓库分发，克隆即得）。');
 }
 const STAGED_SEV_DIR = path.join(OUT, 'data', 'go', 'ml_assets');
+
+// 5.2 阶段 1 必备：sev-linear 线性严重度回归四件（训练脚本 ml/train_sev_linear.py）。
+const SEV_LINEAR_FILES = ['meta.json', 'vocab.txt', 'idf.f32', 'coef.f32']
+  .map((ext) => 'sev-linear.' + ext);
+const missLinear = SEV_LINEAR_FILES.filter((f) => !fs.existsSync(path.join(ML_SRC, f)));
+if (missLinear.length) {
+  throw new Error('ML 资产缺失：' + ML_SRC + ' 缺 sev-linear 线性严重度资产（' +
+    missLinear.join(', ') + '）。5.2 阶段 1 默认严重度后端是 NVD 查表 + sev-linear 兜底；' +
+    '请先运行 python ml/train_sev_linear.py 生成（约 0.7MB，CPU 一分钟内）。');
+}
+
+// 可选：ONNX 高级包硬闸（只在 SITLENS_BUNDLE_ONNX=1 时检查与装箱）。
+// 5.2 仓库瘦身起 ONNX 资产不再入库：出高级包前需手动放入
+// models/go/ml_assets/（见 docs/release-5.2.0/仓库瘦身-5.2.0.md）。
 const SEV_PAIR = ['sev-prior-v3.1-a.onnx', 'sev-prior-v3.1-b.onnx']
   .map((f) => path.join(ML_SRC, f));
 const SEV_SINGLE = path.join(ML_SRC, 'sev-prior-v3.1.onnx');
-const sevOk = SEV_PAIR.every((f) => fs.existsSync(f))
-  || fs.existsSync(SEV_SINGLE);
-if (!sevOk) {
-  throw new Error('ML 资产缺失：' + ML_SRC + ' 缺 sev-prior 双种子对' +
-    '（sev-prior-v3.1-a/b.onnx）或旧单文件 sev-prior-v3.1.onnx。' +
-    '方案 Aa 要求桌面版全量内嵌 ML 资产（sev-prior v3.1 / 线性模型 / 词表 / fixtures）。');
-}
-const sevBig = SEV_PAIR.filter(fs.existsSync);
-for (const f of (sevBig.length ? sevBig : [SEV_SINGLE])) {
-  if (fs.statSync(f).size < 200 * 1024 * 1024) {
-    throw new Error('ML 资产残缺：' + f + ' 小于 200MB（fp32 模型应约 268MB），疑似截断。'
-      + 'LFS 指针文件（几百字节）也会命中此闸——先 git lfs pull 再出包。');
+if (BUNDLE_ONNX) {
+  const sevOk = SEV_PAIR.every((f) => fs.existsSync(f)) || fs.existsSync(SEV_SINGLE);
+  if (!sevOk) {
+    throw new Error('SITLENS_BUNDLE_ONNX=1 但 ML 资产缺 sev-prior 双种子对' +
+      '（sev-prior-v3.1-a/b.onnx）或旧单文件 sev-prior-v3.1.onnx。' +
+      '这些资产自 5.2 仓库瘦身起不再入库，需手动放入 models/go/ml_assets/。');
+  }
+  const sevBig = SEV_PAIR.filter(fs.existsSync);
+  for (const f of (sevBig.length ? sevBig : [SEV_SINGLE])) {
+    if (fs.statSync(f).size < 200 * 1024 * 1024) {
+      throw new Error('ML 资产残缺：' + f + ' 小于 200MB（fp32 模型应约 268MB），疑似截断。'
+        + '请确认是从备份/高级包渠道完整拷入 models/go/ml_assets/ 的。');
+    }
   }
 }
-// 资产整目录进箱到 staging 的 data/go/ml_assets（保持包内布局与引擎默认路径一致）。
+// 资产进箱：默认过滤 sev-prior*.onnx（ONNX 高级包才随包）。
 fs.mkdirSync(path.dirname(STAGED_SEV_DIR), { recursive: true });
-fs.cpSync(ML_SRC, STAGED_SEV_DIR, { recursive: true });
-console.log('[engine] ML 资产已装箱：' + ML_SRC + ' → data/go/ml_assets');
+fs.cpSync(ML_SRC, STAGED_SEV_DIR, {
+  recursive: true,
+  // 默认包把 ONNX 专用文件全部剔掉（模型/词表/ONNX 夹具）；高级包原样装箱。
+  filter: (src) => BUNDLE_ONNX || !/sev-prior[^\\/]*$/i.test(src)
+});
+console.log('[engine] ML 资产已装箱：' + ML_SRC + ' → data/go/ml_assets' +
+  (BUNDLE_ONNX ? '（含 ONNX 模型）' : '（不含 ONNX 模型，5.2 默认）'));
 
-// onnxruntime.dll 源位置同样双候选（models/ 随仓库分发，data/ 兼容旧布局）。
-const ORT_DLL_SRC = ['models/onnxruntime/onnxruntime.dll',
-  'data/onnxruntime/onnxruntime.dll']
-  .map((r) => path.join(ROOT, r))
-  .find((p) => fs.existsSync(p));
-if (!ORT_DLL_SRC) {
-  throw new Error('缺少 onnxruntime.dll（models/onnxruntime/ 与 data/onnxruntime/ 均无）：'
-    + 'sev_onnx 运行时库未就位，缺库等同该通道永不生效。');
+// onnxruntime.dll 仅在 ONNX 高级包中随包（默认不装）。
+if (BUNDLE_ONNX) {
+  const ORT_DLL_SRC = ['models/onnxruntime/onnxruntime.dll',
+    'data/onnxruntime/onnxruntime.dll']
+    .map((r) => path.join(ROOT, r))
+    .find((p) => fs.existsSync(p));
+  if (!ORT_DLL_SRC) {
+    throw new Error('SITLENS_BUNDLE_ONNX=1 但缺少 onnxruntime.dll（models/onnxruntime/ 与 ' +
+      'data/onnxruntime/ 均无）：ONNX 高级包需要该共享库。');
+  }
+  fs.mkdirSync(path.join(OUT, 'data', 'onnxruntime'), { recursive: true });
+  fs.copyFileSync(ORT_DLL_SRC, path.join(OUT, 'data', 'onnxruntime', 'onnxruntime.dll'));
+  console.log('[engine] onnxruntime.dll 已装箱：' + ORT_DLL_SRC);
+} else {
+  console.log('[engine] 跳过 onnxruntime.dll（默认包不带 ONNX；高级包用 SITLENS_BUNDLE_ONNX=1）');
 }
-fs.mkdirSync(path.join(OUT, 'data', 'onnxruntime'), { recursive: true });
-fs.copyFileSync(ORT_DLL_SRC, path.join(OUT, 'data', 'onnxruntime', 'onnxruntime.dll'));
-console.log('[engine] onnxruntime.dll 已装箱：' + ORT_DLL_SRC);
 
 // 3) 体量报告
 let files = 0;

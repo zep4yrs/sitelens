@@ -82,8 +82,8 @@ func TestScanDiagnosticsAdditive(t *testing.T) {
 	if d.Requests <= 0 || d.AvgRPS <= 0 || d.DurationMS <= 0 {
 		t.Fatalf("账本总量异常: %+v", d)
 	}
-	if d.RateMode != "balanced" || d.MaxRPS != 5 {
-		t.Fatalf("rate 配置应回传默认 balanced/5: %+v", d)
+	if d.RateMode != "balanced" || d.MaxRPS != 8 {
+		t.Fatalf("rate 配置应回传默认 balanced/8: %+v", d)
 	}
 	need := map[string]bool{"home": false, "crawl": false, "security": false, "dast": false}
 	for _, p := range d.Phases {

@@ -90,8 +90,9 @@ type settingsConfig struct {
 		MaxURLs int `json:"max_urls"`
 	} `json:"batch"`
 	ML struct {
-		Predict bool `json:"predict"`  // AI 总闸：先验调度 + 预测富化
-		SevONNX bool `json:"sev_onnx"` // 严重度模型推理（需 onnx 构建）
+		Predict   bool `json:"predict"`    // AI 总闸：先验调度 + 预测富化
+		SevLinear bool `json:"sev_linear"` // 线性严重度兜底（NVD 查表优先，5.2 默认开）
+		SevONNX   bool `json:"sev_onnx"`   // ONNX 严重度（需可选高级包构建）
 	} `json:"ml"`
 }
 
@@ -112,6 +113,7 @@ func (s *Server) settingsCfg() settingsConfig {
 	v.Intel.OverridesPath = s.cfg.Intel.OverridesPath
 	v.Batch.MaxURLs = s.cfg.Batch.MaxURLs
 	v.ML.Predict = s.cfg.ML.Predict
+	v.ML.SevLinear = s.cfg.ML.SevLinear
 	v.ML.SevONNX = s.cfg.ML.SevONNX
 	return v
 }
@@ -153,6 +155,7 @@ func (s *Server) applySettings(v settingsConfig) {
 		s.eng.InvalidateMLSev()
 	}
 	s.cfg.ML.Predict = v.ML.Predict
+	s.cfg.ML.SevLinear = v.ML.SevLinear
 	s.cfg.ML.SevONNX = v.ML.SevONNX
 }
 
@@ -181,7 +184,7 @@ func (s *Server) persistSettings(v settingsConfig) error {
 		"exploit": {"enabled": v.Exploit.Enabled},
 		"intel":   {"overrides_path": v.Intel.OverridesPath},
 		"batch":   {"max_urls": v.Batch.MaxURLs},
-		"ml":      {"predict": v.ML.Predict, "sev_onnx": v.ML.SevONNX},
+		"ml":      {"predict": v.ML.Predict, "sev_linear": v.ML.SevLinear, "sev_onnx": v.ML.SevONNX},
 	}
 	if v.Web.APIToken != "" {
 		updates["web"]["api_token"] = v.Web.APIToken

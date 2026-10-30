@@ -58,8 +58,11 @@ type FeedbackConfig struct {
 type MLConfig struct {
 	Predict   bool   `yaml:"predict"`    // ML 总闸：前置产品先验调度 + 收尾预测富化（默认开）
 	AssetsDir string `yaml:"assets_dir"` // 模型资产目录（缺失/损坏静默跳过预测）
-	// SevONNX sev-prior v3.1 严重度模型推理开关（默认关）：需 -tags onnx
-	// 构建与 onnxruntime 共享库；关闭或失败回退 NVD CVSS 先验（§10.8）
+	// SevLinear sev-linear 线性严重度回归开关（5.2 阶段 1，默认开）：
+	// NVD/情报行查不到 CVSS 分时用 0.7MB 线性模型兜底（留出 MAE 1.180）。
+	SevLinear bool `yaml:"sev_linear"`
+	// SevONNX sev-prior v3.1 严重度模型推理开关（默认关，可选高级包）：
+	// 需 -tags onnx 构建与 onnxruntime 共享库；关闭或失败回退线性/NVD（§10.8）
 	SevONNX   bool   `yaml:"sev_onnx"`
 	OnnxrtDLL string `yaml:"onnxrt_dll"` // 共享库路径（空 = data/onnxruntime/onnxruntime.dll）
 }
@@ -122,7 +125,7 @@ type ActiveConfig struct {
 type ScanConfig struct {
 	RateIntervalMS int    `yaml:"rate_interval_ms"` // 请求最小间隔（毫秒）——0/负值回退默认 400；polite 档固定间隔
 	RateMode       string `yaml:"rate_mode"`        // 限速档位：balanced（自适应，默认）/ polite（固定 rate_interval_ms，兼容旧行为）
-	RateMaxRPS     int    `yaml:"rate_max_rps"`     // balanced 档硬上限（req/s/主机，默认 5；越大越快但目标负载越高，仅建议自控靶场调高）
+	RateMaxRPS     int    `yaml:"rate_max_rps"`     // balanced 档硬上限（req/s/主机，默认 8≈125ms；调低更保守，调高最多 10）
 	TimeoutSec     int    `yaml:"timeout_sec"`      // 单请求超时（秒）
 	MaxHops        int    `yaml:"max_hops"`         // 重定向最大跳数
 	MaxBodyMB      int    `yaml:"max_body_mb"`      // 正文留存上限（MB）
@@ -277,7 +280,7 @@ func Default() *Config {
 		Scan: ScanConfig{
 			RateIntervalMS: 400,
 			RateMode:       "balanced",
-			RateMaxRPS:     5,
+			RateMaxRPS:     8,
 			TimeoutSec:     15,
 			MaxHops:        6,
 			MaxBodyMB:      3,
@@ -362,7 +365,8 @@ func Default() *Config {
 		ML: MLConfig{
 			Predict:   true, // 默认开：预测是附加产物，失败静默跳过
 			AssetsDir: "data/go/ml_assets",
-			SevONNX:   false, // 默认关：ONNX 构建属桌面安装器形态（§10.8）
+			SevLinear: true,  // 默认开：0.7MB 线性严重度兜底（NVD 查表优先）
+			SevONNX:   false, // 默认关：ONNX 构建属可选高级包（§10.8）
 		},
 		Feedback: FeedbackConfig{
 			// 默认不提交：产品承诺「不采集用户数据」，提交目标由用户自建。
