@@ -33,6 +33,9 @@
 //     把 ml.sev_onnx 打开即启用（默认关）。
 //   纯 Go 回退构建不带 onnx 标签（yalue/onnxruntime_go 依赖 cgo，
 //   CGO_ENABLED=0 编不过）——该形态下 sev_onnx 配置不生效，自动回退线性/NVD。
+//   仓库瘦身（5.2）：ONNX 资产与 onnxruntime.dll 已不再入库（默认分发不带）；
+//   要出可选高级包，先把它们手动放入 models/go/ml_assets/ 与 models/onnxruntime/
+//   （见 docs/release-5.2.0/仓库瘦身-5.2.0.md），否则本脚本的 ONNX 硬闸会拦下。
 const { execFileSync } = require('child_process');
 const fs = require('fs');
 const path = require('path');
@@ -233,7 +236,7 @@ const ML_SRC = pickMLAssetsDir();
 if (!ML_SRC) {
   throw new Error('ML 资产缺失：models/go/ml_assets 与 data/go/ml_assets 均无全套' +
     '模型资产（cve-tech/cwe-type 的 meta+coef）。桌面包要求线性模型资产随包，' +
-    '请先补齐 models/go/ml_assets（克隆即得；LFS 大文件需 git lfs pull）。');
+    '请先补齐 models/go/ml_assets（线性模型随仓库分发，克隆即得）。');
 }
 const STAGED_SEV_DIR = path.join(OUT, 'data', 'go', 'ml_assets');
 
@@ -248,6 +251,8 @@ if (missLinear.length) {
 }
 
 // 可选：ONNX 高级包硬闸（只在 SITLENS_BUNDLE_ONNX=1 时检查与装箱）。
+// 5.2 仓库瘦身起 ONNX 资产不再入库：出高级包前需手动放入
+// models/go/ml_assets/（见 docs/release-5.2.0/仓库瘦身-5.2.0.md）。
 const SEV_PAIR = ['sev-prior-v3.1-a.onnx', 'sev-prior-v3.1-b.onnx']
   .map((f) => path.join(ML_SRC, f));
 const SEV_SINGLE = path.join(ML_SRC, 'sev-prior-v3.1.onnx');
@@ -255,13 +260,14 @@ if (BUNDLE_ONNX) {
   const sevOk = SEV_PAIR.every((f) => fs.existsSync(f)) || fs.existsSync(SEV_SINGLE);
   if (!sevOk) {
     throw new Error('SITLENS_BUNDLE_ONNX=1 但 ML 资产缺 sev-prior 双种子对' +
-      '（sev-prior-v3.1-a/b.onnx）或旧单文件 sev-prior-v3.1.onnx。');
+      '（sev-prior-v3.1-a/b.onnx）或旧单文件 sev-prior-v3.1.onnx。' +
+      '这些资产自 5.2 仓库瘦身起不再入库，需手动放入 models/go/ml_assets/。');
   }
   const sevBig = SEV_PAIR.filter(fs.existsSync);
   for (const f of (sevBig.length ? sevBig : [SEV_SINGLE])) {
     if (fs.statSync(f).size < 200 * 1024 * 1024) {
       throw new Error('ML 资产残缺：' + f + ' 小于 200MB（fp32 模型应约 268MB），疑似截断。'
-        + 'LFS 指针文件（几百字节）也会命中此闸——先 git lfs pull 再出包。');
+        + '请确认是从备份/高级包渠道完整拷入 models/go/ml_assets/ 的。');
     }
   }
 }

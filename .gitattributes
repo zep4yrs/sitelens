@@ -3,6 +3,6 @@
 # Go 文件都标红，开发者会误判自己改坏了格式。
 * text=auto eol=lf
 
-# 大型模型资产走 LFS（既有规则，保持在最后以覆盖上面的默认属性）。
-models/go/ml_assets/sev-prior-v3.1-a.onnx filter=lfs diff=lfs merge=lfs -text
-models/go/ml_assets/sev-prior-v3.1-b.onnx filter=lfs diff=lfs merge=lfs -text
+# 5.2 仓库瘦身：ONNX 资产（sev-prior-v3.1-a/b.onnx 等）与 onnxruntime.dll
+# 已移出仓库（分发默认不带，高级包需手动放入 models/），LFS 规则一并移除。
+# 详见 docs/release-5.2.0/仓库瘦身-5.2.0.md。

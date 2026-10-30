@@ -87,8 +87,9 @@ sev_linear（默认开）        → SevSource="linear"（0.7MB 线性回归）
 - 高级包：`SITLENS_BUNDLE_ONNX=1 node build-engine.js --target=engine` 恢复旧契约
   （-tags onnx + ONNX 资产 + dll），用户在设置页打开 `sev_onnx` 后生效。
 - 桌面壳种子配置（`desktop/engine.js`）：`sev_linear: true, sev_onnx: false`。
-- `onnxruntime.dll` / `sev-prior*.onnx` 仍留在仓库（模型进仓库本体，克隆即得）；
-  **仓库体积清理（LFS 瘦身）是后续独立动作**，本阶段只改变分发。
+- **仓库瘦身已落地（5.2，独立动作）**：`onnxruntime.dll` / `sev-prior*.onnx` 已从
+  仓库与 git 历史中移除（含 LFS 对象），完整 clone 从约 1.35 GB 降到约 0.5 GB；
+  高级包出包前需手动把资产放入 `models/`，见[仓库瘦身-5.2.0](仓库瘦身-5.2.0.md)。
 
 ---
 
@@ -113,7 +114,7 @@ sev_linear（默认开）        → SevSource="linear"（0.7MB 线性回归）
 
 ## 6. 明确未做 / 后续
 
-- ❌ 未删除仓库内 ONNX/LFS 资产（分发已不带；仓库瘦身另立任务，需 LFS 历史处理）。
+- ✅ 仓库内 ONNX/LFS 资产已删除（5.2 仓库瘦身，含 git 历史重写），见[仓库瘦身-5.2.0](仓库瘦身-5.2.0.md)。
 - ❌ 未改 cve-tech/cwe-type 能力本身（阶段 2：查表优先 + 词典前置/线性兜底，见 A/B 报告）。
 - ❌ 未扩 500 条夹具（阶段 1 用 120 条 Go 门禁 + 2 万留出评测；扩样列入 5.3）。
 - ❌ 未跑真实安装包构建与 LZMA 体积回填（本机无打包依赖，脚本逻辑已按 dry 检查）。
