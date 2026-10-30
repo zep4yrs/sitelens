@@ -44,6 +44,9 @@ type PageInfo struct {
 // Predictions（5.0 L3 阶段 A）：扫描收尾对发现中 CVE 的 ML 先验预测
 // （受影响产品 Top-5 + CWE 弱点类型）。纯增量：预测失败/资产缺失时
 // 字段缺席，其余键位与既有版本逐字节一致。
+//
+// Diagnostics（5.2 效率轮 E2）：additive 请求账本——每阶段请求数/耗时/
+// 去重命中/blocked/RPS。只增键，不改任何既有键语义；旧消费者可忽略。
 type Result struct {
 	URL             string            `json:"url"`
 	Host            string            `json:"host"`
@@ -63,6 +66,37 @@ type Result struct {
 	Extras          map[string]any    `json:"extras"`
 	Pages           []PageInfo        `json:"pages"`
 	Graph           *model.ScanGraph  `json:"graph,omitempty"`
+	Diagnostics     *ScanDiagnostics  `json:"diagnostics,omitempty"`
+}
+
+// PhaseDiagnostics 单个扫描阶段的请求账本。
+//
+// Requests/Blocked 来自 httpx.Client.Stats() 的阶段前后差值；DedupHits 为
+// 本阶段内「被复用而未实际发出的请求」数（DAST benign 基线复用 + 引擎只读
+// GET 复用）；AvgRPS = Requests / 阶段墙钟秒（无请求时为 0）。
+type PhaseDiagnostics struct {
+	Phase      string  `json:"phase"`
+	Requests   int64   `json:"requests"`
+	Blocked    int64   `json:"blocked"`
+	DedupHits  int64   `json:"dedup_hits"`
+	DurationMS int64   `json:"duration_ms"`
+	AvgRPS     float64 `json:"avg_rps"`
+}
+
+// ScanDiagnostics 整次扫描的请求账本（additive 诊断输出）。
+type ScanDiagnostics struct {
+	Phases        []PhaseDiagnostics `json:"phases"`
+	Requests      int64              `json:"requests"`
+	Blocked       int64              `json:"blocked"`
+	Backoffs      int64              `json:"backoffs"`
+	WAFReasons    map[string]int64   `json:"waf_reasons,omitempty"`
+	DedupHits     int64              `json:"dedup_hits"`
+	DurationMS    int64              `json:"duration_ms"`
+	AvgRPS        float64            `json:"avg_rps"`
+	RateMode      string             `json:"rate_mode"`
+	MaxRPS        int                `json:"max_rps"`
+	EffectiveMS   int64              `json:"effective_interval_ms"` // 收尾时实际生效的限速间隔
+	StreamingUsed bool               `json:"streaming_used"`
 }
 
 // techAcc 技术聚合器：同名合并、证据累加、每次独立命中置信 +5（上限 100）。

@@ -159,9 +159,14 @@ func (e *Engine) Scan(rawURL string, opts Options, onProgress progress, cancel f
 		Pages:           []PageInfo{},
 		Extras:          map[string]any{},
 	}
+	// 请求账本（client 建好后赋值；finish 时写入 result.Diagnostics）。
+	var diag *diagRecorder
 	finish := func() {
 		// 毫秒精度（原 10ms 舍入会把 <5ms 的扫描记成 0.00）
 		res.Duration = float64(int(time.Since(start).Seconds()*1000)) / 1000
+		if diag != nil {
+			res.Diagnostics = diag.result(start)
+		}
 	}
 
 	// 4.0 P2：结构化事实收集器（仅在 opts.Graph 时创建，默认不影响 3.0 行为）
@@ -211,6 +216,13 @@ func (e *Engine) Scan(rawURL string, opts Options, onProgress progress, cancel f
 
 	client := e.newClient(opts)
 	authDone := false
+	// 效率轮 E2：请求账本 / 只读 GET 复用 / WAF 拦截隔离。
+	// diag：阶段级请求数/耗时/去重命中/blocked（additive 诊断输出）。
+	// roCache：单次扫描内复用的只读页面响应（首页/种子/爬取页；DAST payload
+	// URL 不会命中，也不会写入）。blocked：拦截响应不进任何判定。
+	blocked := newBlockedTracker()
+	roCache := newReadOnlyCache()
+	diag = newDiagRecorder(client, blocked, opts.Deep, e.cfg.Scan.RateMode, e.cfg.Scan.RateMaxRPS)
 	// 实时事件流：阶段/命中/认证/绕过 统一经此推给 job 事件环
 	emit := func(kind, text string) {
 		if opts.OnEvent != nil {
@@ -221,6 +233,7 @@ func (e *Engine) Scan(rawURL string, opts Options, onProgress progress, cancel f
 	// 认证深化：配置了登录流则以凭证登录，捕获的会话 Cookie 供
 	// 整次扫描（爬虫/DAST/目录探测）复用；用户显式给的 Cookie 优先
 	if e.cfg.Auth.LoginURL != "" && opts.AuthCookie == "" {
+		dt, ds := diag.begin()
 		onProgress(8, "认证登录…")
 		emit("auth", "登录中："+e.cfg.Auth.LoginURL)
 		if cookie, ok, msg := authn.Login(client, e.cfg.Auth); ok {
@@ -232,9 +245,11 @@ func (e *Engine) Scan(rawURL string, opts Options, onProgress progress, cancel f
 			onProgress(9, "认证未确认："+msg)
 			emit("auth", "登录未确认："+msg)
 		}
+		diag.end("auth", dt, ds, 0)
 	}
 
 	// 2) 采集首页（带种子路径/query 时采集该页面本身）
+	dtHome, dsHome := diag.begin()
 	t0 := time.Now()
 	home, ferr := client.GetFollow(seedURL)
 	rtMS := time.Since(t0).Milliseconds()
@@ -244,15 +259,27 @@ func (e *Engine) Scan(rawURL string, opts Options, onProgress progress, cancel f
 		if ferr != nil {
 			res.Error += "（" + ferr.Error() + "）"
 		}
+		diag.end("home", dtHome, dsHome, 0)
+		finish()
+		return res
+	}
+	// 被 WAF/限流拦截的首页：不参与任何判定，直接终止并给出可读原因
+	// （挑战页/429 的正文不是目标站真实内容，往下扫只会产生假阳性/假阴性）。
+	if blocked.note(home) {
+		res.Error = "目标被 WAF/限流拦截（" + home.BlockReason + "），响应不参与判定"
+		diag.end("home", dtHome, dsHome, 0)
 		finish()
 		return res
 	}
 	if home.Status >= 400 {
 		res.Error = fmt.Sprintf("目标返回 HTTP %d", home.Status)
+		diag.end("home", dtHome, dsHome, 0)
 		finish()
 		return res
 	}
 	onProgress(25, fmt.Sprintf("已采集首页（%d）", home.Status))
+	roCache.put(home) // 首页/种子页响应供后续只读复用（DAST benign 基线）
+	diag.end("home", dtHome, dsHome, 0)
 
 	res.IP = lookupIP(host)
 	doc := htmlx.Parse(home.Body)
@@ -264,6 +291,16 @@ func (e *Engine) Scan(rawURL string, opts Options, onProgress progress, cancel f
 	// 数据快照：本次扫描全程使用同一份 matcher/kb（热替换不影响进行中的扫描）
 	matcher, kb := e.snapshot()
 
+	// 效率轮 E2：逐页流式分析。每页一被抓到就启动该页指纹匹配/被动检查，
+	// 与限速等待窗口重叠，不等全站爬完。favicon 指纹整站只取一次（提前到
+	// 流水线启动前，保证 worker 拿到同一份 hash）。
+	favHash := int64(0)
+	if matcher != nil {
+		favHash = sitelens.FaviconHashOf(client, baseURL)
+	}
+	stream := newPageStream(matcher, favHash, opts.Passive, e.cfg.Checks.Workers)
+	stream.push(home, doc) // 首页先入流水线（不重复抓取）
+
 	acc := newTechAcc()
 	dastLinks := []string{}               // 爬取阶段收集的带参链接（DAST 探测点）
 	allLinks := []string{}                // 爬取阶段收集的全部同域链接（目录探测端点扩展用）
@@ -271,7 +308,6 @@ func (e *Engine) Scan(rawURL string, opts Options, onProgress progress, cancel f
 	apiCandidates := []string{}           // API 风格页面 URL（未授权/IDOR 探测点）
 	var dastFormTargets []dast.FormTarget // 爬取阶段收集的表单（DAST 表单探测点）
 	var loginForms []loginFormEntry       // 含密码框的表单页（弱口令审计入口）
-	pages := []crawlPage{{resp: home, doc: doc}}
 
 	// 首页表单/链接即刻采集（任何档位都做）：首页就是 DVWA 登录页与
 	// SQLi/XSS 模块入口，deep=false 时不采集则整站攻击面不可见。
@@ -285,9 +321,11 @@ func (e *Engine) Scan(rawURL string, opts Options, onProgress progress, cancel f
 	// 3) 同域浅爬取（DAST 或 JS 端点开启时 jsmap 前置：API 端点回灌爬虫种子）
 	var jsEndpoints []jsmap.Endpoint
 	if opts.DAST || opts.JSMap {
+		dtJS, dsJS := diag.begin()
 		onProgress(38, "JS 攻击面提取…")
 		var jsFind []jsmap.Finding
-		jsFind, jsEndpoints = jsmap.Run(jsmap.NewFetcher(client), baseURL, doc, 4)
+		// jsmap 走拦截隔离 fetcher：WAF 挑战页正文不参与 SourceMap/API 端点提取。
+		jsFind, jsEndpoints = jsmap.Run(blockedAwareFetcher{c: client, blocked: blocked}, baseURL, doc, 4)
 		for _, f := range jsFind {
 			res.Verified = append(res.Verified, verifiedMap(map[string]any{
 				"check": f.Check, "title": f.Title, "severity": f.Severity,
@@ -304,8 +342,10 @@ func (e *Engine) Scan(rawURL string, opts Options, onProgress progress, cancel f
 		if col != nil {
 			col.captureEntryPoints(nil, nil, jsEndpoints)
 		}
+		diag.end("jsmap", dtJS, dsJS, 0)
 	}
 	if opts.Deep {
+		dtCrawl, dsCrawl := diag.begin()
 		onProgress(40, "同域浅爬取…")
 		cc := e.cfg.Crawler
 		if overBudget() {
@@ -322,29 +362,26 @@ func (e *Engine) Scan(rawURL string, opts Options, onProgress progress, cancel f
 				seeds = append(seeds, ep.Endpoint)
 			}
 		}
+		// 逐页流式：爬取过程中每拿到一页立即启动该页指纹/被动分析；被 WAF/
+		// 限流拦截的页面不进分析集（不参与任何判定），只登记以便命中过滤。
+		c.SetPageHook(func(p *httpx.Response) {
+			if p == nil || p == home { // 首页已在爬取前入流水线
+				return
+			}
+			if normalizeKey(p.FinalURL) == normalizeKey(home.FinalURL) {
+				return // 重定向回首页等重复页
+			}
+			if blocked.note(p) {
+				return
+			}
+			roCache.put(p)
+			stream.push(p, nil)
+		})
 		cr := c.Crawl(home, seeds)
 		if cr.RobotsAll {
 			// robots 封禁整站（Disallow: /）：爬取已塌缩到入口页。显式提示，
 			// 避免「扫出个空站却毫无线索」。需要覆盖时设 crawler.respect_robots=false。
 			onProgress(41, "robots.txt 封禁整站（Disallow: /），爬取仅入口页；如需完整爬取请将 crawler.respect_robots 设为 false")
-		}
-		for i := range cr.Pages {
-			p := &cr.Pages[i]
-			if normalizeKey(p.FinalURL) == normalizeKey(home.FinalURL) {
-				continue // 首页已收录
-			}
-			res.Pages = append(res.Pages, PageInfo{URL: p.FinalURL, Status: p.Status})
-			pageURLs = append(pageURLs, p.FinalURL)
-			pages = append(pages, crawlPage{
-				resp: &httpx.Response{
-					Status:     p.Status,
-					Headers:    p.Headers,
-					SetCookies: p.SetCookies,
-					Body:       p.Body,
-					FinalURL:   p.FinalURL,
-				},
-				doc: htmlx.Parse(p.Body),
-			})
 		}
 		// 爬取期带参链接并入（不覆盖）首页/种子已采集的探测点：
 		// cr.ParamLinks 只含被反解析为 <a href> 的链接，而「首页 GET 表单
@@ -353,15 +390,6 @@ func (e *Engine) Scan(rawURL string, opts Options, onProgress progress, cancel f
 		// 测不到（Acunetix testasp 的 Search.asp 就是这么漏的）。
 		dastLinks = append(dastLinks, cr.ParamLinks...)
 		allLinks = append(allLinks, cr.AllLinks...)
-		pageURLs = append(pageURLs, home.FinalURL)
-		// API 探测点：API 端点通常不带查询串（/api/v2/user/1），拿不到就整块
-		// 测不到——只从带参链接收集会让 API 通道永远空跑。这里把爬到的
-		// 页面 URL 一并登记，由 RunAPI 自行筛出 API 风格路径。
-		for _, pg := range res.Pages {
-			if pg.URL != "" {
-				apiCandidates = append(apiCandidates, pg.URL)
-			}
-		}
 		// 认证深化：未配置 login_url 时，从爬到的表单里自动发现登录表单
 		// （含 password 输入框）并以凭证登录——DAST/目录探测随后带认证态
 		if e.cfg.Auth.LoginURL == "" && opts.AuthCookie == "" &&
@@ -389,6 +417,27 @@ func (e *Engine) Scan(rawURL string, opts Options, onProgress progress, cancel f
 		if col != nil {
 			col.captureEntryPoints(dastLinks, dastFormTargets, nil)
 		}
+		diag.end("crawl", dtCrawl, dsCrawl, 0)
+	}
+
+	// 逐页流水线收尾：等待页内指纹匹配全部完成，按页序重建页面清单
+	// （与串行实现顺序一致；被 WAF/限流拦截的页不进清单、不参与判定）。
+	stream.wait()
+	pages := stream.pages
+	if opts.Deep {
+		for _, p := range pages[1:] {
+			res.Pages = append(res.Pages, PageInfo{URL: p.resp.FinalURL, Status: p.resp.Status})
+			pageURLs = append(pageURLs, p.resp.FinalURL)
+		}
+		pageURLs = append(pageURLs, home.FinalURL)
+		// API 探测点：API 端点通常不带查询串（/api/v2/user/1），拿不到就整块
+		// 测不到——只从带参链接收集会让 API 通道永远空跑。这里把爬到的
+		// 页面 URL 一并登记，由 RunAPI 自行筛出 API 风格路径。
+		for _, pg := range res.Pages {
+			if pg.URL != "" {
+				apiCandidates = append(apiCandidates, pg.URL)
+			}
+		}
 	}
 
 	// 4.0 Track A / A8：页面清单驻留上限（超出省略并计数，削扫描期内存）
@@ -397,43 +446,12 @@ func (e *Engine) Scan(rawURL string, opts Options, onProgress progress, cancel f
 		res.Pages = res.Pages[:capN]
 	}
 
-	// 4) 多页指纹识别
+	// 4) 多页指纹识别：匹配已在逐页流水线里完成，这里只按页序合并结果
+	// （合并顺序 = 页序 = 串行实现的累加顺序，Technologies 输出稳定）。
+	dtFP, dsFP := diag.begin()
 	if matcher != nil {
 		onProgress(55, fmt.Sprintf("指纹识别（%d 页）…", len(pages)))
-		// favicon 指纹：整站采集一次，注入每页证据（FOFA icon_hash 通道）
-		favHash := sitelens.FaviconHashOf(client, baseURL)
-		// 页间指纹识别无依赖：按页并行（worker ≤ min(4, 页数)），把 N 页的
-		// Extract+Match 摊到多核（万级指纹库下单页匹配是扫描 CPU 热点）。
-		// 命中结果按页收集后仍按页面顺序串行累加进 acc，Technologies 的
-		// 排序/去重/置信累加与串行实现完全一致；进度回调不进并行区。
-		pageHits := make([][]sitelens.MatchHit, len(pages))
-		workers := len(pages)
-		if workers > 4 {
-			workers = 4
-		}
-		if workers <= 1 {
-			for i, p := range pages {
-				ev := sitelens.Extract(p.resp)
-				ev.FaviconHash = favHash
-				pageHits[i] = matcher.Match(ev)
-			}
-		} else {
-			var wg sync.WaitGroup
-			sem := make(chan struct{}, workers)
-			for i := range pages {
-				wg.Add(1)
-				go func(i int) {
-					defer wg.Done()
-					sem <- struct{}{}
-					defer func() { <-sem }()
-					ev := sitelens.Extract(pages[i].resp)
-					ev.FaviconHash = favHash
-					pageHits[i] = matcher.Match(ev)
-				}(i)
-			}
-			wg.Wait()
-		}
-		for _, hits := range pageHits {
+		for _, hits := range stream.fpHits {
 			for _, h := range hits {
 				acc.add(h.Name, h.Website, h.Version, h.Evidence, h.Conf, h.Cats)
 			}
@@ -443,21 +461,18 @@ func (e *Engine) Scan(rawURL string, opts Options, onProgress progress, cancel f
 	if col != nil {
 		col.captureTechs(res.Technologies)
 	}
+	diag.end("fingerprint", dtFP, dsFP, 0)
 
-	// 5) 安全响应头评分
+	// 5) 安全响应头评分（逐页 CSP 候选已在流水线 push 时记录）
+	dtSec, dsSec := diag.begin()
 	onProgress(70, "评估安全响应头…")
 	res.Security = security.Assess(home.Headers)
 	// CSP 是**逐路径**策略：DVWA 只在 `vulnerabilities/csp/` 上设 CSP 头，
 	// 首页没有。只评首页会让「有策略但策略可绕过」整块漏掉——实测漏报。
-	// 取首个带 CSP 的响应做指令级弱点分析（首页没有时横扫已采集页面）。
+	// 取页序首个带 CSP 的响应做指令级弱点分析（首页没有时用流水线记录的候选）。
 	cspHeaders, cspURL := home.Headers, baseURL
-	if !hasCSPHeader(cspHeaders) {
-		for _, p := range pages {
-			if hasCSPHeader(p.resp.Headers) {
-				cspHeaders, cspURL = p.resp.Headers, p.resp.FinalURL
-				break
-			}
-		}
+	if !hasCSPHeader(cspHeaders) && stream.cspURL != "" {
+		cspHeaders, cspURL = stream.cspHeaders, stream.cspURL
 	}
 	if strings.TrimSpace(cspURL) != strings.TrimSpace(baseURL) {
 		sc := security.Assess(cspHeaders)
@@ -482,6 +497,7 @@ func (e *Engine) Scan(rawURL string, opts Options, onProgress progress, cancel f
 		})
 		res.Verified = append(res.Verified, m)
 	}
+	diag.end("security", dtSec, dsSec, 0)
 
 	// 5.5) 敏感页缓存卫生：会话/账户类页面缺 no-store 时，内容可被
 	// 共享缓存或浏览器回退键命中——会话数据外泄的常见路径。
@@ -509,6 +525,7 @@ func (e *Engine) Scan(rawURL string, opts Options, onProgress progress, cancel f
 
 	// 6) 验证型 check
 	if opts.Checks != "" && opts.Checks != "none" {
+		dtChk, dsChk := diag.begin()
 		cmsIDs := []string{}
 		for _, t := range res.Technologies {
 			cmsIDs = append(cmsIDs, checks.CMSTechChecks(t.Name)...)
@@ -541,6 +558,11 @@ func (e *Engine) Scan(rawURL string, opts Options, onProgress progress, cancel f
 			})
 		res.CheckRuns = append(res.CheckRuns, checkRuns...)
 		for _, h := range hits {
+			// 被 WAF/限流拦截的响应不参与判定：命中 URL 曾返回拦截页则丢弃
+			// （否则挑战页正文/头会被当成漏洞证据）。
+			if blocked.isBlockedURL(h.URL) {
+				continue
+			}
 			res.Verified = append(res.Verified, verifiedMap(map[string]any{
 				"check": h.Check, "title": h.Title, "severity": h.Severity,
 				"url": h.URL, "evidence": h.Evidence, "advice": h.Advice,
@@ -560,10 +582,12 @@ func (e *Engine) Scan(rawURL string, opts Options, onProgress progress, cancel f
 			}
 		}
 		res.Technologies = acc.list()
+		diag.end("checks", dtChk, dsChk, 0)
 	}
 
 	// 6.5) Nuclei 社区模板子集（all 级别 + 模板库存在时）
 	if opts.Checks == "all" && !cancelled() && e.cfg.Checks.NucleiCap > 0 && e.cfg.Checks.NucleiDir != "" {
+		dtNuc, dsNuc := diag.begin()
 		onProgress(84, "运行 Nuclei 社区模板子集…")
 		if overBudget() {
 			// 先解析有效值：未显式指定（0）时降档须作用于配置默认上限，
@@ -592,6 +616,10 @@ func (e *Engine) Scan(rawURL string, opts Options, onProgress progress, cancel f
 				})
 			res.CheckRuns = append(res.CheckRuns, nRuns...)
 			for _, h := range nHits {
+				// 被 WAF/限流拦截的响应不参与判定（同 checks 通道）。
+				if blocked.isBlockedURL(h.URL) {
+					continue
+				}
 				res.Verified = append(res.Verified, verifiedMap(map[string]any{
 					"check": h.Check, "title": h.Title, "severity": h.Severity,
 					"url": h.URL, "evidence": h.Evidence, "advice": h.Advice,
@@ -605,18 +633,18 @@ func (e *Engine) Scan(rawURL string, opts Options, onProgress progress, cancel f
 				}
 			}
 		}
+		diag.end("nuclei", dtNuc, dsNuc, 0)
 	}
 
-	// 7) 被动安全检测（零额外请求）
+	// 7) 被动安全检测（零额外请求）：结果已在逐页流水线 push 时按页序算好，
+	// 这里只按页序做跨页去重后的最终归并（顺序与串行实现一致）。
 	if opts.Passive {
+		dtPas, dsPas := diag.begin()
 		onProgress(80, "被动安全检测…")
-		// 配置卫生项跨页去重：同一 cookie / 同一表单只报一次（逐页上报会在
-		// 20+ 页站点上产出几十条重复，是脏数据而非误报）
-		dedup := passive.NewDeduper()
 		hygieneChecks := passive.Hygiene()
 		var hygiene []map[string]any
-		for _, p := range pages {
-			for _, h := range passive.RunDedup(p.resp, p.doc, p.resp.FinalURL, dedup) {
+		for idx := range pages {
+			for _, h := range stream.passiveHits[idx] {
 				m := verifiedMap(map[string]any{
 					"check": h.Check, "title": h.Title, "severity": h.Severity,
 					"url": h.URL, "evidence": h.Evidence, "advice": h.Advice,
@@ -638,10 +666,13 @@ func (e *Engine) Scan(rawURL string, opts Options, onProgress progress, cancel f
 		if len(hygiene) > 0 {
 			res.Extras["hygiene"] = hygiene
 		}
+		diag.end("passive", dtPas, dsPas, 0)
 	}
 
 	// 8) DAST：参数级探测（JS 攻击面已在爬取前提取，端点回灌了爬虫种子）
 	if opts.DAST {
+		dtDAST, dsDAST := diag.begin()
+		dedupBefore := roCache.Hits()
 		onProgress(85, "参数级 DAST 探测…")
 		var dastAll []dast.Finding
 		var dastMaps []map[string]any
@@ -654,7 +685,10 @@ func (e *Engine) Scan(rawURL string, opts Options, onProgress progress, cancel f
 		}
 		deepOn := e.cfg.DAST.DeepProbes
 		errStatusOn := e.cfg.DAST.ErrorStatus
-		r := dast.New(dastFetcher{client}, dast.Options{
+		// 只读页面复用：cache 里只有首页/种子/爬取页（DAST payload URL 不会命中）；
+		// 被 WAF/限流拦截的响应在 fetcher 层直接按「无响应」处理。
+		df := dastFetcher{c: client, cache: roCache, blocked: blocked}
+		r := dast.New(df, dast.Options{
 			MaxParams:         e.cfg.DAST.MaxParams,
 			TimeBlind:         e.cfg.DAST.TimeBlind,
 			BoolBlind:         e.cfg.DAST.BoolBlind,
@@ -758,7 +792,10 @@ func (e *Engine) Scan(rawURL string, opts Options, onProgress progress, cancel f
 		// 设置页「利用级验证」控制总闸）；目标合规责任在使用者
 		if opts.Exploit && e.cfg.Exploit.Enabled && len(dastAll) > 0 {
 			onProgress(86, "利用级无害验证…")
-			proven, observed := e.runExploit(host, dastAll, dastMaps, dastFetcher{client}, emit)
+			// exploit 层不复用只读缓存（proven 证据必须来自本次新鲜请求），
+			// 但仍做拦截隔离（WAF 回显 payload 不能算 proven）。
+			proven, observed := e.runExploit(host, dastAll, dastMaps,
+				dastFetcher{c: client, blocked: blocked}, emit)
 			res.Extras["exploit"] = map[string]any{
 				"proven": proven, "observed": observed, "gate": "enabled",
 			}
@@ -773,6 +810,8 @@ func (e *Engine) Scan(rawURL string, opts Options, onProgress progress, cancel f
 				col.addDASTFinding(dastAll[i], m)
 			}
 		}
+		// 去重命中 = 引擎只读页复用 + DAST benign 基线跨通道复用（payload 不复用）。
+		diag.end("dast", dtDAST, dsDAST, (roCache.Hits()-dedupBefore)+r.BaseCacheHits())
 	}
 
 	// 9) 主动模块（默认关）
@@ -781,6 +820,7 @@ func (e *Engine) Scan(rawURL string, opts Options, onProgress progress, cancel f
 		noteBudget("跳过主动模块（目录/子域/WebShell/指纹/端口）")
 		emit("budget", "内存超预算，跳过主动模块段")
 	} else if opts.DirScan || opts.Subdomain || opts.Webshell || opts.WeakAudit || opts.ActiveFP || opts.ServiceProbe || opts.NetProto {
+		dtMod, dsMod := diag.begin()
 		ac := e.cfg.Active
 		if opts.DirBypass {
 			ac.DirBypass403 = true // 每次扫描可覆盖配置（对齐 Python options.dir_bypass）
@@ -961,10 +1001,12 @@ func (e *Engine) Scan(rawURL string, opts Options, onProgress progress, cancel f
 				}
 			}
 		}
+		diag.end("modules", dtMod, dsMod, 0)
 	}
 
 	// 10) 网络层安全
 	if opts.Netsec {
+		dtNs, dsNs := diag.begin()
 		onProgress(89, "TLS / DNS 安全检测…")
 		tlsPort := port
 		if tlsPort == 0 || tlsPort == 80 {
@@ -975,10 +1017,12 @@ func (e *Engine) Scan(rawURL string, opts Options, onProgress progress, cancel f
 			findings = append(findings, netsec.CheckDNSMail(host)...)
 		}
 		res.Extras["netsec"] = map[string]any{"findings": findings}
+		diag.end("netsec", dtNs, dsNs, 0)
 	}
 
 	// 11) 漏洞情报关联
 	if !cancelled() && kb != nil {
+		dtInt, dsInt := diag.begin()
 		onProgress(92, "关联漏洞情报…")
 		techs := acc.techHits()
 		res.Vulnerabilities = append(res.Vulnerabilities, kb.Match(techs)...)
@@ -989,6 +1033,7 @@ func (e *Engine) Scan(rawURL string, opts Options, onProgress progress, cancel f
 				col.addIntelFinding(f)
 			}
 		}
+		diag.end("intel", dtInt, dsInt, 0)
 	}
 
 	if len(budgetDegrades) > 0 {
@@ -1018,7 +1063,9 @@ func (e *Engine) Scan(rawURL string, opts Options, onProgress progress, cancel f
 	// 字段。模型只提供先验参考，不改变任何判定；资产缺失/加载失败/
 	// 推理异常一律静默跳过（字段缺席，主流程零影响）。
 	if !cancelled() && e.cfg.ML.Predict && len(res.Vulnerabilities) > 0 {
+		dtML, dsML := diag.begin()
 		e.mlEnrich(res, kb)
+		diag.end("ml", dtML, dsML, 0)
 	}
 
 	onProgress(100, fmt.Sprintf("完成，识别 %d 项技术，%d 条已验证发现",
@@ -1052,6 +1099,10 @@ type crawlPage struct {
 }
 
 // newClient 按配置与本次选项装配客户端。
+//
+// 限速档位（scan.rate_mode）：balanced = WAF-aware 自适应（400ms 起步，连续
+// 干净成功后加速到 200ms 硬下限；命中 429/503/WAF/挑战页后退避）；其余
+// （polite / 未知值，config 已归一到 polite）= 固定间隔、逐字节保持旧语义。
 func (e *Engine) newClient(opts Options) *httpx.Client {
 	sc := e.cfg.Scan
 	return httpx.NewWithOptions(httpx.ClientOptions{
@@ -1062,6 +1113,8 @@ func (e *Engine) newClient(opts Options) *httpx.Client {
 		UserAgent:    uaFor(sc.UserAgent, opts.BrowserUA),
 		AuthCookie:   opts.AuthCookie,
 		Resolve:      sc.Resolve,
+		Adaptive:     sc.RateMode == "balanced",
+		MaxRPS:       sc.RateMaxRPS,
 	})
 }
 
@@ -1397,14 +1450,34 @@ func (e *Engine) saveNucleiLRU() {
 }
 
 // dastFetcher 把 httpx 客户端适配为 dast.Fetcher。
-type dastFetcher struct{ c *httpx.Client }
+// dastFetcher 把 httpx 客户端适配为 dast.Fetcher。
+//
+// cache：引擎只读 GET 复用（只含爬取阶段抓过的页面/种子/首页；DAST payload URL
+// 不会命中，也不会被写入——payload 请求绝不复用）。blocked：被 WAF/限流拦截
+// 的响应一律按「无响应」返回，避免 WAF 挑战页回显 payload 造成假阳性。
+type dastFetcher struct {
+	c       *httpx.Client
+	cache   *readOnlyCache
+	blocked *blockedTracker
+}
 
-func (d dastFetcher) PostFormSmall(rawURL string, data map[string]string) *dast.Resp {
-	r, err := d.c.PostForm(rawURL, data)
-	if err != nil || r == nil {
+// wrap 拦截隔离 + 适配：Blocked 响应登记后返回 nil（不参与任何判定）。
+func (d dastFetcher) wrap(r *httpx.Response) *dast.Resp {
+	if r == nil {
+		return nil
+	}
+	if d.blocked != nil && d.blocked.note(r) {
 		return nil
 	}
 	return &dast.Resp{Status: r.Status, Headers: r.Headers, SetCookies: r.SetCookies, Body: r.Body}
+}
+
+func (d dastFetcher) PostFormSmall(rawURL string, data map[string]string) *dast.Resp {
+	r, err := d.c.PostForm(rawURL, data)
+	if err != nil {
+		return nil
+	}
+	return d.wrap(r)
 }
 
 // PostFormRawSmall 原始表单体 POST（dast 侧可选接口 rawFormPoster，预编码
@@ -1416,54 +1489,61 @@ func (d dastFetcher) PostFormSmall(rawURL string, data map[string]string) *dast.
 // 单次解码只拿到字面文本，表单侧 CRLF 注入实际不生效（BUG-017 表单残留）。
 func (d dastFetcher) PostFormRawSmall(rawURL, body string) *dast.Resp {
 	r, err := d.c.PostRaw(rawURL, "application/x-www-form-urlencoded", body)
-	if err != nil || r == nil {
+	if err != nil {
 		return nil
 	}
-	return &dast.Resp{Status: r.Status, Headers: r.Headers, SetCookies: r.SetCookies, Body: r.Body}
+	return d.wrap(r)
 }
 
 func (d dastFetcher) GetSmall(rawURL string) *dast.Resp {
+	// 只读页面复用：仅当该 URL 是爬取阶段已抓过的页面/种子时命中；
+	// DAST payload URL 不在缓存里，语义不变。
+	if d.cache != nil {
+		if r, ok := d.cache.get(rawURL); ok {
+			return d.wrap(r)
+		}
+	}
 	r, err := d.c.GetDirect(rawURL)
-	if err != nil || r == nil {
+	if err != nil {
 		return nil
 	}
-	return &dast.Resp{Status: r.Status, Headers: r.Headers, SetCookies: r.SetCookies, Body: r.Body}
+	return d.wrap(r)
 }
 
 // GetWithHeaders 带自定义请求头的 GET（Cookie/头注入通道）。
 func (d dastFetcher) GetWithHeaders(rawURL string, headers map[string]string) *dast.Resp {
 	r, err := d.c.GetWithHeaders(rawURL, headers)
-	if err != nil || r == nil {
+	if err != nil {
 		return nil
 	}
-	return &dast.Resp{Status: r.Status, Headers: r.Headers, Body: r.Body}
+	return d.wrap(r)
 }
 
 // PostRawSmall 原始体 POST（XXE 的 XML 探测用）。
 func (d dastFetcher) PostRawSmall(rawURL, contentType, body string) *dast.Resp {
 	r, err := d.c.PostRaw(rawURL, contentType, body)
-	if err != nil || r == nil {
+	if err != nil {
 		return nil
 	}
-	return &dast.Resp{Status: r.Status, Headers: r.Headers, Body: r.Body}
+	return d.wrap(r)
 }
 
 // PostMultipartSmall 多段上传（上传受理面探测用）。
 func (d dastFetcher) PostMultipartSmall(rawURL, fileField, fileName, content string, extra map[string]string) *dast.Resp {
 	r, err := d.c.PostMultipart(rawURL, fileField, fileName, content, extra)
-	if err != nil || r == nil {
+	if err != nil {
 		return nil
 	}
-	return &dast.Resp{Status: r.Status, Headers: r.Headers, Body: r.Body}
+	return d.wrap(r)
 }
 
 // PostMultipartSmallCT 多段上传（可指定 Content-Type，上传绕过验证用）。
 func (d dastFetcher) PostMultipartSmallCT(rawURL, fileField, fileName, content, contentType string, extra map[string]string) *dast.Resp {
 	r, err := d.c.PostMultipartCT(rawURL, fileField, fileName, content, contentType, extra)
-	if err != nil || r == nil {
+	if err != nil {
 		return nil
 	}
-	return &dast.Resp{Status: r.Status, Headers: r.Headers, Body: r.Body}
+	return d.wrap(r)
 }
 
 // cveMsFindings 把微软公告关联转为统一 Finding 形态。

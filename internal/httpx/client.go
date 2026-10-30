@@ -26,6 +26,12 @@ type Response struct {
 	SetCookies []string
 	Body       string
 	FinalURL   string
+	// Blocked/BlockReason：该响应被判为 WAF/限流拦截（additive，既有字段语义
+	// 不变）。WAF 错误页常回显 payload，上层据此跳过判定以免假阳性；
+	// BlockReason 取值为 http-429 / http-503 / retry-after / waf-header:<name> /
+	// challenge-page / status-downgrade 之一。
+	Blocked     bool
+	BlockReason string
 }
 
 // Header 大小写不敏感取响应头。
@@ -61,7 +67,7 @@ const (
 
 // ClientOptions 客户端参数（全部来自 config.ScanConfig 的装配）。
 type ClientOptions struct {
-	Interval     time.Duration // 相邻请求最小间隔（限速），0=不限速
+	Interval     time.Duration // 每主机请求最小间隔（令牌桶速率）：polite 原样使用（0=不限速）；Adaptive 时作为自适应起点并受 200ms 硬下限约束
 	Timeout      time.Duration // 单请求超时，0=20s
 	MaxHops      int           // 重定向最大跳数，0=6
 	MaxBodyBytes int           // 正文留存上限，0=3MB
@@ -71,19 +77,40 @@ type ClientOptions struct {
 	// 拨号」，覆盖初始请求与重定向逐跳（BUG-021）。继承引擎 resolve 姿态；
 	// 本地/内网靶场矩阵设 false（不做 DNS 级拦截）。
 	Resolve bool
+	// Adaptive=true 启用 WAF-aware 自适应限速（balanced 档）：起点为 Interval
+	// （默认 400ms，polite 档），连续干净成功后逐级减半，硬下限 200ms
+	// （≤5 req/s/主机；令牌桶按 host:port 全进程共享，多个 Client 叠加也不
+	// 超速）；命中 429/503/WAF 特征/挑战页/RTT 恶化时退避，检出拦截后锁定
+	// 低速（400ms→1s→2s）不再加速。false=polite：固定间隔、无抖动、无调速。
+	Adaptive bool
+	// MaxRPS 每主机硬上限（0=默认 5）。只能让上限更保守（更小）——间隔硬下限
+	// 200ms（5 req/s 代码级红线）不因 MaxRPS 变大而突破。
+	MaxRPS int
 }
 
 // Client 限速 HTTP 客户端（自动重定向禁用，逐跳校验后手动跟随）。
 type Client struct {
 	http      *http.Client
-	interval  time.Duration
 	resolve   bool
 	mu        sync.Mutex
-	last      time.Time
 	userAgent string
 	maxHops   int
 	maxBody   int
 	cookie    string
+	// limiterCfg 限速参数（E1）：令牌桶按 host:port 全进程共享，Client 只携带
+	// 配置；base=0 表示不限速（沿用 Interval<=0 的历史语义，不注册限速器）。
+	limiterCfg limiterConfig
+	// 仅测试注入：限速调度时钟/睡眠钩子（nil = time.Now / time.Sleep）。
+	// 注入后令牌节奏可确定性验证；RTT 始终用真实时钟（网络时延语义）。
+	now   func() time.Time
+	sleep func(time.Duration)
+	// 统计与诊断（mu 保护）。
+	requests  int64
+	blocked   int64
+	backoffs  int64
+	firstReq  time.Time
+	lastHost  *hostLimiter   // 最近一次限速命中的 host 限速器（Stats 读取间隔）
+	urlStatus map[string]int // 同 URL 状态历史：2xx 基线 → 后续 403/406 降级判定
 	// lookupIP 域名解析钩子（nil = target.ResolveHostIPs）。仅测试注入：
 	// 生产路径必须走系统解析，且同一份结果只用于本次「校验 + 拨号」。
 	lookupIP func(ctx context.Context, host string) ([]netip.Addr, error)
@@ -106,13 +133,37 @@ func NewWithOptions(o ClientOptions) *Client {
 	if o.UserAgent == "" {
 		o.UserAgent = "SiteLens/3.0.0 (+https://cnb.cool/feng-qiao/sitelens)"
 	}
+	if o.MaxRPS <= 0 {
+		o.MaxRPS = 5 // 每主机硬上限默认 5 req/s（用户红线；仅 Adaptive=true 生效）
+	}
 	c := &Client{
-		interval:  o.Interval,
 		userAgent: o.UserAgent,
 		maxHops:   o.MaxHops,
 		maxBody:   o.MaxBodyBytes,
 		cookie:    o.AuthCookie,
 		resolve:   o.Resolve,
+		urlStatus: make(map[string]int),
+		limiterCfg: limiterConfig{
+			adaptive:   o.Adaptive,
+			accelAfter: adaptiveAccelerateAfter,
+		},
+	}
+	// 限速配置：
+	//   - polite（Adaptive=false）与旧实现逐字节等价：Interval 原样使用
+	//     （0=不限速、1ms=1ms、400ms=400ms），不夹硬下限、不加抖动、不做
+	//     WAF/RTT 调速（只做拦截标记）。
+	//   - adaptive：起点 = max(Interval, 硬下限)，Interval<=0 时沿用历史
+	//     「0=不限速」语义（本地靶场/单测显式表达不限速，生产默认由配置填 400）。
+	if o.Adaptive {
+		c.limiterCfg.floor = adaptiveFloor(o.MaxRPS)
+		if o.Interval > 0 {
+			c.limiterCfg.base = o.Interval
+			if c.limiterCfg.base < c.limiterCfg.floor {
+				c.limiterCfg.base = c.limiterCfg.floor
+			}
+		}
+	} else if o.Interval > 0 {
+		c.limiterCfg.base = o.Interval
 	}
 	// 拨号层接管域名解析：一次解析、全量校验、按已校验 IP 拨号（BUG-021）。
 	tr := http.DefaultTransport.(*http.Transport).Clone()
@@ -327,13 +378,167 @@ func New(interval time.Duration) *Client {
 	return NewWithOptions(ClientOptions{Interval: interval})
 }
 
-func (c *Client) wait() {
+// nowFn 返回限速调度时钟（测试可注入；生产 = time.Now）。
+func (c *Client) nowFn() time.Time {
+	if c.now != nil {
+		return c.now()
+	}
+	return time.Now()
+}
+
+// sleepFn 按限速调度时钟睡眠（测试可注入；生产 = time.Sleep）。
+func (c *Client) sleepFn(d time.Duration) {
+	if c.sleep != nil {
+		c.sleep(d)
+		return
+	}
+	time.Sleep(d)
+}
+
+// acquire 为本次请求取得 host 级共享令牌桶的发送许可（阻塞到令牌可用）。
+//
+// 令牌桶按 host:port 全进程共享：多个 Client（爬虫 / DAST）、多个并发调用者
+// 合起来仍受同一每主机速率约束，从机制上避免旧的「N 个调用者各自睡 interval
+// 后同时齐发 → 实际速率放大成 N/interval」缺陷，也不给多个 Client 叠加翻倍
+// 的机会。base<=0（历史「不限速」语义）时直接放行。
+func (c *Client) acquire(req *http.Request) {
+	if c.limiterCfg.base <= 0 || req == nil || req.URL == nil {
+		return
+	}
+	key := hostKey(req.URL)
+	if key == "" {
+		return
+	}
+	lim := hostLimiterFor(key, c.limiterCfg)
+	lim.acquire(c.nowFn, c.sleepFn)
 	c.mu.Lock()
-	d := c.interval - time.Since(c.last)
-	c.last = time.Now()
+	c.lastHost = lim
 	c.mu.Unlock()
-	if d > 0 {
-		time.Sleep(d)
+}
+
+// send 执行一次真实 HTTP 请求：请求计数、测量 RTT，并把 RTT/失败反馈给该
+// host 的共享限速器（自适应模式据此退避；polite 档只记录不调速）。
+func (c *Client) send(req *http.Request) (*http.Response, error) {
+	start := time.Now() // RTT 用真实时钟：网络时延语义，与可注入的调度时钟无关
+	c.mu.Lock()
+	c.requests++
+	if c.firstReq.IsZero() {
+		c.firstReq = c.nowFn()
+	}
+	c.mu.Unlock()
+
+	resp, err := c.http.Do(req)
+	lim := hostLimiterByRequest(req)
+	if err != nil {
+		if lim != nil {
+			lim.onUnclean() // 连接失败/超时：不加速
+		}
+		return nil, err
+	}
+	if lim != nil && lim.onRTT(time.Since(start), resp.StatusCode) {
+		c.mu.Lock()
+		c.backoffs++
+		c.mu.Unlock()
+	}
+	return resp, nil
+}
+
+// finish 读取并关闭响应体、生成 Response，同时做 WAF/限流识别与自适应反馈
+// （Blocked/BlockReason 为 additive 字段；polite 档只标记、不改节奏）。
+func (c *Client) finish(resp *http.Response, finalURL string, bodyCap int) *Response {
+	body, headers, cookies := readBody(resp, bodyCap)
+	reason := c.classifyResponse(resp, body, finalURL)
+	return &Response{
+		Status:      resp.StatusCode,
+		Headers:     headers,
+		SetCookies:  cookies,
+		Body:        body,
+		FinalURL:    finalURL,
+		Blocked:     reason != "",
+		BlockReason: reason,
+	}
+}
+
+// classifyResponse 识别 WAF/限流拦截并驱动 host 共享限速器反馈，返回
+// BlockReason（空 = 未拦截）。
+//
+// 判定顺序：状态/头级硬信号（429/503/Retry-After/WAF 头）→ 挑战页特征 →
+// 同 URL 状态降级（2xx→403/406）。WAF 特征头只在 4xx/5xx 时作佐证：整套跑在
+// Cloudflare 上的正常站点每个 200 都带 cf-ray，不能全部误判为拦截。
+func (c *Client) classifyResponse(resp *http.Response, body, finalURL string) string {
+	status := resp.StatusCode
+	waf := detectWAFHeader(resp.Header)
+	reason := classifyStatusBlock(status, resp.Header, waf)
+	if reason == "" {
+		reason = challengeReason(status, waf, body)
+	}
+	lim := hostLimiterByRequest(resp.Request)
+	if c.observeURLStatus(finalURL, status) && reason == "" {
+		reason = "status-downgrade"
+	}
+	if reason != "" {
+		c.mu.Lock()
+		c.blocked++
+		c.mu.Unlock()
+		if lim != nil && lim.onBlock() {
+			c.mu.Lock()
+			c.backoffs++
+			c.mu.Unlock()
+		}
+		return reason
+	}
+	if lim != nil {
+		// 404 是扫描常态，计入干净流量；其余 4xx/5xx 清零加速计数（5xx 的
+		// 压力信号已在 send→onRTT 里处理）。
+		if status < 400 || status == http.StatusNotFound {
+			lim.onClean()
+		} else {
+			lim.onUnclean()
+		}
+	}
+	return ""
+}
+
+// readBody 读取响应体（上限 bodyCap）并关闭，收集普通头与 Set-Cookie。
+func readBody(resp *http.Response, bodyCap int) (string, map[string]string, []string) {
+	defer resp.Body.Close()
+	raw, _ := io.ReadAll(io.LimitReader(resp.Body, int64(bodyCap)+1))
+	if len(raw) > bodyCap {
+		raw = raw[:bodyCap]
+	}
+	headers := make(map[string]string, len(resp.Header))
+	for k, vs := range resp.Header {
+		if strings.EqualFold(k, "Set-Cookie") {
+			continue // 单独保真存放
+		}
+		headers[k] = strings.Join(vs, ", ")
+	}
+	return string(raw), headers, resp.Header.Values("Set-Cookie")
+}
+
+// Stats 返回限速/拦截统计快照（诊断包 / CLI 输出用；additive API）。
+func (c *Client) Stats() Stats {
+	c.mu.Lock()
+	reqs, blocked, backoffs := c.requests, c.blocked, c.backoffs
+	first, lim := c.firstReq, c.lastHost
+	c.mu.Unlock()
+
+	interval := c.limiterCfg.base
+	if lim != nil {
+		interval = lim.currentInterval()
+	}
+	var avg float64
+	if !first.IsZero() {
+		if el := c.nowFn().Sub(first); el > 0 {
+			avg = float64(reqs) / el.Seconds()
+		}
+	}
+	return Stats{
+		Requests: reqs,
+		Interval: interval,
+		AvgRPS:   avg,
+		Blocked:  blocked,
+		Backoffs: backoffs,
 	}
 }
 
@@ -385,7 +590,6 @@ func (c *Client) MethodFollowWith(method, rawURL string, extra map[string]string
 	default:
 		return nil, &target.Error{Msg: "方法不允许（仅 GET/HEAD/OPTIONS，无害化红线）"}
 	}
-	c.wait()
 	cur := rawURL
 	var resp *http.Response
 	var err error
@@ -397,7 +601,8 @@ func (c *Client) MethodFollowWith(method, rawURL string, extra map[string]string
 		for k, v := range extra {
 			req.Header.Set(k, v)
 		}
-		resp, err = c.http.Do(req)
+		c.acquire(req) // 逐跳都过 host 级令牌桶（每次真实请求都占一个令牌）
+		resp, err = c.send(req)
 		if err != nil {
 			// 底层错误原样带出（refused/timeout/proxy 一目了然）
 			return nil, &target.Error{Msg: "连接失败：" + cur + "：" + err.Error()}
@@ -429,7 +634,7 @@ func (c *Client) MethodFollowWith(method, rawURL string, extra map[string]string
 		drainAndClose(resp.Body)
 		cur = next
 	}
-	return toResponse(resp, cur), nil
+	return c.finish(resp, cur, defaultMaxBodyBytes), nil
 }
 
 // drainAndClose 排空并关闭中间跳响应体。
@@ -449,21 +654,20 @@ func drainAndClose(body io.ReadCloser) {
 // resolve=true 时拨号层仍会做「一次解析 + IP 集合校验 + 按已校验 IP 拨号」，BUG-021）。
 // 供 DAST 开放重定向判定等需要看原始 30x 响应的探测使用；正文上限 1MB。
 func (c *Client) GetDirect(rawURL string) (*Response, error) {
-	c.wait()
 	req, err := c.newRequest(http.MethodGet, rawURL)
 	if err != nil {
 		return nil, err
 	}
-	resp, err := c.http.Do(req)
+	c.acquire(req)
+	resp, err := c.send(req)
 	if err != nil {
 		return nil, err
 	}
-	return toResponseCap(resp, rawURL, 1_000_000), nil
+	return c.finish(resp, rawURL, 1_000_000), nil
 }
 
 // GetWithHeaders 带自定义请求头的 GET（单请求，不跟随重定向；Cookie/头注入探测用）。
 func (c *Client) GetWithHeaders(rawURL string, headers map[string]string) (*Response, error) {
-	c.wait()
 	req, err := c.newRequest(http.MethodGet, rawURL)
 	if err != nil {
 		return nil, err
@@ -471,16 +675,16 @@ func (c *Client) GetWithHeaders(rawURL string, headers map[string]string) (*Resp
 	for k, v := range headers {
 		req.Header.Set(k, v)
 	}
-	resp, err := c.http.Do(req)
+	c.acquire(req)
+	resp, err := c.send(req)
 	if err != nil {
 		return nil, err
 	}
-	return toResponseCap(resp, rawURL, 512_000), nil
+	return c.finish(resp, rawURL, 512_000), nil
 }
 
 // PostForm POST 表单提交（单请求，不跟随重定向；登录爆破用）。
 func (c *Client) PostForm(rawURL string, fields map[string]string) (*Response, error) {
-	c.wait()
 	form := url.Values{}
 	for k, v := range fields {
 		form.Set(k, v)
@@ -493,16 +697,16 @@ func (c *Client) PostForm(rawURL string, fields map[string]string) (*Response, e
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Body = io.NopCloser(strings.NewReader(payload))
 	req.ContentLength = int64(len(payload))
-	resp, err := c.http.Do(req)
+	c.acquire(req)
+	resp, err := c.send(req)
 	if err != nil {
 		return nil, err
 	}
-	return toResponseCap(resp, rawURL, 512_000), nil
+	return c.finish(resp, rawURL, 512_000), nil
 }
 
 // PostRaw POST 自定义 Content-Type 的原始请求体（Nuclei POST 模板等）。
 func (c *Client) PostRaw(rawURL, contentType, body string) (*Response, error) {
-	c.wait()
 	req, err := c.newRequest(http.MethodPost, rawURL)
 	if err != nil {
 		return nil, err
@@ -510,11 +714,12 @@ func (c *Client) PostRaw(rawURL, contentType, body string) (*Response, error) {
 	req.Header.Set("Content-Type", contentType)
 	req.Body = io.NopCloser(strings.NewReader(body))
 	req.ContentLength = int64(len(body))
-	resp, err := c.http.Do(req)
+	c.acquire(req)
+	resp, err := c.send(req)
 	if err != nil {
 		return nil, err
 	}
-	return toResponseCap(resp, rawURL, 512_000), nil
+	return c.finish(resp, rawURL, 512_000), nil
 }
 
 // PostMultipart 多段表单上传（单请求，不跟随重定向；上传面探测用）。
@@ -527,7 +732,6 @@ func (c *Client) PostMultipart(rawURL, fileField, fileName, content string,
 // postMultipart 多段上传共用实现（可指定文件字段 Content-Type）。
 func (c *Client) postMultipart(rawURL, fileField, fileName, content, contentType string,
 	extra map[string]string) (*Response, error) {
-	c.wait()
 	const boundary = "----sitelensUploadBoundary7e3a9f"
 	var b strings.Builder
 	for k, v := range extra {
@@ -549,11 +753,12 @@ func (c *Client) postMultipart(rawURL, fileField, fileName, content, contentType
 	payload := b.String()
 	req.Body = io.NopCloser(strings.NewReader(payload))
 	req.ContentLength = int64(len(payload))
-	resp, err := c.http.Do(req)
+	c.acquire(req)
+	resp, err := c.send(req)
 	if err != nil {
 		return nil, err
 	}
-	return toResponseCap(resp, rawURL, 512_000), nil
+	return c.finish(resp, rawURL, 512_000), nil
 }
 
 // PostMultipartCT 与 PostMultipart 相同，但显式指定文件字段的 Content-Type。
@@ -565,7 +770,6 @@ func (c *Client) PostMultipartCT(rawURL, fileField, fileName, content, contentTy
 
 // PostJSON POST JSON 请求体（单请求，不跟随重定向；JSON API 登录用）。
 func (c *Client) PostJSON(rawURL, body string) (*Response, error) {
-	c.wait()
 	req, err := c.newRequest(http.MethodPost, rawURL)
 	if err != nil {
 		return nil, err
@@ -573,11 +777,12 @@ func (c *Client) PostJSON(rawURL, body string) (*Response, error) {
 	req.Header.Set("Content-Type", "application/json")
 	req.Body = io.NopCloser(strings.NewReader(body))
 	req.ContentLength = int64(len(body))
-	resp, err := c.http.Do(req)
+	c.acquire(req)
+	resp, err := c.send(req)
 	if err != nil {
 		return nil, err
 	}
-	return toResponseCap(resp, rawURL, 512_000), nil
+	return c.finish(resp, rawURL, 512_000), nil
 }
 
 func isRedirect(code int) bool {
@@ -595,30 +800,4 @@ func resolveRef(base, ref string) (string, error) {
 		return "", err
 	}
 	return bu.ResolveReference(ru).String(), nil
-}
-
-func toResponse(resp *http.Response, finalURL string) *Response {
-	return toResponseCap(resp, finalURL, defaultMaxBodyBytes)
-}
-
-func toResponseCap(resp *http.Response, finalURL string, bodyCap int) *Response {
-	defer resp.Body.Close()
-	body, _ := io.ReadAll(io.LimitReader(resp.Body, int64(bodyCap)+1))
-	if len(body) > bodyCap {
-		body = body[:bodyCap]
-	}
-	headers := make(map[string]string, len(resp.Header))
-	for k, vs := range resp.Header {
-		if strings.EqualFold(k, "Set-Cookie") {
-			continue // 单独保真存放
-		}
-		headers[k] = strings.Join(vs, ", ")
-	}
-	return &Response{
-		Status:     resp.StatusCode,
-		Headers:    headers,
-		SetCookies: resp.Header.Values("Set-Cookie"),
-		Body:       string(body),
-		FinalURL:   finalURL,
-	}
 }

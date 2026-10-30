@@ -297,8 +297,20 @@ func (r *Runner) authzProbe(rawURL, param string, done *int, total int) *Finding
 		}
 		return resp
 	}
-	// 先探两个不同取值，要求响应内容确实随标识变化（否则标识无效）
-	a := get("1")
+	// 先探两个不同取值，要求响应内容确实随标识变化（否则标识无效）。
+	// 取值 1 往往就是 target 原值：若该 benign 请求已被其它通道取过，直接复用
+	// （同一请求不重发），判定读到的仍是本 target 的真实响应。
+	baseU := setParam(rawURL, param, "1")
+	var a *Resp
+	if cached, ok := r.cachedGET(baseU); ok {
+		a = cached
+		*done++
+		if r.prog != nil {
+			r.prog(*done, total, "authz@"+shortLabel(Target{URL: rawURL, Param: param}))
+		}
+	} else {
+		a = get("1")
+	}
 	if a == nil || r.stopped() {
 		return nil
 	}

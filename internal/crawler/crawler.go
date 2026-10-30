@@ -72,6 +72,7 @@ type Crawler struct {
 	start        time.Time
 	renderer     Renderer // 可选：无头渲染器（SPA 支持）
 	sitemapDecls []string // robots.txt 声明的 Sitemap 地址
+	pageHook     func(*httpx.Response)
 }
 
 // New 创建爬取器；homeURL 用于确定同域边界。
@@ -98,6 +99,18 @@ type Renderer interface {
 // SetRenderer 挂载无头渲染器（可选）：启用后首页会额外做一次
 // JS 渲染并提取渲染后 DOM 的链接/路由（SPA 支持）。
 func (c *Crawler) SetRenderer(r Renderer) { c.renderer = r }
+
+// SetPageHook 挂载「每抓取到一页」的通知回调（可选，additive）。
+//
+// 语义约定（引擎流式分析用）：
+//   - 只做通知，无返回值、不影响爬取：不改变抓取顺序/去重/页数上限/robots
+//     语义；默认 nil 时行为与不挂载逐字节一致；
+//   - 串行调用：Crawl 在当前实现里是单 goroutine 顺序抓取，回调按页面
+//     入队完成顺序（= Result.Pages 顺序）串行触发，回调内无需加锁；
+//   - 传的是爬取器持有的响应指针：回调必须把它当**只读**数据（不得修改
+//     Body/Headers，也不得在回调返回后继续持有该指针——需要留存请自行复制）；
+//   - 回调耗时会计入爬取阶段（同步调用）。需要并行处理请在回调内自行派发。
+func (c *Crawler) SetPageHook(fn func(*httpx.Response)) { c.pageHook = fn }
 
 // Crawl 从首页响应开始爬取（首页已由引擎采到，直接复用不重复请求）。
 // extraSeeds 为外部提供的候选入口（jsmap API 端点 / sitemap / SPA 路由），
@@ -204,6 +217,11 @@ func (c *Crawler) Crawl(home *httpx.Response, extraSeeds []string) *Result {
 			Body:       resp.Body,
 			Title:      doc.Title,
 		})
+		// 每页通知（additive，默认 nil 无行为变化）。放在 append 之后，
+		// 回调看到的页面集合与 Result.Pages 前缀一致。
+		if c.pageHook != nil {
+			c.pageHook(resp)
+		}
 
 		// 收集表单与带参链接（任意已访问页都算攻击面）
 		base, _ := url.Parse(resp.FinalURL)
