@@ -142,10 +142,15 @@ func (e *Engine) InvalidateMLSev() {
 }
 
 // mlEnrich 扫描收尾的 ML 富化：对 res.Vulnerabilities 中出现过的
-// 不重复 CVE id——从 NVD 镜像取描述 → 双模型推理 → 组装 Prediction
-// （tech_top5 含与检出技术的 relevance 交集标记；sev_score 以 NVD
-// CVSS 先验填充，sev-prior ONNX 回归头为阶段 B）。无描述的 CVE 跳过
-// （模型输入是英文描述，不臆造）；一条预测都组不出来时不挂字段。
+// 不重复 CVE id 组装 Prediction。5.2 阶段 2 起字段一律「查表优先」：
+//
+//	tech_top5  — NVD CPE（nvd）/ finding 自带 product（intel）→ 模型（model）
+//	cwe_type   — NVD weaknesses / finding CWEs（nvd）→ 模型（model）
+//	sev_score  — 查表（nvd）→ sev-linear（linear）→ 可选 ONNX（onnx）
+//
+// 只有当对应字段查不到时才惰性加载模型资产；查表全覆盖时不读 94MB
+// cve-tech。无描述且无任何查表字段的 CVE 跳过（不臆造）；一条预测都
+// 组不出来时不挂字段。
 func (e *Engine) mlEnrich(res *Result, kb *intel.KB) {
 	// 先收集 CVE：无 CVE 的结果在此即返回，连资产目录都不触碰——
 	// cve-tech coef（94MB）读入后没有任何卸载路径，不能为空结果白付常驻。
@@ -166,64 +171,131 @@ func (e *Engine) mlEnrich(res *Result, kb *intel.KB) {
 	if len(cves) == 0 {
 		return
 	}
-	assets := e.mlFor()
-	if assets == nil {
-		return
-	}
 	techKeys := mlTechKeys(res.Technologies)
-	// sev-prior 模型分（阶段 B）：nil = 回退 NVD 先验；首次推理失败后
-	// 本次扫描余下 CVE 全走回退（模型级故障不会因重试自愈）
-	sevScorer := e.mlSevScorer()
+	// 5.2 阶段 2：产品/CWE/严重度一律「查表优先」——NVD 镜像与 finding
+	// 自带字段能答的条目直接出结论；模型资产按需惰性加载（查表全覆盖时
+	// 连 cve-tech 94MB 都不读），把模型价值区间压到真盲区。
+	var assets *ml.Assets
+	assetsTried := false
+	getAssets := func() *ml.Assets {
+		if !assetsTried {
+			assetsTried = true
+			assets = e.mlFor()
+		}
+		return assets
+	}
+	sevScorer := e.mlSevScorer() // nil = ONNX 未启用/不可用
 	sevBroken := false
-	sevFallback := 0
+	sevStats := map[string]int{"nvd": 0, "linear": 0, "onnx": 0, "none": 0}
+	techStats := map[string]int{"nvd": 0, "intel": 0, "model": 0, "none": 0}
+	cweStats := map[string]int{"nvd": 0, "model": 0, "none": 0}
 	preds := make([]ml.Prediction, 0, len(cves))
 	for _, cve := range cves {
-		descr, sev := mlDescr(kb, res.Vulnerabilities, cve)
-		if descr == "" {
-			continue
+		info := mlCVEInfoOf(kb, res.Vulnerabilities, cve)
+		if info.Descr == "" && len(info.Prods) == 0 && len(info.CWEs) == 0 && info.Score == 0 {
+			continue // 无描述、无查表字段：不臆造
 		}
-		top5 := assets.Tech.ProbaTopK(descr, 5)
-		tp := make([]ml.TechPred, len(top5))
-		for i, t := range top5 {
-			tp[i] = ml.TechPred{
-				Product:   t.Class,
-				Prob:      t.Score,
-				Relevance: mlRelevance(t.Class, techKeys),
+		// 产品 Top-5：CPE / 情报行 product 查表优先，模型只补盲区。
+		var tp []ml.TechPred
+		techSrc := ""
+		if len(info.Prods) > 0 {
+			for i, p := range info.Prods {
+				if i >= 5 {
+					break
+				}
+				tp = append(tp, ml.TechPred{
+					Product:   p,
+					Prob:      1, // 查表结果不是概率，固定 1 并由 TechSource 标注来源
+					Relevance: mlRelevance(p, techKeys),
+				})
+			}
+			techSrc = info.ProdSource
+		} else if a := getAssets(); a != nil && info.Descr != "" {
+			for _, t := range a.Tech.ProbaTopK(info.Descr, 5) {
+				tp = append(tp, ml.TechPred{
+					Product:   t.Class,
+					Prob:      t.Score,
+					Relevance: mlRelevance(t.Class, techKeys),
+				})
+			}
+			techSrc = "model"
+		}
+		if techSrc == "" {
+			techStats["none"]++
+		} else {
+			techStats[techSrc]++
+		}
+		// CWE：NVD weaknesses（或 finding 回填的 CWEs）查表优先，模型兜底。
+		cweType, cweSrc := "", ""
+		if len(info.CWEs) > 0 {
+			cweType, cweSrc = info.CWEs[0], "nvd"
+		} else if a := getAssets(); a != nil && info.Descr != "" {
+			cweType, _ = a.Cwe.ArgMax(info.Descr)
+			cweSrc = "model"
+		}
+		if cweSrc == "" {
+			cweStats["none"]++
+		} else {
+			cweStats[cweSrc]++
+		}
+		// 严重度：查表 → sev-linear → 可选 ONNX → 无先验。
+		sev, sevSrc := 0.0, ""
+		if info.Score > 0 {
+			sev, sevSrc = info.Score, "nvd"
+		}
+		if sevSrc == "" && e.cfg != nil && e.cfg.ML.SevLinear && info.Descr != "" {
+			if a := getAssets(); a != nil && a.Sev != nil {
+				if s, err := a.Sev.RegressionScore(info.Descr); err == nil {
+					sev, sevSrc = s, "linear"
+				}
 			}
 		}
-		cweType, _ := assets.Cwe.ArgMax(descr)
-		sevSrc := ""
-		if sevScorer != nil && !sevBroken {
-			if s, serr := sevScorer.Score(descr); serr == nil {
+		if sevSrc == "" && sevScorer != nil && !sevBroken && info.Descr != "" {
+			if s, serr := sevScorer.Score(info.Descr); serr == nil {
 				sev, sevSrc = s, "onnx"
 			} else {
 				sevBroken = true
 			}
 		}
 		if sevSrc == "" {
-			sevSrc = "nvd"
-			sevFallback++
+			sevStats["none"]++
+		} else {
+			sevStats[sevSrc]++
 		}
 		preds = append(preds, ml.Prediction{
-			CVE:       cve,
-			TechTop5:  tp,
-			CWEType:   cweType,
-			SevScore:  sev,
-			SevSource: sevSrc,
+			CVE:        cve,
+			TechTop5:   tp,
+			CWEType:    cweType,
+			SevScore:   sev,
+			SevSource:  sevSrc,
+			TechSource: techSrc,
+			CWESource:  cweSrc,
 		})
 	}
-	if e.cfg.ML.SevONNX {
-		info := map[string]any{"active": sevScorer != nil && !sevBroken}
-		if sevScorer == nil {
-			info["reason"] = e.mlSevReason
-		} else if sevBroken {
-			info["reason"] = "推理失败，回退 NVD 先验"
-		}
-		if sevFallback > 0 {
-			info["nvd_fallback"] = sevFallback
-		}
-		res.Extras["ml_sev"] = info
+	// extras.ml_sev：严重度来源可解释信息（web 摘要区/诊断用）。
+	// active 表示本次是否有"模型推理"型严重度（线性/ONNX）；nvd 查表属
+	// 权威数据，不算模型推理。旧字段与旧取值（onnx/nvd）继续输出 SevSource。
+	info := map[string]any{
+		"active": sevStats["linear"]+sevStats["onnx"] > 0,
+		"nvd":    sevStats["nvd"],
+		"linear": sevStats["linear"],
+		"onnx":   sevStats["onnx"],
+		"none":   sevStats["none"],
+		"tech":   techStats, // 5.2 阶段 2：产品来源计数（nvd/intel/model/none）
+		"cwe":    cweStats,  // 5.2 阶段 2：CWE 来源计数（nvd/model/none）
 	}
+	if e.cfg != nil && e.cfg.ML.SevONNX && sevScorer == nil {
+		info["reason"] = e.mlSevReason
+	} else if sevBroken {
+		info["reason"] = "onnx 推理失败，已回退线性/NVD"
+	}
+	if assets != nil && assets.SevErr != "" {
+		info["linear_reason"] = assets.SevErr
+	}
+	if res.Extras == nil { // 防御：测试/嵌入调用可能未初始化 extras
+		res.Extras = map[string]any{}
+	}
+	res.Extras["ml_sev"] = info
 	if len(preds) > 0 {
 		res.Predictions = preds
 	}
@@ -235,26 +307,72 @@ func (e *Engine) mlEnrich(res *Result, kb *intel.KB) {
 // 相互命中。
 var cveIDRe = regexp.MustCompile(`^CVE-\d{4,}-\d{4,}$`)
 
-// mlDescr CVE 描述与 CVSS 先验。NVD 镜像**仅在索引已解码常驻时**顺带
+// mlCVEInfo CVE 的权威字段：NVD 镜像优先，回退 findings 自带字段。
+// 5.2 阶段 2 起 mlEnrich 的产品/CWE/严重度都先查这里，查不到才用模型。
+type mlCVEInfo struct {
+	Descr      string
+	Score      float64
+	Prods      []string // NVD CPE vendor/product；回退 finding.Product（单值）
+	CWEs       []string
+	ProdSource string // nvd = NVD CPE；intel = finding.Product；空 = 无
+}
+
+// mlCVEInfoOf 取 CVE 的查表字段。NVD 镜像**仅在索引已解码常驻时**顺带
 // 查询（NVDLoaded 不触发加载）：cveMs-only 等未拉起场景若在此首次拉起
 // 全量索引（实测 3.46s / 37 万条 / ≈1.7GB 常驻），会同步阻塞扫描收尾、
 // 抬高常驻内存并让后续 overBudget 更易降档——违背「模型不改变扫描
 // 行为」原则，与 cwe.Relate 的 A3 惰性纪律（engine.go「只判断是否配置，
 // 不拉起索引」）对齐。镜像未拉起或未知 CVE 时，回退到扫描结果中该 CVE
-// 情报行自带的英文描述与 CVSS 分（数据已在结果里，不新增数据源）。
-func mlDescr(kb *intel.KB, findings []intel.Finding, cve string) (string, float64) {
-	if kb.NVDLoaded() {
+// 情报行自带的描述/CVSS/CWE/产品（数据已在结果里，不新增数据源）。
+func mlCVEInfoOf(kb *intel.KB, findings []intel.Finding, cve string) mlCVEInfo {
+	var info mlCVEInfo
+	if kb != nil && kb.NVDLoaded() {
 		// 索引已常驻：ByCVE 精确查询（NVDStore 为 nil 安全）
 		if e, ok := kb.NVD().ByCVE(cve); ok {
-			return e.Descr, e.Score
+			info.Descr = e.Descr
+			info.Score = e.Score
+			info.CWEs = e.CWEs
+			for _, p := range e.Prods {
+				if p.VP != "" {
+					info.Prods = append(info.Prods, p.VP)
+				}
+			}
+			if len(info.Prods) > 0 {
+				info.ProdSource = "nvd"
+			}
+			return info
 		}
 	}
+	// NVD 未常驻或未知 CVE：合并同 CVE 的多条 finding 自带字段。
+	seenCWE := map[string]bool{}
 	for _, f := range findings {
-		if strings.EqualFold(strings.TrimSpace(f.CVE), cve) && f.Desc != "" {
-			return f.Desc, f.CVSSScore
+		if !strings.EqualFold(strings.TrimSpace(f.CVE), cve) {
+			continue
+		}
+		if info.Descr == "" && f.Desc != "" {
+			info.Descr = f.Desc
+		}
+		if info.Score == 0 && f.CVSSScore > 0 {
+			info.Score = f.CVSSScore
+		}
+		for _, c := range f.CWEs {
+			if c != "" && !seenCWE[c] {
+				seenCWE[c] = true
+				info.CWEs = append(info.CWEs, c)
+			}
+		}
+		if len(info.Prods) == 0 && strings.TrimSpace(f.Product) != "" {
+			info.Prods = []string{strings.TrimSpace(f.Product)}
+			info.ProdSource = "intel"
 		}
 	}
-	return "", 0
+	return info
+}
+
+// mlDescr 兼容旧接口：返回描述与 CVSS 分（内部走 mlCVEInfoOf）。
+func mlDescr(kb *intel.KB, findings []intel.Finding, cve string) (string, float64) {
+	info := mlCVEInfoOf(kb, findings, cve)
+	return info.Descr, info.Score
 }
 
 // mlTechKeys 预计算检出技术的归一匹配键集合。

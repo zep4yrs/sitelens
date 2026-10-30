@@ -1,0 +1,16 @@
+{
+ "name": "sev-linear",
+ "classes": [
+  "cvss-score"
+ ],
+ "n_features": 41382,
+ "n_classes": 1,
+ "intercept": [
+  6.511473559401692
+ ],
+ "sublinear_tf": true,
+ "lowercase": true,
+ "token_pattern": "(?u)\\b\\w\\w+\\b",
+ "l2_norm": true,
+ "format": "vocab.txt line=id; idf.f32; coef.f32 rows=classes；regression: score=x·w+intercept"
+}

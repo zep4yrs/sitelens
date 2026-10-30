@@ -238,7 +238,6 @@ actuator/quartz
 actuator/startup
 actuator/shutdown
 heap
-dump
 api-docs/swagger.json
 api/api-docs
 api/apidocs

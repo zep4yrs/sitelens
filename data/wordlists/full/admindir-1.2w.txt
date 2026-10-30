@@ -82,7 +82,6 @@ general/index/UploadFile.%EXT%
 eoffice10/server/public/api/attachment/atuh-file
 eoffice10/server/public/api/attachment/path/migrate
 eoffice10/server/public/api/empower/import
-demo/servlet/dataSphereServlet
 InputServlet
 ajax/swfupload.%EXT%
 services/operOriztion

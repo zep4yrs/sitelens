@@ -111,7 +111,7 @@ go build -o sitelens.exe ./cmd/sitelens
 - **监听非回环地址时务必配 API Token**：把 `web.listen` 改成 `0.0.0.0:5000` 这类非回环地址、且未配置 token 时，启动只会打一条醒目告警并照常监听（`internal/server/server.go` 的 SEC-8 加固）——**告警不是硬闸**，但此时全部 `/api/*`（含主动扫描能力）对所在网络开放，生产部署请设 `SLENS_API_TOKEN` 或 `web.api_token`；配了 token 后 `/api/*` 一律要求 `X-Token` 头（常量时间比较），鉴权行为与既往版本一致；
 - 主动验证能力默认关闭，只有显式开启才会发包（且带硬上限）；
 - `target.allow_private` 是私网/本机扫描的安全闸，默认关，仅授权靶场开启；
-- 5.0 ML 预测由 `ml.predict`（默认开）控制总闸、`ml.assets_dir`（默认 `data/go/ml_assets`，仓内缺失时自动回退仓库内建 `models/go/ml_assets`）指定模型资产目录：资产缺失静默跳过预测，损坏则本进程禁用；预测呈现为先验参考字段（结果 JSON 的 `predictions`，前置先验信息在 `extras.ml_prior`）——**ML 先验只调整执行顺序与核心档位下的扩展集纳入（只增不删，all 档全集已跑、无增量），不改变任何 check 的命中判定、不凭模型直接产生发现**。
+- 5.0 ML 预测由 `ml.predict`（默认开）控制总闸、`ml.assets_dir`（默认 `data/go/ml_assets`，仓内缺失时自动回退仓库内建 `models/go/ml_assets`）指定模型资产目录：资产缺失静默跳过预测，损坏则本进程禁用；5.2 阶段 1/2 起预测字段一律**查表优先、模型兜底**——`tech_top5` 优先 NVD CPE / 情报行 product（`tech_source=nvd/intel`）、`cwe_type` 优先 NVD weaknesses（`cwe_source=nvd`）、`sev_score` 优先 NVD/情报 CVSS 分（`sev_source=nvd`，其次 0.7MB `ml.sev_linear` 线性回归兜底，留出 MAE 1.180）；前置调度通道改为**指纹技术名 → 产品映射**（确定性，不依赖模型），指纹无命中才回退 cve-tech 文本模型；查表全覆盖时不加载 94MB 模型资产，ONNX 降为可选高级包（`ml.sev_onnx` 默认关，安装包默认不含 ONNX 模型与 onnxruntime，ML 资产从 748.9 MiB 降到约 106 MiB）；预测呈现为先验参考字段（结果 JSON 的 `predictions`，含 `sev_source/tech_source/cwe_source` 来源；前置先验信息在 `extras.ml_prior`）——**ML 先验只调整执行顺序与核心档位下的扩展集纳入（只增不删，all 档全集已跑、无增量），不改变任何 check 的命中判定、不凭模型直接产生发现**。
 
 ## 七种扫描模式
 

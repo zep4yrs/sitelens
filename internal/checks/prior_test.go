@@ -127,6 +127,47 @@ func TestMLProductChecks(t *testing.T) {
 	}
 }
 
+// TestMLProductChecksForTech 指纹技术名 → 产品映射（5.2 阶段 2）：
+// 归一包含匹配、与 MLProductChecks 共用同一张表、无匹配返回 nil。
+func TestMLProductChecksForTech(t *testing.T) {
+	cases := []struct{ tech, key string }{
+		{"WordPress", "wordpress"},
+		{"WordPress Super Cache", "wordpress"},
+		{"Apache Tomcat", "tomcat"},
+		{"Apache-Tomcat", "tomcat"},
+		{"Apache HTTP Server", "http_server"},
+		{"PHP", "php"},
+		{"phpMyAdmin", "phpmyadmin"}, // 映射表 phpmyadmin 先于 php
+		{"Joomla", "joomla"},
+		{"Drupal", "drupal"},
+		{"Subversion", "subversion"},
+	}
+	for _, tc := range cases {
+		got := MLProductChecksForTech(tc.tech)
+		if len(got) == 0 || got[0].Key != tc.key {
+			t.Errorf("%q 命中 %v，期望首个 key=%q", tc.tech, got, tc.key)
+			continue
+		}
+		// 与类别串路径同一张表：check id 不能分叉（MLProductChecks 对
+		// phpmyadmin 会同时命中 phpmyadmin+php 两个 key，ids 可能重复，按集合比）。
+		want := map[string]bool{}
+		for _, id := range MLProductChecks(tc.key) {
+			want[id] = true
+		}
+		for _, id := range got[0].IDs {
+			if !want[id] {
+				t.Errorf("%q 映射出 %q 不在 MLProductChecks(%q) 集合内",
+					tc.tech, id, tc.key)
+			}
+		}
+	}
+	for _, no := range []string{"Nginx", "Redis", "   ", "unknown-httpd"} {
+		if got := MLProductChecksForTech(no); got != nil {
+			t.Errorf("%q 无映射应返回 nil，得到 %v", no, got)
+		}
+	}
+}
+
 // TestIsExtended 扩展集判断：wp-readme 是 Lv1 扩展集。
 func TestIsExtended(t *testing.T) {
 	if !IsExtended("wp-readme") {

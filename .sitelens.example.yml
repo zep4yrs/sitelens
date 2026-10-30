@@ -142,7 +142,12 @@ active:                      # 主动模块阈值（模块本身默认关，扫�
   probe_workers: 10
   wordlist_dir: data/wordlists
 
-ml:                          # 5.0 内嵌 ML 推理（cve-tech/cwe-type，先验参考不改变判定）
-  predict: true              # 扫描收尾对含 CVE 的发现做产品 Top-5 + CWE 类型预测（总闸）
+ml:                          # 5.0 内嵌 ML 推理（cve-tech/cwe-type/sev-linear，先验参考不改变判定）
+  predict: true              # 扫描收尾对含 CVE 的发现做产品 Top-5 + CWE 类型 + 严重度预测（总闸）
   assets_dir: data/go/ml_assets  # 模型资产目录；缺失静默跳过预测，损坏本进程禁用
+  sev_linear: true           # 5.2 阶段 1：线性严重度兜底（0.7MB，MAE≈1.19）。NVD/情报行
+                             # 查不到 CVSS 分时用它；关闭则无 NVD 分的条目不冒风险给分
+  sev_onnx: false            # 可选高级包：sev-prior ONNX 严重度（需 -tags onnx 构建 +
+                             # onnxruntime 共享库 + 模型随包；默认关，失败自动回退线性/NVD）
+  onnxrt_dll: data/onnxruntime/onnxruntime.dll  # ONNX 共享库路径（仅 sev_onnx 开时用）
 

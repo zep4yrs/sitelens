@@ -341,3 +341,297 @@ func TestMLDescrDoesNotWakeNVD(t *testing.T) {
 		t.Fatalf("kb=nil 应回退 findings, got %q", d3)
 	}
 }
+
+// writeTinySevLinear 写一个 1 类×3 特征的线性严重度回归资产（系数全零，
+// 分数 = intercept），供 mlEnrich 严重度后端优先级测试。
+func writeTinySevLinear(t *testing.T, dir string, intercept float64) {
+	t.Helper()
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	meta := fmt.Sprintf(`{"name":"sev-linear","classes":["cvss-score"],"n_features":3,"n_classes":1,
+"intercept":[%g],"sublinear_tf":true,"lowercase":true,
+"token_pattern":"(?u)\\b\\w\\w+\\b","l2_norm":true}`, intercept)
+	files := map[string][]byte{
+		"sev-linear.meta.json": []byte(meta),
+		"sev-linear.vocab.txt": []byte("alpha\nbravo\ncharlie"),
+		"sev-linear.idf.f32":   {0, 0, 128, 63, 0, 0, 128, 63, 0, 0, 128, 63},
+		"sev-linear.coef.f32":  make([]byte, 12), // 1 类×3 特征全零系数
+	}
+	for fn, b := range files {
+		if err := os.WriteFile(filepath.Join(dir, fn), b, 0o644); err != nil {
+			t.Fatalf("写 %s: %v", fn, err)
+		}
+	}
+}
+
+// TestMLEnrichSevSourcePriority 5.2 阶段 1 严重度后端优先级：
+// NVD/情报行查表（nvd）→ sev-linear（linear）→ 无可选 ONNX 时留空。
+// 同时覆盖 sev_linear 开关关闭的行为（不臆造分数）。
+func TestMLEnrichSevSourcePriority(t *testing.T) {
+	dir := t.TempDir()
+	writeTinyMLAssets(t, dir)
+	writeTinySevLinear(t, dir, 5.5)
+
+	if !config.Default().ML.SevLinear {
+		t.Fatal("默认配置 ml.sev_linear 应为 true（5.2 阶段 1 默认后端）")
+	}
+
+	e := &Engine{cfg: config.Default()}
+	e.cfg.ML.AssetsDir = dir
+	descr := "alpha bravo charlie delta"
+	res := &Result{Vulnerabilities: []intel.Finding{
+		{CVE: "CVE-2024-0001", Desc: descr, CVSSScore: 7.5}, // 查表优先
+		{CVE: "CVE-2024-0002", Desc: descr},                 // 无分 → 线性兜底
+	}}
+	e.mlEnrich(res, nil)
+	if len(res.Predictions) != 2 {
+		t.Fatalf("应产出 2 条预测, got %d: %v", len(res.Predictions), res.Predictions)
+	}
+	if p := res.Predictions[0]; p.SevSource != "nvd" || p.SevScore != 7.5 {
+		t.Fatalf("查表优先失效: source=%q score=%v", p.SevSource, p.SevScore)
+	}
+	if p := res.Predictions[1]; p.SevSource != "linear" || p.SevScore != 5.5 {
+		t.Fatalf("线性兜底失效: source=%q score=%v", p.SevSource, p.SevScore)
+	}
+	info, ok := res.Extras["ml_sev"].(map[string]any)
+	if !ok {
+		t.Fatalf("extras.ml_sev 缺失: %v", res.Extras)
+	}
+	if info["nvd"] != 1 || info["linear"] != 1 || info["none"] != 0 {
+		t.Fatalf("ml_sev 来源计数不对: %v", info)
+	}
+	if info["active"] != true {
+		t.Fatalf("linear 生效时 active 应为 true: %v", info)
+	}
+
+	// 关闭 sev_linear：无 NVD 分的条目不给分数（不臆造），来源留空。
+	e2 := &Engine{cfg: config.Default()}
+	e2.cfg.ML.AssetsDir = dir
+	e2.cfg.ML.SevLinear = false
+	res2 := &Result{Vulnerabilities: []intel.Finding{
+		{CVE: "CVE-2024-0003", Desc: descr},
+	}}
+	e2.mlEnrich(res2, nil)
+	if len(res2.Predictions) != 1 {
+		t.Fatalf("应产出 1 条预测, got %d", len(res2.Predictions))
+	}
+	if p := res2.Predictions[0]; p.SevScore != 0 || p.SevSource != "" {
+		t.Fatalf("关闭 sev_linear 后不应给分: source=%q score=%v", p.SevSource, p.SevScore)
+	}
+}
+
+// TestSevLinearOptionalLoadSemantics 可选 sev-linear 资产的两类降级：
+// 缺文件 = 未就绪（不报错、不影响 cve-tech/cwe-type）；损坏 = 仅禁用该后端。
+func TestSevLinearOptionalLoadSemantics(t *testing.T) {
+	dir := t.TempDir()
+	writeTinyMLAssets(t, dir) // 只有 cve-tech/cwe-type
+	e := &Engine{cfg: config.Default()}
+	e.cfg.ML.AssetsDir = dir
+	a := e.mlFor()
+	if a == nil {
+		t.Fatal("缺 sev-linear 不应影响必备线性模型加载")
+	}
+	if a.Sev != nil || a.SevErr != "" {
+		t.Fatalf("缺 sev-linear 应为未就绪（nil, \"\"）: Sev=%v SevErr=%q", a.Sev, a.SevErr)
+	}
+
+	bad := t.TempDir()
+	writeTinyMLAssets(t, bad)
+	writeTinySevLinear(t, bad, 5.5)
+	if err := os.WriteFile(filepath.Join(bad, "sev-linear.coef.f32"), make([]byte, 4), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	e2 := &Engine{cfg: config.Default()}
+	e2.cfg.ML.AssetsDir = bad
+	a2 := e2.mlFor()
+	if a2 == nil {
+		t.Fatal("可选 sev-linear 损坏不应置死整个 ML 资产")
+	}
+	if a2.Sev != nil || a2.SevErr == "" {
+		t.Fatalf("损坏 sev-linear 应仅禁用该后端: Sev=%v SevErr=%q", a2.Sev, a2.SevErr)
+	}
+	if e2.mlDead {
+		t.Fatal("可选 sev-linear 损坏不应置死标记")
+	}
+}
+
+// writeNVDKB 写一个内存 NVD 镜像（gzip JSON）并挂载到 KB，供查表优先用例。
+func writeNVDKB(t *testing.T, entries []map[string]any) *intel.KB {
+	t.Helper()
+	gz := filepath.Join(t.TempDir(), "nvd_cves.json.gz")
+	var buf bytes.Buffer
+	zw := gzip.NewWriter(&buf)
+	if err := json.NewEncoder(zw).Encode(map[string]any{"cves": entries}); err != nil {
+		t.Fatal(err)
+	}
+	if err := zw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(gz, buf.Bytes(), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	store, err := intel.LoadNVD(gz)
+	if err != nil || store == nil {
+		t.Fatalf("LoadNVD: %v", err)
+	}
+	kb := &intel.KB{}
+	kb.AttachNVD(store)
+	return kb
+}
+
+// TestMLEnrichLookupOnlyWithoutAssets 5.2 阶段 2：查表字段（CPE/CWE/score）
+// 齐全时，即使完全没有模型资产也能产出预测，且不读 94MB cve-tech。
+func TestMLEnrichLookupOnlyWithoutAssets(t *testing.T) {
+	kb := writeNVDKB(t, []map[string]any{{
+		"cve": "CVE-2024-1234", "pub": "2024-01-02", "score": 9.8,
+		"descr": "WordPress plugin allows remote code execution",
+		"prods": []map[string]any{{"vp": "wordpress/wordpress"}},
+		"cwes":  []string{"CWE-79", "CWE-20"},
+	}})
+	e := &Engine{cfg: config.Default()}
+	e.cfg.ML.AssetsDir = filepath.Join(t.TempDir(), "absent")
+	res := &Result{Vulnerabilities: []intel.Finding{{CVE: "CVE-2024-1234"}}}
+	e.mlEnrich(res, kb)
+
+	if len(res.Predictions) != 1 {
+		t.Fatalf("查表齐全应产出预测, got %v", res.Predictions)
+	}
+	p := res.Predictions[0]
+	if p.TechSource != "nvd" || len(p.TechTop5) != 1 ||
+		p.TechTop5[0].Product != "wordpress/wordpress" || p.TechTop5[0].Prob != 1 {
+		t.Fatalf("产品查表结果不对: source=%q top5=%+v", p.TechSource, p.TechTop5)
+	}
+	if p.CWESource != "nvd" || p.CWEType != "CWE-79" {
+		t.Fatalf("CWE 查表结果不对: source=%q cwe=%q", p.CWESource, p.CWEType)
+	}
+	if p.SevSource != "nvd" || p.SevScore != 9.8 {
+		t.Fatalf("严重度查表结果不对: source=%q score=%v", p.SevSource, p.SevScore)
+	}
+	if e.mlAssets != nil {
+		t.Fatal("查表全覆盖时应保持惰性，不加载模型资产（94MB）")
+	}
+}
+
+// TestMLEnrichLookupBeatsModel 查表优先于模型：有 CPE/CWE/score 时，
+// 即使模型资产可用也直接出查表结论，且不加载资产。
+func TestMLEnrichLookupBeatsModel(t *testing.T) {
+	dir := t.TempDir()
+	writeTinyMLAssets(t, dir)
+	writeTinySevLinear(t, dir, 5.5)
+	kb := writeNVDKB(t, []map[string]any{{
+		"cve": "CVE-2024-5678", "pub": "2024-02-02", "score": 7.5,
+		"descr": "alpha bravo charlie delta",
+		"prods": []map[string]any{{"vp": "apache/tomcat"}},
+		"cwes":  []string{"CWE-22"},
+	}})
+	e := &Engine{cfg: config.Default()}
+	e.cfg.ML.AssetsDir = dir
+	res := &Result{Vulnerabilities: []intel.Finding{{CVE: "CVE-2024-5678"}}}
+	e.mlEnrich(res, kb)
+
+	if len(res.Predictions) != 1 {
+		t.Fatalf("应产出 1 条预测, got %v", res.Predictions)
+	}
+	p := res.Predictions[0]
+	if p.TechSource != "nvd" || p.TechTop5[0].Product != "apache/tomcat" {
+		t.Fatalf("查表应优先于模型: source=%q top5=%+v", p.TechSource, p.TechTop5)
+	}
+	if p.CWESource != "nvd" || p.CWEType != "CWE-22" {
+		t.Fatalf("CWE 查表应优先于模型: source=%q cwe=%q", p.CWESource, p.CWEType)
+	}
+	if p.SevSource != "nvd" || p.SevScore != 7.5 {
+		t.Fatalf("严重度查表应优先: source=%q score=%v", p.SevSource, p.SevScore)
+	}
+	if e.mlAssets != nil {
+		t.Fatal("查表全覆盖时不应加载模型资产")
+	}
+}
+
+// TestMLEnrichModelFallback 盲区回退：无查表字段时按 descr 走模型，
+// 来源标注为 model/linear（阶段 1+2 契约）。
+func TestMLEnrichModelFallback(t *testing.T) {
+	dir := t.TempDir()
+	writeTinyMLAssets(t, dir)
+	writeTinySevLinear(t, dir, 5.5)
+	e := &Engine{cfg: config.Default()}
+	e.cfg.ML.AssetsDir = dir
+	res := &Result{Vulnerabilities: []intel.Finding{{
+		CVE: "CVE-2024-9999", Desc: "alpha bravo charlie delta echo",
+	}}}
+	e.mlEnrich(res, nil)
+
+	if len(res.Predictions) != 1 {
+		t.Fatalf("应产出 1 条预测, got %v", res.Predictions)
+	}
+	p := res.Predictions[0]
+	if p.TechSource != "model" || len(p.TechTop5) == 0 {
+		t.Fatalf("产品应走模型兜底: source=%q top5=%+v", p.TechSource, p.TechTop5)
+	}
+	if p.CWESource != "model" || p.CWEType == "" {
+		t.Fatalf("CWE 应走模型兜底: source=%q cwe=%q", p.CWESource, p.CWEType)
+	}
+	if p.SevSource != "linear" {
+		t.Fatalf("严重度应走 sev-linear: source=%q", p.SevSource)
+	}
+}
+
+// TestMLEnrichIntelProductSource finding 自带 product 的回退（无 NVD 索引）：
+// 产品来源标 intel，CWE 来源空、严重度走 finding CVSS。
+func TestMLEnrichIntelProductSource(t *testing.T) {
+	e := &Engine{cfg: config.Default()}
+	e.cfg.ML.AssetsDir = filepath.Join(t.TempDir(), "absent")
+	res := &Result{Vulnerabilities: []intel.Finding{{
+		CVE: "CVE-2023-0001", Product: "wordpress/wordpress", CVSSScore: 8.0,
+	}}}
+	e.mlEnrich(res, nil)
+
+	if len(res.Predictions) != 1 {
+		t.Fatalf("finding 自带 product 应产出预测, got %v", res.Predictions)
+	}
+	p := res.Predictions[0]
+	if p.TechSource != "intel" || len(p.TechTop5) != 1 || p.TechTop5[0].Product != "wordpress/wordpress" {
+		t.Fatalf("产品来源应为 intel: source=%q top5=%+v", p.TechSource, p.TechTop5)
+	}
+	if p.CWESource != "" || p.CWEType != "" {
+		t.Fatalf("无 CWE 查表时不应臆造: source=%q cwe=%q", p.CWESource, p.CWEType)
+	}
+	if p.SevSource != "nvd" || p.SevScore != 8.0 {
+		t.Fatalf("严重度应取 finding CVSS: source=%q score=%v", p.SevSource, p.SevScore)
+	}
+	if e.mlAssets != nil {
+		t.Fatal("无模型资产且查表覆盖产品/严重度时不应报错或加载资产")
+	}
+}
+
+// TestMLPriorFingerprintFirst 5.2 阶段 2：指纹技术名 → 产品映射优先，
+// 不加载模型资产、不读正文；无指纹命中且无资产时无先验。
+func TestMLPriorFingerprintFirst(t *testing.T) {
+	e := &Engine{cfg: config.Default()}
+	e.cfg.ML.AssetsDir = filepath.Join(t.TempDir(), "absent")
+	res := &Result{Technologies: []Tech{{Name: "WordPress"}, {Name: "Apache Tomcat"}}}
+	prior, _, info := e.mlPrior(res, nil, "core", []string{"wp-login"})
+	if prior == nil {
+		t.Fatal("指纹命中应产出先验")
+	}
+	for _, id := range []string{"wp-users", "tomcat-manager"} {
+		if _, ok := prior.Boost[id]; !ok {
+			t.Errorf("指纹先验应提权 %s，实得 %v", id, prior.Boost)
+		}
+	}
+	if info["source"] != "fingerprint" {
+		t.Fatalf("先验来源应为 fingerprint, got %v", info["source"])
+	}
+	if e.mlAssets != nil {
+		t.Fatal("指纹先验不应加载模型资产（94MB）")
+	}
+
+	// 无指纹命中：无资产时静默无先验，且保持不加载资产。
+	res2 := &Result{Technologies: []Tech{{Name: "Nginx"}}}
+	if p, _, _ := e.mlPrior(res2, nil, "core", nil); p != nil {
+		t.Fatalf("无映射且无资产应无先验, got %+v", p)
+	}
+	if e.mlAssets != nil {
+		t.Fatal("无先验时也不应加载模型资产")
+	}
+}

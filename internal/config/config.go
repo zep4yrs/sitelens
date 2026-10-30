@@ -58,8 +58,11 @@ type FeedbackConfig struct {
 type MLConfig struct {
 	Predict   bool   `yaml:"predict"`    // ML 总闸：前置产品先验调度 + 收尾预测富化（默认开）
 	AssetsDir string `yaml:"assets_dir"` // 模型资产目录（缺失/损坏静默跳过预测）
-	// SevONNX sev-prior v3.1 严重度模型推理开关（默认关）：需 -tags onnx
-	// 构建与 onnxruntime 共享库；关闭或失败回退 NVD CVSS 先验（§10.8）
+	// SevLinear sev-linear 线性严重度回归开关（5.2 阶段 1，默认开）：
+	// NVD/情报行查不到 CVSS 分时用 0.7MB 线性模型兜底（留出 MAE 1.180）。
+	SevLinear bool `yaml:"sev_linear"`
+	// SevONNX sev-prior v3.1 严重度模型推理开关（默认关，可选高级包）：
+	// 需 -tags onnx 构建与 onnxruntime 共享库；关闭或失败回退线性/NVD（§10.8）
 	SevONNX   bool   `yaml:"sev_onnx"`
 	OnnxrtDLL string `yaml:"onnxrt_dll"` // 共享库路径（空 = data/onnxruntime/onnxruntime.dll）
 }
@@ -362,7 +365,8 @@ func Default() *Config {
 		ML: MLConfig{
 			Predict:   true, // 默认开：预测是附加产物，失败静默跳过
 			AssetsDir: "data/go/ml_assets",
-			SevONNX:   false, // 默认关：ONNX 构建属桌面安装器形态（§10.8）
+			SevLinear: true,  // 默认开：0.7MB 线性严重度兜底（NVD 查表优先）
+			SevONNX:   false, // 默认关：ONNX 构建属可选高级包（§10.8）
 		},
 		Feedback: FeedbackConfig{
 			// 默认不提交：产品承诺「不采集用户数据」，提交目标由用户自建。

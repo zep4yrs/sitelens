@@ -225,13 +225,16 @@ async function ensureConfig(prefPort) {
       tpl_intel_path: underRoot(userDir, 'data', 'tpl_intel.json.gz'),
       technologies_path: underRoot(userDir, 'data', 'go', 'technologies.json')
     },
-    // 方案 Aa（5.0 桌面全量内嵌）：桌面引擎带 -tags onnx，sev-prior 模型与
-    // onnxruntime.dll 随包（engine/data），故 sev_onnx 桌面默认开。onnxrt_dll
-    // 用相对引擎 cwd 的安装目录内路径（引擎 spawn 时 cwd=ENGINE_DIR，与引擎
-    // 自身空值默认 data/onnxruntime/onnxruntime.dll 同点位）；布尔必须落成
-    // YAML 裸字面量 true，带引号会被引擎当字符串、整份配置回退默认。
+    // 5.2 阶段 1：默认包不带 ONNX（-tags onnx / sev-prior 模型 /
+    // onnxruntime.dll 均不进默认安装包）。严重度默认走「NVD/情报行查表 →
+    // sev-linear 线性回归兜底」（ml.sev_linear 默认开），故 sev_onnx 默认
+    // 关；仅当用户安装可选 ONNX 高级包（SITLENS_BUNDLE_ONNX=1 构建）且
+    // 在设置页显式打开后才启用。onnxrt_dll 保留点位说明，默认包无该文件
+    // 也不影响线性/NVD 路径（引擎按不可用静默降级）。布尔必须落成 YAML
+    // 裸字面量 true/false，带引号会被引擎当字符串、整份配置回退默认。
     ml: {
-      sev_onnx: true,
+      sev_linear: true,
+      sev_onnx: false,
       onnxrt_dll: 'data/onnxruntime/onnxruntime.dll'
     }
   };

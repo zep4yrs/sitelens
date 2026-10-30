@@ -22,7 +22,7 @@ func settingsBody(overridesPath string) string {
 		"exploit": map[string]any{"enabled": false},
 		"intel":   map[string]any{"overrides_path": overridesPath},
 		"batch":   map[string]any{"max_urls": 10},
-		"ml":      map[string]any{"predict": false, "sev_onnx": false},
+		"ml":      map[string]any{"predict": false, "sev_linear": true, "sev_onnx": false},
 	})
 	return string(b)
 }

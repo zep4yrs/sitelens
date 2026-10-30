@@ -65,6 +65,47 @@ func MLProductChecks(class string) []string {
 	return out
 }
 
+// normTechKey 归一指纹技术名/映射 key：小写、仅保留字母数字。
+// 与引擎 mlNorm 同口径（"Apache Tomcat" → "apachetomcat"、
+// "http_server" → "httpserver"），保证两条先验通道语义一致。
+func normTechKey(s string) string {
+	var b strings.Builder
+	b.Grow(len(s))
+	for _, r := range strings.ToLower(s) {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') {
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
+}
+
+// MLProductTechMatch 指纹技术名命中的产品映射项。
+type MLProductTechMatch struct {
+	Key string   // 映射表 key（wordpress / tomcat / php …）
+	IDs []string // 相关 check id（与 MLProductChecks 同一张表）
+}
+
+// MLProductChecksForTech 检出技术名 → 相关 check（5.2 阶段 2 确定性指纹先验）。
+//
+// 与 MLProductChecks 共用同一张 mlProductChecks 映射表：指纹通道把
+// "检出技术名" 当作产品类别串直接匹配，不经过 cve-tech 模型，因此
+// 不需要加载 94MB 资产、也不会被站点正文的泛化词带偏。
+// 归一后做包含匹配（"Apache Tomcat" ⊃ "tomcat"），无匹配返回 nil。
+func MLProductChecksForTech(techName string) []MLProductTechMatch {
+	n := normTechKey(techName)
+	if n == "" {
+		return nil
+	}
+	var out []MLProductTechMatch
+	for _, m := range mlProductChecks {
+		k := normTechKey(m.key)
+		if k != "" && strings.Contains(n, k) {
+			out = append(out, MLProductTechMatch{Key: m.key, IDs: m.ids})
+		}
+	}
+	return out
+}
+
 // checkIndex 是 check id → Check 的只读快照，随插件集版本换代。
 //
 // BUG-013：原实现用 sync.Once 只建一次索引，ConfigurePlugins 热重载

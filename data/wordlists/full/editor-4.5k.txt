@@ -777,7 +777,6 @@ Plugins/kindeditor351/skins/default
 Plugins/ueditor/ueditor.all.min.js
 Plugins/ueditor1_4_3-utf8-jsp/ueditor.all.min.js
 Plugins/ueditor/jsp/controller.jsp
-Plugins/ueditor1_4_3-utf8-jsp/ueditor.all.min.js
 zmd/WebEdit/db/dbwebedit#cc495898.asp
 zmd/WebEdit/Dialog/about
 zmd/WebEdit/Dialog/about.htm
