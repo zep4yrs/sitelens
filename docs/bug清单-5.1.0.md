@@ -247,28 +247,28 @@ BUG-017 修前服务端只收到 `q=%250d%250a…`、BUG-008 修前 5 跳 × 8 �
 > 400ms 配置 155s、1ms 后 0.6s）——从「算得快」转向「单位时间产出更多，且不伤害
 > 被扫目标」。完整设计与实测见 `docs/release-5.2.0/效率轮-5.2.0.md`。
 
-#### 0.7.1 前后数字（同 fixture：4 页带表单/带参 + 2 个可命中点，deep+DAST）
+#### 0.7.1 前后数字（同 fixture：4 页带表单/带参；deep+DAST）
 
 | 组 | 请求数 | 墙钟 | findings |
 |---|---|---|---|
-| 旧实现 af60716（worktree 独立测） | 799 | 159.95s | 2（sqli-error / xss-reflect） |
-| 新 balanced（默认 `scan.rate_mode`） | **776（-2.88%）** | **156.09s（-2.4%）** | 2，逐字节等价 |
-| 新 polite | 776 | 310.01s | 2，逐字节等价 |
+| 旧实现 af60716（fixture A，独立 worktree 测） | 775 | 155.1s | — |
+| **新 balanced 默认（8 req/s）** | 771（-0.5%） | **98.1s（-36.8%）** | 与旧等价（dast 层复用对照 + 旧/新逐字节等价用例） |
+| 新 balanced 保守档（`rate_max_rps: 5`） | 776（-2.88%） | 156.09s | 2 条，逐字节等价（fixture B） |
+| 新 polite 400ms | 776 | 310.01s | 2 条，逐字节等价（fixture B） |
 
-- balanced vs 新 polite 墙钟 **↓49.6%**（自适应 400ms→200ms 硬下限）。
-- 相对旧实现墙钟只快 2.4%：旧 `wait()` 的 pairing 缺陷让实际速率恰好 ≈5 rps，与
-  balanced 下限同速——墙钟收益只能来自请求数下降，这是「不伤害目标」前提下的必然结果。
-- 目标侧负载：balanced 平均 **≤5 req/s/主机**（峰值 1s=6，与旧实现同口径）、
-  最大并发 1（未增加并发）；RTT 恶化/WAF 信号自动退避并锁定低速。
-- 想要更快：`scan.rate_max_rps` 可调高（如 8 → 约 -35% 墙钟、平均 8 req/s），
-  **默认 5 保持保守，只建议自控靶场调高**。
+- 默认 8 rps 相对旧实现墙钟 **-36.8%**；保守档（5 rps）与旧实现同速（旧 `wait()`
+  pairing 缺陷实际 ≈5 rps），只快 2.4%——默认改 8 后才有实质提速。
+- 目标侧负载（默认 8 rps）：平均 **7.9 req/s/主机**、峰值 1s=9、最大并发 1（未增加）；
+  代码级绝对上限 10 req/s（100ms，配置无法突破）；RTT 恶化/WAF 信号自动退避并锁定低速。
+- 保守配置：`scan.rate_max_rps: 5`（200ms 下限、平均 ≤5 req/s）或更低，只会更保守。
 
 #### 0.7.2 改了什么
 
 - **httpx**：旧 `wait()`（先设 last 再睡 → 并发齐发 N/interval）重做为 **per-host 共享
   令牌桶**（容量 1、全进程共享、空闲 5min TTL）；polite 档语义修正为真实固定间隔
-  （400ms=2.5 rps）；balanced 档 400ms 起步→连续成功减半→**硬下限 200ms**（间隔高于
-  下限才 ±20% 抖动）；RTT EWMA 恶化自动退避；429/503/Retry-After/WAF 特征头/挑战页/
+  （400ms=2.5 rps）；balanced 档 400ms 起步→连续成功减半→**默认硬下限 125ms
+  （8 req/s，`rate_max_rps: 8`）**，代码级绝对上限 10 req/s（100ms）；间隔高于下限才
+  ±20% 抖动；RTT EWMA 恶化自动退避；429/503/Retry-After/WAF 特征头/挑战页/
   2xx→403 降级 → `Resp.Blocked/BlockReason` + 锁定低速（400ms→1s→2s 只增不减）；
   `Stats()` 指标；SSRF/解析链路零改动。
 - **engine/dast/crawler**：DAST benign 基线跨通道复用（payload 绝不复用；时间差分复用
@@ -277,7 +277,7 @@ BUG-017 修前服务端只收到 `q=%250d%250a…`、BUG-008 修前 5 跳 × 8 �
   （首页被拦终止/爬取页不进分析集/jsmap 拦截隔离/DAST 被拦不判定/checks 命中按 URL 过滤）、
   `Result.Diagnostics` 诊断账本（additive）。
 - **config**：`scan.rate_mode: balanced|polite`（默认 balanced；未知值按 polite 保守
-  处理）、`scan.rate_max_rps`（默认 5）；`.sitelens.example.yml` 同步。
+  处理）、`scan.rate_max_rps`（默认 8，绝对上限 10）；`.sitelens.example.yml` 同步。
 
 #### 0.7.3 新增门禁
 

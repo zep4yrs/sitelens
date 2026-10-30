@@ -82,22 +82,22 @@
 - **限速层重做**：修掉旧 `wait()` 的 pairing 缺陷（并发调用者齐发 → 实际速率
   N/interval，400ms 配置实际 ≈5 rps）；改为 **per-host 共享令牌桶**（全进程共享、
   容量 1、空闲 5min TTL）。新增 `scan.rate_mode`：`balanced`（默认，400ms 起步 →
-  连续干净成功减半 → 硬下限 200ms ≈ 平均 ≤5 req/s/主机，间隔高于下限才抖动）与
-  `polite`（固定 `rate_interval_ms`，修正后 400ms = 真实 2.5 rps）。RTT 恶化自动
-  退避；429/503/Retry-After/WAF 特征头/挑战页/2xx→403 降级 → `Resp.Blocked` +
-  锁定低速；`Stats()` 暴露请求数/间隔/平均 RPS/blocked/backoffs。
+  连续干净成功减半 → **默认硬下限 125ms ≈ 平均 ≤8 req/s/主机**；代码级绝对上限
+  10 req/s，配置无法突破；间隔高于下限才抖动）与 `polite`（固定 `rate_interval_ms`，
+  修正后 400ms = 真实 2.5 rps）。RTT 恶化自动退避；429/503/Retry-After/WAF 特征头/
+  挑战页/2xx→403 降级 → `Resp.Blocked` + 锁定低速；`Stats()` 暴露请求数/间隔/
+  平均 RPS/blocked/backoffs。
 - **请求去重**：DAST benign 基线跨通道复用（payload 绝不复用；时间差分复用携带
   首次真实 RTT 防误报）、只读页面响应单扫描复用、crawler additive `SetPageHook`
   逐页流式指纹/被动、主页/robots/favicon/种子页去重；WAF 拦截响应不参与任何判定
   （防回显假阳性）。
 - **诊断账本**：`Result.Diagnostics`（JSON `diagnostics`，additive）——总请求/
   blocked/backoffs/WAF 原因/去重命中/平均 RPS/实际间隔/流式标记 + 每阶段明细。
-- **实测**（4 页带表单/带参 + 2 个可命中点，deep+DAST）：旧 799 请求/159.95s →
-  新 balanced **776 请求（-2.88%）/ 156.09s**，findings 逐字节等价；balanced vs
-  polite 墙钟 **↓49.6%**。相对旧实现墙钟仅快 2.4%（旧 pairing 缺陷实际速率恰好
-  ≈5 rps，与 balanced 下限同速）；要更快可调 `scan.rate_max_rps`（默认 5，只建议
-  自控靶场调高）。目标侧平均 ≤5 req/s/主机、并发不增（最大并发 1）、RTT/WAF 信号
-  自动退避；详见 `docs/release-5.2.0/效率轮-5.2.0.md`。
+- **实测**（4 页带表单/带参，deep+DAST）：旧实现 775 请求/155.1s → 新默认
+  **771 请求/98.1s（-36.8%）**，发现结果等价（dast 层复用对照 + 旧/新逐字节等价
+  用例）；保守档 `rate_max_rps: 5` 与旧实现同速（156.09s），polite 400ms 为
+  310.01s。目标侧默认平均 7.9 req/s/主机、峰值 1s=9、并发不增（最大并发 1）、
+  RTT/WAF 信号自动退避；详见 `docs/release-5.2.0/效率轮-5.2.0.md`。
 
 ### 已知限制 / 待拍板
 

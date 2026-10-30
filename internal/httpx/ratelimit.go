@@ -10,8 +10,8 @@ package httpx
 //     先得、其余调用者排队等待各自的槽位。任意时刻最多放行一个请求——旧
 //     wait() 的缺陷是「每个并发调用者各自睡 interval 后同时齐发」，N 个调用
 //     者把实际速率放大成 N/interval；令牌桶从机制上消除这种叠加。
-//  3. 硬上限 5 req/s/主机：间隔硬下限 200ms，任何配置/加速/抖动都不能突破
-//     （MaxRPS 只能让上限更保守）。
+//  3. 硬上限 10 req/s/主机：间隔绝对硬下限 100ms，任何配置/加速/抖动都不能
+//     突破（MaxRPS 只能让上限更保守）。引擎默认 MaxRPS=8 → 125ms（8 req/s）。
 //  4. polite（Adaptive=false）：固定间隔、无抖动、无自适应调速（WAF 只做
 //     标记不改节奏）；adaptive（balanced）：从 base 间隔起步，连续干净成功
 //     后逐级减半到下界，命中 WAF/限流/RTT 恶化时退避并锁定低速。
@@ -28,9 +28,10 @@ import (
 
 // 自适应限速与 WAF 识别参数。集中定义、不暴露为配置项。
 const (
-	// adaptiveMinInterval 自适应硬下限 200ms ⇒ 每主机 ≤5 req/s。用户红线
-	// 「不能影响被扫描机器」的代码级硬上限，不受任何配置/加速逻辑突破。
-	adaptiveMinInterval = 200 * time.Millisecond
+	// adaptiveMinInterval 自适应绝对硬下限 100ms ⇒ 每主机 ≤10 req/s。用户红线
+	// 「不能影响被扫描机器」的代码级硬上限，不受任何配置/加速逻辑突破；引擎
+	// 默认 MaxRPS=8 时实际下限 125ms（8 req/s），调低更保守、调高最多 10 rps。
+	adaptiveMinInterval = 100 * time.Millisecond
 
 	// adaptiveMaxInterval 退避上限 2s（WAF 锁定最高一级同值）。
 	adaptiveMaxInterval = 2 * time.Second
@@ -87,8 +88,9 @@ type limiterConfig struct {
 	accelAfter int
 }
 
-// adaptiveFloor 计算自适应下限：200ms 与 1s/MaxRPS 取大——MaxRPS 小于 5 时
-// 更保守，大于 5（或 0）时仍受 200ms 硬下限约束，无法突破 5 req/s。
+// adaptiveFloor 计算自适应下限：100ms 与 1s/MaxRPS 取大——MaxRPS 小于 10 时
+// 按 1s/MaxRPS 收紧（更保守），大于 10（或 0=默认 5）时仍受 100ms 绝对硬下限
+// 约束，无法突破 10 req/s。引擎默认 MaxRPS=8 → 125ms（8 req/s）。
 func adaptiveFloor(maxRPS int) time.Duration {
 	if maxRPS <= 0 {
 		maxRPS = 5

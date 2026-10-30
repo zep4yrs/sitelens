@@ -382,8 +382,7 @@ func TestAdaptiveAcceleratesToFloor(t *testing.T) {
 	}
 }
 
-// TestAdaptiveMaxRPSTightensAndFloorIsHard MaxRPS 只能更保守（2 → 500ms 下限）；
-// 调大 MaxRPS 无法突破 200ms/5rps 硬下限。
+// TestAdaptiveMaxRPSTightensAndFloorIsHard MaxRPS 只能更保守（2 → 500ms 下限）；\r\n// 调大 MaxRPS 无法突破 100ms/10rps 绝对硬下限。
 func TestAdaptiveMaxRPSTightensAndFloorIsHard(t *testing.T) {
 	resetHostLimiters()
 	srv, _ := newFastServer(t)
@@ -408,7 +407,7 @@ func TestAdaptiveMaxRPSTightensAndFloorIsHard(t *testing.T) {
 		t.Fatalf("MaxRPS=2 时 Stats().Interval 应为 500ms，实际 %v", got)
 	}
 
-	// MaxRPS 调大（100）不能突破 200ms 硬下限。
+	// MaxRPS 调大（100）不能突破 100ms 绝对硬下限。
 	resetHostLimiters()
 	clock2 := newFakeClock()
 	c2 := NewWithOptions(ClientOptions{Adaptive: true, Interval: time.Millisecond, MaxRPS: 100})
@@ -419,11 +418,26 @@ func TestAdaptiveMaxRPSTightensAndFloorIsHard(t *testing.T) {
 	if _, err := c2.GetDirect(srv.URL); err != nil {
 		t.Fatalf("请求失败: %v", err)
 	}
-	if got := c2.Stats().Interval; got != 200*time.Millisecond {
-		t.Fatalf("MaxRPS=100 时仍应被 200ms 硬下限约束，实际 %v", got)
+	if got := c2.Stats().Interval; got != 100*time.Millisecond {
+		t.Fatalf("MaxRPS=100 时仍应被 100ms 绝对硬下限约束，实际 %v", got)
 	}
-	if sleeps := clock2.drainSleeps(); len(sleeps) != 1 || sleeps[0] < 200*time.Millisecond {
-		t.Fatalf("MaxRPS=100 时令牌间隔不得低于 200ms，实际 %v", sleeps)
+	if sleeps := clock2.drainSleeps(); len(sleeps) != 1 || sleeps[0] < 100*time.Millisecond {
+		t.Fatalf("MaxRPS=100 时令牌间隔不得低于 100ms，实际 %v", sleeps)
+	}
+
+	// 引擎默认 MaxRPS=8 → 125ms（8 req/s）。
+	resetHostLimiters()
+	clock3 := newFakeClock()
+	c3 := NewWithOptions(ClientOptions{Adaptive: true, Interval: time.Millisecond, MaxRPS: 8})
+	useFakeClock(c3, clock3)
+	if _, err := c3.GetDirect(srv.URL); err != nil {
+		t.Fatalf("请求失败: %v", err)
+	}
+	if _, err := c3.GetDirect(srv.URL); err != nil {
+		t.Fatalf("请求失败: %v", err)
+	}
+	if got := c3.Stats().Interval; got != 125*time.Millisecond {
+		t.Fatalf("MaxRPS=8（引擎默认）时下限应为 125ms，实际 %v", got)
 	}
 }
 
@@ -680,6 +694,46 @@ func TestRateCapTargetSidePeak(t *testing.T) {
 		for i, c := range []*Client{c1, c2} {
 			if got := c.Stats().Interval; got != 200*time.Millisecond {
 				t.Fatalf("第 %d 个 Client 的当前间隔应为 200ms，实际 %v", i, got)
+			}
+		}
+	})
+
+	t.Run("adaptive-default-8", func(t *testing.T) {
+		resetHostLimiters()
+		srv, rec := newFastServer(t)
+		// 引擎默认 MaxRPS=8 → 125ms 硬下限（8 req/s）。
+		c1 := NewWithOptions(ClientOptions{Adaptive: true, Interval: time.Millisecond, MaxRPS: 8, Timeout: 5 * time.Second})
+		c2 := NewWithOptions(ClientOptions{Adaptive: true, Interval: time.Millisecond, MaxRPS: 8, Timeout: 5 * time.Second})
+		runConcurrent(t, []*Client{c1, c2}, srv.URL, 2, 4200*time.Millisecond)
+
+		times, maxIn := rec.snapshot()
+		if len(times) == 0 {
+			t.Fatal("目标侧未收到请求")
+		}
+		peak1 := peakInWindow(times, time.Second)
+		peak2 := peakInWindow(times, 2*time.Second)
+		elapsed := times[len(times)-1].Sub(times[0])
+		avgRPS := 0.0
+		if elapsed > 0 {
+			avgRPS = float64(len(times)-1) / elapsed.Seconds()
+		}
+		t.Logf("adaptive-default-8: 请求=%d 峰值RPS(1s)=%d 峰值(2s)=%d 平均=%.2f 最大并发=%d",
+			len(times), peak1, peak2, avgRPS, maxIn)
+		if avgRPS > 8.2 {
+			t.Fatalf("平均 %.2f req/s 超过 8 req/s 硬上限（默认 MaxRPS=8 / 125ms）", avgRPS)
+		}
+		if peak1 > 9 {
+			t.Fatalf("1s 窗口峰值 %d 超过 9（平均 8 req/s 的到达抖动上限）", peak1)
+		}
+		if peak2 > 17 {
+			t.Fatalf("2s 窗口峰值 %d 超过 17（平均 8 req/s 的到达抖动上限）", peak2)
+		}
+		if maxIn > 2 {
+			t.Fatalf("并发 %d 超过调用方并发（不应由限速层引入并发）", maxIn)
+		}
+		for i, c := range []*Client{c1, c2} {
+			if got := c.Stats().Interval; got != 125*time.Millisecond {
+				t.Fatalf("第 %d 个 Client 的当前间隔应为 125ms，实际 %v", i, got)
 			}
 		}
 	})
