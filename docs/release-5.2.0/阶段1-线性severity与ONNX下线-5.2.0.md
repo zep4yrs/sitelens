@@ -19,7 +19,7 @@
 ## 2. 资产契约：`sev-linear`
 
 由 [`ml/train_sev_linear.py`](../../ml/train_sev_linear.py) 训练 + 导出（纯 numpy，CPU ~25s），
-产物落在 `models/go/ml_assets/`：
+产物落在 `ml/models/go/ml_assets/`：
 
 | 文件 | 内容 | 实测体积 |
 |---|---|---|
@@ -89,7 +89,7 @@ sev_linear（默认开）        → SevSource="linear"（0.7MB 线性回归）
 - 桌面壳种子配置（`desktop/engine.js`）：`sev_linear: true, sev_onnx: false`。
 - **仓库瘦身已落地（5.2，独立动作）**：`onnxruntime.dll` / `sev-prior*.onnx` 已从
   仓库与 git 历史中移除（含 LFS 对象），完整 clone 从约 1.35 GB 降到约 0.5 GB；
-  高级包出包前需手动把资产放入 `models/`，见[仓库瘦身-5.2.0](仓库瘦身-5.2.0.md)。
+  高级包出包前需手动把资产放入 `ml/models/`，见[仓库瘦身-5.2.0](仓库瘦身-5.2.0.md)。
 
 ---
 

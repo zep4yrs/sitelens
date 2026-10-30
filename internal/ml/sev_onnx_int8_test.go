@@ -209,7 +209,7 @@ func int8Preview(s string, max int) string {
 }
 
 // int8ORTDLL 解析 onnxruntime 共享库路径，口径与 sev_onnx_parity_test.go 一致：
-// 环境变量 SITLENS_ORT_DLL → data/onnxruntime → models/onnxruntime（仓库内建）。
+// 环境变量 SITLENS_ORT_DLL → data/onnxruntime → ml/models/onnxruntime（仓库内建）。
 // 都找不到时返回最后候选，由调用方统一按「前置缺失」处理。
 func int8ORTDLL(root string) string {
 	if dll := os.Getenv("SITLENS_ORT_DLL"); dll != "" {
@@ -217,7 +217,7 @@ func int8ORTDLL(root string) string {
 	}
 	cands := []string{
 		filepath.Join(root, "data", "onnxruntime", "onnxruntime.dll"),
-		filepath.Join(root, "models", "onnxruntime", "onnxruntime.dll"),
+		filepath.Join(root, "ml", "models", "onnxruntime", "onnxruntime.dll"),
 	}
 	for _, cand := range cands {
 		if _, err := os.Stat(cand); err == nil {
@@ -236,7 +236,7 @@ func TestSevOnnxInt8VsFp32(t *testing.T) {
 	root := filepath.Join("..", "..")
 	assets := LocateAssetsDir(
 		filepath.Join(root, "data", "go", "ml_assets"),
-		filepath.Join(root, "models", "go", "ml_assets"),
+		filepath.Join(root, "ml", "models", "go", "ml_assets"),
 	)
 
 	// 测量机：前置缺失不该被当成「通过」，用环境变量把跳过切成失败。
@@ -250,7 +250,7 @@ func TestSevOnnxInt8VsFp32(t *testing.T) {
 	}
 
 	if assets == "" {
-		skip("ml 资产目录缺失（data/go/ml_assets 与 models/go/ml_assets 均无成套线性模型），跳过 int8 实测")
+		skip("ml 资产目录缺失（data/go/ml_assets 与 ml/models/go/ml_assets 均无成套线性模型），跳过 int8 实测")
 	}
 
 	vocabPath := filepath.Join(assets, "sev-prior-v3.1.vocab.txt")

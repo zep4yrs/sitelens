@@ -4,5 +4,5 @@
 * text=auto eol=lf
 
 # 5.2 仓库瘦身：ONNX 资产（sev-prior-v3.1-a/b.onnx 等）与 onnxruntime.dll
-# 已移出仓库（分发默认不带，高级包需手动放入 models/），LFS 规则一并移除。
+# 已移出仓库（分发默认不带，高级包需手动放入 ml/models/），LFS 规则一并移除。
 # 详见 docs/release-5.2.0/仓库瘦身-5.2.0.md。

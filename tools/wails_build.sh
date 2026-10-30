@@ -41,7 +41,7 @@ mkdir -p "$ENGINE_DIR/data"
 
 # 许可页素材：安装器取 ${SRCDIR}/installer/notice.txt，随源根暂存。
 mkdir -p "$STAGE_ROOT/installer"
-cp "$ROOT/installer/notice.txt" "$STAGE_ROOT/installer/notice.txt"
+cp "$ROOT/desktop-wails/installer/notice.txt" "$STAGE_ROOT/installer/notice.txt"
 
 # 1) 壳：CGO_ENABLED=0 纯 Go（Wails v3 + WebView2，无需 C 工具链）。
 #    -H windowsgui：GUI 子系统，不弹控制台窗口。

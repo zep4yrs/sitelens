@@ -558,7 +558,7 @@ B) sitelens scan <target> -config <cfg>   →  ❌ exit 1
 | **BUG-016** | `internal/nuclei/afrog.go:24-36`、`:93`、`:103` | `afrogRule` **没有 `expression` 字段**（yaml.v3 静默忽略未知字段），而 afrog 模板的判定全写在 rule 级 `expression` 里 → `afrogNorm` 拼不出 matcher → 整条拒收。✅ 实测 `packs/nuclei-templates.tar.gz`：**1,699 条 afrog 模板，100% 过不了漏斗**（1,687 条有 rule 级 expression，0 条有 `response:` 块） | 补 `Expression` 字段 + 实现其求值（`response.status == N` / `response.body.bcontains(...)` / `&&` / `||`） | ⚠️ **放行前必须评估误报**——这 1,699 条会真正开始产出发现。补夹具：至少 10 条真实模板的判定结果 |
 | **BUG-017** | `internal/dast/dast.go:865-874`（`setParam`） | `url.Values.Encode()` 把 `%` → `%25`，预编码载荷被**编码两次**。✅ 实测：`%0d%0a...` → `%250d%250a...`、`%AC%ED%00%05sl` → `%25AC%25ED...` → 服务端单次解码拿到**字面文本**而非 CR/LF 字节/序列化魔数 → **CRLF 与反序列化两条通道实际不注入**。单测绿是因为桩件按头名子串匹配（`deep_test.go:53-58`），从不校验真字节 | 这类"要注入原始字节/控制符"的探针**不能走 `setParam`**，需一条原始注入构造路径 | 补用例：起一个真服务器，断言注入后**真的收到 CRLF**（字节级断言，不是子串） |
 | **BUG-018** | `internal/dast/dast.go:627-630` + `:818-827` | `hit.Replay = formReplay(...)`（POST 语义）下一行被 `chainEvidence` 覆盖成 `curlReplay(probeURL)`（**GET 风格**），且 `probeURL` 是裸拼未 URL 编码 → 表单类发现的复现命令**复现不了真实请求** | 调换 629/630 顺序，或让 `chainEvidence` 不覆盖已有值 | 补用例：表单命中的 `replay` 必须含 `-X POST`/`--data-raw` |
-| **BUG-019** | `internal/engine/ml.go:69` | `assets := e.cfg.ML.AssetsDir`（默认 `data/go/ml_assets`，**仓内不存在**），而资产在 `models/go/ml_assets`（✅ 实测存在，16 个文件含 4 个 ONNX）→ glob 落空 → **ONNX 通道恒不可用**，恒回退 NVD 先验。⚠️ 该文件 `:39-41` 注释原文写着"曾因两处各自维护、测试漏跟迁移而恒读不到资产"——**同一类 bug 原样复发** | 改用 `ml.LocateAssetsDir(...)` 同源候选（`:42` 的线性模型路径已正确） | 补用例：`sev_onnx` 开启时能加载到 `models/go/ml_assets` 的 ONNX |
+| **BUG-019** | `internal/engine/ml.go:69` | `assets := e.cfg.ML.AssetsDir`（默认 `data/go/ml_assets`，**仓内不存在**），而资产在 `ml/models/go/ml_assets`（✅ 实测存在，16 个文件含 4 个 ONNX）→ glob 落空 → **ONNX 通道恒不可用**，恒回退 NVD 先验。⚠️ 该文件 `:39-41` 注释原文写着"曾因两处各自维护、测试漏跟迁移而恒读不到资产"——**同一类 bug 原样复发** | 改用 `ml.LocateAssetsDir(...)` 同源候选（`:42` 的线性模型路径已正确） | 补用例：`sev_onnx` 开启时能加载到 `ml/models/go/ml_assets` 的 ONNX |
 | **BUG-020** | `Dockerfile:26-28` | 镜像只 COPY 了 `data/go` + `data/affected_ranges.json` + `data/wordlists`。**缺** `data/intel_dump.json.gz`（含 KEV 表）、`data/nvd_cves.json.gz`（37.8MB）、`data/tpl_intel.json.gz`、`data/state/kev_extra.json`、**模板池**（`packs/`）、**ML 模型**（`models/`）→ 容器里情报关联/KEV/CVSS 补全/模板子集/ML 预测**全部静默降级**。注释只提了 `intel_dump.json.gz` | 要么补 COPY，要么把缺失清单写进镜像文档。⚠️ 单文件挂载陷阱：宿主文件不存在时 Docker 会创建**目录**，`intel_dump.json.gz` 变目录 → 加载失败 | 补检查脚本：构建镜像后跑 `docker run ... /app/sitelens -version` + 抽查各能力是否降级 |
 | **BUG-021** | `internal/target/validator.go:157-172` + `internal/httpx/client.go:85-90` | `ensurePublicHost` 用 `net.LookupHost` 校验后即释放；`httpx.Client` 未设 `Transport.DialContext`，实际连接由系统解析器**二次解析** → **DNS 重绑定**绕过 SSRF 闸。`internal/netx/netx.go:118-124` 同样"先校验后拨号"，且该包 `:11-12` 注释**已自认此缺口** | 一次解析、校验 IP 集合、按**已校验 IP** 拨号（保留 Host/SNI），重定向逐跳重复 | 补用例：DNS 返回不同 IP 的桩服务 |
 
@@ -698,7 +698,7 @@ window.api = {
 
 ### BUG-035 🟠 安装包过大（模型资产整套随包分发）
 
-**位置**：`models/go/ml_assets/`、`desktop/build-engine.js`、`tools/wails_build.sh`、`desktop-wails/main.go`（种子交付）
+**位置**：`ml/models/go/ml_assets/`、`desktop/build-engine.js`、`tools/wails_build.sh`、`desktop-wails/main.go`（种子交付）
 **证据**：✅ 实测（本地逐目录统计）
 
 **实测构成**：
@@ -783,7 +783,7 @@ window.api = {
 | **DOC-006** | 配置注释「`rate_interval_ms: 0` = 不限速」 | `fillInt` 把 0 也回退成 400，**写 0 达不到不限速** | `internal/config/config.go:414-421` |
 | **DOC-007** | 同上，`crawler.timeout_sec: 0` = 不限 | 恒回退 60 | 同上 |
 | **DOC-008** | 同上，`intel.update_hours: 0` = 关闭 KEV 自动更新 | 恒回退 24 | 同上 |
-| **DOC-009** | 模型卡写 sev-prior v2 / acc 0.5221 / 产物在 `data/ml/` 不进 git | 名册是 **v3.1 / MAE 1.07** / 资产**已进仓** `models/go/ml_assets/` | `ml/model_registry.json` vs `docs/5.0-模型卡.md` |
+| **DOC-009** | 模型卡写 sev-prior v2 / acc 0.5221 / 产物在 `data/ml/` 不进 git | 名册是 **v3.1 / MAE 1.07** / 资产**已进仓** `ml/models/go/ml_assets/` | `ml/model_registry.json` vs `docs/5.0-模型卡.md` |
 | **DOC-010** | README「ML 预测不改变任何扫描判定」 | `mlPrior` 把产品先验转成 **check 提权表并新增 check id** → 会改变本次执行的 check 集合 | `internal/engine/engine.go:493-497` → `internal/engine/mlprior.go:32` |
 | **DOC-011** | `internal/astx/astx_cgo.go:26-29` 注释「PHP 未纳入」 | 同文件 `:37-38` 已接 `phpgram.GetLanguage()` | `internal/astx/` |
 | **DOC-012** | `desktop-wails/README.md:83`「自动更新已接线（v5.2）」 | `desktop-wails/version.go` 仍是 5.1.0 | — |

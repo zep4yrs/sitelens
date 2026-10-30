@@ -13,8 +13,8 @@
 #               不进镜像，需挂载或用对应 update-* 子命令拉取到用户区：
 #                 模板池：-v <host>/nuclei:/app/data/nuclei
 #                         （或容器内 `sitelens update-nuclei` / `update-afrog`）
-#                 ML 资产：-v <host>/ml_assets:/app/models/go/ml_assets
-#                         （引擎候选路径：data/go/ml_assets → models/go/ml_assets）
+#                 ML 资产：-v <host>/ml_assets:/app/ml/models/go/ml_assets
+#                         （引擎候选路径：data/go/ml_assets → ml/models/go/ml_assets）
 #       想确认本容器的资产就位矩阵：`GET /api/diagnostics`（反馈页同源数据，
 #       逐项标注就位/缺失以及缺失会让哪项能力静默降级）
 #   - data/state 是 VOLUME：镜像内往该目录放内容会被匿名卷遮蔽，故 KEV 增量

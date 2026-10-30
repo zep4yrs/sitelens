@@ -122,9 +122,9 @@ python ml/train_sev_linear.py          # 约 25–30 s，峰值内存 ~0.85 GB
 
 真值取 `data/nvd_cves.json.gz` 的截断 descr（`nvd_sync.go` 的 280 字符口径）与 NVD score：训练
 220,744 条（pub<2024）、holdout 20,000 条（pub≥2024，seed 20261030）、词表 41,382（df≥3，top 60k）；
-产物 `models/go/ml_assets/sev-linear.{vocab.txt,idf.f32,coef.f32,meta.json}` + `sev-linear-fixtures.json`
+产物 `ml/models/go/ml_assets/sev-linear.{vocab.txt,idf.f32,coef.f32,meta.json}` + `sev-linear-fixtures.json`
 （120 条夹具，seed 20261031，与 holdout 不相交），合计约 0.68 MB。
 实测（2026-10-30 NVD 快照，内容到 2026-10-30）：holdout MAE 1.1802 / RMSE 1.4820 / p95 2.933 /
 ≤±1 50.2%，夹具 MAE 1.0858（max 5.24）；Go `ml.LoadModel`
 可直接加载，与 Python 侧最大偏差 5.3e-15。路径可用 `SITLENS_NVD_DUMP`、`SITLENS_ML_GO_ASSETS` 覆盖
-（默认 `models/go/ml_assets`；`config.go_assets_dir()` 的 `data/go/ml_assets` 是旧位置，运行时读前者）。
+（默认 `ml/models/go/ml_assets`；`config.go_assets_dir()` 的 `data/go/ml_assets` 是旧位置，运行时读前者）。

@@ -10,17 +10,17 @@ import (
 
 // testAssetsDir 解析模型资产目录，候选顺序与运行时（engine.mlFor 经
 // ml.LocateAssetsDir）一致：data/go/ml_assets（export_go_assets.py 旧导出
-// 位置）→ models/go/ml_assets（模型进仓库本体后克隆即得的常规位置）。
+// 位置）→ ml/models/go/ml_assets（模型进仓库本体后克隆即得的常规位置）。
 // 两处都无全套资产时 t.Skip，不阻塞无资产环境的单测。
 func testAssetsDir(t *testing.T) string {
 	t.Helper()
 	root := filepath.Join("..", "..")
 	dir := LocateAssetsDir(
 		filepath.Join(root, "data", "go", "ml_assets"),
-		filepath.Join(root, "models", "go", "ml_assets"),
+		filepath.Join(root, "ml", "models", "go", "ml_assets"),
 	)
 	if dir == "" {
-		t.Skip("ml 资产缺失（models/go/ml_assets 与 data/go/ml_assets 均无全套文件），跳过对拍")
+		t.Skip("ml 资产缺失（ml/models/go/ml_assets 与 data/go/ml_assets 均无全套文件），跳过对拍")
 	}
 	return dir
 }

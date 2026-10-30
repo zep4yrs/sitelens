@@ -17,7 +17,7 @@ import (
 
 // TestSevAssetsDirResolvesRepoModels BUG-019 回归：ONNX 资产路径曾只用
 // cfg.ML.AssetsDir（默认 data/go/ml_assets，仓内不存在），而资产随
-// 「模型进仓库本体」迁到 models/go/ml_assets → glob 恒落空 → sev_onnx
+// 「模型进仓库本体」迁到 ml/models/go/ml_assets → glob 恒落空 → sev_onnx
 // 通道恒不可用并静默回退 NVD 先验。现与线性模型路径同源经
 // ml.LocateAssetsDir 解析。工作树无 ONNX 资产时 skip。
 func TestSevAssetsDirResolvesRepoModels(t *testing.T) {
@@ -28,7 +28,7 @@ func TestSevAssetsDirResolvesRepoModels(t *testing.T) {
 		t.Skipf("默认资产目录已存在（%s），本回归前提不再成立", e.cfg.ML.AssetsDir)
 	}
 	got := e.sevAssetsDir()
-	want := filepath.Join("models", "go", "ml_assets")
+	want := filepath.Join("ml", "models", "go", "ml_assets")
 	if got != want {
 		t.Fatalf("sev 资产目录 = %q，期望同源候选 %q", got, want)
 	}
@@ -53,7 +53,7 @@ func TestSevAssetsDirResolvesRepoModels(t *testing.T) {
 // TestSevAssetsDirFallbackToConfigured 自定义部署可能只投放 ONNX 文件
 // （不成套线性模型资产）：候选全不合格时保持配置值原语义，不得静默改道。
 func TestSevAssetsDirFallbackToConfigured(t *testing.T) {
-	t.Chdir(t.TempDir()) // 默认候选（data/go、models/go）在此均不存在
+	t.Chdir(t.TempDir()) // 默认候选（data/go、ml/models/go）在此均不存在
 	e := &Engine{cfg: config.Default()}
 	custom := "custom-onnx-only"
 	e.cfg.ML.AssetsDir = custom
