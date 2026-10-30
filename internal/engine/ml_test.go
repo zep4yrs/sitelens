@@ -32,16 +32,21 @@ func TestSevAssetsDirResolvesRepoModels(t *testing.T) {
 	if got != want {
 		t.Fatalf("sev 资产目录 = %q，期望同源候选 %q", got, want)
 	}
-	// 解析到的目录必须真能定位 sev-prior ONNX 资产与词表（默认构建下
-	// NewSevScorer 由 onnx 构建标签提供，这里断言资产可发现性）。
-	for _, pat := range []string{"sev-prior-v3.1-[ab].onnx", "sev-prior-v3.1-[ab]-int8.onnx"} {
-		m, err := filepath.Glob(filepath.Join(got, pat))
-		if err != nil || len(m) == 0 {
-			t.Fatalf("资产目录 %q 下未找到 %q（ONNX 通道将不可用）", got, pat)
-		}
-	}
+	// 解析到的目录必须真能定位 sev 词表（默认构建下 NewSevScorer 由 onnx
+	// 构建标签提供，这里断言资产可发现性）。
 	if _, err := os.Stat(filepath.Join(got, "sev-prior-v3.1.vocab.txt")); err != nil {
 		t.Fatalf("资产目录 %q 缺 sev-prior 词表: %v", got, err)
+	}
+	// ONNX 模型自 5.2 仓库瘦身起不再入库（分发默认不带，可选高级包手动放入），
+	// 因此这里只做提示不失败：仓内没有模型是正常形态，默认构建回退线性/NVD。
+	for _, pat := range []string{"sev-prior-v3.1-[ab].onnx", "sev-prior-v3.1-[ab]-int8.onnx"} {
+		m, err := filepath.Glob(filepath.Join(got, pat))
+		if err != nil {
+			t.Fatalf("glob %q 失败: %v", pat, err)
+		}
+		if len(m) == 0 {
+			t.Logf("提示：%q 下无 %q（ONNX 高级包未投放，默认构建走线性/NVD 兜底）", got, pat)
+		}
 	}
 }
 
