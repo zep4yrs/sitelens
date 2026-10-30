@@ -1,0 +1,98 @@
+/* SiteLens 设计令牌（Design Tokens）单一来源
+   ============================================================================
+   本文件只放"令牌"，不放任何选择器规则；组件样式在 app.css。
+   - 颜色 / 表面 / 边框 / 语义色：浅色在 :root，深色在 .dark（由 common.js
+     按 light|dark|auto 偏好切换 html.dark；auto 跟随系统 prefers-color-scheme）
+   - 圆角 / 间距 / 阴影 / 焦点环刻度
+   - 字体栈（中文优先 LXGW WenKai → Noto Sans SC → 系统字体；等宽单独一组）
+   - 动效时长与签名缓动（快 150 / 标准 250 / 慢 400，cubic-bezier(.2,0,0,1)）
+   - 层级与布局常量（--top-h）
+   纪律：新颜色/圆角/时长先在这里加令牌，再到 app.css 用 var() 消费；
+   不要在组件里写死色值（深色模式会漏、后续换肤会散）。
+   ========================================================================== */
+
+:root {
+  color-scheme: light;
+
+  /* ---- 表面与文字（浅色） ---- */
+  --background: #fafafa;      /* 页面底色 */
+  --foreground: #1a1a1a;      /* 主文字 */
+  --card: #ffffff;            /* 卡片/浮层表面 */
+  --muted: #f8fafc;           /* 次级表面（表头、代码块） */
+  --accent: #f1f5f9;          /* hover / 选中底 */
+  --secondary: #f1f5f9;       /* 次级按钮底 */
+  --muted-fg: #64748b;        /* 次级文字 / 提示 */
+  --border: #e2e8f0;          /* 分隔线 / 边框 */
+  --input: #ffffff;           /* 输入框底 */
+  --ring: #3e3f3f;            /* 焦点环 / 选中强调 */
+
+  /* ---- 主色与语义色 ---- */
+  --primary: #3e3f3f;         /* 主按钮 / 品牌动作 */
+  --primary-fg: #ffffff;      /* 主按钮文字 */
+  --ok: #16a34a;              /* 通过 / 低危 */
+  --warn: #d97706;            /* 警告 / 中危 */
+  --danger: #dc2626;          /* 危险 / 高危 */
+  --info: #2563eb;            /* 信息 */
+
+  /* ---- 圆角刻度 ---- */
+  --radius: .35rem;
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 14px;
+  --radius-pill: 999px;
+
+  /* ---- 间距刻度（4 的倍数，页面节奏统一） ---- */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 22px;
+  --space-6: 30px;
+
+  /* ---- 阴影（三层，越靠上越"浮"） ---- */
+  --shadow-2xs: 0 2px 0 0 rgba(51, 51, 51, .07);
+  --shadow-sm: 0 2px 0 0 rgba(51, 51, 51, .15), 0 1px 2px -1px rgba(51, 51, 51, .15);
+  --shadow-md: 0 2px 0 0 rgba(51, 51, 51, .15), 0 2px 4px -1px rgba(51, 51, 51, .15);
+  --shadow-1: 0 1px 2px rgba(15, 23, 42, .06), 0 1px 3px rgba(15, 23, 42, .08);
+  --shadow-2: 0 2px 4px rgba(15, 23, 42, .06), 0 4px 12px rgba(15, 23, 42, .08);
+  --shadow-3: 0 6px 16px rgba(15, 23, 42, .10), 0 12px 32px rgba(15, 23, 42, .10);
+
+  /* ---- 字体 ---- */
+  --font-sans: "LXGW WenKai", "Noto Sans SC", "Source Han Sans SC", -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, "SF Mono", Consolas, "Liberation Mono", Menlo, "Cascadia Code", "LXGW WenKai Mono", "LXGW WenKai", monospace;
+  --fw-normal: 400;
+  --fw-strong: 600;
+
+  /* ---- 动效（签名缓动 + 三档时长；禁 linear 空间位移） ---- */
+  --t-fast: 150ms;
+  --t-med: 250ms;
+  --t-slow: 400ms;
+  --ease: cubic-bezier(0.2, 0, 0, 1);
+
+  /* ---- 焦点环与布局常量 ---- */
+  --ring-w: 2px;
+  --top-h: 50px;
+}
+
+/* 深色令牌：只覆盖颜色类令牌，圆角/间距/动效/字体与浅色共用 */
+.dark {
+  color-scheme: dark;
+
+  --background: #0d0d0f;
+  --foreground: #ececf1;
+  --card: #141417;
+  --muted: #1c1c20;
+  --accent: #26262b;
+  --secondary: #1c1c20;
+  --muted-fg: #9b9ba4;
+  --border: #26262b;
+  --input: #141417;
+  --ring: #9b9ba4;
+
+  --primary: #e0e0e3;
+  --primary-fg: #111113;
+  --ok: #22c55e;
+  --warn: #f59e0b;
+  --danger: #ef4444;
+  --info: #60a5fa;
+}

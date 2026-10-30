@@ -316,6 +316,61 @@ api.get("/api/categories").then(function (r) {
   r.categories.forEach(function (c) { CAT_NAMES[c.id] = c.name; });
 }).catch(function (e) { window.slReportError(e, { quiet: true }); });
 
+/* 扫描覆盖度/诊断卡（5.2 效率轮 diagnostics，additive）：
+   把「这次到底扫了多少、有没有被拦、请求省了多少」摊开给用户看——
+   被 WAF/限流拦截的响应不参与判定，必须在报告里显式声明，避免"静默少报"。 */
+var PHASE_NAMES = {
+  home: "首页", jsmap: "JS 端点", crawl: "爬取", fingerprint: "指纹",
+  security: "安全头", dast: "DAST"
+};
+function coverageCard(r) {
+  var d = r && r.diagnostics;
+  if (!d) return "";
+  var pages = (r.pages || []).length;
+  var blocked = Number(d.blocked || 0);
+  var phases = d.phases || [];
+  var waf = d.waf_reasons || {};
+  var wafKeys = Object.keys(waf);
+  var rateTxt = (d.rate_mode === "polite")
+    ? "polite 固定间隔"
+    : "balanced ≤" + (d.max_rps || 8) + " req/s";
+  var cells = [
+    ["访问页面", pages + " 页"],
+    ["实际请求", (d.requests || 0) + " 次"],
+    ["去重省下", (d.dedup_hits || 0) + " 次"],
+    ["被 WAF/限流拦截", blocked + " 次"],
+    ["平均速率", Number(d.avg_rps || 0).toFixed(1) + " req/s"],
+    ["限速档", rateTxt]
+  ];
+  var h = '<div class="cov-card"><div class="cov-head"><b>扫描覆盖度</b>' +
+    '<span class="hint">按实际发出的请求统计；被拦响应不参与任何判定</span></div>' +
+    '<div class="cov-grid">' + cells.map(function (c) {
+      var cls = (c[0].indexOf("拦截") >= 0 && blocked > 0) ? "danger" : "";
+      return '<div class="cov-cell"><span>' + esc(c[0]) + '</span><b class="' + cls + '">' + esc(c[1]) + "</b></div>";
+    }).join("") + "</div>";
+  if (wafKeys.length) {
+    h += '<div class="cov-note warn">WAF/限流原因：' + wafKeys.map(function (k) {
+      return esc(k) + " ×" + waf[k];
+    }).join(" · ") + "</div>";
+  }
+  var rows = phases.filter(function (p) { return (p.requests || 0) > 0 || (p.blocked || 0) > 0; });
+  if (rows.length) {
+    h += '<div class="tbl-wrap" style="margin-top:10px"><table class="vulns cov-table">' +
+      "<tr><th>阶段</th><th>请求</th><th>去重省下</th><th>被拦</th><th>耗时</th></tr>";
+    rows.forEach(function (p) {
+      var dur = (p.duration_ms || 0) >= 1000
+        ? ((p.duration_ms || 0) / 1000).toFixed(1) + " s"
+        : (p.duration_ms || 0) + " ms";
+      h += "<tr><td>" + esc(PHASE_NAMES[p.phase] || p.phase) + "</td><td>" + (p.requests || 0) +
+        "</td><td>" + (p.dedup_hits || 0) + "</td><td>" + (p.blocked || 0) + "</td><td>" + dur + "</td></tr>";
+    });
+    h += "</table></div>";
+  }
+  h += '<div class="cov-note">覆盖声明：以上为本次扫描实际触达范围；未列出的模块（未开启或未命中）不在覆盖内。' +
+    (blocked > 0 ? "被拦部分可能造成漏报，建议降低速率/更换出口后重扫。" : "") + "</div></div>";
+  return h;
+}
+
 function renderResult(r, scanId) {
   var html = "";
 
@@ -395,6 +450,7 @@ function renderResult(r, scanId) {
         sevBadge(v.severity) +
         '<span class="hint">证据 ' + evN + "/5 · " + (v.confirmed ? "二次确认通过" : "单轮命中") + "</span></div>" +
         '<div class="mono" style="word-break:break-all;font-size:12.5px;margin-top:6px">' + esc(v.url || "") + "</div>" +
+        (v.advice ? '<div class="hint" style="margin-top:4px">建议：' + esc(v.advice) + "</div>" : "") +
         replayDetails(v.replay || "") +
         "</div>";
     });
@@ -446,6 +502,9 @@ function renderResult(r, scanId) {
       html += '<p class="hint">AI 预测说明：严重度来源 ' + sevParts.join(" · ") + sevNote + "。</p>";
   }
 
+  /* 扫描覆盖度（diagnostics）：放在摘要之后、明细之前——先讲清"扫了多少/有没有被拦" */
+  html += coverageCard(r);
+
   var techs = r.technologies || [];
   html += '<div class="sec-title">指纹识别 <span class="count">' + techs.length + " 项</span>" +
     '<span class="right">' + exportButtons() + "</span></div>";
@@ -482,8 +541,9 @@ function renderResult(r, scanId) {
       if (v.impact === "proven") imp = ' <span class="badge danger">影响已证明</span>';
       else if (v.impact === "observed") imp = ' <span class="badge warn">可利用面观测</span>';
       var impEv = v.impact_evidence ? '<div style="font-size:12px;color:var(--muted-fg)">利用级：' + esc(v.impact_evidence) + "</div>" : "";
+      var evN = 1 + (v.request ? 1 : 0) + (v.response ? 1 : 0) + ((v.signals || []).length ? 1 : 0) + (v.confirmed ? 1 : 0);
       html += "<tr><td>" + sevBadge(v.severity) + "</td>" +
-        '<td class="mono">' + esc(v.check) + " " + esc(v.title) + imp + "</td>" +
+        '<td class="mono"><span class="badge">证据 ' + evN + "/5</span> " + esc(v.check) + " " + esc(v.title) + imp + "</td>" +
         '<td class="mono" style="font-size:12px;word-break:break-all">' + esc(v.url) +
         "（" + esc(v.evidence) + "）" + impEv + block + "</td><td>" + esc(v.advice) + "</td></tr>";
     });
