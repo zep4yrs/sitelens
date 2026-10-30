@@ -21,8 +21,8 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 PUBLISH=0
 [ "${1:-}" = "--publish" ] && PUBLISH=1
 
-# 版本号单一来源：desktop-wails/version.go（切 wails 交付后不再是
-# desktop/package.json——那是 Electron 壳的产物）。
+# 版本号单一来源：desktop-wails/version.go（已退役 Electron 壳的 package.json
+# 见 .archive/desktop-electron/，不再是版本权威）。
 VER="$(grep -oP 'const Version = "\K[0-9.]+' "$ROOT/desktop-wails/version.go" | head -1)"
 TAG="v$VER"
 echo "== SiteLens 本地发版（Wails 线）：$VER（tag $TAG）=="

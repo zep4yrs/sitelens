@@ -32,7 +32,7 @@ desktop-wails/
 
 | 行为 | 实现 |
 |---|---|
-| 引擎目录探测 | 打包态 `<exe同级>/engine/`；开发态 `../desktop/engine`；`SITLENS_ENGINE_DIR` 覆盖 |
+| 引擎目录探测 | 打包态 `<exe同级>/engine/`；开发态 `../build/engine`；`SITLENS_ENGINE_DIR` 覆盖 |
 | 端口决策 | 壳偏好（`desktop-prefs.json`）> 配置原文 `web.listen` > 默认 **5087**，被占用才随机；协商结果回写 |
 | 配置落点 | `%APPDATA%\SiteLens-Wails\config.yml`（**不写安装目录**，EPERM 教训）；merge 语义只更新受管键（`web.listen` + 可写路径 `store.data_dir` / `intel.overrides_path` / `checks.nuclei_dir` / `checks.plugin_dir`，见 `internal/usercfg`） |
 | 种子交付 | 启动调引擎 `update-seed`，随包种子按**包版本**覆盖用户区（`internal/seedrefresh` 定边界） |

@@ -1,7 +1,7 @@
 // SiteLens Wails 壳（实验，4.0 Track：GUI 换壳验证）。
 //
 // 职责与 Electron 壳对齐的最小子集：
-//  1. 探测引擎目录（打包态 = exe 同级 engine/；开发态 = 仓库 desktop/engine，
+//  1. 探测引擎目录（打包态 = exe 同级 engine/；开发态 = 仓库 build/engine，
 //     可用 SITLENS_ENGINE_DIR 覆盖）
 //  2. 取空闲端口，生成最小配置（web.listen）落【用户目录】——不写安装目录
 //     （v3.0.1 EPERM 教训：Program Files 只读）
@@ -97,7 +97,7 @@ func main() {
 
 	engineDir, ok := detectEngineDir()
 	if !ok {
-		log.Fatal("未找到引擎（期望 exe 同级 engine/ 或 ../desktop/engine，或设 SITLENS_ENGINE_DIR）")
+		log.Fatal("未找到引擎（期望 exe 同级 engine/ 或 ../build/engine，或设 SITLENS_ENGINE_DIR）")
 	}
 	engineExe, ok := findEngineExe(engineDir)
 	if !ok {
@@ -286,7 +286,7 @@ func main() {
 }
 
 // killEngineTree 树杀引擎进程（对齐 Electron 壳 stop() 的 taskkill /T 语义，
-// 见 desktop/engine.js:302-325）：Windows 上 os.Process.Kill=TerminateProcess
+// 见 .archive/desktop-electron/engine.js:302-325）：Windows 上 os.Process.Kill=TerminateProcess
 // 只杀引擎 PID 本身，引擎扫描时经 chromedp 拉起的 Chrome 等子进程会成孤儿
 // 继续驻留内存；taskkill /PID /T /F 把整棵树连同孙进程一并强杀（引擎已退出
 // 时 taskkill 报错属常态，忽略）。POSIX 下引擎未单独设进程组（cmd 未用
@@ -310,7 +310,7 @@ func killEngineTree(p *os.Process) {
 	_ = p.Kill() // 兜底：树杀失败时至少杀引擎本身（已死则返回错误，忽略）
 }
 
-// detectEngineDir 引擎目录探测：环境变量 > exe 同级 engine/ > 开发态 ../desktop/engine。
+// detectEngineDir 引擎目录探测：环境变量 > exe 同级 engine/ > 开发态 ../build/engine。
 func detectEngineDir() (string, bool) {
 	if v := os.Getenv("SITLENS_ENGINE_DIR"); v != "" {
 		if st, err := os.Stat(v); err == nil && st.IsDir() {
@@ -322,12 +322,12 @@ func detectEngineDir() (string, bool) {
 		return "", false
 	}
 	exeDir = filepath.Dir(exeDir)
-	// 打包态 = exe 同级 engine/（安装器布局）；开发态 = 仓库 desktop/engine
-	// （npm run engine 的暂存产物）；SITLENS_ENGINE_DIR 可覆盖（上方已处理）。
+	// 打包态 = exe 同级 engine/（安装器布局）；开发态 = 仓库 build/engine
+	// （tools/build-engine.js 的暂存产物）；SITLENS_ENGINE_DIR 可覆盖（上方已处理）。
 	// 原「本机绝对路径兜底」已删——切正式交付后，产品产物里不该出现开发机路径。
 	for _, cand := range []string{
 		filepath.Join(exeDir, "engine"),
-		filepath.Join(exeDir, "..", "desktop", "engine"),
+		filepath.Join(exeDir, "..", "build", "engine"),
 	} {
 		if _, ok := findEngineExe(cand); ok {
 			return cand, true

@@ -65,16 +65,37 @@ web                 内嵌前端（HTML/CSS/JS，零构建）
 
 **关键设计**：指纹库（`sitelens.Matcher`）与情报库（`intel.KB`）支持运行期热替换，进行中的扫描持旧快照、新扫描取新数据，互不干扰；单次扫描全程用同一份数据快照，保证结果自洽。
 
-### 三条交付形态
+### 交付形态
 
 | 形态 | 入口 | 说明 |
 |---|---|---|
 | 桌面版 | 安装包 `SiteLens-Setup-*.exe` | **Wails 壳**（Go + 系统 WebView2）+ 引擎，安装即用（唯一正式交付形态） |
-| CLI | `sitelens scan <url>` | 全流水线扫描，stdout 出 JSON，可直接管道消费 |
+| CLI | `sitelens scan <url>` | 全流水线扫描，stdout 出 JSON，可直接管道消费；经 npm 包 `@fengqiao666/sitelens-cli`（`tui/`）分发 |
 | Web 控制台 | `sitelens serve` | 内嵌 SPA + REST API，默认 `http://127.0.0.1:5000` |
 | 白盒审计 | `sitelens audit <dir>` | 源码污点分析，输出 JSON 报告 |
 
-三者共用同一个 `internal/engine` 编排器与 `internal/store` 历史库——**同一套引擎，三种用法**。
+以上形态共用同一个 `internal/engine` 编排器与 `internal/store` 历史库——**同一套引擎，多种用法**。
+
+### 仓库结构
+
+| 目录 | 职责 |
+|---|---|
+| `cmd/` | Go 入口：`sitelens`（CLI，随 TUI npm 线分发）、`sitelens-engine`（桌面引擎） |
+| `internal/` | 引擎主体（扫描 / 检查 / 情报 / 存储 / 服务） |
+| `web/` | 前端源码，经 `go:embed` 编进引擎二进制 |
+| `ml/` | Python 训练 / 导出流水线（产出 `models/`） |
+| `models/` | 模型资产（线性模型，随仓库分发） |
+| `data/` | 运行时数据（NVD 快照 / 情报 / 字典） |
+| `packs/` | 模板池（含 `src/protocol/` 模板源） |
+| `desktop-wails/` | 桌面壳（Wails + WebView2），拉起引擎并加载其 HTTP UI |
+| `tui/` | 命令行 npm 包（唯一 CLI 入口） |
+| `tools/` | 构建 / 发版 / CI 脚本（含 `build-engine.js`） |
+| `assets/` | README 配图（logo / banner / 路线图） |
+| `docs/` | 文档 |
+| `vendor/` | Go 依赖（离线构建） |
+| `.archive/` | **保留但不参与构建/测试/发版**的退役产物（Electron 壳、旧发行说明、旧图等），见 [.archive/README.md](.archive/README.md) |
+
+依赖关系：`tui/` 打包 `cmd/sitelens`；`desktop-wails/` 拉起 `cmd/sitelens-engine`；两者共用 `internal/` 引擎，`web/` 由 `go:embed` 编进引擎二进制。
 
 模块划分与扩展方式见 [开发文档](docs/开发文档.md)。
 

@@ -75,7 +75,7 @@
 - [x] 发行说明文件 `tools/release-body-3.0.0.md`（Markdown，CI 接文件上传）
 - [x] README：路线图 3.0 行标 ✅、当前版本标记移到 3.0；工程质量段数字
       实测更新（包数/测试文件数/模板池规模）；能力矩阵加 3.0 能力行；
-      主视觉换预置的 `assets/banner-3.0-exploit.png`
+      主视觉换预置的 `.archive/assets/banner-3.0-exploit.png`
 - [x] docs/产品说明.md 同步 3.0 能力；docs/开发文档.md 14 节改「已落地」实况
 - [x] 数据资产：情报库如刷新则同步 Release 私有资产；full 版模板库打包清单
       加 network/dns/ssl 目录（文件数实测写死进 CI，防体积失控无感）

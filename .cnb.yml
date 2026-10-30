@@ -32,7 +32,6 @@
         - apt-get update -qq && apt-get install -y -qq nodejs >/dev/null
         - node --test web/js/esc.test.mjs web/js/scan-options.test.mjs # 转义回归 + 三维选择器映射单测
         - node --test tools/ci_pipeline_guard.test.mjs # CI 配置门禁：wine 调用必须套 xvfb-run（tag 构建曾在此红）
-        - cd desktop && node --test # 桌面壳单测：配置合并器 + 端口决策（逻辑最密层；无参自动发现）
     - name: Wails 壳回归
       script:
         # v5.1.0 起交付线切到 Wails 壳（desktop-wails/）。它是**独立模块**
@@ -62,13 +61,13 @@ main:
 # --- 发版构建：已改为**本地发版**（v3.0.1 起） ------------------------------
 #
 # 为什么停用 CI 的 tag 自动构建：
-#   CI 跑在 Linux（golang 镜像），而 desktop/build-engine.js 曾执行不带 GOOS 的
+#   CI 跑在 Linux（golang 镜像），而 tools/build-engine.js 曾执行不带 GOOS 的
 #   go build —— 打出的「sitelens.exe」实为 Linux ELF 二进制，装进 Windows 安装包
 #   后引擎永远起不来（v3.0.0 真实事故，且被壳的配置写入错误掩盖）。
 #   本地在 Windows 上构建产物必为 PE，且可在打包前后即时验证平台。
 #
 # 现在的发版流程（本地）：
-#   改 desktop/package.json 版本号 → tools/release_local.sh [--publish]
+#   改 desktop-wails/version.go 版本号 → tools/release_local.sh [--publish]
 #   脚本：构建引擎（显式 GOOS=windows + PE 魔数校验）→ 打包 NSIS → 可选上传 CNB。
 #   更新源仍唯一在 GitHub desktop-stable（手工同步三件套）。
 #

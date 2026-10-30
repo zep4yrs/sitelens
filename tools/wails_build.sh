@@ -50,13 +50,13 @@ cp "$ROOT/installer/notice.txt" "$STAGE_ROOT/installer/notice.txt"
   CGO_ENABLED=0 GOOS=windows GOARCH=amd64 \
   go build -ldflags "-s -w -H windowsgui" -o "$SHELL_OUT/sitelens.exe" . )
 
-# 2) 引擎：复用 desktop/build-engine.js 的构建与硬闸（PE 校验 / ML 资产硬闸 / 默认不含 ONNX；高级包 SITLENS_BUNDLE_ONNX=1 才装箱 onnxruntime.dll），保证两条壳共用同一份引擎产物契约。
-#    产物落 desktop/engine/，再拷进 staging 的 engine/。
+# 2) 引擎：复用 tools/build-engine.js 的构建与硬闸（PE 校验 / ML 资产硬闸 / 默认不含 ONNX；高级包 SITLENS_BUNDLE_ONNX=1 才装箱 onnxruntime.dll），保证两条壳共用同一份引擎产物契约。
+#    产物落 build/engine/，再拷进 staging 的 engine/。
 #    5.2 起 --target=engine：构建 cmd/sitelens-engine（serve + update-seed），
 #    产物名 sitelens-engine.exe；**CLI（cmd/sitelens）不进桌面安装包**。
-echo "== 构建引擎载荷（复用 desktop/build-engine.js --target=engine）=="
-( cd "$ROOT/desktop" && node build-engine.js --target=engine )
-cp -r "$ROOT/desktop/engine/." "$ENGINE_DIR/"
+echo "== 构建引擎载荷（复用 tools/build-engine.js --target=engine）=="
+( cd "$ROOT" && node tools/build-engine.js --target=engine )
+cp -r "$ROOT/build/engine/." "$ENGINE_DIR/"
 
 # 3) PE 魔数校验（壳 + 引擎都要过——错平台二进制进包是 v3.0.0 事故的根因）。
 for f in "$SHELL_OUT/sitelens.exe" "$ENGINE_DIR/sitelens-engine.exe"; do

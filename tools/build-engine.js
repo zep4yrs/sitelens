@@ -1,7 +1,7 @@
 // 构建并暂存引擎载荷：Go 单二进制 + lite 数据集（与 CI lite 版同一清单）。
-// 产物落 desktop/engine/，electron-builder 经 extraResources 整体打包。
-// 用法：cd desktop && npm run engine            （CLI 目标，npm 线/旧 Electron 线用）
-//       cd desktop && node build-engine.js --target=engine   （引擎目标，桌面 Wails 线用）
+// 产物落 build/engine/（.gitignore 已忽略），由 tools/wails_build.sh 拷进安装包 staging。
+// 用法：node tools/build-engine.js                        （CLI 目标，npm 线用）
+//       node tools/build-engine.js --target=engine        （引擎目标，桌面 Wails 线用）
 //
 // 5.2 起引擎与 CLI 拆成两个二进制：
 //   - target=cli    → ./cmd/sitelens        → sitelens.exe          （控制台子系统，scan/audit/update-*）
@@ -41,15 +41,15 @@ const fs = require('fs');
 const path = require('path');
 
 const ROOT = path.join(__dirname, '..');
-const OUT = path.join(__dirname, 'engine');
+const OUT = path.join(ROOT, 'build', 'engine');
 const LDFLAGS = '-s -w';
 // 可选高级包开关：1 = 带 ONNX（-tags onnx + onnxruntime.dll + sev-prior 模型）。
 const BUNDLE_ONNX = process.env.SITLENS_BUNDLE_ONNX === '1';
 const BUILD_TAGS = BUNDLE_ONNX ? ['-tags', 'onnx'] : [];
 
 // --target=cli|engine：构建哪个入口、产出什么文件名。
-// 默认 cli —— npm 线（tui/scripts/build-engines.mjs 另建）与旧 Electron 线
-// 都用 CLI 二进制（需要 stdout 输出 scan --json 结果）。
+// 默认 cli —— npm 线（tui/scripts/build-engines.mjs 另建）用 CLI 二进制
+//（需要 stdout 输出 scan --json 结果）；旧 Electron 线已退役（见 .archive/）。
 const targetArg = process.argv.find((a) => a.startsWith('--target='));
 const TARGET = targetArg ? targetArg.slice('--target='.length) : 'cli';
 if (TARGET !== 'cli' && TARGET !== 'engine') {
