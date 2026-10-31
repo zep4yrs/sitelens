@@ -746,31 +746,27 @@ func (s *Server) hJobCancel(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) hBatch(w http.ResponseWriter, r *http.Request) {
 	s.reloadIfDataChanged()
-	var body struct {
-		URLs []string `json:"urls"`
-	}
+	var body batchRequest
 	_ = json.NewDecoder(io.LimitReader(r.Body, 4<<20)).Decode(&body)
-	var urls []string
-	for _, u := range body.URLs {
-		u = strings.TrimSpace(u)
-		if u != "" {
-			urls = append(urls, u)
-		}
-		if len(urls) >= s.cfg.Batch.MaxURLs {
-			break
-		}
-	}
-	if len(urls) == 0 {
+	items := parseBatchItems(body, s.cfg.Batch.MaxURLs)
+	if len(items) == 0 {
 		writeJSON(w, 400, map[string]any{"error": "URL 列表为空"})
 		return
 	}
+	urls := make([]string, len(items))
+	for i, it := range items {
+		urls[i] = it.URL
+	}
 	jobID := newID()
-	s.jobs.Create(jobID, "batch", map[string]any{"urls": urls}, len(urls))
-	go s.runBatch(jobID, urls)
-	writeJSON(w, 200, map[string]any{"job_id": jobID, "total": len(urls)})
+	s.jobs.Create(jobID, "batch", map[string]any{"urls": urls, "items": items}, len(items))
+	go s.runBatch(jobID, items)
+	writeJSON(w, 200, map[string]any{"job_id": jobID, "total": len(items)})
 }
 
-func (s *Server) runBatch(jobID string, urls []string) {
+// batchMaxAttempts 单条 URL 最大尝试次数（失败重试，指数退避）。
+const batchMaxAttempts = 3
+
+func (s *Server) runBatch(jobID string, items []batchItem) {
 	workers := s.cfg.Batch.Workers
 	if workers <= 0 {
 		workers = 3
@@ -778,8 +774,22 @@ func (s *Server) runBatch(jobID string, urls []string) {
 	var mu sync.Mutex
 	done := 0
 	var lines []string
-	rows := make([]map[string]any, 0, len(urls)) // 25B-B1：逐 URL 结构化状态（任务队列表格数据源）
+	rows := make([]map[string]any, 0, len(items))
 	idx := atomic.Int64{}
+	// 同 host 串行：避免批量把同一站点并发打爆（不同 host 仍按 workers 并行）。
+	hostLocks := map[string]*sync.Mutex{}
+	var hostMu sync.Mutex
+	lockFor := func(raw string) *sync.Mutex {
+		h := batchHost(raw)
+		hostMu.Lock()
+		defer hostMu.Unlock()
+		l, ok := hostLocks[h]
+		if !ok {
+			l = &sync.Mutex{}
+			hostLocks[h] = l
+		}
+		return l
+	}
 	var wg sync.WaitGroup
 	for w := 0; w < workers; w++ {
 		wg.Add(1)
@@ -787,32 +797,52 @@ func (s *Server) runBatch(jobID string, urls []string) {
 			defer wg.Done()
 			for {
 				i := int(idx.Add(1)) - 1
-				if i >= len(urls) {
+				if i >= len(items) {
 					return
 				}
-				u := urls[i]
+				it := items[i]
 				if s.jobs.CancelRequested(jobID) {
 					mu.Lock()
-					lines = append(lines, u+" -> 已跳过（任务取消）")
-					rows = append(rows, map[string]any{"url": u, "status": "skipped"})
+					lines = append(lines, it.URL+" -> 已跳过（任务取消）")
+					rows = append(rows, map[string]any{"url": it.URL, "status": "skipped", "level": it.Level})
 					mu.Unlock()
 				} else {
 					start := time.Now()
-					s.sem <- struct{}{}
-					res := s.eng.Scan(u, engine.DefaultOptions(), nil,
-						func() bool { return s.jobs.CancelRequested(jobID) })
-					<-s.sem
+					opts := engine.DefaultOptions()
+					if it.Level != "" {
+						opts = scanOptions(map[string]any{"level": it.Level})
+					}
+					var res *engine.Result
+					attempts := 0
+					hostLock := lockFor(it.URL)
+					for attempt := 1; attempt <= batchMaxAttempts; attempt++ {
+						attempts = attempt
+						s.sem <- struct{}{}
+						hostLock.Lock()
+						res = s.eng.Scan(it.URL, opts, nil,
+							func() bool { return s.jobs.CancelRequested(jobID) })
+						hostLock.Unlock()
+						<-s.sem
+						if res.Error == "" || s.jobs.CancelRequested(jobID) {
+							break
+						}
+						if attempt < batchMaxAttempts {
+							time.Sleep(time.Duration(attempt*300) * time.Millisecond)
+						}
+					}
 					elapsed := time.Since(start).Milliseconds()
 					if res.Error != "" {
 						mu.Lock()
-						lines = append(lines, u+" -> 失败（"+res.Error+"）")
-						rows = append(rows, map[string]any{"url": u, "status": "failed", "error": res.Error, "elapsed_ms": elapsed})
+						lines = append(lines, it.URL+" -> 失败（"+res.Error+"，尝试 "+fmt.Sprint(attempts)+" 次）")
+						rows = append(rows, map[string]any{"url": it.URL, "status": "failed", "error": res.Error,
+							"level": it.Level, "attempts": attempts, "elapsed_ms": elapsed})
 						mu.Unlock()
 					} else {
 						s.st.Save(res, map[string]any{"batch": true})
 						mu.Lock()
-						lines = append(lines, fmt.Sprintf("%s -> 完成（%d 项技术）", u, len(res.Technologies)))
-						rows = append(rows, map[string]any{"url": u, "status": "done",
+						lines = append(lines, fmt.Sprintf("%s -> 完成（%d 项技术）", it.URL, len(res.Technologies)))
+						rows = append(rows, map[string]any{"url": it.URL, "status": "done",
+							"level": it.Level, "attempts": attempts,
 							"findings": len(res.Vulnerabilities) + len(res.Verified), "techs": len(res.Technologies), "elapsed_ms": elapsed})
 						mu.Unlock()
 					}
@@ -825,7 +855,7 @@ func (s *Server) runBatch(jobID string, urls []string) {
 				mu.Unlock()
 				s.jobs.Update(jobID, func(j *store.Job) {
 					j.Done = d
-					j.Progress = d * 100 / len(urls)
+					j.Progress = d * 100 / len(items)
 					if len(ln) > 0 {
 						j.Message = ln[len(ln)-1]
 					}
