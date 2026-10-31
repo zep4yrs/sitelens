@@ -305,6 +305,17 @@ ONNX 整套退出默认分发。**
 
 ---
 
+### 14. 5.2 新增（部分）：预检 / 网络层 / 爆破护栏 / SARIF
+
+> 本版先交付 4 项低风险增量，其余能力（批量续跑/定时、审计基线/规则/SCA、网络层资产发现、统一任务中心等）列入 **5.3**，详见 `docs/新功能路线图-5.2-5.3.md`。
+
+- **扫描前预检 + 建议卡**：输入目标后发 1 次只读 GET（≤ MaxHops 跳/256KB/5s），展示状态/标题/服务器/WAF/技术指纹，并给出建议档位（WAF→关 DAST、CMS→保留专项、静态→快速、401/403→认证/UA）。**该响应在开始扫描时复用为首页，总请求不增加**；`scan.preflight` 可关；同 URL 30s 去重。
+- **网络层 P0**：证书 hostname/SAN 不匹配、链不完整、SHA-1、RSA<2048；DMARC 策略（none/quarantine/reject + rua）、SPF 查询数/语法、HSTS、HTTP→HTTPS 跳转。附带修复：TLS 采集模式未设 InsecureSkipVerify，导致证书不合格站点的既有证书类发现长期空转。
+- **登录爆破安全护栏**：锁号/429/403/连续失败自动停止或退避、每账号尝试上限、每次 POST 前重取 hidden/CSRF、成功证据（响应差异 + Set-Cookie + 跳转 + 可复制 curl）；不增加验证码破解能力。
+- **源码审计 SARIF 导出**：`sitelens audit <dir> --sarif out.sarif`，SARIF 2.1.0（ruleId/level/locations/partialFingerprints），可接 GitHub/GitLab code scanning；既有 JSON 报告键位不变。
+
+以上新功能均带开关或为 additive，可单独关闭；具体验收见 `docs/release-5.2.0/预检与建议卡-5.2.0.md`、`docs/release-5.2.0/网络层与爆破护栏-5.2.0.md`。
+
 ## 兼容升级
 
 - **5.1.0 可直接覆盖升级**，配置自动迁移，历史扫描记录完整保留。
