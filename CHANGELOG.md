@@ -130,12 +130,13 @@
 
 ### 5.2 新增（部分）：预检 / 网络层 / 爆破护栏 / SARIF
 
-> 其余能力列入 5.3（见 `docs/新功能路线图-5.2-5.3.md`）。
+> 其余能力列入 5.3（见 `docs/新功能路线图-5.2.md`）。
 
 - **扫描前预检 + 建议卡**：输入目标后 1 次只读 GET（≤ MaxHops 跳/256KB/5s），展示状态/标题/服务器/WAF/指纹并给建议档位；**开始扫描时复用该响应为首页，总请求不增加**；`scan.preflight` 可关，同 URL 30s 去重。
 - **网络层 P0**：证书 hostname/SAN、链完整性、SHA-1、RSA<2048；DMARC 策略 + rua、SPF 查询数/语法、HSTS、HTTP→HTTPS 跳转；修复证书校验配置导致既有证书类发现长期空转的前提缺陷。
 - **登录爆破安全护栏**：锁号/429/403/连续失败自动停止或退避、每账号上限、每次重取 hidden/CSRF、成功证据（响应差异 + Set-Cookie + 跳转 + curl）。
 - **源码审计 SARIF 2.1.0 导出**：`sitelens audit <dir> --sarif out.sarif`，ruleId/level/locations/partialFingerprints 稳定；既有 JSON 报告键位不变。
+- **批量扫描增强**：逐行档位（`url quick|standard|deep|full`，中英文均可）、失败自动重试 3 次、同 host 串行/跨 host 并行、任务队列显示档位/尝试次数、结果 CSV 导出。
 
 ### 已知限制 / 待拍板
 - BUG-035 包体瘦身：已实测 891.4 MiB 构成、确认「只带 int8」零 Go 改动（≈380 MiB），
