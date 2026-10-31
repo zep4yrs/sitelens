@@ -245,6 +245,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/job/{id}/cancel", s.hJobCancel)
 	mux.HandleFunc("GET /api/job/{id}/results", s.hJobResults)
 	mux.HandleFunc("POST /api/batch", s.hBatch)
+	mux.HandleFunc("GET /api/batch/jobs", s.hBatchJobs)           // 可断点续跑的批量任务
+	mux.HandleFunc("POST /api/batch/{id}/resume", s.hBatchResume) // 从状态文件续跑
 	mux.HandleFunc("GET /api/history", s.hHistory)
 	mux.HandleFunc("GET /api/history/{id}", s.hHistoryDetail)
 	mux.HandleFunc("DELETE /api/history/{id}", s.hHistoryDelete)
@@ -758,15 +760,17 @@ func (s *Server) hBatch(w http.ResponseWriter, r *http.Request) {
 		urls[i] = it.URL
 	}
 	jobID := newID()
+	st := newBatchState(jobID, items)
+	_ = s.saveBatchState(st)
 	s.jobs.Create(jobID, "batch", map[string]any{"urls": urls, "items": items}, len(items))
-	go s.runBatch(jobID, items)
+	go s.runBatch(jobID, items, st)
 	writeJSON(w, 200, map[string]any{"job_id": jobID, "total": len(items)})
 }
 
 // batchMaxAttempts 单条 URL 最大尝试次数（失败重试，指数退避）。
 const batchMaxAttempts = 3
 
-func (s *Server) runBatch(jobID string, items []batchItem) {
+func (s *Server) runBatch(jobID string, items []batchItem, st *batchState) {
 	workers := s.cfg.Batch.Workers
 	if workers <= 0 {
 		workers = 3
@@ -801,10 +805,20 @@ func (s *Server) runBatch(jobID string, items []batchItem) {
 					return
 				}
 				it := items[i]
+				if st != nil {
+					mu.Lock()
+					st.Items[i].Status = "running"
+					_ = s.saveBatchState(st)
+					mu.Unlock()
+				}
 				if s.jobs.CancelRequested(jobID) {
 					mu.Lock()
 					lines = append(lines, it.URL+" -> 已跳过（任务取消）")
 					rows = append(rows, map[string]any{"url": it.URL, "status": "skipped", "level": it.Level})
+					if st != nil {
+						st.Items[i].Status = "skipped"
+						_ = s.saveBatchState(st)
+					}
 					mu.Unlock()
 				} else {
 					start := time.Now()
@@ -836,6 +850,13 @@ func (s *Server) runBatch(jobID string, items []batchItem) {
 						lines = append(lines, it.URL+" -> 失败（"+res.Error+"，尝试 "+fmt.Sprint(attempts)+" 次）")
 						rows = append(rows, map[string]any{"url": it.URL, "status": "failed", "error": res.Error,
 							"level": it.Level, "attempts": attempts, "elapsed_ms": elapsed})
+						if st != nil {
+							st.Items[i].Status = "failed"
+							st.Items[i].Attempts = attempts
+							st.Items[i].Error = res.Error
+							st.Items[i].ElapsedMS = elapsed
+							_ = s.saveBatchState(st)
+						}
 						mu.Unlock()
 					} else {
 						s.st.Save(res, map[string]any{"batch": true})
@@ -844,6 +865,14 @@ func (s *Server) runBatch(jobID string, items []batchItem) {
 						rows = append(rows, map[string]any{"url": it.URL, "status": "done",
 							"level": it.Level, "attempts": attempts,
 							"findings": len(res.Vulnerabilities) + len(res.Verified), "techs": len(res.Technologies), "elapsed_ms": elapsed})
+						if st != nil {
+							st.Items[i].Status = "done"
+							st.Items[i].Attempts = attempts
+							st.Items[i].Findings = len(res.Vulnerabilities) + len(res.Verified)
+							st.Items[i].Techs = len(res.Technologies)
+							st.Items[i].ElapsedMS = elapsed
+							_ = s.saveBatchState(st)
+						}
 						mu.Unlock()
 					}
 				}
@@ -868,10 +897,21 @@ func (s *Server) runBatch(jobID string, items []batchItem) {
 	// 注意：CancelRequested 不能放进 Update 回调——RWMutex 不可重入，
 	// 持写锁再请求读锁会永久死锁（回调外先取状态）。
 	wasCancelled := s.jobs.CancelRequested(jobID)
+	if st != nil {
+		if wasCancelled {
+			// 取消：保留状态供断点续跑（未完成项 queued/skipped，失败项 failed 可重试）。
+			st.Cancelled = true
+			_ = s.saveBatchState(st)
+		} else {
+			st.Finished = true
+			_ = s.saveBatchState(st)
+			s.deleteBatchState(jobID)
+		}
+	}
 	s.jobs.Update(jobID, func(j *store.Job) {
 		if wasCancelled {
 			j.Status = "cancelled"
-			j.Message = "批量已取消（未开始的 URL 已跳过）"
+			j.Message = "批量已取消（未开始的 URL 已跳过，可断点续跑）"
 		} else {
 			j.Status = "done"
 			j.Message = "批量完成"
