@@ -127,16 +127,19 @@ type ScanConfig struct {
 	RateMode       string `yaml:"rate_mode"`        // 限速档位：balanced（自适应，默认）/ polite（固定 rate_interval_ms，兼容旧行为）
 	RateMaxRPS     int    `yaml:"rate_max_rps"`     // balanced 档硬上限（req/s/主机，默认 8≈125ms；调低更保守，调高最多 10）
 	Preflight      bool   `yaml:"preflight"`        // 输入目标后自动发 1 次只读预检（供建议卡；开始扫描时复用为首页）；false = 完全关闭
-	TimeoutSec     int    `yaml:"timeout_sec"`      // 单请求超时（秒）
-	MaxHops        int    `yaml:"max_hops"`         // 重定向最大跳数
-	MaxBodyMB      int    `yaml:"max_body_mb"`      // 正文留存上限（MB）
-	UserAgent      string `yaml:"user_agent"`       // 自定义 UA（空 = SiteLens/x.y）
-	Deep           bool   `yaml:"deep"`             // 默认开启同域浅爬取
-	Resolve        bool   `yaml:"resolve"`          // 目标校验时是否做 DNS 解析（SSRF 防护强度）
-	MaxConcurrent  int    `yaml:"max_concurrent"`   // 同时进行的扫描任务数（信号量）
-	Graph          bool   `yaml:"graph"`            // 收集结构化事实图（4.0 P2，默认关）
-	MaxMemoryMB    int    `yaml:"max_memory_mb"`    // A7 内存预算（MB）：超限逐级降档；0=默认 768
-	PagesRetained  int    `yaml:"pages_retained"`   // A8 页面清单驻留上限：超出省略并计数；0=默认 2000
+	// AllowHosts 授权白名单（空 = 不限制）：精确域名或 "*.example.com" 后缀；
+	// 不在白名单的目标在扫描/网络层检测前直接拒绝（SSRF/gov.cn 等硬闸门不受影响）。
+	AllowHosts    []string `yaml:"allow_hosts"`
+	TimeoutSec    int      `yaml:"timeout_sec"`    // 单请求超时（秒）
+	MaxHops       int      `yaml:"max_hops"`       // 重定向最大跳数
+	MaxBodyMB     int      `yaml:"max_body_mb"`    // 正文留存上限（MB）
+	UserAgent     string   `yaml:"user_agent"`     // 自定义 UA（空 = SiteLens/x.y）
+	Deep          bool     `yaml:"deep"`           // 默认开启同域浅爬取
+	Resolve       bool     `yaml:"resolve"`        // 目标校验时是否做 DNS 解析（SSRF 防护强度）
+	MaxConcurrent int      `yaml:"max_concurrent"` // 同时进行的扫描任务数（信号量）
+	Graph         bool     `yaml:"graph"`          // 收集结构化事实图（4.0 P2，默认关）
+	MaxMemoryMB   int      `yaml:"max_memory_mb"`  // A7 内存预算（MB）：超限逐级降档；0=默认 768
+	PagesRetained int      `yaml:"pages_retained"` // A8 页面清单驻留上限：超出省略并计数；0=默认 2000
 }
 
 // TargetConfig 目标安全闸配置。
@@ -210,6 +213,7 @@ type IntelConfig struct {
 type NetsecConfig struct {
 	TLSTimeoutSec int  `yaml:"tls_timeout_sec"` // TLS 握手超时（秒）
 	MailCheck     bool `yaml:"mail_check"`      // SPF/DMARC/MX 检查开关
+	PortScan      bool `yaml:"port_scan"`       // 端口探测（默认关：会额外发 TCP connect，仅授权目标开启）
 }
 
 // ExploitConfig 3.0 利用级无害验证（总闸默认关，设置页可开）。
@@ -251,6 +255,8 @@ type AuditConfig struct {
 type BatchConfig struct {
 	MaxURLs int `yaml:"max_urls"` // 单批 URL 数上限
 	Workers int `yaml:"workers"`  // 并发扫描 worker 数
+	// WebhookURL 批量完成/取消后推送 JSON（空 = 不推送）。
+	WebhookURL string `yaml:"webhook_url"`
 }
 
 // WebConfig 内置 Web 服务。

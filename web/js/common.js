@@ -55,8 +55,11 @@
 
   var PREFS = loadPrefs();
 
-  /* ---------------- i18n：zh-CN 为缺省（键值即中文），其余语言按需补字典 ---------------- */
-  var I18N = {
+  /* ---------------- i18n：zh-CN 为缺省 ----------------
+     字典与 t()/apply() 的单一来源是 web/js/i18n.js（UMD，含 zh-CN 字典与
+     data-i18n 扫描替换）；本文件按需加载它并暴露 window.slI18n。这里只留
+     最小回退字典，保证字典脚本未就绪时导航文案不闪空。window.slI18N 为旧名兼容。 */
+  var I18N_FALLBACK = {
     "en-US": {
       nav_scan: "Scan", nav_netsec: "Net Scan", nav_audit: "Code Audit",
       nav_brute: "Login Brute", nav_batch: "Batch", nav_history: "History",
@@ -65,11 +68,47 @@
     }
   };
   function t(key) {
-    if (PREFS.lang && I18N[PREFS.lang] && I18N[PREFS.lang][key]) return I18N[PREFS.lang][key];
+    if (window.slI18n && typeof window.slI18n.t === "function") {
+      var v = window.slI18n.t(key);
+      if (v) return v;
+    }
+    if (PREFS.lang && I18N_FALLBACK[PREFS.lang] && I18N_FALLBACK[PREFS.lang][key]) {
+      return I18N_FALLBACK[PREFS.lang][key];
+    }
     return null;
   }
   window.slT = t;
-  window.slI18N = I18N;
+  window.slI18N = window.slI18N || I18N_FALLBACK;
+
+  /* 按需加载 i18n 字典（所有页面共用；加载成功后重渲染外壳以应用语言） */
+  function loadI18n() {
+    // a11y：语言偏好先落到 <html lang>，不等字典脚本（屏幕阅读器按 lang 选发音规则）
+    try {
+      if (document.documentElement && /^(zh-CN|en-US)$/.test(PREFS.lang || "")) {
+        document.documentElement.setAttribute("lang", PREFS.lang);
+      }
+    } catch (e) {}
+    if (window.slI18n) {
+      try { window.slI18n.setLang(PREFS.lang); window.slI18n.apply(document); } catch (e) {}
+      return;
+    }
+    var s = document.createElement("script");
+    s.src = "/js/i18n.js";
+    s.async = false;
+    s.onload = function () {
+      try {
+        if (window.slI18n) {
+          window.slI18n.setLang(PREFS.lang);
+          window.slI18N = window.slI18n; // 旧名兼容
+          window.slI18n.apply(document);
+          buildShell(); // 导航/模式行由 t() 生成，重渲染一次拿新语言
+        }
+      } catch (e) {}
+      try { document.dispatchEvent(new CustomEvent("sl:i18n-ready")); } catch (e) {}
+    };
+    s.onerror = function () { /* 字典缺失不影响功能，保持中文回退 */ };
+    document.head.appendChild(s);
+  }
 
   /* ---------------- 偏好应用：主题（light/dark/auto）+ 主题色 + 字号 ---------------- */
   function applyTheme() {
@@ -77,6 +116,9 @@
       (PREFS.theme === "auto" &&
         window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches);
     document.documentElement.classList.toggle("dark", dark);
+    // 明暗切换按钮的按下态（屏幕阅读器可感知当前主题）
+    var themeBtn = document.querySelector(".theme-btn");
+    if (themeBtn) themeBtn.setAttribute("aria-pressed", dark ? "true" : "false");
   }
   function applyAccent() {
     var rootStyle = document.documentElement.style;
@@ -104,6 +146,9 @@
     window.__slCommonLoaded = true;
 
     injectHeadLinks();
+    // i18n 字典（web/js/i18n.js）按需加载；无障碍全局快捷键/弹层接线只注册一次
+    loadI18n();
+    slInitGlobalA11y();
 
     // 跟随系统：系统明暗变化实时反映（仅 auto 模式）。经 trampoline 调到最新闭包。
     if (window.matchMedia) {
@@ -119,6 +164,7 @@
     window.addEventListener("hashchange", function () {
       if (window.slUpdateNav) window.slUpdateNav();
       if (window.slUpdateSide) window.slUpdateSide();
+      if (window.slUpdateModes) window.slUpdateModes();
     });
     // 模式行点击分派：工作台=即时 switchTab；被动页=Turbo 去对应模式。
     // 注意不能以「switchTab 函数存在」判定在工作台——Turbo 切页后 window 上的
@@ -132,6 +178,7 @@
         document.querySelector(".tw-panel") && typeof window.switchTab === "function";
       if (onWorkbench) {
         window.switchTab(name);
+        if (window.slUpdateModes) window.slUpdateModes();
       } else if (window.Turbo) {
         window.Turbo.visit("/app#" + name);
       }
@@ -146,6 +193,7 @@
         e.preventDefault();
         window.switchTab(key);
         if (window.slUpdateSide) window.slUpdateSide();
+        if (window.slUpdateModes) window.slUpdateModes();
       }
     });
 
@@ -186,6 +234,10 @@
       applyTheme();
       applyAccent();
       applyFontScale();
+      // 语言变更即时应用（设置页通常 reload，这里兜住不重载的调用方）
+      if (window.slI18n && patch && Object.prototype.hasOwnProperty.call(patch, "lang")) {
+        try { window.slI18n.setLang(PREFS.lang); window.slI18n.apply(document); } catch (e) {}
+      }
     },
     reset: function () {
       PREFS = { theme: "auto", accent: "", fontScale: "md", lang: "zh-CN" };
@@ -193,8 +245,365 @@
       applyTheme();
       applyAccent();
       applyFontScale();
+      if (window.slI18n) {
+        try { window.slI18n.setLang(PREFS.lang); window.slI18n.apply(document); } catch (e) {}
+      }
     }
   };
+
+  /* ================= 无障碍增强（FE-04，5.2.x） =================
+     1) 全局快捷键：Ctrl+Enter 开始扫描 / Esc 取消扫描或关弹层 / Ctrl+E 导出 JSON；
+        CJK 输入法组合输入期间一律不触发（compositionstart/end + isComposing 守卫）。
+     2) 弹层管理器：role=dialog + aria-modal + 焦点陷阱（Tab 循环）+ Esc 关闭 +
+        焦点归还；约定用 data-sl-dialog-open / data-sl-dialog-close 接线，避免改 app.js。
+     3) 每渲染增强：跳过导航链接、main 地标、窄屏侧栏抽屉开关、页签 aria-selected、
+        进度条 aria-valuenow 同步、分割条键盘调整、非原生 role=button 控件可聚焦。
+     状态挂 window.__slA11y：common.js 随 Turbo 换页重放，文档级监听只注册一次，
+     但 DOM 引用必须跨渲染存活/清理。 */
+  var SL = window.__slA11y || (window.__slA11y = { dialogs: [], imeComposing: false });
+
+  function slFocusables(root) {
+    var sel = 'a[href],button:not([disabled]),input:not([disabled]):not([type="hidden"]),' +
+      'select:not([disabled]),textarea:not([disabled]),[tabindex]:not([tabindex="-1"])';
+    return Array.prototype.slice.call(root.querySelectorAll(sel)).filter(function (el) {
+      return !el.hasAttribute("hidden") && el.getClientRects().length > 0;
+    });
+  }
+
+  function slEnhanceDialog(el) {
+    if (!el) return null;
+    if (el.__slDialogReady) return el;
+    el.__slDialogReady = true;
+    if (!el.hasAttribute("role")) el.setAttribute("role", "dialog");
+    if (!el.hasAttribute("aria-modal")) el.setAttribute("aria-modal", "true");
+    if (!el.hasAttribute("tabindex")) el.setAttribute("tabindex", "-1");
+    // 点遮罩关闭（只在点到 backdrop 自身时；点内容不关）
+    el.addEventListener("mousedown", function (e) {
+      if (e.target === el) slCloseDialog(el);
+    });
+    // 焦点陷阱：Tab/Shift+Tab 在弹层内循环
+    el.addEventListener("keydown", function (e) {
+      if (e.key !== "Tab") return;
+      var f = slFocusables(el);
+      if (!f.length) { e.preventDefault(); el.focus(); return; }
+      var first = f[0], last = f[f.length - 1];
+      if (e.shiftKey && (document.activeElement === first || document.activeElement === el)) {
+        e.preventDefault();
+        last.focus();
+      } else if (!e.shiftKey && document.activeElement === last) {
+        e.preventDefault();
+        first.focus();
+      }
+    });
+    return el;
+  }
+
+  function slOpenDialog(el, opener) {
+    if (!el) return false;
+    slEnhanceDialog(el);
+    if (SL.dialogs.indexOf(el) >= 0) return true;
+    SL.dialogs.push(el);
+    el.__slPrevFocus = opener || document.activeElement;
+    el.hidden = false;
+    el.classList.add("open");
+    document.documentElement.classList.add("sl-modal-open");
+    var f = slFocusables(el);
+    (f[0] || el).focus();
+    return true;
+  }
+
+  function slCloseDialog(el) {
+    if (!el) return false;
+    var i = SL.dialogs.indexOf(el);
+    if (i < 0) return false;
+    SL.dialogs.splice(i, 1);
+    el.hidden = true;
+    el.classList.remove("open");
+    if (!SL.dialogs.length) document.documentElement.classList.remove("sl-modal-open");
+    var prev = el.__slPrevFocus;
+    el.__slPrevFocus = null;
+    if (prev && typeof prev.focus === "function") { try { prev.focus(); } catch (e) {} }
+    return true;
+  }
+
+  function slTopDialog() {
+    return SL.dialogs.length ? SL.dialogs[SL.dialogs.length - 1] : null;
+  }
+
+  window.slDialog = {
+    open: slOpenDialog,
+    close: slCloseDialog,
+    enhance: slEnhanceDialog,
+    top: slTopDialog,
+    isOpen: function () { return SL.dialogs.length > 0; }
+  };
+
+  /* Esc 关闭顺序：弹层 → 自绘下拉 → 窄屏侧栏抽屉（都没有才轮到取消扫描）。 */
+  function slCloseOverlays() {
+    var dlg = slTopDialog();
+    if (dlg) { slCloseDialog(dlg); return true; }
+    var openCdd = document.querySelector(".cdd.open");
+    if (openCdd) {
+      openCdd.classList.remove("open");
+      var cbtn = openCdd.querySelector(".cdd-btn");
+      if (cbtn) { cbtn.setAttribute("aria-expanded", "false"); cbtn.focus(); }
+      return true;
+    }
+    var app = document.querySelector(".tw-app.side-open");
+    if (app) {
+      app.classList.remove("side-open");
+      var tgl = document.querySelector(".sl-side-toggle");
+      if (tgl) { tgl.setAttribute("aria-expanded", "false"); tgl.focus(); }
+      return true;
+    }
+    return false;
+  }
+
+  /* 文档级监听（只注册一次）：快捷键 + 弹层接线 + 非原生控件键盘激活。 */
+  function slInitGlobalA11y() {
+    if (SL.globalReady) return;
+    SL.globalReady = true;
+
+    // CJK IME 守卫：组合输入期间快捷键不解释（中文/日文/韩文输入法）
+    document.addEventListener("compositionstart", function () { SL.imeComposing = true; }, true);
+    document.addEventListener("compositionend", function () { SL.imeComposing = false; }, true);
+
+    document.addEventListener("keydown", function (e) {
+      if (SL.imeComposing || e.isComposing || e.keyCode === 229) return;
+      var key = String(e.key || "").toLowerCase();
+
+      if (key === "escape") {
+        if (slCloseOverlays()) { e.preventDefault(); return; }
+        // 取消进行中的扫描：#cancel-btn 只在扫描期渲染（app.js renderLivePanel）
+        if (document.getElementById("cancel-btn") && typeof window.cancelScan === "function") {
+          e.preventDefault();
+          window.cancelScan();
+        }
+        return;
+      }
+
+      if (!(e.ctrlKey || e.metaKey)) return;
+      if (slTopDialog()) return; // 弹层内不触发全局快捷键
+
+      if (key === "enter") {
+        if (typeof window.startScan !== "function" || !document.getElementById("url")) return;
+        var go = document.getElementById("go");
+        if (go && go.disabled) return; // 扫描进行中不重复提交
+        e.preventDefault();
+        window.startScan();
+        return;
+      }
+      if (key === "e") {
+        if (typeof window.exportAs !== "function") return;
+        // 无结果时 exportAs 是静默 no-op；不劫持浏览器默认快捷键
+        if (!document.querySelector('#result [onclick*="exportAs"]')) return;
+        e.preventDefault();
+        window.exportAs("json");
+      }
+    }, false);
+
+    // 弹层开/关接线（data-* 约定；不改 app.js）
+    document.addEventListener("click", function (e) {
+      var t2 = e.target;
+      if (!t2 || !t2.closest) return;
+      var opener = t2.closest("[data-sl-dialog-open]");
+      if (opener) {
+        var id = opener.getAttribute("data-sl-dialog-open");
+        var dlg = id ? document.getElementById(id) : null;
+        if (dlg) { e.preventDefault(); slOpenDialog(dlg, opener); }
+        return;
+      }
+      var closer = t2.closest("[data-sl-dialog-close]");
+      if (closer) {
+        var host = closer.closest('[role="dialog"]');
+        if (host) { e.preventDefault(); slCloseDialog(host); }
+      }
+    }, false);
+
+    // 非原生可聚焦控件（role=button 的 div 等）用 Enter/Space 激活
+    document.addEventListener("keydown", function (e) {
+      if (SL.imeComposing || e.isComposing || e.keyCode === 229) return;
+      var key = String(e.key || "");
+      if (key !== "Enter" && key !== " " && key !== "Spacebar") return;
+      var el = e.target && e.target.closest ? e.target.closest("[data-sl-activate]") : null;
+      if (!el) return;
+      e.preventDefault();
+      el.click();
+    }, false);
+  }
+
+  /* 进度条 aria-valuenow 同步：app.js 只改 <i style="width">，这里观察属性变化补 ARIA。 */
+  function slWatchProgress(el) {
+    if (!el || el.__slProgress) return;
+    el.__slProgress = true;
+    if (!el.hasAttribute("role")) el.setAttribute("role", "progressbar");
+    el.setAttribute("aria-valuemin", "0");
+    el.setAttribute("aria-valuemax", "100");
+    if (!el.hasAttribute("aria-label")) el.setAttribute("aria-label", t("a11y_progress") || "进度");
+    var bar = el.querySelector("i");
+    function sync() {
+      var w = bar ? parseFloat(bar.style.width || "0") : 0;
+      if (!isFinite(w)) w = 0;
+      el.setAttribute("aria-valuenow", String(Math.max(0, Math.min(100, Math.round(w)))));
+    }
+    sync();
+    if (bar && window.MutationObserver) {
+      new MutationObserver(sync).observe(bar, { attributes: true, attributeFilter: ["style"] });
+    }
+  }
+
+  /* 分割条键盘调整（鼠标拖拽由 app.js 处理；这里补键盘可达，写同一个偏好键）。 */
+  function slInitSplit() {
+    var split = document.getElementById("tw-split");
+    var left = document.getElementById("tw-left");
+    if (!split || !left || split.__slKeys) return;
+    split.__slKeys = true;
+    if (!split.hasAttribute("role")) split.setAttribute("role", "separator");
+    split.setAttribute("aria-orientation", "vertical");
+    split.setAttribute("tabindex", "0");
+    if (!split.hasAttribute("aria-label")) split.setAttribute("aria-label", t("a11y_resize") || "调整左栏宽度");
+    split.setAttribute("aria-valuemin", "240");
+    split.setAttribute("aria-valuemax", "520");
+    function sync() {
+      var w = Math.round(left.getBoundingClientRect().width);
+      if (w > 0) split.setAttribute("aria-valuenow", String(w));
+    }
+    sync();
+    split.addEventListener("keydown", function (e) {
+      var d = e.key === "ArrowLeft" ? -16 : e.key === "ArrowRight" ? 16 : 0;
+      if (!d) return;
+      e.preventDefault();
+      var w = Math.max(240, Math.min(520, Math.round(left.getBoundingClientRect().width) + d));
+      left.style.width = w + "px";
+      try { localStorage.setItem("tw-left-w", String(w)); } catch (err) {}
+      sync();
+    });
+    window.addEventListener("resize", sync);
+  }
+
+  /* 模式行 aria-selected / aria-current 同步（app.js switchTab 只切 class）。 */
+  function slUpdateModes() {
+    var active = sideActive();
+    document.querySelectorAll(".tw-modes .tab").forEach(function (b) {
+      var on = b.getAttribute("data-tab") === active;
+      b.setAttribute("aria-selected", on ? "true" : "false");
+      if (on) b.setAttribute("aria-current", "true"); else b.removeAttribute("aria-current");
+    });
+  }
+  window.slUpdateModes = slUpdateModes;
+
+  /* 每渲染增强：跨页/跨 Turbo 换页都执行，必须幂等。 */
+  function slInitShellA11y() {
+    // 换页后清掉已不在文档里的弹层引用（避免 Esc 关闭幽灵弹层）
+    SL.dialogs = SL.dialogs.filter(function (el) { return el && document.contains(el); });
+    if (!SL.dialogs.length) document.documentElement.classList.remove("sl-modal-open");
+
+    var app = document.querySelector(".tw-app");
+    if (!app) return;
+
+    // 1) 跳过导航链接 + main 地标（工作台没有 <main>，画布即主内容）
+    var main = document.querySelector("main");
+    if (!main) {
+      var canvas = document.querySelector(".tw-canvas");
+      if (canvas) { canvas.setAttribute("role", "main"); main = canvas; }
+    }
+    if (main) {
+      if (!main.id) main.id = "sl-main";
+      if (!main.hasAttribute("tabindex")) main.setAttribute("tabindex", "-1");
+      if (!document.querySelector(".sl-skip")) {
+        var skip = document.createElement("a");
+        skip.className = "sl-skip";
+        skip.href = "#" + main.id;
+        skip.setAttribute("data-i18n", "skip_to_main");
+        skip.textContent = t("skip_to_main") || "跳到主要内容";
+        document.body.insertBefore(skip, document.body.firstChild);
+      }
+    }
+
+    // 2) 左栏语义 + 窄屏抽屉开关
+    var left = app.querySelector(".tw-left");
+    if (left) {
+      if (!left.id) left.id = "tw-left";
+      if (!left.hasAttribute("aria-label")) {
+        left.setAttribute("aria-label", t("a11y_side_panel") || "扫描配置面板");
+      }
+    }
+    var toolbar = app.querySelector(".tw-toolbar");
+    if (toolbar && left && !toolbar.querySelector(".sl-side-toggle")) {
+      var toggle = document.createElement("button");
+      toggle.type = "button";
+      toggle.className = "btn ghost small sl-side-toggle";
+      toggle.setAttribute("aria-controls", left.id);
+      toggle.setAttribute("aria-expanded", app.classList.contains("side-open") ? "true" : "false");
+      toggle.setAttribute("data-i18n", "side_toggle");
+      toggle.textContent = t("side_toggle") || "配置";
+      toggle.addEventListener("click", function () {
+        var open = app.classList.toggle("side-open");
+        toggle.setAttribute("aria-expanded", open ? "true" : "false");
+      });
+      toolbar.insertBefore(toggle, toolbar.firstChild);
+    }
+
+    // 3) 页签语义：模式行 aria-selected + 面板 role=tabpanel/aria-labelledby
+    slUpdateModes();
+    document.querySelectorAll(".tabpanel").forEach(function (p) {
+      if (!p.hasAttribute("role")) p.setAttribute("role", "tabpanel");
+      if (p.hasAttribute("aria-labelledby")) return;
+      var name = (p.id || "").replace(/^tab-/, "");
+      var tabBtn = document.querySelector('.tw-modes .tab[data-tab="' + name + '"]') ||
+        document.querySelector('.tabs .tab[data-tab="' + name + '"]');
+      if (tabBtn) {
+        if (!tabBtn.id) tabBtn.id = "tab-btn-" + name;
+        p.setAttribute("aria-labelledby", tabBtn.id);
+        tabBtn.setAttribute("aria-controls", p.id);
+      }
+    });
+    // 被动页的普通 .tabs（如历史页）补最小 tablist/tab 语义
+    document.querySelectorAll(".tabs").forEach(function (list) {
+      if (list.classList.contains("tw-modes")) return;
+      if (!list.hasAttribute("role") && list.querySelector(".tab")) list.setAttribute("role", "tablist");
+      list.querySelectorAll(".tab").forEach(function (b) {
+        if (!b.hasAttribute("role")) b.setAttribute("role", "tab");
+      });
+    });
+
+    // 4) 状态行 / 进度条 / 分割条
+    ["st-msg", "st-state"].forEach(function (id) {
+      var el = document.getElementById(id);
+      if (el && !el.hasAttribute("aria-live")) el.setAttribute("aria-live", "polite");
+    });
+    ["pw", "lb-pw", "batch-pw"].forEach(function (id) { slWatchProgress(document.getElementById(id)); });
+    slInitSplit();
+
+    // 5) role=button 的非原生控件补 tabindex（如拖拽上传区）
+    document.querySelectorAll('[role="button"]').forEach(function (el) {
+      if (!el.hasAttribute("tabindex") && !/^(BUTTON|A)$/.test(el.tagName)) el.setAttribute("tabindex", "0");
+    });
+
+    // 5.1) 表单控件兜底标签：范围外页面（settings/history/intel/feedback）的静态
+    //      标签待 5.3 补齐，这里先用 placeholder / 相邻 label 文本补 aria-label，
+    //      避免屏幕阅读器把无标签输入框读成空白。已有标签（label/aria-label/title）
+    //      的控件绝不覆盖。
+    document.querySelectorAll("input,textarea,select").forEach(function (el) {
+      var type = (el.getAttribute("type") || "").toLowerCase();
+      if (type === "hidden" || type === "submit" || type === "button" || type === "reset" || type === "image") return;
+      if (el.getAttribute("aria-label") || el.getAttribute("aria-labelledby") || el.getAttribute("title")) return;
+      if (el.labels && el.labels.length) return;
+      var ph = (el.getAttribute("placeholder") || "").trim();
+      if (ph) { el.setAttribute("aria-label", ph); return; }
+      var row = el.closest ? el.closest(".row") : null;
+      var lab = row ? row.querySelector("label") : null;
+      var txt = lab ? (lab.textContent || "").trim() : "";
+      if (txt) el.setAttribute("aria-label", txt);
+    });
+
+    // 6) 静态弹层增强 + i18n 应用（幂等）
+    document.querySelectorAll('[role="dialog"][aria-modal="true"]').forEach(function (el) { slEnhanceDialog(el); });
+    if (window.slI18n) {
+      try { window.slI18n.setLang(PREFS.lang); window.slI18n.apply(document); } catch (e) {}
+    }
+  }
+  window.slInitShellA11y = slInitShellA11y;
 
   /* ---------------- 左侧栏 HTML ---------------- */
   var ICONS = {
@@ -297,12 +706,18 @@
   // 供无法走 api 封装的裸 fetch（如 FormData 上传）手动补 X-Token 头
   window.apiTok = tok;
 
-  /* 引擎不可达时的界面态：明确告诉用户"引擎没响应"，而不是一片空白。 */
+  /* 引擎不可达时的界面态：明确告诉用户"引擎没响应"，而不是一片空白。
+     语义：这是阻塞式错误对话框（role=dialog + aria-modal），不做 Esc 关闭
+     （关闭会把故障藏起来）；焦点落到「重新加载」按钮，Tab 限制在对话框内。 */
   function showEngineDown(msg) {
     if (!document.body || document.getElementById("sl-engine-down")) return;
     var d = document.createElement("div");
     d.id = "sl-engine-down";
-    d.setAttribute("role", "alert");
+    d.setAttribute("role", "dialog");
+    d.setAttribute("aria-modal", "true");
+    d.setAttribute("aria-labelledby", "sl-engine-down-title");
+    d.setAttribute("aria-describedby", "sl-engine-down-desc");
+    d.setAttribute("tabindex", "-1");
     d.style.cssText = "position:fixed;inset:0;z-index:9999;background:rgba(16,16,20,.94);" +
       "color:#e8e8ee;display:flex;align-items:center;justify-content:center;padding:24px;" +
       "font:14px/1.75 system-ui,-apple-system,'Segoe UI',sans-serif";
@@ -310,16 +725,28 @@
     box.style.cssText = "max-width:560px;padding:26px 30px;border-radius:14px;background:#25252e;" +
       "border:1px solid #3a3a46";
     box.innerHTML =
-      "<h3 style='margin:0 0 10px;font-size:16px'>引擎服务无响应</h3>" +
-      "<p style='margin:0 0 10px;color:#c9c9d4'>" + esc(msg) + "</p>" +
+      "<h3 id='sl-engine-down-title' style='margin:0 0 10px;font-size:16px'>引擎服务无响应</h3>" +
+      "<p id='sl-engine-down-desc' style='margin:0 0 10px;color:#c9c9d4'>" + esc(msg) + "</p>" +
       "<p style='margin:0 0 16px;color:#8f8f9c;font-size:13px'>可能原因：引擎进程已退出 / " +
       "端口被占用 / 数据目录不可写。命令行形态请确认 <code>sitelens serve</code> 仍在运行。</p>" +
-      "<button id='sl-engine-reload' style='padding:7px 16px;border-radius:8px;" +
+      "<button id='sl-engine-reload' type='button' style='padding:7px 16px;border-radius:8px;" +
       "border:1px solid #55555f;background:#33333d;color:#eee;cursor:pointer'>重新加载</button>";
     d.appendChild(box);
     document.body.appendChild(d);
     var btn = document.getElementById("sl-engine-reload");
-    if (btn) btn.onclick = function () { location.reload(); };
+    if (btn) {
+      btn.onclick = function () { location.reload(); };
+      try { btn.focus(); } catch (e) {}
+    }
+    // 焦点陷阱：Tab/Shift+Tab 不跑出错误对话框
+    d.addEventListener("keydown", function (e) {
+      if (e.key !== "Tab") return;
+      var f = slFocusables(d);
+      if (!f.length) { e.preventDefault(); d.focus(); return; }
+      var first = f[0], last = f[f.length - 1];
+      if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+      else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+    });
   }
   function clearEngineDown() {
     var el = document.getElementById("sl-engine-down");
@@ -421,30 +848,85 @@
     return handle;
   };
 
-  /* 自绘下拉组件（cdd）：app.html 与 chain.html 复用 */
+  /* 自绘下拉组件（cdd）：app.html 与 chain.html 复用。
+     ARIA：触发按钮 aria-haspopup=listbox + aria-expanded，弹层 role=listbox、
+     选项 role=option + aria-selected；Esc 关闭并把焦点还给按钮。
+     注意：app.js/chain.html 只用返回值的 .value，额外方法向后兼容。 */
   window.initCDD = function (rootId, onPick) {
     var root = document.getElementById(rootId);
+    if (!root) return { get value() { return null; } };
+    var btn = root.querySelector(".cdd-btn");
     var pop = root.querySelector(".cdd-pop");
-    root.querySelector(".cdd-btn").addEventListener("click", function (e) {
+    if (!btn || !pop) return { get value() { return root.getAttribute("data-value"); } };
+    var opts = pop.querySelectorAll(".cdd-opt");
+
+    btn.setAttribute("aria-haspopup", "listbox");
+    btn.setAttribute("aria-expanded", "false");
+    pop.setAttribute("role", "listbox");
+    opts.forEach(function (o) { o.setAttribute("role", "option"); });
+
+    function sync() {
+      var open = root.classList.contains("open");
+      btn.setAttribute("aria-expanded", open ? "true" : "false");
+      opts.forEach(function (o) {
+        o.setAttribute("aria-selected", o.classList.contains("active") ? "true" : "false");
+      });
+    }
+    function close(refocus) {
+      root.classList.remove("open");
+      sync();
+      if (refocus) btn.focus();
+    }
+    sync();
+
+    btn.addEventListener("click", function (e) {
       e.stopPropagation();
       var willOpen = !root.classList.contains("open");
-      document.querySelectorAll(".cdd.open").forEach(function (r) { r.classList.remove("open"); });
+      document.querySelectorAll(".cdd.open").forEach(function (r) {
+        r.classList.remove("open");
+        var b = r.querySelector(".cdd-btn");
+        if (b) b.setAttribute("aria-expanded", "false");
+      });
       if (willOpen) root.classList.add("open");
+      sync();
     });
     pop.addEventListener("click", function (e) { e.stopPropagation(); });
-    pop.querySelectorAll(".cdd-opt").forEach(function (opt) {
+    opts.forEach(function (opt) {
       opt.addEventListener("click", function () {
-        pop.querySelectorAll(".cdd-opt").forEach(function (o) { o.classList.remove("active"); });
+        opts.forEach(function (o) { o.classList.remove("active"); });
         opt.classList.add("active");
         root.setAttribute("data-value", opt.getAttribute("data-v"));
         root.querySelector(".cdd-label").innerHTML =
           "<b>" + esc(opt.querySelector("b").textContent) + "</b>" +
           '<span class="cdd-desc">' + esc(opt.querySelector("span").textContent) + "</span>";
         root.classList.remove("open");
+        sync();
         if (onPick) onPick(opt.getAttribute("data-v"));
       });
     });
-    return { get value() { return root.getAttribute("data-value"); } };
+    // 键盘：Esc 关闭并归还焦点；上下键在选项间移动
+    root.addEventListener("keydown", function (e) {
+      if (e.key === "Escape") {
+        if (root.classList.contains("open")) {
+          e.stopPropagation();
+          e.preventDefault();
+          close(true);
+        }
+        return;
+      }
+      if (e.key !== "ArrowDown" && e.key !== "ArrowUp") return;
+      if (!root.classList.contains("open")) return;
+      e.preventDefault();
+      var list = Array.prototype.slice.call(opts).filter(function (o) { return !o.disabled; });
+      if (!list.length) return;
+      var i = list.indexOf(document.activeElement);
+      var next = e.key === "ArrowDown" ? (i + 1) % list.length : (i <= 0 ? list.length - 1 : i - 1);
+      list[next].focus();
+    });
+    return {
+      get value() { return root.getAttribute("data-value"); },
+      close: function () { close(false); }
+    };
   };
 
   window.extrasLine = function (key, it) {
@@ -508,23 +990,37 @@
   }
   window.slUpdateSide = updateSideActive;
 
-  /* 模式行（主动五功能）单一来源：工作台与被动页渲染同一份 markup */
+  /* 模式行（主动五功能）单一来源：工作台与被动页渲染同一份 markup。
+     ARIA：tablist/tab + aria-selected（active 由 buildShell/switchTab 维护），
+     可访问名来自 <span> 文案；图标对辅助技术隐藏（aria-hidden）。 */
+  function svgA11y(svg) {
+    return String(svg || "").replace(/^<svg\b/, '<svg aria-hidden="true" focusable="false"');
+  }
   function modeRowHTML() {
-    return '<div class="tw-modes tabs">' + MODE_SIDE.map(function (m) {
-      return '<button class="tab" data-tab="' + m[0] + '" title="' + m[2] + '">' + m[3] + "<span>" + m[2] + "</span></button>";
-    }).join("") + "</div>";
+    return '<div class="tw-modes tabs" role="tablist" aria-label="' +
+      (t("a11y_mode_tabs") || "功能模式") + '" data-i18n-aria-label="a11y_mode_tabs">' +
+      MODE_SIDE.map(function (m) {
+        var label = t("mode_" + m[0]) || m[2];
+        return '<button type="button" class="tab" role="tab" data-tab="' + m[0] + '"' +
+          ' aria-selected="false" title="' + label + '" data-i18n-title="mode_' + m[0] + '">' +
+          svgA11y(m[3]) + '<span data-i18n="mode_' + m[0] + '">' + label + "</span></button>";
+      }).join("") + "</div>";
   }
   function topNavHTML() {
     var nav = NAV.map(function (n) {
       var label = t(n[3]) || n[2];
-      return '<a href="' + n[1] + '" data-key="' + n[0] + '" title="' + label + '">' +
-        ICONS[n[0]] + "<span>" + label + "</span></a>";
+      return '<a href="' + n[1] + '" data-key="' + n[0] + '" title="' + label + '"' +
+        ' data-i18n-title="' + n[3] + '">' +
+        svgA11y(ICONS[n[0]]) + '<span data-i18n="' + n[3] + '">' + label + "</span></a>";
     }).join("");
-    return '<nav class="top-nav">' + nav + "</nav>";
+    return '<nav class="top-nav" aria-label="' + (t("a11y_main_nav") || "主导航") + '"' +
+      ' data-i18n-aria-label="a11y_main_nav">' + nav + "</nav>";
   }
   function topRightHTML() {
+    var themeLabel = t("theme_toggle") || "切换明暗主题";
     return '<div class="top-right">' +
-      '<button class="theme-btn" onclick="toggleTheme()" title="' + (t("theme_toggle") || "切换明暗主题") + '">◐</button>' +
+      '<button type="button" class="theme-btn" onclick="toggleTheme()" title="' + themeLabel + '"' +
+      ' aria-label="' + themeLabel + '" data-i18n-aria-label="a11y_theme_btn" aria-pressed="false">◐</button>' +
       '<span class="ver" id="sl-ver">SiteLens</span></div>';
   }
   function fillVersion() {
@@ -539,23 +1035,31 @@
     var stale = document.querySelector(".wb-top");
     if (stale && stale.parentNode) stale.parentNode.removeChild(stale);
 
-    // 模式行（同款组件单一来源）：工作台填槽，被动页补同款左列
+    // 模式行（同款组件单一来源）：工作台填槽，被动页补同款左列。
+    // 注意：槽位首次渲染后被 outerHTML 替换掉 #tw-modeslot，后续渲染（Turbo
+    // 换页/i18n 就绪重渲染）要按 .tw-left > .tw-modes 兜底重渲染，否则语言
+    // 切换后模式行文案不更新。
     var row = modeRowHTML();
     var key = sideActive();
     var modeSlot = document.getElementById("tw-modeslot");
     if (modeSlot) {
       modeSlot.outerHTML = row;
-      document.querySelectorAll(".tw-modes .tab").forEach(function (b) {
-        var on = b.getAttribute("data-tab") === key;
-        b.classList.toggle("active", on);
-        if (on) b.setAttribute("aria-current", "true"); else b.removeAttribute("aria-current");
-      });
-    } else if (!app.querySelector(":scope > .tw-left")) {
-      var col = document.createElement("aside");
-      col.className = "tw-left";
-      col.innerHTML = row;
-      app.insertBefore(col, app.firstChild);
+    } else {
+      var oldRow = app.querySelector(":scope > .tw-left > .tw-modes");
+      if (oldRow) {
+        oldRow.outerHTML = row;
+      } else if (!app.querySelector(":scope > .tw-left")) {
+        var col = document.createElement("aside");
+        col.className = "tw-left";
+        col.innerHTML = row;
+        app.insertBefore(col, app.firstChild);
+      }
     }
+    document.querySelectorAll(".tw-modes .tab").forEach(function (b) {
+      var on = b.getAttribute("data-tab") === key;
+      b.classList.toggle("active", on);
+      if (on) b.setAttribute("aria-current", "true"); else b.removeAttribute("aria-current");
+    });
 
     // 工具条槽位（被动页导航 + 亮暗 + 版本）
     var slot = document.getElementById("tw-topslot");
@@ -564,6 +1068,9 @@
       slUpdateNav();
       fillVersion();
     }
+    // 无障碍外壳增强（跳过导航/main 地标/抽屉开关/页签 ARIA/进度条/分割条/i18n）
+    slInitShellA11y();
+    applyTheme(); // 同步明暗按钮 aria-pressed
   }
   /* 首次执行位于 body 起始：.tw-app / 槽位尚未解析，等 DOM 就绪再定壳形态；
      Turbo 换页时脚本体在换页后重放，readyState 已过 loading，立即执行 */

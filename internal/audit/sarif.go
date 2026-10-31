@@ -48,10 +48,11 @@ func ToSARIF(rep *Report, toolVersion string) ([]byte, error) {
 		rep = &Report{}
 	}
 
-	// 规则元数据：按 ruleId 去重（保留首个发现的 Title/Advice），排序保证
-	// rules[] 与 ruleIndex 稳定（map 迭代顺序不可依赖）。
+	// 规则元数据：按 ruleId 去重（保留首个发现的 Title/Advice/OWASP），排序
+	// 保证 rules[] 与 ruleIndex 稳定（map 迭代顺序不可依赖）。
 	ruleTitle := map[string]string{}
 	ruleAdvice := map[string]string{}
+	ruleOWASP := map[string]string{}
 	ruleIDs := make([]string, 0)
 	for _, f := range rep.Findings {
 		if _, ok := ruleTitle[f.Rule]; ok {
@@ -60,6 +61,9 @@ func ToSARIF(rep *Report, toolVersion string) ([]byte, error) {
 		ruleIDs = append(ruleIDs, f.Rule)
 		ruleTitle[f.Rule] = f.Title
 		ruleAdvice[f.Rule] = f.Advice
+		if f.OWASP != "" {
+			ruleOWASP[f.Rule] = f.OWASP
+		}
 	}
 	sort.Strings(ruleIDs)
 
@@ -75,6 +79,10 @@ func ToSARIF(rep *Report, toolVersion string) ([]byte, error) {
 		r.ShortDescription = &sarifText{Text: title}
 		if adv := ruleAdvice[id]; adv != "" {
 			r.Help = &sarifText{Text: adv}
+		}
+		// AU-02：OWASP 映射走 SARIF 标准 properties（GitHub code scanning 保留）。
+		if o := ruleOWASP[id]; o != "" {
+			r.Properties = map[string]string{"owasp": o}
 		}
 		rules = append(rules, r)
 	}
@@ -222,11 +230,12 @@ type sarifDriver struct {
 }
 
 type sarifRule struct {
-	ID               string     `json:"id"`
-	Name             string     `json:"name,omitempty"`
-	ShortDescription *sarifText `json:"shortDescription,omitempty"`
-	Help             *sarifText `json:"help,omitempty"`
-	HelpURI          string     `json:"helpUri,omitempty"` // 现无规则元数据 URI：省略
+	ID               string            `json:"id"`
+	Name             string            `json:"name,omitempty"`
+	ShortDescription *sarifText        `json:"shortDescription,omitempty"`
+	Help             *sarifText        `json:"help,omitempty"`
+	HelpURI          string            `json:"helpUri,omitempty"`    // 现无规则元数据 URI：省略
+	Properties       map[string]string `json:"properties,omitempty"` // AU-02：owasp 映射
 }
 
 type sarifText struct {

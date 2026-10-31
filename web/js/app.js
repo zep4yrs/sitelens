@@ -948,7 +948,8 @@ function exportButtons() {
     '<button class="btn ghost small" onclick="exportAs(\'csv\')">明细 CSV</button>' +
     '<button class="btn ghost small" onclick="exportAs(\'wide\')">宽表 CSV</button>' +
     '<button class="btn ghost small" onclick="exportAs(\'html\')">HTML 报告</button>' +
-    '<button class="btn ghost small" onclick="exportAs(\'md\')">MD 报告</button>';
+    '<button class="btn ghost small" onclick="exportAs(\'md\')">MD 报告</button>' +
+    '<button class="btn ghost small" onclick="exportAs(\'sarif\')">SARIF</button>';
 }
 window.exportAs = function (fmt) {
   if (!currentScanId) return;

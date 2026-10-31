@@ -243,3 +243,193 @@ table.list tbody tr{transition:background .15s}
 .plan-card a{color:var(--primary);text-decoration:none}
 .plan-card .btn.small{margin-top:6px}
 .plan-head .mono{font-family:var(--font-mono);font-size:11.5px}
+
+/* ==========================================================================
+   FE-04 无障碍基础（5.2.x）：焦点可见态扩展 / 跳转链接 / 弹层 / 工具类
+   —— 只消费 tokens.css 令牌，不新增色值（tokens 门禁见 web/js/tokens.test.mjs）
+   ========================================================================== */
+
+/* 焦点可见态：原生控件 + 自绘控件 + role=button/tabindex 元素统一焦点环。
+   已有点击控件（鼠标）不出现 outline，仅键盘 :focus-visible 时出现。 */
+.cdd-btn:focus-visible,
+.cdd-opt:focus-visible,
+.theme-btn:focus-visible,
+.tw-url-clear:focus-visible,
+.tw-modes .tab:focus-visible,
+.tw-split:focus-visible,
+.sl-dialog-close:focus-visible,
+.sl-keys-btn:focus-visible,
+input:focus-visible,
+textarea:focus-visible,
+select:focus-visible,
+[role="button"]:focus-visible,
+[tabindex]:not([tabindex="-1"]):focus-visible {
+  outline: var(--ring-w) solid var(--ring);
+  outline-offset: 2px;
+}
+
+/* 屏幕阅读器专用文本（视觉隐藏但可被辅助技术读取） */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* 跳过导航链接：键盘 Tab 第一下出现，直接跳到主内容 */
+.sl-skip {
+  position: fixed;
+  left: var(--space-3);
+  top: var(--space-3);
+  z-index: 1000;
+  padding: 8px 14px;
+  border-radius: var(--radius-sm);
+  background: var(--primary);
+  color: var(--primary-fg);
+  font-size: 13px;
+  box-shadow: var(--shadow-2);
+  transform: translateY(-200%);
+  transition: transform var(--t-fast) var(--ease);
+}
+.sl-skip:focus,
+.sl-skip:focus-visible {
+  transform: none;
+}
+
+/* 弹层（dialog）：role=dialog + aria-modal 的通用外观；[hidden] 优先于 display:flex */
+html.sl-modal-open { overflow: hidden; }
+.sl-dialog-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 120;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-4);
+  background: rgba(15, 23, 42, .5);
+}
+.sl-dialog-backdrop[hidden] { display: none !important; }
+.sl-dialog {
+  width: min(520px, 92vw);
+  max-height: 80vh;
+  overflow: auto;
+  padding: var(--space-5);
+  background: var(--card);
+  color: var(--foreground);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-3);
+}
+.sl-dialog-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  margin-bottom: var(--space-3);
+}
+.sl-dialog-title { margin: 0; font-size: 16px; font-weight: 600; }
+.sl-dialog-close { margin-left: auto; padding: 4px 10px; min-width: 34px; }
+.sl-keys { display: grid; gap: var(--space-2); margin: 0; }
+.sl-key-row { display: flex; align-items: baseline; gap: var(--space-3); margin: 0; }
+.sl-key-row dt { flex: none; min-width: 132px; margin: 0; color: var(--muted-fg); }
+.sl-key-row dd { margin: 0; font-size: 13.5px; }
+.sl-keys kbd {
+  padding: 1px 6px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  background: var(--muted);
+  border: 1px solid var(--border);
+  border-bottom-width: 2px;
+  border-radius: 4px;
+}
+.sl-dialog-note { margin: var(--space-3) 0 0; font-size: 12px; color: var(--muted-fg); opacity: .8; }
+
+/* 窄屏侧栏抽屉开关：桌面隐藏，≤900px 显示 */
+.sl-side-toggle { display: none; flex: none; }
+.sl-keys-btn { flex: none; }
+
+/* ==========================================================================
+   FE-11 响应式（≤900px）：左栏折叠为顶部抽屉，画布占满剩余高度
+   ========================================================================== */
+@media (max-width: 900px) {
+  body:has(.tw-app) { padding-top: 0; }
+  .tw-app { flex-direction: column; }
+  .tw-left {
+    display: none;
+    width: auto;
+    flex: none;
+    max-height: 62vh;
+    padding-bottom: var(--space-3);
+    border-right: none;
+    border-bottom: 1px solid var(--border);
+  }
+  .tw-app.side-open .tw-left { display: flex; overflow-y: auto; }
+  .tw-split { display: none; }
+  .tw-right { flex: 1; min-height: 0; }
+  .tw-canvas { padding: var(--space-4) var(--space-3); }
+  .tw-toolbar { gap: var(--space-2); padding: 0 var(--space-3); }
+  .tw-toolbar .tw-topslot { gap: 0; }
+  .top-nav a { padding: 7px 8px; }
+  .tw-modes { margin-bottom: var(--space-3); }
+  .sl-side-toggle { display: inline-flex; }
+  .sl-dialog { width: calc(100vw - 28px); max-height: 82vh; }
+  .sl-key-row { flex-direction: column; gap: 2px; }
+  .sl-key-row dt { min-width: 0; }
+  main.page { padding: var(--space-4) var(--space-4) var(--space-5); }
+}
+
+/* ==========================================================================
+   FE-11 打印（报告白底黑字、隐藏工具栏/侧栏、避免分页断行）
+   ========================================================================== */
+@media print {
+  @page { margin: 14mm 12mm; }
+
+  html, body { background: #fff !important; color: #000 !important; }
+  body { padding: 0 !important; animation: none !important; }
+
+  /* 外壳不打印：侧栏 / 分割条 / 工具条 / 进度条 / 抽屉开关 / 弹层 / toast */
+  .tw-left, .tw-split, .tw-toolbar, .tw-progress-row, .tw-modes, .tw-topslot,
+  .sl-skip, .sl-side-toggle, .sl-keys-btn, .sl-dialog-backdrop,
+  .toast, #idle-wrap, #sl-engine-down { display: none !important; }
+  .tw-app {
+    position: static !important;
+    inset: auto !important;
+    display: block !important;
+    background: #fff !important;
+  }
+  .tw-right, .tw-canvas {
+    display: block !important;
+    height: auto !important;
+    overflow: visible !important;
+    padding: 0 !important;
+    background: #fff !important;
+  }
+  /* 只打印当前可见画布面板，隐藏的页签面板不进纸面 */
+  .tw-canvaspane { display: none !important; }
+  .tw-canvaspane.active { display: block !important; }
+  .tw-canvas .netsec-out, .tw-canvas .brute-out { max-width: none !important; }
+
+  a { color: #000 !important; text-decoration: underline; }
+  /* 报告里不出现交互按钮（导出/取消/重试等），避免纸面噪声 */
+  .btn { display: none !important; }
+
+  .card, .tbl-wrap, .extras-box, .cov-card, .plan-card, .empty { box-shadow: none !important; }
+  .card, .tbl-wrap, .extras-box, .cov-card, .plan-card {
+    background: #fff !important;
+    border-color: #999 !important;
+  }
+  table.list th, .vulns th { background: #f2f2f2 !important; color: #000 !important; }
+  table.list td, .vulns td { border-color: #bbb !important; }
+  .badge { background: #fff !important; color: #000 !important; border-color: #666 !important; }
+
+  /* 分页控制：标题不落页尾，行/卡片/分组不被拦腰截断 */
+  h1, h2, h3, .sec-title { break-after: avoid; page-break-after: avoid; }
+  tr, .card, .tech-group, .sec, .cov-card, .plan-card, .empty {
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+}

@@ -1,14 +1,19 @@
-// Package netsec 网络层安全检测（TLS 证书深度 + DNS 邮件安全 SPF/DMARC/MX +
-// HTTP 传输层安全 HSTS/跳转）。
+// Package netsec 网络层安全检测（TLS 证书深度/协议评级 + DNS 邮件安全
+// SPF/DMARC/MX + HTTP 传输层安全 HSTS/跳转 + 端口/服务探测 + 批量入口）。
 //
 // Go 原生实现：crypto/tls 证书链捕获 + net.LookupTXT/MX 查询 + 一次只读
-// HTTP GET（响应头分析）。扫描器需跳过证书校验以检测自签名/过期/SAN
-// 不匹配/弱签名等证书，通过 InsecureSkipVerify + 证书链采集完成——
-// 这是安全扫描器场景，不可用于生产 Web 客户端。
+// HTTP GET（响应头分析）+ TCP connect 端口探测。扫描器需跳过证书校验以
+// 检测自签名/过期/SAN 不匹配/弱签名等证书，通过 InsecureSkipVerify +
+// 证书链采集完成——这是安全扫描器场景，不可用于生产 Web 客户端。
+//
+// NS-02 新增：证书资产线索（SAN/颁发者/到期，CheckCertAssets/CertExpiry）、
+// cipher 套件强度分级与 ALPN h2、端口/服务探测（CheckPorts，只 TCP connect
+// + 被动读 banner，不发 payload）、组合与批量入口（CheckHost/CheckHosts）。
 //
 // 限制：CAA（RFC 8659）查询需要 DNS 库支持，net 标准库没有 LookupCAA；
-// 5.2.0 P0 按《网络层与爆破护栏-5.2.0.md》允许的限制跳过，不引入新依赖
-// （5.3 引入 DNS 库后再补）。
+// 5.2.0/5.2.x 按《网络层与爆破护栏-5.2.0.md》允许的限制跳过，不引入新
+// 依赖（引入 DNS 库后再补）。HTTP/3（QUIC/UDP）同理超出 net/http 能力，
+// ALPN 只能观测 TLS/TCP 上协商到的 h2/http1.1。
 package netsec
 
 import (
@@ -35,42 +40,57 @@ type Finding struct {
 	URL      string `json:"url"`
 	Evidence string `json:"evidence"`
 	Advice   string `json:"advice"`
+	// SANs 证书 SAN 线索（仅 tls-protocol/tls-hostname-mismatch 等证书类
+	// finding 上带出，避免新增独立 finding 的噪音；资产清单请用
+	// CheckCertAssets）。additive 字段，旧调用方忽略即可。
+	SANs []string `json:"sans,omitempty"`
 }
 
-// CheckTLS TLS 证书与协议检测（捕获证书链供分析，不阻断连接）。
-func CheckTLS(host string, port int) []Finding {
-	host = normalizeHost(host)
-	var hits []Finding
+// tlsProbeTimeout TLS 探测连接/握手总超时。
+const tlsProbeTimeout = 8 * time.Second
 
+// tlsHandshake 建 TCP 连接并完成 TLS 握手，返回握手状态。
+// 扫描器语义：跳过标准证书校验（InsecureSkipVerify + 采集回调），以便对
+// 自签名/过期/域名不符证书做检测；失败返回 ok=false。
+func tlsHandshake(host string, port int) (tls.ConnectionState, bool) {
+	host = normalizeHost(host)
+	if host == "" || port <= 0 || port > 65535 {
+		return tls.ConnectionState{}, false
+	}
 	conf := &tls.Config{
 		ServerName: host,
-		// 扫描器场景：需检测自签名/过期/域名不匹配证书，跳过标准校验但保留
-		// 证书链。若沿用默认校验，握手会因证书不合格直接失败——所有证书类
-		// 发现都拿不到（既有检查长期因此空转）。
-		// 仅在安全评估工具中使用；不可用于生产 Web 客户端。
+		// 扫描器场景：跳过标准校验但保留证书链（理由见包注释）。
 		MinVersion:         tls.VersionTLS12,
 		InsecureSkipVerify: true,
+		// ALPN：观测服务端是否支持 HTTP/2（h2）。服务端不协商时为空。
+		NextProtos: []string{"h2", "http/1.1"},
 		VerifyPeerCertificate: func(rawCerts [][]byte, verifiedChains [][]*x509.Certificate) error {
 			// 采集模式：始终返回 nil 以捕获证书链供后续分析
 			return nil
 		},
 	}
-
-	dialConn, dialErr := net.DialTimeout("tcp", net.JoinHostPort(host, strconv.Itoa(port)), 8*time.Second)
+	dialConn, dialErr := net.DialTimeout("tcp", net.JoinHostPort(host, strconv.Itoa(port)), tlsProbeTimeout)
 	if dialErr != nil {
-		return nil
+		return tls.ConnectionState{}, false
 	}
 	conn := tls.Client(dialConn, conf)
 	if herr := conn.Handshake(); herr != nil {
 		dialConn.Close()
-		return nil
+		return tls.ConnectionState{}, false
 	}
-	defer conn.Close()
-
 	cs := conn.ConnectionState()
-	if len(cs.PeerCertificates) == 0 {
+	_ = conn.Close()
+	return cs, true
+}
+
+// CheckTLS TLS 证书与协议检测（捕获证书链供分析，不阻断连接）。
+func CheckTLS(host string, port int) []Finding {
+	host = normalizeHost(host)
+	cs, ok := tlsHandshake(host, port)
+	if !ok || len(cs.PeerCertificates) == 0 {
 		return nil
 	}
+	var hits []Finding
 	cert := cs.PeerCertificates[0]
 
 	// 证书过期检测
@@ -112,8 +132,146 @@ func CheckTLS(host string, port int) []Finding {
 	}
 
 	// NS-01 证书深度检测（hostname/SAN、链完整性、弱签名、弱密钥）
-	hits = append(hits, analyzeCert(host, cs.PeerCertificates)...)
+	certFindings := analyzeCert(host, cs.PeerCertificates)
+	sans := certSANs(cert)
+	for i := range certFindings {
+		if certFindings[i].Check == "tls-hostname-mismatch" {
+			certFindings[i].SANs = sans
+		}
+	}
+	hits = append(hits, certFindings...)
+
+	// NS-02 协议评级：cipher 套件强度 + ALPN/HTTP2 能力（info 级）
+	hits = append(hits, analyzeProtocol(host, cs, sans)...)
 	return hits
+}
+
+// CheckCertAssets 证书资产线索（供上层做资产发现/台账）：返回证书 SAN
+// 域名列表（DNS+IP，去重保序）、颁发者（优先 CN，空则完整 DN）与到期时间。
+// 不做任何 finding（避免噪音）；连接失败/无证书时返回零值。
+func CheckCertAssets(host string, port int) (sans []string, issuer string, notAfter time.Time) {
+	cs, ok := tlsHandshake(host, port)
+	if !ok || len(cs.PeerCertificates) == 0 {
+		return nil, "", time.Time{}
+	}
+	leaf := cs.PeerCertificates[0]
+	issuer = leaf.Issuer.CommonName
+	if issuer == "" {
+		issuer = leaf.Issuer.String()
+	}
+	return certSANs(leaf), issuer, leaf.NotAfter
+}
+
+// CertExpiry 证书到期提醒数据（供上层落盘提醒；本包不实现存储）。
+// days 与 CheckTLS 同口径：剩余整天数（向下取整，可负）。
+func CertExpiry(host string, port int) (notAfter time.Time, days int, ok bool) {
+	cs, ok := tlsHandshake(host, port)
+	if !ok || len(cs.PeerCertificates) == 0 {
+		return time.Time{}, 0, false
+	}
+	notAfter = cs.PeerCertificates[0].NotAfter
+	return notAfter, int(time.Until(notAfter).Hours() / 24), true
+}
+
+// certSANs 证书 SAN 列表（DNS + IP，去重保序；DNS 在前）。
+func certSANs(cert *x509.Certificate) []string {
+	if cert == nil {
+		return nil
+	}
+	out := make([]string, 0, len(cert.DNSNames)+len(cert.IPAddresses))
+	seen := map[string]bool{}
+	add := func(s string) {
+		if s == "" || seen[s] {
+			return
+		}
+		seen[s] = true
+		out = append(out, s)
+	}
+	for _, d := range cert.DNSNames {
+		add(d)
+	}
+	for _, ip := range cert.IPAddresses {
+		add(ip.String())
+	}
+	return out
+}
+
+// cipherGrade TLS 协商套件的强度分级（越高越差）。
+type cipherGrade int
+
+const (
+	cipherStrong cipherGrade = iota // AEAD + 前向保密（或无前向保密但 AEAD），无 finding
+	cipherNoFS                      // AEAD 但静态 RSA 密钥交换（无前向保密）
+	cipherCBC                       // CBC 模式（无 AEAD）
+	cipherWeak                      // RC4/3DES/NULL/EXPORT 等明确弱套件
+)
+
+// cipherGradeOf 按套件名分级（纯函数，便于单测覆盖现代栈不再协商的弱套件）。
+// 未知套件（CipherSuiteName 返回 0x 十六进制）按 strong 处理，避免误报。
+func cipherGradeOf(id uint16) (cipherGrade, string) {
+	name := tls.CipherSuiteName(id)
+	if strings.HasPrefix(name, "0x") {
+		return cipherStrong, name
+	}
+	up := strings.ToUpper(name)
+	switch {
+	case strings.Contains(up, "RC4"), strings.Contains(up, "3DES"),
+		strings.Contains(up, "NULL"), strings.Contains(up, "DES_CBC"),
+		strings.Contains(up, "EXPORT"), strings.Contains(up, "ANON"):
+		return cipherWeak, name
+	case strings.Contains(up, "CBC"):
+		return cipherCBC, name
+	case strings.HasPrefix(up, "TLS_RSA_"):
+		// 静态 RSA 密钥交换：无前向保密
+		return cipherNoFS, name
+	}
+	return cipherStrong, name
+}
+
+// analyzeProtocol NS-02 协议评级：协商 cipher 套件强度分级 + ALPN/HTTP2
+// 能力。返回（可能为空）的 tls-weak-cipher 与一条 tls-protocol info。
+func analyzeProtocol(host string, cs tls.ConnectionState, sans []string) []Finding {
+	verName := tlsVersionName(cs.Version)
+	grade, cipherName := cipherGradeOf(cs.CipherSuite)
+	if grade != cipherStrong {
+		f := Finding{
+			Check: "tls-weak-cipher", Severity: "low", URL: host,
+			Evidence: fmt.Sprintf("%s %s", verName, cipherName),
+		}
+		switch grade {
+		case cipherWeak:
+			f.Title = "协商到弱加密套件（RC4/3DES/NULL）"
+			f.Severity = "medium"
+			f.Advice = "禁用 RC4/3DES/NULL 套件，仅保留 AEAD（GCM/CHACHA20-POLY1305）"
+		case cipherCBC:
+			f.Title = "协商到 CBC 模式套件（无 AEAD，易受填充攻击）"
+			f.Advice = "优先启用 AEAD 套件（GCM/CHACHA20-POLY1305），禁用 CBC"
+		case cipherNoFS:
+			f.Title = "协商到静态 RSA 密钥交换套件（无前向保密）"
+			f.Advice = "启用 ECDHE/DHE 前向保密套件，禁用静态 RSA 密钥交换"
+		}
+		return []Finding{f, protocolFinding(host, cs, sans)}
+	}
+	return []Finding{protocolFinding(host, cs, sans)}
+}
+
+// protocolFinding info 级协议能力（TLS 版本 / cipher / ALPN 是否 h2）。
+func protocolFinding(host string, cs tls.ConnectionState, sans []string) Finding {
+	alpn := cs.NegotiatedProtocol
+	if alpn == "" {
+		alpn = "none"
+	}
+	h2 := "no"
+	if cs.NegotiatedProtocol == "h2" {
+		h2 = "yes"
+	}
+	return Finding{
+		Check: "tls-protocol", Title: "TLS 协议能力",
+		Severity: "info", URL: host,
+		Evidence: fmt.Sprintf("%s; cipher=%s; alpn=%s; http2=%s",
+			tlsVersionName(cs.Version), tls.CipherSuiteName(cs.CipherSuite), alpn, h2),
+		SANs: sans,
+	}
 }
 
 // analyzeCert 证书深度分析（纯函数，不发起网络，便于单测用合成夹具）：

@@ -82,7 +82,7 @@
    logits 的算术平均 ×10 得到 CVSS 0-10 分并 clamp。所以「换成 int8」是把两个 session 的
    权重都换成量化版，两套都可在同一进程内并存（`ortOnce` 只保护运行时环境初始化，
    session 是 per-scorer 的）——这正是测量测试的可行性依据。
-3. **呈现是「分数 ± 1.07 区间」，不是硬档位**：[web/app.js:544-546](../../web/app.js)
+3. **呈现是「分数 ± 1.07 区间」，不是硬档位**：[web/js/app.js:544-546](../../web/js/app.js)
    把 `sev_score` 呈现为 `x.x ± 1.07（lo – hi）`（`:528` 注释同义）。因此
    **分数误差**才是主契约；CVSS 定性档/1 分档翻转属于诊断指标，不能单独当否决项
    （详见 §5.2）。
@@ -212,7 +212,7 @@ go test -tags onnx ./internal/ml -run TestSevOnnxInt8VsFp32 -v -count=1 -timeout
 
 **为什么门槛取 0.15 分**：
 
-1. 呈现契约是 `sev_score ± 1.07`（[web/app.js:544-546](../../web/app.js)），模型自身 test MAE 为
+1. 呈现契约是 `sev_score ± 1.07`（[web/js/app.js:544-546](../../web/js/app.js)），模型自身 test MAE 为
    1.07/1.0699（[TRAINING_PARAMS §3.9](../../docs/release-5.0.0/TRAINING_PARAMS.md)）。
    0.15 分 = 呈现误差的 **14%**、模型误差的 **14%**、0-10 量程的 **1.5%**——量化误差不应占主导。
 2. Python 侧对部署对（双种子集成 fp32 vs int8）已记录 **MAE 0.0127 logits = 0.127 分**，
@@ -315,7 +315,7 @@ python -m ml.export_sev_v31_pair
 | 单模/集成 test MAE | 1.0722 / 1.0699 | `TRAINING_PARAMS.md` §3.9 |
 | 引擎模型 glob 顺序 | fp32 → int8 → 单文件 | `internal/engine/ml.go:93-106` |
 | 集成平均口径 | logits 平均 ×10，clamp 0-10 | `internal/ml/sev_onnx.go:85-118` |
-| 呈现「分数 ± 1.07」 | — | `web/app.js:528,544-546` |
+| 呈现「分数 ± 1.07」 | — | `web/js/app.js:528,544-546` |
 | 夹具规模 | n=120，seq=192，ensemble="v3.1 a+b" | 实测：`ml/models/go/ml_assets/sev-fixtures.json` 顶层字段 |
 | **Go 侧 int8 vs fp32 精度数字** | **待实测** | 本机无 CGO/gcc 无法执行；命令见 §4.3，测试见 `internal/ml/sev_onnx_int8_test.go` |
 

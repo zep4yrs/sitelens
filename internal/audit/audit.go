@@ -21,7 +21,7 @@ import (
 	"cnb.cool/feng-qiao/sitelens/internal/model"
 )
 
-// rule 审计规则（id, 严重度, 语言, 标题, 正则, 修复建议）。
+// rule 审计规则（id, 严重度, 语言, 标题, 正则, 修复建议, OWASP 映射）。
 type rule struct {
 	ID     string
 	Sev    string
@@ -29,14 +29,20 @@ type rule struct {
 	Title  string
 	Re     *regexp.Regexp
 	Advice string
+	// OWASP OWASP Top 10:2021 映射（如 "A03:2021 Injection"）；空 = 未映射。
+	// 由 owaspOf(id) 查表填充，输出到 JSON Finding.owasp 与 SARIF properties。
+	OWASP string
 }
 
 func mustRule(id, sev, lang, title, pattern, advice string) rule {
 	return rule{ID: id, Sev: sev, Lang: lang, Title: title,
-		Re: regexp.MustCompile("(?i)" + pattern), Advice: advice}
+		Re: regexp.MustCompile("(?i)" + pattern), Advice: advice, OWASP: owaspOf(id)}
 }
 
-var auditRules = []rule{
+// auditRules = 基础规则（PY/JS/PHP/GEN）+ AU-02 扩展规则（Java/Go/TS/密钥前缀）。
+var auditRules = append(baseAuditRules, au02Rules...)
+
+var baseAuditRules = []rule{
 	mustRule("PY-EVAL", "high", "py", "使用 eval 动态执行", `\beval\s*\(`,
 		"改用 ast.literal_eval 或显式解析，eval 可执行任意代码"),
 	mustRule("PY-EXEC", "high", "py", "使用 exec 动态执行", `\bexec\s*\(`,
@@ -83,13 +89,14 @@ var skipDirs = map[string]bool{
 }
 
 var textExt = map[string]bool{
-	".py": true, ".js": true, ".php": true, ".java": true, ".go": true,
+	".py": true, ".js": true, ".jsx": true, ".ts": true, ".tsx": true,
+	".php": true, ".java": true, ".go": true,
 	".rb": true, ".html": true, ".css": true, ".json": true, ".yaml": true,
 	".yml": true, ".md": true, ".txt": true, ".sql": true, ".sh": true,
 	".env": true, ".ini": true, ".cfg": true,
 }
 
-// Finding 一条审计发现（JSON 对齐 Python）。
+// Finding 一条审计发现（JSON 对齐 Python；AU-02 增 owasp additive 字段）。
 type Finding struct {
 	Rule     string `json:"rule"`
 	Severity string `json:"severity"`
@@ -99,6 +106,8 @@ type Finding struct {
 	Snippet  string `json:"snippet"`
 	Match    string `json:"match"`
 	Advice   string `json:"advice"`
+	// OWASP OWASP Top 10:2021 映射（AU-02，additive；未映射规则省略）。
+	OWASP string `json:"owasp,omitempty"`
 }
 
 // Report 审计报告。
@@ -113,6 +122,10 @@ type Report struct {
 	// 二进制不回传；内容仅回传发起审计的用户，服务端仍审计后即删。
 	Sources  []string          `json:"sources,omitempty"`
 	Contents map[string]string `json:"contents,omitempty"`
+	// AU-02/03 additive 字段（指针 + omitempty：未启用时输出逐字节不变）。
+	BaselineIgnored *int        `json:"baseline_ignored,omitempty"` // --baseline 过滤条数
+	Diff            *DiffResult `json:"diff,omitempty"`             // --diff 与上次报告对比
+	SCA             *SCAReport  `json:"sca,omitempty"`              // --sca 依赖清单
 }
 
 // CollectSources 遍历审计目录，产出文本源码相对路径列表与内容映射（25A 源码预览）。
@@ -144,13 +157,15 @@ func CollectSources(root string) (sources []string, contents map[string]string) 
 	return sources, contents
 }
 
-// Run 审计目录或单文件。
+// Run 审计目录或单文件（既有行为不变；AU-02/03 附加能力见 RunWithOptions）。
 func Run(root string, cfg config.AuditConfig, onProgress func(done, total int, msg string)) (*Report, error) {
-	return run(root, cfg, onProgress, nil)
+	return run(root, cfg, RunOptions{}, onProgress, nil)
 }
 
-// run 是 Run 的核心实现。wb 非空时（P4）顺带把白盒发现实体化进图。
-func run(root string, cfg config.AuditConfig, onProgress func(done, total int, msg string), wb *model.ScanGraph) (*Report, error) {
+// run 是 Run 的核心实现。wb 非空时（P4）顺带把白盒发现实体化进图；
+// opts 为零值时行为与旧实现逐字节一致（AU-02/03 全部关闭）。
+func run(root string, cfg config.AuditConfig, opts RunOptions,
+	onProgress func(done, total int, msg string), wb *model.ScanGraph) (*Report, error) {
 	if cfg.MaxFileKB <= 0 {
 		cfg.MaxFileKB = 8192 // 审计读入上限 8MB；CollectSources 预览为全量回传（不截断），总量由上传/解压 8MB 闸门把守
 	}
@@ -217,6 +232,14 @@ func run(root string, cfg config.AuditConfig, onProgress func(done, total int, m
 		}
 		rep.Lines += strings.Count(string(data), "\n") + 1
 		ext := strings.TrimPrefix(strings.ToLower(filepath.Ext(fp)), ".")
+		// AU-02：tsx/jsx 归一到 ts/js，使 TS/JS 规则覆盖 React 扩展名。
+		ruleExt := ext
+		switch ext {
+		case "tsx":
+			ruleExt = "ts"
+		case "jsx":
+			ruleExt = "js"
+		}
 		lines := strings.Split(string(data), "\n")
 
 		// AST 污点分析（4.0 P3，opt-in：config audit.ast_enabled 且 CGO 构建）。
@@ -248,7 +271,7 @@ func run(root string, cfg config.AuditConfig, onProgress func(done, total int, m
 		}
 
 		for _, r := range auditRules {
-			if r.Lang != "*" && r.Lang != ext {
+			if r.Lang != "*" && r.Lang != ruleExt {
 				continue
 			}
 			for n, line := range lines {
@@ -268,13 +291,36 @@ func run(root string, cfg config.AuditConfig, onProgress func(done, total int, m
 					rep.Findings = append(rep.Findings, Finding{
 						Rule: r.ID, Severity: r.Sev, Title: r.Title,
 						File: rel, Line: n + 1, Snippet: snippet,
-						Match: mt, Advice: r.Advice,
+						Match: mt, Advice: r.Advice, OWASP: r.OWASP,
 					})
 					// P4：白盒发现实体化（行级线索 → evidence + vuln_node）。
 					if wb != nil {
 						emitLineFact(wb, fp, r.ID, r.Sev, r.Title, snippet, n+1)
 					}
 				}
+			}
+		}
+		// AU-02 密钥扫描增强：高熵字面量动态检测（GEN-ENTROPY）。
+		// 只把键名写进 Match/Snippet，密钥值不落报告（避免二次泄露）。
+		if ruleHits["GEN-ENTROPY"] < cfg.MaxFindingsPerRule {
+			for n, line := range lines {
+				if ruleHits["GEN-ENTROPY"] >= cfg.MaxFindingsPerRule {
+					break
+				}
+				key, ok := scanHighEntropySecret(line)
+				if !ok {
+					continue
+				}
+				ruleHits["GEN-ENTROPY"]++
+				rep.Findings = append(rep.Findings, Finding{
+					Rule: "GEN-ENTROPY", Severity: "high",
+					Title: "高熵字符串疑似硬编码密钥",
+					File:  rel, Line: n + 1,
+					Snippet: key + ` = "<高熵值已脱敏>"`,
+					Match:   key + "=***",
+					Advice:  "确认是否为真实凭据：立即轮换并移入环境变量/密钥服务，不得写入源码",
+					OWASP:   owaspOf("GEN-ENTROPY"),
+				})
 			}
 		}
 		if onProgress != nil {
@@ -297,5 +343,9 @@ func run(root string, cfg config.AuditConfig, onProgress func(done, total int, m
 		rep.BySeverity[f.Severity]++
 	}
 	rep.Files = len(files)
+	// AU-02/03 附加处理：基线/更新基线/diff/SCA（RunOptions 零值时零副作用）。
+	if err := applyRunOptions(rep, root, opts); err != nil {
+		return nil, err
+	}
 	return rep, nil
 }

@@ -219,8 +219,8 @@
     <section class="tabpanel active tw-panel" id="tab-scan">
       <div class="tw-urlwrap">
         <svg class="tw-url-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a15 15 0 0 1 0 18 15 15 0 0 1 0-18"/></svg>
-        <input class="url-input tw-url" id="url" placeholder="https://example.com" autocomplete="off">
-        <button type="button" class="tw-url-clear" id="url-clear" title="清空">×</button>
+        <input class="url-input tw-url" id="url" placeholder="https://example.com" autocomplete="off" aria-label="目标网址">
+        <button type="button" class="tw-url-clear" id="url-clear" title="清空" aria-label="清空网址输入" data-i18n-aria-label="a11y_clear_url">×</button>
       </div>
       <div class="tw-config">
           <div class="opt-group">
@@ -266,11 +266,11 @@
             </div>
           </div>
           <div class="tw-fold-sep"></div>
-          <input class="tb" id="opt-cookie" style="margin-bottom:12px" placeholder="认证会话（可选）Cookie: session=…" autocomplete="off">
+          <input class="tb" id="opt-cookie" style="margin-bottom:12px" placeholder="认证会话（可选）Cookie: session=…" autocomplete="off" aria-label="认证会话 Cookie">
           <label class="tw-toggle" style="margin:0"><input type="checkbox" id="opt-ua" class="tw-switch"> 浏览器 UA（应对按 UA 降级的站点）</label>
           <label class="tw-toggle" style="margin:0"><input type="checkbox" id="opt-preflight" class="tw-switch" checked> 输入后自动预检（1 次只读请求，可关）</label>
       </div>
-      <button class="btn tw-run" id="go" onclick="startScan()"><span class="arr">▷</span> 开始扫描</button>
+      <button class="btn tw-run" id="go" onclick="startScan()" aria-keyshortcuts="Control+Enter" title="Ctrl+Enter 开始扫描"><span class="arr" aria-hidden="true">▷</span> <span data-i18n="btn_start_scan">开始扫描</span></button>
       <p class="hint" id="hint" style="text-align:center"></p>
       <!-- 空态引导住在控制栏（对齐参照物布局）；扫描开始时由 app.js 隐藏 -->
       <div id="idle-wrap">
@@ -281,15 +281,15 @@
     <!-- 网络层检测：控制 -->
     <section class="tabpanel tw-panel" id="tab-netsec">
       <p class="tw-note" style="margin:0 0 12px">TLS 证书 + DNS 邮件安全，只读检测。</p>
-      <input class="url-input tw-url" id="ns-host" placeholder="example.com" autocomplete="off">
-      <button class="btn tw-run" id="ns-go" onclick="runNetsec()">▷ 开始检测</button>
+      <input class="url-input tw-url" id="ns-host" placeholder="example.com" autocomplete="off" aria-label="网络层检测目标域名">
+      <button class="btn tw-run" id="ns-go" onclick="runNetsec()"><span class="arr" aria-hidden="true">▷</span> <span data-i18n="btn_netsec_start">开始检测</span></button>
     </section>
 
     <!-- 登录爆破：控制 -->
     <section class="tabpanel tw-panel" id="tab-loginbrute">
       <p class="m-label" style="font-size:12px;color:var(--muted-fg);margin:0 0 6px">登录页 URL</p>
       <input class="url-input tw-url" id="lb-url" style="height:42px;font-size:13.5px"
-             placeholder="https://target.com/login" autocomplete="off">
+             placeholder="https://target.com/login" autocomplete="off" aria-label="登录页 URL">
       <div class="toolbar" style="margin:0 0 12px">
         <button class="btn ghost small" id="lb-pv-btn" onclick="togglePreview()">显示登录页预览</button>
       </div>
@@ -311,9 +311,9 @@
             <button type="button" class="cdd-opt" data-v="click"><b>图像点选</b><span>检测框坐标提交</span></button>
           </div>
         </div>
-        <input class="tb" id="lb-cap-field" placeholder="字段名，留空自动识别">
+        <input class="tb" id="lb-cap-field" placeholder="字段名，留空自动识别" aria-label="验证码字段名">
       </div>
-      <button class="btn tw-run" id="lb-go" onclick="runBrute()" disabled>▶ 开始爆破</button>
+      <button class="btn tw-run" id="lb-go" onclick="runBrute()" disabled><span class="arr" aria-hidden="true">▶</span> <span data-i18n="btn_loginbrute_start">开始爆破</span></button>
       <p class="mono hint tw-run-hint" id="lb-st">需要勾选授权确认</p>
       <div class="progressbar" id="lb-pw" style="display:none"><i id="lb-bar"></i></div>
     </section>
@@ -321,26 +321,28 @@
     <!-- 源码审计：控制（上传收纳一行 + 文件夹选择 + 文件树 + 运行键） -->
     <section class="tabpanel tw-panel" id="tab-audit">
       <div class="audit-src-row">
-        <div class="dropzone dz-mini" id="audit-dz" style="flex:1">
-          <input id="audit-files" type="file" multiple style="display:none" accept=".zip,.py,.js,.php">
-          <svg class="dz-mini-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg>
+        <div class="dropzone dz-mini" id="audit-dz" style="flex:1" role="button" tabindex="0"
+             aria-label="选择文件或拖入文件夹" data-i18n-aria-label="a11y_dropzone" data-sl-activate>
+          <input id="audit-files" type="file" multiple style="display:none" accept=".zip,.py,.js,.php" aria-label="选择源码文件">
+          <svg class="dz-mini-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg>
           <span class="dz-mini-txt">点击或拖入文件 / 文件夹<span class="dz-mini-sub">.zip / .py / .js / .php</span></span>
         </div>
-        <button type="button" class="btn tw-run ghost-lite dz-dir-btn" id="audit-dir-btn" title="选择整个项目文件夹">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:15px;height:15px"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/></svg>
+        <button type="button" class="btn tw-run ghost-lite dz-dir-btn" id="audit-dir-btn" title="选择整个项目文件夹"
+                aria-label="选择整个项目文件夹" data-i18n-aria-label="a11y_dir_btn">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:15px;height:15px" aria-hidden="true"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/></svg>
         </button>
-        <input id="audit-dir-input" type="file" webkitdirectory directory multiple style="display:none">
+        <input id="audit-dir-input" type="file" webkitdirectory directory multiple style="display:none" aria-label="选择整个项目文件夹">
       </div>
       <div class="dz-names mono" id="audit-names"></div>
       <div class="audit-tree" id="audit-tree"></div>
-      <button class="btn tw-run" id="audit-go" onclick="runAudit()">▷ 开始审计</button>
+      <button class="btn tw-run" id="audit-go" onclick="runAudit()"><span class="arr" aria-hidden="true">▷</span> <span data-i18n="btn_audit_start">开始审计</span></button>
       <p class="tw-run-hint">本地静态分析 · 审计后即删</p>
     </section>
 
     <!-- 批量扫描：控制 -->
     <section class="tabpanel tw-panel" id="tab-batch">
       <p class="tw-note" style="margin:0 0 12px">扫描完成后可在历史页导出 CSV。</p>
-      <button class="btn tw-run" id="batch-go" onclick="startBatch()">▷ 开始批量扫描</button>
+      <button class="btn tw-run" id="batch-go" onclick="startBatch()"><span class="arr" aria-hidden="true">▷</span> <span data-i18n="btn_batch_start">开始批量扫描</span></button>
       <button class="btn tw-run ghost-lite" id="batch-cancel" onclick="cancelBatch()" style="margin-top:8px;display:none">取消</button>
       <p class="hint" id="batch-hint" style="text-align:center"></p>
       <div class="progressbar" id="batch-pw" style="display:none"><i id="batch-bar"></i></div>
@@ -353,10 +355,14 @@
   <!-- ============ 右：画布 ============ -->
   <div class="tw-right">
     <div class="tw-toolbar">
-      <span class="st-dot" id="st-dot"></span>
+      <span class="st-dot" id="st-dot" aria-hidden="true"></span>
       <span id="st-state">idle</span>
       <span id="st-msg">等待目标</span>
       <span id="st-time"></span>
+      <button type="button" class="btn ghost small sl-keys-btn" id="sl-keys-btn"
+              data-sl-dialog-open="sl-keys-dialog" aria-haspopup="dialog"
+              aria-label="键盘快捷键" data-i18n-aria-label="a11y_keys_btn"
+              title="键盘快捷键" data-i18n-title="keys_btn">⌨</button>
       <div class="tw-topslot" id="tw-topslot"></div>
     </div>
     <div class="tw-progress-row"><div class="progressbar" id="pw" style="display:none"><i id="bar"></i></div></div>
@@ -364,7 +370,7 @@
       <!-- 综合扫描：输出画布（空载留白，引导在左栏） -->
       <section class="tw-canvaspane active" data-pane="scan">
         <div id="plan" class="plan-card" hidden></div>
-        <div id="result"></div>
+        <div id="result" role="region" aria-label="扫描结果"></div>
       </section>
       <!-- 网络层检测：输出 -->
       <section class="tw-canvaspane netsec-out" data-pane="netsec">
@@ -372,7 +378,7 @@
       </section>
       <!-- 登录爆破：输出 -->
       <section class="tw-canvaspane brute-out" data-pane="loginbrute">
-        <iframe id="lb-preview" sandbox="allow-forms allow-same-origin"></iframe>
+        <iframe id="lb-preview" sandbox="allow-forms allow-same-origin" title="登录页预览"></iframe>
         <div id="lb-out"></div>
       </section>
       <!-- 源码审计：Monaco 画布 + 发现面板 -->
@@ -391,7 +397,7 @@
       </section>
       <!-- 批量扫描：输入画布 + 输出 -->
       <section class="tw-canvaspane" data-pane="batch">
-        <textarea class="batch-box" id="batch-urls" style="min-height:200px" placeholder="https://example.com&#10;https://www.python.org&#10;https://books.toscrape.com quick&#10;（可选：行尾加 quick/standard/deep/full 指定档位）"></textarea>
+        <textarea class="batch-box" id="batch-urls" style="min-height:200px" placeholder="https://example.com&#10;https://www.python.org&#10;https://books.toscrape.com quick&#10;（可选：行尾加 quick/standard/deep/full 指定档位）" aria-label="批量扫描 URL 列表"></textarea>
         <div class="count-row"><span class="n" id="batch-n">-</span></div>
         <div id="batch-resume-wrap" style="display:none;margin-top:8px">
           <span class="hint" id="batch-resume-hint"></span>
@@ -399,7 +405,7 @@
         </div>
         <div class="tbl-wrap" id="batch-queue" style="display:none;margin-top:14px">
           <table class="list">
-            <thead><tr><th style="width:96px">状态</th><th>URL</th><th style="width:70px">档位</th><th style="width:70px">发现</th><th style="width:130px">耗时</th></tr></thead>
+            <thead><tr><th scope="col" style="width:96px">状态</th><th scope="col">URL</th><th scope="col" style="width:70px">档位</th><th scope="col" style="width:70px">发现</th><th scope="col" style="width:130px">耗时</th></tr></thead>
             <tbody id="batch-rows"></tbody>
           </table>
         </div>
@@ -407,6 +413,24 @@
         <div class="log-box" id="batch-log"></div>
       </section>
     </div>
+  </div>
+</div>
+
+<!-- ============ 键盘快捷键帮助（弹层 a11y 示例：role=dialog + aria-modal + 焦点陷阱 + Esc） ============ -->
+<div class="sl-dialog-backdrop" id="sl-keys-dialog" role="dialog" aria-modal="true"
+     aria-labelledby="sl-keys-title" tabindex="-1" data-sl-dialog hidden>
+  <div class="sl-dialog">
+    <div class="sl-dialog-head">
+      <h2 class="sl-dialog-title" id="sl-keys-title" data-i18n="keys_dialog_title">键盘快捷键</h2>
+      <button type="button" class="btn ghost small sl-dialog-close" data-sl-dialog-close
+              aria-label="关闭快捷键帮助" data-i18n-aria-label="keys_dialog_close">✕</button>
+    </div>
+    <dl class="sl-keys">
+      <div class="sl-key-row"><dt><kbd>Ctrl</kbd> + <kbd>Enter</kbd></dt><dd data-i18n="keys_start">开始扫描</dd></div>
+      <div class="sl-key-row"><dt><kbd>Esc</kbd></dt><dd data-i18n="keys_cancel">取消扫描 / 关闭弹层</dd></div>
+      <div class="sl-key-row"><dt><kbd>Ctrl</kbd> + <kbd>E</kbd></dt><dd data-i18n="keys_export">导出 JSON 结果</dd></div>
+    </dl>
+    <p class="sl-dialog-note" data-i18n="keys_ime_note">输入法组合输入期间快捷键不触发。</p>
   </div>
 </div>
 

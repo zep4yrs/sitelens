@@ -95,6 +95,7 @@ type Server struct {
 	osvLastN    int
 
 	preflights *preflightCache // 扫描前预检缓存（TTL/上限/in-flight 去重）
+	bgOnce     sync.Once       // 后台调度器启动一次
 }
 
 // New 装配服务（加载指纹库/知识库/历史存储/用户插件）。
@@ -189,6 +190,8 @@ func (s *Server) techMetaSnap() techMeta {
 
 // Handler 构建全部路由。
 func (s *Server) Handler() http.Handler {
+	// 后台调度器：每 30s 检查定时批量任务（幂等，仅首次 Handler 调用启动）。
+	s.bgOnce.Do(func() { go s.RunScheduler(context.Background()) })
 	mux := http.NewServeMux()
 
 	// 页面（产品形态：无宣传首页与关于页，根路径即工作台）
@@ -247,6 +250,15 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/batch", s.hBatch)
 	mux.HandleFunc("GET /api/batch/jobs", s.hBatchJobs)           // 可断点续跑的批量任务
 	mux.HandleFunc("POST /api/batch/{id}/resume", s.hBatchResume) // 从状态文件续跑
+	// 定时批量（BT-03）
+	mux.HandleFunc("GET /api/batch/schedules", s.hBatchSchedulesList)
+	mux.HandleFunc("POST /api/batch/schedules", s.hBatchScheduleCreate)
+	mux.HandleFunc("PATCH /api/batch/schedules/{id}", s.hBatchScheduleUpdate)
+	mux.HandleFunc("DELETE /api/batch/schedules/{id}", s.hBatchScheduleDelete)
+	mux.HandleFunc("POST /api/batch/schedules/{id}/run", s.hBatchScheduleRun)
+	// API 描述解析（CP-03）：OpenAPI/Swagger JSON、HAR、GraphQL introspection
+	mux.HandleFunc("POST /api/apispec", s.hAPISpec)
+	mux.HandleFunc("POST /api/apispec/graphql", s.hAPISpecGraphQL)
 	mux.HandleFunc("GET /api/history", s.hHistory)
 	mux.HandleFunc("GET /api/history/{id}", s.hHistoryDetail)
 	mux.HandleFunc("DELETE /api/history/{id}", s.hHistoryDelete)
@@ -548,9 +560,14 @@ func (s *Server) hScan(w http.ResponseWriter, r *http.Request) {
 	}
 	jobID := newID()
 	s.jobs.Create(jobID, "scan", map[string]any{"url": urlStr, "options": opts}, 100)
-	if _, _, _, verr := target.Validate(urlStr, s.cfg.Scan.Resolve); verr != nil {
+	if _, vhost, _, verr := target.Validate(urlStr, s.cfg.Scan.Resolve); verr != nil {
 		s.jobs.Update(jobID, func(j *store.Job) { j.Status = "error"; j.Message = verr.Error() })
 		writeJSON(w, 400, map[string]any{"job_id": jobID, "error": verr.Error()})
+		return
+	} else if !target.Allowed(vhost, s.cfg.Scan.AllowHosts) {
+		msg := "目标不在 allow_hosts 授权白名单：" + vhost
+		s.jobs.Update(jobID, func(j *store.Job) { j.Status = "error"; j.Message = msg })
+		writeJSON(w, 400, map[string]any{"job_id": jobID, "error": msg})
 		return
 	}
 	go s.runScanJob(jobID, urlStr, opts)
@@ -751,20 +768,12 @@ func (s *Server) hBatch(w http.ResponseWriter, r *http.Request) {
 	var body batchRequest
 	_ = json.NewDecoder(io.LimitReader(r.Body, 4<<20)).Decode(&body)
 	items := parseBatchItems(body, s.cfg.Batch.MaxURLs)
-	if len(items) == 0 {
+	jobID, total := s.startBatchJob(items)
+	if total == 0 {
 		writeJSON(w, 400, map[string]any{"error": "URL 列表为空"})
 		return
 	}
-	urls := make([]string, len(items))
-	for i, it := range items {
-		urls[i] = it.URL
-	}
-	jobID := newID()
-	st := newBatchState(jobID, items)
-	_ = s.saveBatchState(st)
-	s.jobs.Create(jobID, "batch", map[string]any{"urls": urls, "items": items}, len(items))
-	go s.runBatch(jobID, items, st)
-	writeJSON(w, 200, map[string]any{"job_id": jobID, "total": len(items)})
+	writeJSON(w, 200, map[string]any{"job_id": jobID, "total": total})
 }
 
 // batchMaxAttempts 单条 URL 最大尝试次数（失败重试，指数退避）。
@@ -860,11 +869,16 @@ func (s *Server) runBatch(jobID string, items []batchItem, st *batchState) {
 						mu.Unlock()
 					} else {
 						s.st.Save(res, map[string]any{"batch": true})
+						row := map[string]any{"url": it.URL, "status": "done",
+							"level": it.Level, "attempts": attempts,
+							"findings": len(res.Vulnerabilities) + len(res.Verified), "techs": len(res.Technologies), "elapsed_ms": elapsed}
+						if n, fx, ok := s.DiffURL(it.URL); ok {
+							row["new_findings"] = n
+							row["fixed"] = fx
+						}
 						mu.Lock()
 						lines = append(lines, fmt.Sprintf("%s -> 完成（%d 项技术）", it.URL, len(res.Technologies)))
-						rows = append(rows, map[string]any{"url": it.URL, "status": "done",
-							"level": it.Level, "attempts": attempts,
-							"findings": len(res.Vulnerabilities) + len(res.Verified), "techs": len(res.Technologies), "elapsed_ms": elapsed})
+						rows = append(rows, row)
 						if st != nil {
 							st.Items[i].Status = "done"
 							st.Items[i].Attempts = attempts
@@ -917,6 +931,22 @@ func (s *Server) runBatch(jobID string, items []batchItem, st *batchState) {
 			j.Message = "批量完成"
 		}
 	})
+	// Webhook 通知（可选；配置 batch.webhook_url 后异步推送，不阻塞任务收尾）。
+	if hook := s.cfg.Batch.WebhookURL; hook != "" {
+		event := "batch.done"
+		if wasCancelled {
+			event = "batch.cancelled"
+		}
+		payload := map[string]any{
+			"event": event, "job_id": jobID, "total": len(items), "done": done,
+			"tag": batchTagOf(items), "rows": rows,
+		}
+		go func() {
+			if err := NotifyBatch(hook, payload); err != nil {
+				log.Printf("批量 webhook 通知失败：%v", err)
+			}
+		}()
+	}
 }
 
 // ---- 历史 / 导出 / 差异 ----
@@ -1006,6 +1036,16 @@ func (s *Server) hExport(w http.ResponseWriter, r *http.Request) {
 		}
 		csvText := wideCSV([]*store.ScanRecord{rec}, s.techMetaSnap().cats)
 		csvResponse(w, csvText, fmt.Sprintf("sitelens-wide-%d.csv", id))
+	case "sarif":
+		data, serr := scanSARIF(rec)
+		if serr != nil {
+			writeJSON(w, 404, map[string]any{"error": serr.Error()})
+			return
+		}
+		w.Header().Set("Content-Type", "application/sarif+json; charset=utf-8")
+		w.Header().Set("Content-Disposition",
+			fmt.Sprintf("attachment; filename=sitelens-%d.sarif", id))
+		_, _ = w.Write(data)
 	case "html":
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		_, _ = w.Write([]byte(htmlReport(rec)))
@@ -1086,6 +1126,10 @@ func (s *Server) hNetsec(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 400, map[string]any{"error": err.Error()})
 		return
 	}
+	if !target.Allowed(host, s.cfg.Scan.AllowHosts) {
+		writeJSON(w, 400, map[string]any{"error": "目标不在 allow_hosts 授权白名单：" + host})
+		return
+	}
 	tlsPort := port
 	if tlsPort == 0 || tlsPort == 80 {
 		tlsPort = 443
@@ -1100,7 +1144,30 @@ func (s *Server) hNetsec(w http.ResponseWriter, r *http.Request) {
 		probeURL = fmt.Sprintf("%s://%s:%d", scheme, host, port)
 	}
 	findings = append(findings, netsec.CheckHTTP(probeURL)...)
-	writeJSON(w, 200, map[string]any{"host": host, "findings": findings})
+	// 证书资产线索（SAN/颁发者/到期）+ 可选端口探测（?ports=1 或 ?ports=22,443）。
+	resp := map[string]any{"host": host, "findings": findings}
+	if sans, issuer, notAfter := netsec.CheckCertAssets(host, tlsPort); len(sans) > 0 || issuer != "" || !notAfter.IsZero() {
+		assets := map[string]any{"sans": sans, "issuer": issuer}
+		if !notAfter.IsZero() {
+			assets["not_after"] = notAfter.Format(time.RFC3339)
+			assets["days_left"] = int(time.Until(notAfter).Hours() / 24)
+		}
+		resp["assets"] = assets
+	}
+	if q := strings.TrimSpace(r.URL.Query().Get("ports")); q != "" {
+		var ports []int
+		if q == "1" || q == "common" || q == "true" {
+			ports = netsec.DefaultPorts
+		} else {
+			for _, part := range strings.Split(q, ",") {
+				if n, perr := strconv.Atoi(strings.TrimSpace(part)); perr == nil && n > 0 && n < 65536 {
+					ports = append(ports, n)
+				}
+			}
+		}
+		resp["ports"] = netsec.CheckPorts(host, ports, 1500*time.Millisecond)
+	}
+	writeJSON(w, 200, resp)
 }
 
 func (s *Server) hCaptchaCapability(w http.ResponseWriter, r *http.Request) {
@@ -1176,6 +1243,7 @@ func (s *Server) hLoginBrute(w http.ResponseWriter, r *http.Request) {
 				IntervalMS:      s.cfg.LoginBrute.IntervalMS,
 				SuccessContains: successContains,
 				CaptchaField:    captchaField, // 用户显式指定优先于自动识别
+				AllowHosts:      s.cfg.Scan.AllowHosts,
 				Cancel:          func() bool { return s.jobs.CancelRequested(jobID) },
 			}, progress)
 		} else {
@@ -1188,6 +1256,7 @@ func (s *Server) hLoginBrute(w http.ResponseWriter, r *http.Request) {
 				CaptchaType:  captchaType,
 				CaptchaField: captchaField, // 用户显式指定优先（空 = 自动识别）
 				OCRURL:       s.cfg.LoginBrute.CaptchaOCRURL,
+				AllowHosts:   s.cfg.Scan.AllowHosts,
 				Cancel:       func() bool { return s.jobs.CancelRequested(jobID) },
 				FetchImage: func(rawURL string) ([]byte, error) {
 					rr, rerr := s.eng.ClientFor(scanOptions(body)).GetDirect(rawURL)

@@ -9,6 +9,7 @@ scan:
                              #   默认 8 req/s/主机，绝对上限 10）；polite=固定 rate_interval_ms（兼容旧行为，最保守）
   rate_max_rps: 8            # balanced 档硬上限（req/s/主机，默认 8≈125ms）；调低更保守、调高最多 10
   preflight: true            # 输入目标后自动发 1 次只读预检（供建议卡；开始扫描时复用为首页，总请求不增加）；false = 完全关闭
+  allow_hosts: []            # 授权白名单（空=不限制）：精确域名或 "*.example.com"；不在白名单的扫描/网络层检测直接拒绝
   timeout_sec: 15            # 单请求超时
   max_hops: 6                # 重定向跳数上限
   max_body_mb: 3             # 正文留存上限
@@ -83,6 +84,7 @@ intel:
 netsec:
   tls_timeout_sec: 8
   mail_check: true
+  port_scan: false           # 端口探测（默认关：额外 TCP connect，仅授权目标开启）
 
 oob:                         # 出带回调（SSRF/盲 XSS/XXE 外发）——默认关
   enabled: false             # 主动外发，需显式开启并自备接收端
@@ -112,6 +114,7 @@ audit:
 batch:
   max_urls: 50
   workers: 3
+  webhook_url: ""            # 批量完成/取消后 POST JSON 通知（空 = 不推送）
 
 web:
   listen: 127.0.0.1:5000     # 旧 Python 服务占用 5000 时可改端口

@@ -208,9 +208,21 @@ func TestAnalyzeCertChainBrokenLink(t *testing.T) {
 
 // ---- 真实 TLS 握手夹具（自签证书，覆盖采集路径 + 既有发现语义）----
 
+// tlsFixtureOpt 夹具 TLS 配置（NS-02：ALPN/cipher 评级测试需要定制）。
+type tlsFixtureOpt struct {
+	NextProtos   []string
+	CipherSuites []uint16
+}
+
 // newTLSCertFixture 启一个使用指定自签证书的本地 TLS 服务器，返回
 // 主机名/端口；CheckTLS 走真实 TCP + TLS 握手 + PeerCertificates 采集。
 func newTLSCertFixture(t *testing.T, tpl *x509.Certificate, key any) (string, int) {
+	t.Helper()
+	return newTLSFixture(t, tpl, key, tlsFixtureOpt{})
+}
+
+// newTLSFixture 带 TLS 配置选项的夹具（ALPN/cipher 组合）。
+func newTLSFixture(t *testing.T, tpl *x509.Certificate, key any, opt tlsFixtureOpt) (string, int) {
 	t.Helper()
 	signer, ok := key.(crypto.Signer)
 	if !ok {
@@ -226,11 +238,13 @@ func newTLSCertFixture(t *testing.T, tpl *x509.Certificate, key any) (string, in
 	}
 	tlsLn := tls.NewListener(ln, &tls.Config{
 		MinVersion: tls.VersionTLS12,
-		MaxVersion: tls.VersionTLS12, // 弱密钥/弱签名夹具固定在 TLS1.2，避免 TLS1.3 套件限制
+		MaxVersion: tls.VersionTLS12, // 弱密钥/弱签名/弱套件夹具固定在 TLS1.2，避免 TLS1.3 套件限制
 		Certificates: []tls.Certificate{{
 			Certificate: [][]byte{der},
 			PrivateKey:  signer,
 		}},
+		NextProtos:   opt.NextProtos,
+		CipherSuites: opt.CipherSuites,
 	})
 	srv := &http.Server{
 		Handler:  http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusOK) }),
@@ -312,6 +326,158 @@ func TestCheckTLSRSA1024OverWire(t *testing.T) {
 	if !strings.Contains(f.Evidence, "1024") {
 		t.Fatalf("evidence 应含密钥位数: %q", f.Evidence)
 	}
+}
+
+// ---- NS-02 协议评级 / 证书资产 / 到期数据 ----
+
+// TestCipherGradeOf 套件强度分级（含现代栈默认已不协商的 RC4/3DES）。
+func TestCipherGradeOf(t *testing.T) {
+	cases := []struct {
+		id   uint16
+		want cipherGrade
+	}{
+		{tls.TLS_RSA_WITH_RC4_128_SHA, cipherWeak},
+		{tls.TLS_RSA_WITH_3DES_EDE_CBC_SHA, cipherWeak},
+		{tls.TLS_ECDHE_RSA_WITH_3DES_EDE_CBC_SHA, cipherWeak},
+		{tls.TLS_RSA_WITH_AES_128_CBC_SHA, cipherCBC},
+		{tls.TLS_ECDHE_RSA_WITH_AES_128_CBC_SHA, cipherCBC},
+		{tls.TLS_RSA_WITH_AES_128_GCM_SHA256, cipherNoFS},
+		{tls.TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256, cipherStrong},
+		{tls.TLS_AES_128_GCM_SHA256, cipherStrong},
+		{tls.TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305, cipherStrong},
+	}
+	for _, tc := range cases {
+		got, name := cipherGradeOf(tc.id)
+		if got != tc.want {
+			t.Fatalf("cipherGradeOf(%s)=%v, want %v", name, got, tc.want)
+		}
+		if name == "" || strings.HasPrefix(name, "0x") {
+			t.Fatalf("已知套件缺少可读名: id=%d name=%q", tc.id, name)
+		}
+	}
+}
+
+// TestCheckTLSWeakCipherOverWire 服务端仅支持 CBC 套件（ECDHE+AES-CBC-SHA1）
+// → 协商结果被评级为弱（low）；同时必有 tls-protocol info。
+func TestCheckTLSWeakCipherOverWire(t *testing.T) {
+	key := rsaKeyBits(t, 2048)
+	tpl := selfSignedTpl("acme-cbc", nil, []net.IP{net.ParseIP("127.0.0.1")}, x509.SHA256WithRSA)
+	host, port := newTLSFixture(t, tpl, key, tlsFixtureOpt{
+		// 用客户端默认集里仍存在的 CBC_SHA1 套件（RSA 密钥交换套件的
+		// 握手在 Go1.22+ 默认被禁用，夹具改用 ECDHE_RSA+CBC）。
+		CipherSuites: []uint16{tls.TLS_ECDHE_RSA_WITH_AES_128_CBC_SHA},
+	})
+	hits := CheckTLS(host, port)
+	f := mustFind(t, hits, "tls-weak-cipher", "low")
+	if !strings.Contains(f.Evidence, "CBC") {
+		t.Fatalf("evidence 应含套件名: %q", f.Evidence)
+	}
+	mustFind(t, hits, "tls-protocol", "info")
+}
+
+// TestCheckTLSProtocolAndALPN ALPN 协商到 h2 时 info finding 带 http2=yes，
+// 且证书 SAN 通过 additive 字段带出（资产线索）。
+func TestCheckTLSProtocolAndALPN(t *testing.T) {
+	key := rsaKeyBits(t, 2048)
+	tpl := selfSignedTpl("acme-alpn", []string{"h2.example.com"}, []net.IP{net.ParseIP("127.0.0.1")}, x509.SHA256WithRSA)
+	host, port := newTLSFixture(t, tpl, key, tlsFixtureOpt{
+		NextProtos: []string{"h2", "http/1.1"},
+	})
+	hits := CheckTLS(host, port)
+	f := mustFind(t, hits, "tls-protocol", "info")
+	if !strings.Contains(f.Evidence, "alpn=h2") || !strings.Contains(f.Evidence, "http2=yes") {
+		t.Fatalf("protocol evidence 应含 ALPN/HTTP2: %q", f.Evidence)
+	}
+	if len(f.SANs) == 0 || f.SANs[0] != "h2.example.com" {
+		t.Fatalf("tls-protocol.SANs 应带出证书 SAN: %+v", f.SANs)
+	}
+
+	// 服务端不支持 ALPN → alpn=none / http2=no
+	host2, port2 := newTLSCertFixture(t, tpl, key)
+	f2 := mustFind(t, CheckTLS(host2, port2), "tls-protocol", "info")
+	if !strings.Contains(f2.Evidence, "http2=no") {
+		t.Fatalf("无 ALPN 服务端应报 http2=no: %q", f2.Evidence)
+	}
+}
+
+// TestCheckCertAssets 证书资产线索：SAN 列表 / 颁发者 / 到期时间。
+func TestCheckCertAssets(t *testing.T) {
+	key := rsaKeyBits(t, 2048)
+	tpl := selfSignedTpl("acme-assets",
+		[]string{"a.example.com", "b.example.com"}, []net.IP{net.ParseIP("127.0.0.1")}, x509.SHA256WithRSA)
+	host, port := newTLSCertFixture(t, tpl, key)
+	sans, issuer, notAfter := CheckCertAssets(host, port)
+	wantDNS := map[string]bool{"a.example.com": true, "b.example.com": true}
+	got := map[string]bool{}
+	for _, s := range sans {
+		got[s] = true
+	}
+	for d := range wantDNS {
+		if !got[d] {
+			t.Fatalf("SAN 缺少 %q: %+v", d, sans)
+		}
+	}
+	if !got["127.0.0.1"] {
+		t.Fatalf("SAN 应包含 IP 线索: %+v", sans)
+	}
+	if issuer != "acme-assets" {
+		t.Fatalf("issuer=%q, want acme-assets", issuer)
+	}
+	if notAfter.Unix() != tpl.NotAfter.Unix() {
+		t.Fatalf("notAfter=%v, want %v", notAfter, tpl.NotAfter)
+	}
+
+	// 连接失败 → 零值
+	if sans, issuer, notAfter := CheckCertAssets(host, closedPort(t)); len(sans) != 0 || issuer != "" || !notAfter.IsZero() {
+		t.Fatalf("关闭端口应返回零值: %v %q %v", sans, issuer, notAfter)
+	}
+}
+
+// TestCertExpiry 到期提醒数据 + 失败时 ok=false。
+func TestCertExpiry(t *testing.T) {
+	key := rsaKeyBits(t, 2048)
+	tpl := selfSignedTpl("acme-expiry", nil, []net.IP{net.ParseIP("127.0.0.1")}, x509.SHA256WithRSA)
+	host, port := newTLSCertFixture(t, tpl, key)
+	notAfter, days, ok := CertExpiry(host, port)
+	if !ok {
+		t.Fatal("CertExpiry 应成功")
+	}
+	if notAfter.Unix() != tpl.NotAfter.Unix() {
+		t.Fatalf("notAfter=%v, want %v", notAfter, tpl.NotAfter)
+	}
+	if days < 0 || days > 1 {
+		t.Fatalf("24h 证书 days=%d, want 0..1", days)
+	}
+	if _, _, ok := CertExpiry(host, closedPort(t)); ok {
+		t.Fatal("关闭端口应 ok=false")
+	}
+}
+
+// TestCheckHostCompose CheckHost 组合 TLS + HTTP（mailCheck=false 时不查 DNS）。
+func TestCheckHostCompose(t *testing.T) {
+	key := rsaKeyBits(t, 2048)
+	tpl := selfSignedTpl("acme-host", nil, []net.IP{net.ParseIP("127.0.0.1")}, x509.SHA256WithRSA)
+	host, port := newTLSCertFixture(t, tpl, key)
+	hits := CheckHost(host, port, false)
+	mustFind(t, hits, "tls-self-signed", "medium")
+	mustFind(t, hits, "http-hsts", "low") // 夹具未设 HSTS
+	for _, f := range hits {
+		if strings.HasPrefix(f.Check, "dns-") {
+			t.Fatalf("mailCheck=false 不应有 DNS 发现: %+v", f)
+		}
+	}
+}
+
+// closedPort 返回一个当前无人监听的本地端口（listen 后立即关闭）。
+func closedPort(t *testing.T) int {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("监听失败: %v", err)
+	}
+	addr := ln.Addr().(*net.TCPAddr)
+	_ = ln.Close()
+	return addr.Port
 }
 
 // ---- CheckDNSMail 纯解析部分 ----

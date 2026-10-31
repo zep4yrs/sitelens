@@ -165,6 +165,9 @@ func main() {
 	app := application.New(application.Options{
 		Name:        "SiteLens",
 		Description: "SiteLens 站点透视（Wails 壳）",
+		// FE-08：把 Wails 内部错误（含全局快捷键被占用等）统一落到 shell.log，
+		// 否则 GUI 子系统没有控制台，这类降级事实不可查。
+		ErrorHandler: func(err error) { log.Printf("wails 错误：%v", err) },
 		Windows: application.WindowsOptions{
 			AdditionalBrowserArgs: browserArgs,
 		},
@@ -191,6 +194,10 @@ func main() {
 	// 主窗在引擎就绪后由 goroutine 创建（URL 指向引擎，避免加载死引擎出错页）；
 	// 创建即隐藏——憋到启动页最低展示期满才现身，与启动页退场同时呈现
 	hiddenForMeasure := len(os.Args) > 1 && os.Args[1] == "-hidden"
+	// FE-08 窗口材质：默认 Mica（Win11 22H2+）+ 深色标题栏跟随系统主题
+	//（Theme=SystemDefault，Wails 订阅系统主题变更自动切换）；更老 Windows 由
+	// Wails 降级为 blur-behind，不会失败。SITLENS_WIN_MATERIAL=off 回退纯色窗。
+	mainBG, mainWinOpts := windowMaterial()
 	makeMain := func() application.Window {
 		return app.Window.NewWithOptions(application.WebviewWindowOptions{
 			Title:            "SiteLens 扫描工作台",
@@ -198,8 +205,10 @@ func main() {
 			Height:           850,
 			MinWidth:         980,
 			MinHeight:        620,
-			BackgroundColour: application.NewRGB(250, 250, 250), // 主题底色：跨文档导航空帧期不闪白
-			Hidden:           true,                              // 交接时序由 goroutine 控制（见下方 handoff 注释）
+			BackgroundType:   mainBG,
+			BackgroundColour: application.NewRGB(250, 250, 250), // 纯色模式下的主题底色
+			Windows:          mainWinOpts,
+			Hidden:           true, // 交接时序由 goroutine 控制（见下方 handoff 注释）
 			URL:              baseURL,
 		})
 	}
@@ -220,8 +229,20 @@ func main() {
 		defer mainWinMu.Unlock()
 		return mainWin
 	}
+	// FE-08 壳侧能力装配：托盘/快捷键共用的快速扫描、通知窗、对比窗口。
+	// 用依赖注入而非全局变量：核心启动流程（引擎拉起、窗口交接）保持原样可读。
+	shell := &shellCtx{
+		app:      app,
+		baseURL:  baseURL,
+		cfgPath:  cfgPath,
+		getMain:  getMainWin,
+		notifier: newToastNotifier(app),
+	}
 	holdSplash := os.Getenv("SITLENS_SPLASH_HOLD") == "1" // 验证/预览：启动页常驻不自动退场
 	app.Event.OnApplicationEvent(events.Windows.ApplicationStarted, func(*application.ApplicationEvent) {
+		// 全局快捷键在应用启动后注册：被其它程序占用时 Register 同步返回错误，
+		// 结论落 shell.log；托盘菜单是等价入口，功能降级但不影响壳运行。
+		shell.registerGlobalShortcuts()
 		go func() {
 			if err := waitReady(baseURL+"/api/version", 30*time.Second); err != nil {
 				killEngineTree(eng) // log.Fatalf=os.Exit 跳过 defer，先树杀再退出
@@ -249,15 +270,22 @@ func main() {
 		}()
 	})
 
-	// 通知栏托盘（对齐 Electron 壳 createTray 的最小集）：品牌图标 + 显示主界面/退出
+	// 通知栏托盘（FE-08 扩展）：快速扫描 / 打开工作台 / 对比窗口 / 检查更新 / 退出。
+	// 菜单与全局快捷键共用同一实现；快捷键被占用时菜单入口仍可用（降级不崩溃）。
 	tray := app.SystemTray.New()
 	tray.SetIcon(iconICO)
 	tray.SetTooltip("SiteLens 站点透视 v" + Version)
 	trayMenu := app.NewMenu()
-	trayMenu.Add("显示主界面").OnClick(func(*application.Context) {
-		if w := getMainWin(); w != nil {
-			w.Show()
-		}
+	trayMenu.Add("快速扫描剪贴板 URL").SetAccelerator("Ctrl+Shift+Q").
+		OnClick(func(*application.Context) {
+			go safeRun("快速扫描", shell.quickScanClipboard)
+		})
+	trayMenu.Add("打开工作台").SetAccelerator("Ctrl+Shift+S").
+		OnClick(func(*application.Context) {
+			go safeRun("唤起工作台", shell.wakeAndFocusURL)
+		})
+	trayMenu.Add("打开对比窗口").OnClick(func(*application.Context) {
+		go safeRun("打开对比窗口", func() { shell.openDiffWindow() })
 	})
 	trayMenu.AddSeparator()
 	trayMenu.Add("检查更新").OnClick(func(*application.Context) {
@@ -266,6 +294,8 @@ func main() {
 	trayMenu.AddSeparator()
 	trayMenu.Add("退出 SiteLens").OnClick(func(*application.Context) { app.Quit() })
 	tray.SetMenu(trayMenu)
+	// 左键单击托盘图标 = 唤起工作台（右键出菜单）；与 Electron 壳单击行为对齐。
+	tray.OnClick(func() { go safeRun("唤起工作台", shell.wakeAndFocusURL) })
 
 	// 启动静默检查一次：发现新版本即下载并静默覆盖安装（装完由安装器拉起新版）。
 	// 失败完全静默（离线/源不可达是常态，不该打扰用户），shell.log 留痕可查。

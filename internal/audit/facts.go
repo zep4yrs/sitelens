@@ -24,7 +24,14 @@ import (
 // wb 为 nil 时等价于 Run。
 func RunWithFacts(root string, cfg config.AuditConfig, wb *model.ScanGraph,
 	onProgress func(done, total int, msg string)) (*Report, error) {
-	return run(root, cfg, onProgress, wb)
+	return run(root, cfg, RunOptions{}, onProgress, wb)
+}
+
+// RunWithFactsOptions 同时带附加选项（基线/diff/SCA）与白盒图（CLI -graph
+// 与 AU-02/03 同时使用时走这里）。
+func RunWithFactsOptions(root string, cfg config.AuditConfig, opts RunOptions, wb *model.ScanGraph,
+	onProgress func(done, total int, msg string)) (*Report, error) {
+	return run(root, cfg, opts, onProgress, wb)
 }
 
 // emitLineFact 把一条行级规则命中转成白盒实体。
