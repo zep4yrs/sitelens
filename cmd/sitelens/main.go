@@ -13,9 +13,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 
-	"cnb.cool/feng-qiao/sitelens/internal/audit"
 	"cnb.cool/feng-qiao/sitelens/internal/chain"
 	"cnb.cool/feng-qiao/sitelens/internal/checks"
 	"cnb.cool/feng-qiao/sitelens/internal/config"
@@ -56,7 +54,9 @@ func main() {
   sitelens [flags] update-ehole [url]
                                  合并 EHole 中文产品指纹（exact 字面量通道）
   sitelens [flags] audit <dir> [--sarif <out.sarif>]
-                                 源码静态审计，JSON 输出；--sarif 另导出 SARIF 2.1.0
+                                  [--baseline <file>] [--update-baseline <file>]
+                                  [--diff <old.json>] [--sca]
+                                  源码静态审计，JSON 输出；SARIF/基线/diff/SCA 可选
   sitelens [flags] correlate <blackbox.graph.jsonl> <whitebox.graph.jsonl>
                                  合并黑/白盒图并做证据关联，输出合并图 JSONL
   sitelens graph-read <file.graph.jsonl> [--self-test]
@@ -127,19 +127,19 @@ func main() {
 
 	switch args[0] {
 	case "audit":
-		// AU-01：audit 支持 --sarif <path> 另导出 SARIF 2.1.0；
-		// 既有用法 `audit <dir>` 与 JSON 输出保持不变。
-		root, sarifPath, aerr := parseAuditArgs(args[1:])
+		// AU-01/02/03：audit 支持 --sarif / --baseline / --update-baseline /
+		// --diff / --sca；既有用法 `audit <dir>` 与 JSON 输出保持不变。
+		a, aerr := parseAuditArgsFull(args[1:])
 		if aerr != nil {
 			fmt.Fprintln(os.Stderr, aerr)
 			flag.Usage()
 			os.Exit(2)
 		}
-		if root == "" {
+		if a.Root == "" {
 			flag.Usage()
 			os.Exit(2)
 		}
-		runAudit(cfg, root, sarifPath)
+		runAuditWithOptions(cfg, a)
 	case "correlate":
 		if len(args) < 3 {
 			fmt.Fprintln(os.Stderr, "用法：sitelens correlate <blackbox.graph.jsonl> <whitebox.graph.jsonl>")
@@ -262,82 +262,24 @@ func gradeOf(res *engine.Result) string {
 	return fmt.Sprintf("%s(%d)", res.Security.Grade, res.Security.Score)
 }
 
-// parseAuditArgs 解析 audit 子命令参数（AU-01）：
-//   - 首个非开关参数 = 审计目标（目录或单文件）；
-//   - --sarif <path> / -sarif <path> / --sarif=<path> 指定 SARIF 2.1.0 导出路径；
-//   - 其余参数沿用旧行为忽略（既有 `sitelens audit <dir>` 零变化）。
+// parseAuditArgs 兼容 AU-01 既有调用（root/sarif 两字段视图）。
+// AU-02/03 的完整参数（--baseline/--update-baseline/--diff/--sca）见
+// parseAuditArgsFull（audit_au02.go）。
 //
 // 全局开关（-config/-graph/-ast 等）已由 main 在调用前补扫剔除，不会到这里。
 func parseAuditArgs(argv []string) (root, sarifPath string, err error) {
-	for i := 0; i < len(argv); i++ {
-		tok := argv[i]
-		name, inlineVal, hasInline := splitGlobalToken(tok) // 复用 -/--/=/空格 切分
-		switch name {
-		case "sarif":
-			val := inlineVal
-			if !hasInline {
-				if i+1 >= len(argv) {
-					return "", "", fmt.Errorf("--sarif 缺少导出路径")
-				}
-				i++
-				val = argv[i]
-			}
-			val = strings.TrimSpace(val)
-			if val == "" {
-				return "", "", fmt.Errorf("--sarif 导出路径不能为空")
-			}
-			sarifPath = val
-		default:
-			if strings.HasPrefix(tok, "-") {
-				continue // 未知开关：沿用旧行为忽略（不吞后续参数）
-			}
-			if root == "" {
-				root = tok
-			}
-		}
+	a, aerr := parseAuditArgsFull(argv)
+	if aerr != nil {
+		return "", "", aerr
 	}
-	return root, sarifPath, nil
+	return a.Root, a.SarifPath, nil
 }
 
-// runAudit 执行源码审计；-graph 时额外输出白盒图 JSONL（供 correlate）；
-// sarifPath 非空时另导出 SARIF 2.1.0（AU-01，stdout 的 JSON 报告不变）。
+// runAudit 兼容 AU-01 既有调用（仅 --sarif）；完整选项走 runAuditWithOptions。
+// -graph 时额外输出白盒图 JSONL（供 correlate）；sarifPath 非空时另导出
+// SARIF 2.1.0（stdout 的 JSON 报告不变）。
 func runAudit(cfg *config.Config, root, sarifPath string) {
-	var wb *model.ScanGraph
-	if cfg.Scan.Graph {
-		wb = model.NewGraph("")
-	}
-	rep, err := audit.RunWithFacts(root, cfg.Audit, wb, nil)
-	if err != nil {
-		fmt.Fprintln(os.Stderr, "审计失败:", err)
-		os.Exit(1)
-	}
-	out, _ := json.MarshalIndent(rep, "", "  ")
-	fmt.Println(string(out))
-	// AU-01：SARIF 导出（独立文件；stdout 的 JSON 报告逐字节不变）
-	if sarifPath != "" {
-		data, serr := audit.ToSARIF(rep, server.Version)
-		if serr != nil {
-			fmt.Fprintln(os.Stderr, "SARIF 序列化失败:", serr)
-			os.Exit(1)
-		}
-		if werr := os.WriteFile(sarifPath, data, 0o644); werr != nil {
-			fmt.Fprintln(os.Stderr, "SARIF 写出失败:", werr)
-			os.Exit(1)
-		}
-		fmt.Fprintf(os.Stderr, "SARIF 已写出：%s（%d 条发现）\n", sarifPath, len(rep.Findings))
-	}
-	if wb != nil {
-		// 白盒图写 stderr 之后的独立文件，避免与报告 JSON 混流。
-		p := filepath.Join(cfg.Store.DataDir, "whitebox.graph.jsonl")
-		if err := writeGraphJSONL(p, wb); err != nil {
-			fmt.Fprintln(os.Stderr, "白盒图写出失败:", err)
-		} else {
-			fmt.Fprintf(os.Stderr, "白盒图已写出：%s（%d 实体）\n", p, len(wb.SortedEntities()))
-		}
-	}
-	fmt.Fprintf(os.Stderr, "\n审计完成：%d 文件，%d 行，%d 发现（高 %d / 中 %d / 低 %d）\n",
-		rep.Files, rep.Lines, len(rep.Findings),
-		rep.BySeverity["high"], rep.BySeverity["medium"], rep.BySeverity["low"])
+	runAuditWithOptions(cfg, auditCLIArgs{Root: root, SarifPath: sarifPath})
 }
 
 // runCorrelate 读入黑盒/白盒两张图，合并后做黑白盒关联，输出合并图 JSONL。

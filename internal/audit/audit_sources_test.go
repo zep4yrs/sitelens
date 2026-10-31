@@ -21,7 +21,10 @@ func TestCollectSources(t *testing.T) {
 		}
 	}
 	write("app.py", "import os\nos.system('ls')\n")
-	write("lib/db.php", "<?php eval($_GET['x']);\n")
+	// 用良性 PHP 片段做「子目录文本文件」样本：本机 AV 会把
+	// `<?php eval($_GET[...])` 形态的 webshell 测试样本直接删除，
+	// 导致用例随机丢失文件（与本函数行为无关）。
+	write("lib/db.php", "<?php echo 'ok';\n")
 	write("blob.bin", "ok\x00binary")                // 含 NUL：二进制，不入树
 	write("invalid.txt", "ok\xff\xfe junk")          // 内容非 UTF-8：不入树
 	write("huge.log", strings.Repeat("a", 600*1024)) // 600KB > 512KB：入树无内容
