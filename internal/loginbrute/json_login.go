@@ -21,6 +21,10 @@ func JSONBrute(p Poster, o Options, onProgress func(done, total int, msg string)
 	if onProgress == nil {
 		onProgress = func(int, int, string) {}
 	}
+	// LB-02：授权白名单（零请求前置检查）
+	if err := checkAllowHosts(&o); err != nil {
+		return nil, err
+	}
 	if o.JSONTemplate == "" {
 		return nil, fmt.Errorf("JSON 模式需要提供 JSON 模板（含 {user}/{pass} 占位符）")
 	}
@@ -31,6 +35,10 @@ func JSONBrute(p Poster, o Options, onProgress func(done, total int, msg string)
 	endpoint := o.JSONEndpoint
 	if endpoint == "" {
 		endpoint = o.PageURL
+	}
+	// LB-02：端点 host 同样受白名单约束
+	if err := requireStepAllowed(&o, endpoint); err != nil {
+		return nil, err
 	}
 
 	combos := buildCombos(o.Users, o.Passwords, o.MaxTries, maxPerUser)
@@ -54,18 +62,24 @@ func JSONBrute(p Poster, o Options, onProgress func(done, total int, msg string)
 		sleepInterval(o.IntervalMS, i)
 		body := applyJSON(o.JSONTemplate, c.u, c.pw)
 		status, rbody, header, rerr := postJSONFull(p, endpoint, body)
-		onProgress(i+2, total, c.u+" / "+strings.Repeat("*", len(c.pw)))
+		progress := attemptProgress(c.u, c.pw)
 		if rerr != nil {
+			// 网络错误：归类 unknown（可观测），不改变既有 continue 语义
+			_ = notifyFailure(&o, c.u, 0, "")
+			onProgress(i+2, total, progress+" [失败: "+FailureUnknown+"]")
 			continue
 		}
 		// LB-01 锁号保护：失败响应出现锁号/限流特征或 429/403 → 立即停止
 		if sig := lockoutSignal(status, rbody); sig != "" {
+			cat := notifyFailure(&o, c.u, status, rbody)
+			onProgress(i+2, total, progress+" [失败: "+cat+"]")
 			return hits, fmt.Errorf("检测到锁号/限流信号（%s）：已立即停止对 %s 的 JSON 登录爆破"+
 				"（已尝试 %d/%d 组）。请稍后人工复核，避免锁死真实账号", sig, endpoint, i+1, len(combos))
 		}
 		if status == 200 &&
 			(o.SuccessContains == "" || strings.Contains(rbody, o.SuccessContains)) &&
 			(baseSize == 0 || rbody != bBody) {
+			onProgress(i+2, total, progress) // 命中：不标失败
 			ev := jsonEvidence(endpoint, body, status, rbody, header, bStatus, baseSize)
 			hits = append(hits, Hit{
 				Type: "json-api", User: c.u, Password: c.pw, URL: endpoint,
@@ -75,6 +89,9 @@ func JSONBrute(p Poster, o Options, onProgress func(done, total int, msg string)
 			})
 			break
 		}
+		// LB-02：失败原因分类（只做可观测，不影响命中/停止判定）
+		cat := notifyFailure(&o, c.u, status, rbody)
+		onProgress(i+2, total, progress+" [失败: "+cat+"]")
 		fails++
 		if maxFails > 0 && fails >= maxFails {
 			if o.FailBackoffMS > 0 {

@@ -337,6 +337,22 @@ type Options struct {
 	// token」的额外 GET（默认 false = 启用）。启用时含隐藏字段/验证码的
 	// 表单每次尝试额外 1 个 GET；POST 尝试数仍受 MaxTries 硬上限约束。
 	DisableTokenRefresh bool
+
+	// ---- LB-02（additive；零值 = 既有行为不变） ----
+
+	// AllowHosts 授权白名单（主机名，忽略端口；"*.example.com" 匹配子域）。
+	// 空 = 不限制（既有行为）。目标 host 不在白名单时直接返回错误且零请求；
+	// JSON 端点与多步登录每一步的提交地址同样受约束。
+	AllowHosts []string
+	// MultiStep 启用两步登录（先提交用户名 → 再提交密码），仅表单模式生效。
+	// 第二步表单优先从第一步响应中自动发现；显式字段见 BruteMultiStep。
+	MultiStep bool
+	// OnFailure 失败尝试回调（LB-02 可观测出口；nil = 静默）。
+	// 事件只含分类/状态/用户名，不含口令。
+	OnFailure func(FailureEvent)
+	// MaxTotalTries 批量目标（BruteTargets）跨目标累计尝试上限（0 = 不限）。
+	// 每目标仍受 MaxTries 约束；失败基线不计入。
+	MaxTotalTries int
 }
 
 // refreshLoginForm 重取登录页，刷新 hidden/CSRF 字段与验证码图（LB-01）。
@@ -370,6 +386,13 @@ func refreshLoginForm(p Poster, pageURL string) (hidden map[string]string, captc
 func Brute(p Poster, opts Options, onProgress func(done, total int, msg string)) ([]Hit, error) {
 	if onProgress == nil {
 		onProgress = func(int, int, string) {}
+	}
+	// LB-02：授权白名单（零请求前置检查）与多步登录分派
+	if err := checkAllowHosts(&opts); err != nil {
+		return nil, err
+	}
+	if opts.MultiStep {
+		return BruteMultiStep(p, opts, nil, onProgress)
 	}
 	if opts.CaptchaType != "" && !strings.EqualFold(opts.CaptchaType, "none") && opts.OCRURL == "" {
 		return nil, fmt.Errorf("该登录页需要验证码识别：请先启动 ddddocr sidecar" +
@@ -406,6 +429,10 @@ func Brute(p Poster, opts Options, onProgress func(done, total int, msg string))
 	if opts.CaptchaField != "" {
 		form.CaptchaField = opts.CaptchaField
 		form.HasCaptcha = true
+	}
+	// LB-02：表单 action 可能是跨域地址，白名单启用时同样校验
+	if err := requireStepAllowed(&opts, form.Action); err != nil {
+		return nil, err
 	}
 
 	// 组合生成（LB-01）：MaxTries-1 为基线预留 1 次；每账号最多
@@ -498,16 +525,22 @@ func Brute(p Poster, opts Options, onProgress func(done, total int, msg string))
 			fields[form.CaptchaField] = code
 		}
 		rStatus, rBody, rHeader, rerr := postFormFull(p, form.Action, fields)
-		onProgress(i+2, total, c.u+" / "+strings.Repeat("*", len(c.pw)))
+		progress := attemptProgress(c.u, c.pw)
 		if rerr != nil {
+			// 网络错误：归类 unknown（可观测），不改变既有 continue 语义
+			_ = notifyFailure(&opts, c.u, 0, "")
+			onProgress(i+2, total, progress+" [失败: "+FailureUnknown+"]")
 			continue
 		}
 		// LB-01 锁号保护：失败响应出现锁号/限流特征或 429/403 → 立即停止
 		if sig := lockoutSignal(rStatus, rBody); sig != "" {
+			cat := notifyFailure(&opts, c.u, rStatus, rBody)
+			onProgress(i+2, total, progress+" [失败: "+cat+"]")
 			return hits, fmt.Errorf("检测到锁号/限流信号（%s）：已立即停止对 %s 的爆破"+
 				"（已尝试 %d/%d 组）。请稍后人工复核，避免锁死真实账号", sig, pageURL, i+1, len(combos))
 		}
 		if isSuccess(rStatus, rBody, bStatus, baseSize) {
+			onProgress(i+2, total, progress) // 命中：不标失败
 			ev := formEvidence(form.Action, fields, rStatus, rBody, rHeader, bStatus, baseSize)
 			hits = append(hits, Hit{
 				User: c.u, Password: c.pw, URL: form.Action,
@@ -517,6 +550,9 @@ func Brute(p Poster, opts Options, onProgress func(done, total int, msg string))
 			})
 			break
 		}
+		// LB-02：失败原因分类（只做可观测，不影响命中/停止判定）
+		cat := notifyFailure(&opts, c.u, rStatus, rBody)
+		onProgress(i+2, total, progress+" [失败: "+cat+"]")
 		fails++
 		if maxFails > 0 && fails >= maxFails {
 			if opts.FailBackoffMS > 0 {
