@@ -1011,18 +1011,25 @@ func (s *Server) hNetsec(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 400, map[string]any{"error": "请输入域名"})
 		return
 	}
-	_, host, port, err := target.Validate(host, s.cfg.Scan.Resolve)
+	scheme, host, port, err := target.Validate(host, s.cfg.Scan.Resolve)
 	if err != nil {
 		writeJSON(w, 400, map[string]any{"error": err.Error()})
 		return
 	}
-	if port == 0 || port == 80 {
-		port = 443
+	tlsPort := port
+	if tlsPort == 0 || tlsPort == 80 {
+		tlsPort = 443
 	}
-	findings := netsec.CheckTLS(host, port)
+	findings := netsec.CheckTLS(host, tlsPort)
 	if s.cfg.Netsec.MailCheck {
 		findings = append(findings, netsec.CheckDNSMail(host)...)
 	}
+	// HSTS / HTTP→HTTPS 跳转：一次只读 GET（≤5s、丢弃正文）。
+	probeURL := scheme + "://" + host
+	if port > 0 && !(scheme == "http" && port == 80) && !(scheme == "https" && port == 443) {
+		probeURL = fmt.Sprintf("%s://%s:%d", scheme, host, port)
+	}
+	findings = append(findings, netsec.CheckHTTP(probeURL)...)
 	writeJSON(w, 200, map[string]any{"host": host, "findings": findings})
 }
 

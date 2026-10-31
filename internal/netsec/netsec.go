@@ -1,16 +1,29 @@
-// Package netsec 网络层安全检测（TLS 证书/协议 + DNS 邮件安全 SPF/DMARC/MX）。
+// Package netsec 网络层安全检测（TLS 证书深度 + DNS 邮件安全 SPF/DMARC/MX +
+// HTTP 传输层安全 HSTS/跳转）。
 //
-// Go 原生实现：crypto/tls 证书链捕获 + net.LookupTXT/MX 查询。
-// 扫描器需跳过证书校验以检测自签名/过期证书——通过 VerifyPeerCertificate
-// 回调采集证书链而不中断连接（安全扫描器场景，非生产 Web 客户端）。
+// Go 原生实现：crypto/tls 证书链捕获 + net.LookupTXT/MX 查询 + 一次只读
+// HTTP GET（响应头分析）。扫描器需跳过证书校验以检测自签名/过期/SAN
+// 不匹配/弱签名等证书，通过 InsecureSkipVerify + 证书链采集完成——
+// 这是安全扫描器场景，不可用于生产 Web 客户端。
+//
+// 限制：CAA（RFC 8659）查询需要 DNS 库支持，net 标准库没有 LookupCAA；
+// 5.2.0 P0 按《网络层与爆破护栏-5.2.0.md》允许的限制跳过，不引入新依赖
+// （5.3 引入 DNS 库后再补）。
 package netsec
 
 import (
+	"crypto/rsa"
 	"crypto/tls"
 	"crypto/x509"
+	"errors"
 	"fmt"
+	"io"
 	"net"
+	"net/http"
+	"net/url"
+	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -26,20 +39,24 @@ type Finding struct {
 
 // CheckTLS TLS 证书与协议检测（捕获证书链供分析，不阻断连接）。
 func CheckTLS(host string, port int) []Finding {
+	host = normalizeHost(host)
 	var hits []Finding
 
 	conf := &tls.Config{
 		ServerName: host,
-		// 扫描器场景：需检测自签名/过期证书，跳过标准校验但保留证书链。
+		// 扫描器场景：需检测自签名/过期/域名不匹配证书，跳过标准校验但保留
+		// 证书链。若沿用默认校验，握手会因证书不合格直接失败——所有证书类
+		// 发现都拿不到（既有检查长期因此空转）。
 		// 仅在安全评估工具中使用；不可用于生产 Web 客户端。
-		MinVersion: tls.VersionTLS12,
+		MinVersion:         tls.VersionTLS12,
+		InsecureSkipVerify: true,
 		VerifyPeerCertificate: func(rawCerts [][]byte, verifiedChains [][]*x509.Certificate) error {
 			// 采集模式：始终返回 nil 以捕获证书链供后续分析
 			return nil
 		},
 	}
 
-	dialConn, dialErr := net.DialTimeout("tcp", fmt.Sprintf("%s:%d", host, port), 8*time.Second)
+	dialConn, dialErr := net.DialTimeout("tcp", net.JoinHostPort(host, strconv.Itoa(port)), 8*time.Second)
 	if dialErr != nil {
 		return nil
 	}
@@ -93,7 +110,137 @@ func CheckTLS(host string, port int) []Finding {
 			Evidence: verName, Advice: "服务端禁用 TLS1.1 及以下",
 		})
 	}
+
+	// NS-01 证书深度检测（hostname/SAN、链完整性、弱签名、弱密钥）
+	hits = append(hits, analyzeCert(host, cs.PeerCertificates)...)
 	return hits
+}
+
+// analyzeCert 证书深度分析（纯函数，不发起网络，便于单测用合成夹具）：
+// hostname/SAN 不匹配、链完整性、SHA-1/MD5 签名、RSA <2048。
+// 过期/自签名/旧协议仍由 CheckTLS 既有逻辑产出，这里不重复。
+func analyzeCert(host string, chain []*x509.Certificate) []Finding {
+	if len(chain) == 0 {
+		return nil
+	}
+	leaf := chain[0]
+	var hits []Finding
+
+	// 1) hostname/SAN 不匹配（Go 1.15+ 只认 SAN，不认 CN）
+	if err := leaf.VerifyHostname(host); err != nil {
+		hits = append(hits, Finding{
+			Check: "tls-hostname-mismatch", Title: "证书与域名不匹配（hostname/SAN）",
+			Severity: "high", URL: host,
+			Evidence: fmt.Sprintf("host=%s; SAN=[%s]", host, sanList(leaf)),
+			Advice:   "重新签发包含该域名的证书（SAN 扩展）",
+		})
+	}
+
+	// 2) 签名算法过弱（SHA-1/MD5）
+	if alg, weak := weakSignature(leaf.SignatureAlgorithm); weak {
+		hits = append(hits, Finding{
+			Check: "tls-weak-signature", Title: "证书签名算法过弱（SHA-1/MD5）",
+			Severity: "medium", URL: host,
+			Evidence: "signatureAlgorithm=" + alg,
+			Advice:   "改用 SHA-256 及以上签名算法重签证书",
+		})
+	}
+
+	// 3) RSA 密钥 < 2048
+	if pub, ok := leaf.PublicKey.(*rsa.PublicKey); ok && pub.N != nil && pub.N.BitLen() < 2048 {
+		hits = append(hits, Finding{
+			Check: "tls-weak-key", Title: "RSA 密钥长度不足（<2048）",
+			Severity: "medium", URL: host,
+			Evidence: fmt.Sprintf("RSA %d bits", pub.N.BitLen()),
+			Advice:   "更换为 RSA ≥2048 或 ECDSA P-256 及以上密钥",
+		})
+	}
+
+	// 4) 链完整性：逐级签发关系 + 用系统根构建完整链
+	if bad, evidence := chainIncomplete(chain); bad {
+		hits = append(hits, Finding{
+			Check: "tls-chain", Title: "证书链不完整/无法验证",
+			Severity: "medium", URL: host,
+			Evidence: evidence,
+			Advice:   "部署完整的中间证书链（服务器应下发 leaf + 全部中间证书）",
+		})
+	}
+	return hits
+}
+
+// sanList 证书 SAN 列表摘要（DNS + IP）。
+func sanList(cert *x509.Certificate) string {
+	parts := make([]string, 0, len(cert.DNSNames)+len(cert.IPAddresses))
+	parts = append(parts, cert.DNSNames...)
+	for _, ip := range cert.IPAddresses {
+		parts = append(parts, ip.String())
+	}
+	return strings.Join(parts, ",")
+}
+
+// weakSignature 弱签名算法判定（SHA-1/MD5 系）。
+func weakSignature(alg x509.SignatureAlgorithm) (string, bool) {
+	switch alg {
+	case x509.MD5WithRSA, x509.SHA1WithRSA, x509.DSAWithSHA1, x509.ECDSAWithSHA1:
+		return alg.String(), true
+	}
+	return alg.String(), false
+}
+
+var (
+	systemRootsOnce sync.Once
+	systemRootsPool *x509.CertPool
+)
+
+// systemRoots 系统信任根（一次性加载；不可用时返回 nil，调用方跳过
+// 「无法构建可信链」判定以免误报）。
+func systemRoots() *x509.CertPool {
+	systemRootsOnce.Do(func() {
+		systemRootsPool, _ = x509.SystemCertPool()
+	})
+	return systemRootsPool
+}
+
+// chainIncomplete 判定证书链不完整/无法验证：
+//   - 链内相邻证书 Issuer/Subject 与签名关系不符（链被拼错）；
+//   - 叶子无法经链内中间证书构建到系统信任根（缺中间证书/自签名根不受信）。
+//
+// 过期/用途不符等其他 Verify 错误不在此报（既有过期检查覆盖）。
+func chainIncomplete(chain []*x509.Certificate) (bool, string) {
+	if len(chain) == 0 {
+		return false, ""
+	}
+	for i := 0; i+1 < len(chain); i++ {
+		if err := chain[i].CheckSignatureFrom(chain[i+1]); err != nil {
+			return true, fmt.Sprintf("证书链第 %d 级签发关系无法验证: %v", i+1, err)
+		}
+	}
+	roots := systemRoots()
+	if roots == nil {
+		return false, ""
+	}
+	inter := x509.NewCertPool()
+	for _, c := range chain[1:] {
+		inter.AddCert(c)
+	}
+	_, verr := chain[0].Verify(x509.VerifyOptions{Roots: roots, Intermediates: inter})
+	if verr == nil {
+		return false, ""
+	}
+	var unknown x509.UnknownAuthorityError
+	if errors.As(verr, &unknown) {
+		return true, "未能构建到系统信任根（缺少中间证书或根不受信）"
+	}
+	return false, ""
+}
+
+// normalizeHost 去掉可能的 scheme/端口/括号，只留主机名。
+func normalizeHost(host string) string {
+	host = strings.TrimSpace(host)
+	if h, _, err := net.SplitHostPort(host); err == nil {
+		host = h
+	}
+	return strings.Trim(host, "[]")
 }
 
 func tlsVersionName(v uint16) string {
@@ -142,6 +289,10 @@ func CheckDNSMail(domain string) []Finding {
 		spfSpots = append(spfSpots, domain)
 	}
 	hasSPF := false
+	// NS-01：按查询域分组收集 SPF 记录原文（多记录/查找数/语法检查必须
+	// 逐域判定——主域与子域各自有 SPF 是合法配置，不能合并成"重复记录"）。
+	spfByDomain := map[string][]string{}
+	var spfDomains []string
 	for _, spot := range spfSpots {
 		for _, r := range lookupTXT(spot) {
 			low := strings.ToLower(r)
@@ -149,6 +300,10 @@ func CheckDNSMail(domain string) []Finding {
 			if strings.HasPrefix(low, "v=spf1") && !seenSPF[low] {
 				seenSPF[low] = true
 				hasSPF = true
+				if _, ok := spfByDomain[spot]; !ok {
+					spfDomains = append(spfDomains, spot)
+				}
+				spfByDomain[spot] = append(spfByDomain[spot], strings.TrimSpace(r))
 				hits = append(hits, Finding{
 					Check: "dns-spf", Title: "SPF 记录存在",
 					Severity: "info", URL: org,
@@ -163,13 +318,20 @@ func CheckDNSMail(domain string) []Finding {
 			Severity: "medium", URL: org,
 			Evidence: "TXT " + org, Advice: "添加 SPF 记录（v=spf1）限制合法发件源",
 		})
+	} else {
+		// NS-01：SPF 语法/查找数深度检查（逐域）
+		for _, spot := range spfDomains {
+			hits = append(hits, analyzeSPF(spot, spfByDomain[spot])...)
+		}
 	}
 
 	dmarcDomain := "_dmarc." + org
 	hasDMARC := false
+	var dmarcRecord string // NS-01：DMARC 记录原文（供策略/rua 解析）
 	for _, r := range lookupTXT(dmarcDomain) {
 		if strings.HasPrefix(strings.ToLower(r), "v=dmarc1") {
 			hasDMARC = true
+			dmarcRecord = r
 			hits = append(hits, Finding{
 				Check: "dns-dmarc", Title: "DMARC 记录存在",
 				Severity: "info", URL: dmarcDomain,
@@ -185,7 +347,12 @@ func CheckDNSMail(domain string) []Finding {
 			Evidence: "TXT _dmarc." + org,
 			Advice:   "添加 DMARC 记录（v=DMARC1）防止发件伪造",
 		})
+	} else {
+		// NS-01：DMARC 策略强度与 rua 报告地址
+		hits = append(hits, analyzeDMARC(dmarcDomain, dmarcRecord)...)
 	}
+
+	// CAA（RFC 8659）：net 标准库没有 LookupCAA，5.2.0 按文档允许的限制跳过。
 
 	mxRecords, _ := net.LookupMX(org)
 	if len(mxRecords) == 0 {
@@ -206,12 +373,294 @@ func CheckDNSMail(domain string) []Finding {
 	return hits
 }
 
+// analyzeSPF SPF 记录深度检查（纯函数）：多份 v=spf1、DNS 查询机制 >10、
+// 明显语法异常。对照 RFC 7208：include/a/mx/ptr/exists/redirect 每次触发
+// DNS 查询，查找次数上限 10。
+func analyzeSPF(domain string, records []string) []Finding {
+	if len(records) == 0 {
+		return nil
+	}
+	var hits []Finding
+	if len(records) > 1 {
+		ev := make([]string, 0, len(records))
+		for _, r := range records {
+			ev = append(ev, r[:minInt(80, len(r))])
+		}
+		hits = append(hits, Finding{
+			Check: "dns-spf-syntax", Title: "SPF 记录重复（多份 v=spf1，接收方行为未定义）",
+			Severity: "low", URL: domain,
+			Evidence: strings.Join(ev, " | "),
+			Advice:   "只保留一份 SPF 记录（多份会导致 permerror）",
+		})
+	}
+	if n := spfLookupCount(records[0]); n > 10 {
+		hits = append(hits, Finding{
+			Check: "dns-spf-lookups", Title: "SPF DNS 查询次数超过上限（>10）",
+			Severity: "low", URL: domain,
+			Evidence: fmt.Sprintf("DNS 查询机制 %d 个（RFC 7208 上限 10）", n),
+			Advice:   "精简 include/redirect 链路或改为专用发件子域",
+		})
+	}
+	if issues := spfSyntaxIssues(records[0]); len(issues) > 0 {
+		hits = append(hits, Finding{
+			Check: "dns-spf-syntax", Title: "SPF 记录语法异常",
+			Severity: "low", URL: domain,
+			Evidence: strings.Join(issues, "; "),
+			Advice:   "检查机制拼写（include:/a/mx/ptr/ip4:/ip6:/exists:/redirect=/all）",
+		})
+	}
+	return hits
+}
+
+// spfQualifierStrip 去掉机制前缀限定符（+ - ~ ?）。
+func spfQualifierStrip(tok string) string {
+	if len(tok) > 0 && strings.ContainsRune("+-~?", rune(tok[0])) {
+		return tok[1:]
+	}
+	return tok
+}
+
+// spfLookupCount 统计触发 DNS 查询的机制个数。
+func spfLookupCount(record string) int {
+	n := 0
+	for _, tok := range strings.Fields(record) {
+		low := strings.ToLower(spfQualifierStrip(tok))
+		switch {
+		case strings.HasPrefix(low, "include:"),
+			strings.HasPrefix(low, "exists:"),
+			strings.HasPrefix(low, "redirect="):
+			n++
+		case low == "a", strings.HasPrefix(low, "a:"), strings.HasPrefix(low, "a/"):
+			n++
+		case low == "mx", strings.HasPrefix(low, "mx:"), strings.HasPrefix(low, "mx/"):
+			n++
+		case low == "ptr", strings.HasPrefix(low, "ptr:"), strings.HasPrefix(low, "ptr/"):
+			n++
+		}
+	}
+	return n
+}
+
+// spfSyntaxIssues 轻量语法检查：只报明确异常的机制，避免误报。
+func spfSyntaxIssues(record string) []string {
+	var issues []string
+	for _, tok := range strings.Fields(record) {
+		if strings.EqualFold(tok, "v=spf1") {
+			continue
+		}
+		base := spfQualifierStrip(tok)
+		if base == "" {
+			issues = append(issues, "空机制")
+			continue
+		}
+		low := strings.ToLower(base)
+		// 明确合法的机制/修饰符
+		if low == "all" {
+			continue
+		}
+		if strings.HasPrefix(low, "ip4:") || strings.HasPrefix(low, "ip6:") ||
+			strings.HasPrefix(low, "include:") || strings.HasPrefix(low, "exists:") ||
+			strings.HasPrefix(low, "redirect=") || strings.HasPrefix(low, "exp=") {
+			if strings.HasSuffix(low, ":") || strings.HasSuffix(low, "=") {
+				issues = append(issues, "机制缺少参数: "+tok)
+			}
+			continue
+		}
+		if low == "a" || strings.HasPrefix(low, "a:") || strings.HasPrefix(low, "a/") ||
+			low == "mx" || strings.HasPrefix(low, "mx:") || strings.HasPrefix(low, "mx/") ||
+			low == "ptr" || strings.HasPrefix(low, "ptr:") || strings.HasPrefix(low, "ptr/") {
+			continue
+		}
+		issues = append(issues, "未知机制: "+tok)
+	}
+	return issues
+}
+
+// parseDMARCTags 解析 DMARC 记录的 tag=value 列表（键小写，值去空白/引号）。
+func parseDMARCTags(record string) map[string]string {
+	tags := map[string]string{}
+	for _, part := range strings.Split(record, ";") {
+		k, v, ok := strings.Cut(part, "=")
+		if !ok {
+			continue
+		}
+		key := strings.ToLower(strings.TrimSpace(k))
+		if key == "" {
+			continue
+		}
+		tags[key] = strings.Trim(strings.TrimSpace(v), `"`)
+	}
+	return tags
+}
+
+// analyzeDMARC DMARC 深度检查（纯函数）：策略强度 p=none/quarantine/reject
+// 与聚合报告地址 rua 是否配置。
+func analyzeDMARC(domain, record string) []Finding {
+	tags := parseDMARCTags(record)
+	var hits []Finding
+	policy := strings.ToLower(tags["p"])
+	switch policy {
+	case "none":
+		hits = append(hits, Finding{
+			Check: "dns-dmarc-policy", Title: "DMARC 策略为 none（仅监控，不拦截伪造邮件）",
+			Severity: "medium", URL: domain,
+			Evidence: "p=none",
+			Advice:   "观察聚合报告后把 p= 调整为 quarantine 或 reject",
+		})
+	case "quarantine":
+		hits = append(hits, Finding{
+			Check: "dns-dmarc-policy", Title: "DMARC 策略为 quarantine（可疑邮件隔离）",
+			Severity: "info", URL: domain,
+			Evidence: "p=quarantine",
+			Advice:   "观察报告后升级为 p=reject",
+		})
+	case "reject":
+		hits = append(hits, Finding{
+			Check: "dns-dmarc-policy", Title: "DMARC 策略为 reject（强防护）",
+			Severity: "info", URL: domain,
+			Evidence: "p=reject", Advice: "",
+		})
+	case "":
+		hits = append(hits, Finding{
+			Check: "dns-dmarc-policy", Title: "DMARC 记录缺少策略（p=）",
+			Severity: "medium", URL: domain,
+			Evidence: record[:minInt(120, len(record))],
+			Advice:   "补充 p=none|quarantine|reject 策略",
+		})
+	default:
+		hits = append(hits, Finding{
+			Check: "dns-dmarc-policy", Title: "DMARC 策略值异常",
+			Severity: "low", URL: domain,
+			Evidence: "p=" + policy,
+			Advice:   "p= 只接受 none/quarantine/reject",
+		})
+	}
+	if strings.TrimSpace(tags["rua"]) == "" {
+		hits = append(hits, Finding{
+			Check: "dns-dmarc-rua", Title: "DMARC 未配置聚合报告地址（rua=）",
+			Severity: "low", URL: domain,
+			Evidence: "缺少 rua=",
+			Advice:   "添加 rua=mailto:dmarc@<主域> 接收伪造/失败报告",
+		})
+	}
+	return hits
+}
+
 func lookupTXT(domain string) []string {
 	records, err := net.LookupTXT(domain)
 	if err != nil {
 		return nil
 	}
 	return records
+}
+
+// CheckHTTP 一次只读 GET（5s 超时，跟随跳转并记录最终 scheme）检测：
+//   - HSTS 缺失/过短（最终响应为 HTTPS 时检查 Strict-Transport-Security）；
+//   - HTTP→HTTPS 未跳转（入参为 http 且最终仍是 http）。
+//
+// 只读、不发 payload；扫描器场景允许自签证书（与 CheckTLS 一致），只做
+// 1 次逻辑请求（重定向目标由 net/http 内部跟随，上限 10 跳）。
+func CheckHTTP(rawURL string) []Finding {
+	u, err := url.Parse(strings.TrimSpace(rawURL))
+	if err != nil || u.Host == "" {
+		return nil
+	}
+	scheme := strings.ToLower(u.Scheme)
+	if scheme != "http" && scheme != "https" {
+		return nil
+	}
+	client := &http.Client{
+		Timeout: 5 * time.Second,
+		Transport: &http.Transport{
+			TLSClientConfig:     &tls.Config{InsecureSkipVerify: true}, // 扫描器：需观测自签/配置错误站点
+			Proxy:               http.ProxyFromEnvironment,
+			TLSHandshakeTimeout: 5 * time.Second,
+		},
+	}
+	resp, gerr := client.Get(u.String())
+	if gerr != nil {
+		return nil
+	}
+	defer client.CloseIdleConnections() // 单次请求后释放连接，避免每次扫描残留空闲 socket
+	defer resp.Body.Close()
+	// 丢弃响应体（上限 4KB，避免下载大页面）；只分析响应头/最终 URL。
+	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4<<10))
+
+	final := resp.Request.URL
+	finalScheme := ""
+	finalURL := u.String()
+	if final != nil {
+		finalScheme = strings.ToLower(final.Scheme)
+		finalURL = final.String()
+	}
+	var hits []Finding
+
+	// HTTP→HTTPS 未跳转
+	if scheme == "http" && finalScheme == "http" {
+		hits = append(hits, Finding{
+			Check: "http-https-redirect", Title: "HTTP 未跳转到 HTTPS",
+			Severity: "medium", URL: rawURL,
+			Evidence: "最终 URL: " + finalURL,
+			Advice:   "配置 301 全站跳转到 HTTPS，并配合 HSTS",
+		})
+	}
+
+	// HSTS：只在最终响应为 HTTPS 时校验（HTTP 响应上的 HSTS 头无效）
+	if finalScheme == "https" {
+		hits = append(hits, checkHSTS(finalURL, resp.Header.Get("Strict-Transport-Security"))...)
+	}
+	return hits
+}
+
+// hstsMinMaxAge HSTS 建议最小 max-age（6 个月；OWASP 建议 1 年）。
+const hstsMinMaxAge int64 = 15552000
+
+// checkHSTS 校验 Strict-Transport-Security 响应头：缺失 / 无 max-age /
+// max-age 过短。
+func checkHSTS(u, header string) []Finding {
+	header = strings.TrimSpace(header)
+	if header == "" {
+		return []Finding{{
+			Check: "http-hsts", Title: "缺少 HSTS 响应头（易受降级/SSL 剥离攻击）",
+			Severity: "low", URL: u,
+			Evidence: "Strict-Transport-Security 未设置",
+			Advice:   "添加 Strict-Transport-Security: max-age=31536000; includeSubDomains",
+		}}
+	}
+	maxAge, ok := hstsMaxAge(header)
+	if !ok {
+		return []Finding{{
+			Check: "http-hsts", Title: "HSTS 响应头缺少 max-age",
+			Severity: "low", URL: u,
+			Evidence: "Strict-Transport-Security: " + header[:minInt(160, len(header))],
+			Advice:   "设置 max-age=31536000（≥6 个月）",
+		}}
+	}
+	if maxAge < hstsMinMaxAge {
+		return []Finding{{
+			Check: "http-hsts", Title: "HSTS max-age 过短",
+			Severity: "low", URL: u,
+			Evidence: fmt.Sprintf("max-age=%d（建议 ≥%d 秒）", maxAge, hstsMinMaxAge),
+			Advice:   "把 max-age 提升到 31536000（1 年）",
+		}}
+	}
+	return nil
+}
+
+// hstsMaxAge 解析 HSTS 头的 max-age 指令（秒）。
+func hstsMaxAge(header string) (int64, bool) {
+	for _, part := range strings.Split(header, ";") {
+		k, v, ok := strings.Cut(strings.TrimSpace(part), "=")
+		if !ok || !strings.EqualFold(strings.TrimSpace(k), "max-age") {
+			continue
+		}
+		n, err := strconv.ParseInt(strings.Trim(strings.TrimSpace(v), `"`), 10, 64)
+		if err != nil || n < 0 {
+			return 0, false
+		}
+		return n, true
+	}
+	return 0, false
 }
 
 func minInt(a, b int) int {

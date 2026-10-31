@@ -1054,6 +1054,8 @@ func (e *Engine) Scan(rawURL string, opts Options, onProgress progress, cancel f
 		if e.cfg.Netsec.MailCheck {
 			findings = append(findings, netsec.CheckDNSMail(host)...)
 		}
+		// HSTS / HTTP→HTTPS 跳转：一次只读 GET（≤5s、丢弃正文）。
+		findings = append(findings, netsec.CheckHTTP(seedURL)...)
 		res.Extras["netsec"] = map[string]any{"findings": findings}
 		diag.end("netsec", dtNs, dsNs, 0)
 	}
