@@ -313,7 +313,7 @@ ONNX 整套退出默认分发。**
 - **网络层 P0**：证书 hostname/SAN 不匹配、链不完整、SHA-1、RSA<2048；DMARC 策略（none/quarantine/reject + rua）、SPF 查询数/语法、HSTS、HTTP→HTTPS 跳转。附带修复：TLS 采集模式未设 InsecureSkipVerify，导致证书不合格站点的既有证书类发现长期空转。
 - **登录爆破安全护栏**：锁号/429/403/连续失败自动停止或退避、每账号尝试上限、每次 POST 前重取 hidden/CSRF、成功证据（响应差异 + Set-Cookie + 跳转 + 可复制 curl）；不增加验证码破解能力。
 - **源码审计 SARIF 导出**：`sitelens audit <dir> --sarif out.sarif`，SARIF 2.1.0（ruleId/level/locations/partialFingerprints），可接 GitHub/GitLab code scanning；既有 JSON 报告键位不变。
-- **批量扫描增强**：逐行档位（`url quick|standard|deep|full`，中英文均可）、失败自动重试 3 次、同 host 串行/跨 host 并行、任务队列显示档位/尝试次数、结果 CSV 导出。
+- **批量扫描增强**：逐行档位（`url quick|standard|deep|full`，中英文均可）、失败自动重试 3 次、同 host 串行/跨 host 并行、任务队列显示档位/尝试次数、结果 CSV 导出、**断点续跑**（状态落盘 `data/state/batches/`，取消/重启后可续跑未完成目标）。
 
 以上新功能均带开关或为 additive，可单独关闭；具体验收见 `docs/release-5.2.0/预检与建议卡-5.2.0.md`、`docs/release-5.2.0/网络层与爆破护栏-5.2.0.md`。
 

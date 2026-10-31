@@ -1,4 +1,4 @@
-/* 批量扫描：URL 列表（可选逐行档位）→ /api/batch → 进度 + 日志 + 队列 + CSV 导出。
+/* 批量扫描：URL 列表（可选逐行档位）→ /api/batch → 进度 + 日志 + 队列 + CSV 导出 + 断点续跑。
    行语法：`https://example.com` 或 `https://example.com quick|standard|deep|full`（中文档位亦可）。
    工作台批量页签专用；ID 统一 batch- 前缀。 */
 (function () {
@@ -13,6 +13,7 @@
   };
   var LEVEL_LABEL = { quick: "快速", standard: "标准", deep: "深度", full: "完整" };
   var lastRows = [];
+  var resumable = [];
   box.addEventListener("input", updateCount);
 
   // 上限随 batch.max_urls 配置（页面加载时拉取一次）
@@ -51,9 +52,40 @@
       (lv ? " · 档位：" + lv : "");
   }
 
-  window.startBatch = function () {
-    var entries = parseEntries();
-    if (!entries.length) return;
+  /* ---------------- 断点续跑：加载未完成批量 ---------------- */
+  function loadResumable() {
+    var wrap = document.getElementById("batch-resume-wrap");
+    var hint = document.getElementById("batch-resume-hint");
+    if (!wrap || !hint) return;
+    api.get("/api/batch/jobs").then(function (r) {
+      resumable = (r && r.jobs) || [];
+      if (!resumable.length) { wrap.style.display = "none"; return; }
+      var total = 0, pending = 0;
+      resumable.forEach(function (j) {
+        total++;
+        (j.items || []).forEach(function (it) { if (it.status !== "done") pending++; });
+      });
+      hint.textContent = "发现 " + total + " 个未完成批量（待跑 " + pending + " 条），可断点续跑";
+      wrap.style.display = "";
+    }).catch(function () {});
+  }
+  window.loadResumable = loadResumable;
+
+  window.resumeBatch = function () {
+    if (!resumable.length) return;
+    var job = resumable[0];
+    var wrap = document.getElementById("batch-resume-wrap");
+    if (wrap) wrap.style.display = "none";
+    api.post("/api/batch/" + job.job_id + "/resume", {}).then(function (r) {
+      startWatch(r.job_id, r.total || 1, "续跑");
+    }).catch(function (e) {
+      toast("续跑失败：" + e.message, "err");
+      loadResumable();
+    });
+  };
+
+  /* ---------------- 进度/队列/日志渲染（新任务与续跑共用） ---------------- */
+  function startWatch(jobId, total, tag) {
     document.getElementById("batch-go").disabled = true;
     var cancelBtn = document.getElementById("batch-cancel");
     cancelBtn.disabled = false;
@@ -67,6 +99,7 @@
     lastRows = [];
     var exportBtn = document.getElementById("batch-export");
     if (exportBtn) exportBtn.style.display = "none";
+    window.__batchJobId = jobId;
 
     function addLog(line) {
       if (!line || seen[line]) return;
@@ -80,63 +113,70 @@
       logBox.scrollTop = logBox.scrollHeight;
     }
 
-    api.post("/api/batch", { entries: entries }).then(function (r) {
-      var jobId = r.job_id;
-      window.__batchJobId = jobId;
-      // 25B-B1：任务队列表格
-      var queueWrap = document.getElementById("batch-queue");
-      var rowsEl = document.getElementById("batch-rows");
-      if (queueWrap) queueWrap.style.display = "";
-      function renderRows(rows) {
-        if (!rows || !rowsEl) return;
-        lastRows = rows;
-        rowsEl.innerHTML = rows.map(function (rw) {
-          var st = rw.status || "queued";
-          var label = st === "done" ? "完成" : st === "failed" ? "失败" : st === "skipped" ? "跳过" : "扫描中";
-          var elapsed = rw.elapsed_ms ? (rw.elapsed_ms / 1000).toFixed(1) + "s" : "—";
-          var findings = st === "done" ? (rw.findings != null ? rw.findings : "—") : "—";
-          var level = rw.level ? (LEVEL_LABEL[rw.level] || rw.level) : "默认";
-          var attempts = rw.attempts > 1 ? "（重试 " + (rw.attempts - 1) + "）" : "";
-          return "<tr><td><span class=\"badge " + (st === "done" ? "ok" : st === "failed" ? "danger" : "warn") + "\">" + label + "</span></td>" +
-            '<td class="mono" style="word-break:break-all">' + esc(rw.url) + "</td>" +
-            "<td>" + esc(level) + "</td>" +
-            "<td>" + findings + "</td><td>" + elapsed + attempts + "</td></tr>";
-        }).join("");
-      }
-      return new Promise(function (resolve, reject) {
-        // slPoll 句柄：必须用 handle.stop() 停止（clearInterval 对句柄无效）
-        var handle = slPoll(function () {
-          api.get("/api/job/" + jobId + "/results").then(function (job) {
-            document.getElementById("batch-bar").style.width = (job.progress || 0) + "%";
-            addLog(job.message);
-            document.getElementById("batch-hint").textContent =
-              (job.done || 0) + " / " + (job.total || entries.length) + " 已完成" +
-              (job.status === "cancelling" ? "（取消中…）" : "");
-            var rows = job.rows || (job.results && job.results.rows);
-            if (rows) renderRows(rows);
-            if (job.status === "done" || job.status === "cancelled") {
-              handle.stop();
-              resolve(job);
-            }
-          }).catch(function (e) { handle.stop(); reject(e); });
-        }, 1200);
-      });
+    var queueWrap = document.getElementById("batch-queue");
+    var rowsEl = document.getElementById("batch-rows");
+    if (queueWrap) queueWrap.style.display = "";
+    function renderRows(rows) {
+      if (!rows || !rowsEl) return;
+      lastRows = rows;
+      rowsEl.innerHTML = rows.map(function (rw) {
+        var st = rw.status || "queued";
+        var label = st === "done" ? "完成" : st === "failed" ? "失败" : st === "skipped" ? "跳过" : "扫描中";
+        var elapsed = rw.elapsed_ms ? (rw.elapsed_ms / 1000).toFixed(1) + "s" : "—";
+        var findings = st === "done" ? (rw.findings != null ? rw.findings : "—") : "—";
+        var level = rw.level ? (LEVEL_LABEL[rw.level] || rw.level) : "默认";
+        var attempts = rw.attempts > 1 ? "（重试 " + (rw.attempts - 1) + "）" : "";
+        return "<tr><td><span class=\"badge " + (st === "done" ? "ok" : st === "failed" ? "danger" : "warn") + "\">" + label + "</span></td>" +
+          '<td class="mono" style="word-break:break-all">' + esc(rw.url) + "</td>" +
+          "<td>" + esc(level) + "</td>" +
+          "<td>" + findings + "</td><td>" + elapsed + attempts + "</td></tr>";
+      }).join("");
+    }
+
+    return new Promise(function (resolve, reject) {
+      var handle = slPoll(function () {
+        api.get("/api/job/" + jobId + "/results").then(function (job) {
+          document.getElementById("batch-bar").style.width = (job.progress || 0) + "%";
+          addLog(job.message);
+          document.getElementById("batch-hint").textContent =
+            (tag ? tag + " · " : "") + (job.done || 0) + " / " + (job.total || total) + " 已完成" +
+            (job.status === "cancelling" ? "（取消中…）" : "");
+          var rows = job.rows || (job.results && job.results.rows);
+          if (rows) renderRows(rows);
+          if (job.status === "done" || job.status === "cancelled") {
+            handle.stop();
+            resolve(job);
+          }
+        }).catch(function (e) { handle.stop(); reject(e); });
+      }, 1200);
     }).then(function (job) {
       document.getElementById("batch-go").disabled = false;
       document.getElementById("batch-cancel").style.display = "none";
       if (job.status === "cancelled") {
-        document.getElementById("batch-hint").textContent = "批量已取消（未开始的 URL 已跳过）";
-        toast("批量已取消", "err");
+        document.getElementById("batch-hint").textContent = "批量已取消（可断点续跑）";
+        toast("批量已取消，可续跑", "err");
       } else {
         document.getElementById("batch-hint").innerHTML =
           '全部完成 · <a href="/history" style="color:var(--info)">→ 查看历史 / 导出宽表</a>';
         toast("批量扫描完成", "ok");
       }
       if (exportBtn && lastRows.length) exportBtn.style.display = "";
+      loadResumable();
     }).catch(function (e) {
       document.getElementById("batch-go").disabled = false;
       document.getElementById("batch-cancel").style.display = "none";
       document.getElementById("batch-hint").textContent = "失败：" + e.message;
+      loadResumable();
+    });
+  }
+
+  window.startBatch = function () {
+    var entries = parseEntries();
+    if (!entries.length) return;
+    api.post("/api/batch", { entries: entries }).then(function (r) {
+      startWatch(r.job_id, r.total || entries.length, "");
+    }).catch(function (e) {
+      toast("批量提交失败：" + e.message, "err");
     });
   };
 
@@ -169,4 +209,6 @@
     api.post("/api/job/" + window.__batchJobId + "/cancel", {})
       .catch(function (e) { window.slReportError(e); });
   };
+
+  loadResumable();
 })();

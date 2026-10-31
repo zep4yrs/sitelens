@@ -393,6 +393,10 @@
       <section class="tw-canvaspane" data-pane="batch">
         <textarea class="batch-box" id="batch-urls" style="min-height:200px" placeholder="https://example.com&#10;https://www.python.org&#10;https://books.toscrape.com quick&#10;（可选：行尾加 quick/standard/deep/full 指定档位）"></textarea>
         <div class="count-row"><span class="n" id="batch-n">-</span></div>
+        <div id="batch-resume-wrap" style="display:none;margin-top:8px">
+          <span class="hint" id="batch-resume-hint"></span>
+          <button class="btn ghost small" onclick="resumeBatch()">继续未完成批量</button>
+        </div>
         <div class="tbl-wrap" id="batch-queue" style="display:none;margin-top:14px">
           <table class="list">
             <thead><tr><th style="width:96px">状态</th><th>URL</th><th style="width:70px">档位</th><th style="width:70px">发现</th><th style="width:130px">耗时</th></tr></thead>
