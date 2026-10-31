@@ -9,6 +9,9 @@ import (
 type batchItem struct {
 	URL   string `json:"url"`
 	Level string `json:"level,omitempty"`
+	// Tag 分组标签（BT-03 additive）：定时任务按 schedule.Tag 填充，用于结果
+	// 分组/筛选与 job metadata；普通批量请求可留空。只做 trim，不影响既有语义。
+	Tag string `json:"tag,omitempty"`
 }
 
 // batchRequest /api/batch 请求体：entries 优先，urls 兼容旧客户端。
@@ -61,6 +64,7 @@ func parseBatchItems(req batchRequest, max int) []batchItem {
 		if it.URL == "" {
 			return
 		}
+		it.Tag = strings.TrimSpace(it.Tag)
 		if !batchLevels[strings.ToLower(it.Level)] {
 			it.Level = ""
 		} else {

@@ -200,6 +200,11 @@ func (e *Engine) Scan(rawURL string, opts Options, onProgress progress, cancel f
 		finish()
 		return res
 	}
+	if !target.Allowed(host, e.cfg.Scan.AllowHosts) {
+		res.Error = "目标不在 allow_hosts 授权白名单：" + host
+		finish()
+		return res
+	}
 	baseURL := scheme + "://" + host
 	if port > 0 && !(scheme == "http" && port == 80) && !(scheme == "https" && port == 443) {
 		baseURL = fmt.Sprintf("%s://%s:%d", scheme, host, port)
@@ -993,6 +998,7 @@ func (e *Engine) Scan(rawURL string, opts Options, onProgress progress, cancel f
 						CaptchaType: capType,
 						OCRURL:      ocrURL,
 						FetchImage:  fetchImg,
+						AllowHosts:  e.cfg.Scan.AllowHosts,
 					}, nil)
 					if lerr != nil {
 						continue // 无表单 / 验证码页：跳过，不中断其余审计
@@ -1057,6 +1063,10 @@ func (e *Engine) Scan(rawURL string, opts Options, onProgress progress, cancel f
 		}
 		// HSTS / HTTP→HTTPS 跳转：一次只读 GET（≤5s、丢弃正文）。
 		findings = append(findings, netsec.CheckHTTP(seedURL)...)
+		// 端口探测默认关（额外 TCP 连接）：netsec.port_scan 显式开启。
+		if e.cfg.Netsec.PortScan {
+			findings = append(findings, netsec.CheckPorts(host, nil, 1500*time.Millisecond)...)
+		}
 		res.Extras["netsec"] = map[string]any{"findings": findings}
 		diag.end("netsec", dtNs, dsNs, 0)
 	}
