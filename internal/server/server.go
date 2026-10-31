@@ -93,6 +93,8 @@ type Server struct {
 	osvLastTime string
 	osvLastMsg  string
 	osvLastN    int
+
+	preflights *preflightCache // 扫描前预检缓存（TTL/上限/in-flight 去重）
 }
 
 // New 装配服务（加载指纹库/知识库/历史存储/用户插件）。
@@ -101,8 +103,9 @@ func New(cfg *config.Config, cfgPath string) (*Server, error) {
 		cfgPath = ".sitelens.yml"
 	}
 	s := &Server{cfg: cfg, cfgPath: cfgPath, jobs: store.NewJobManagerWithCap(200),
-		sem:      make(chan struct{}, cfg.Scan.MaxConcurrent),
-		lastData: map[string]int64{}}
+		sem:        make(chan struct{}, cfg.Scan.MaxConcurrent),
+		preflights: newPreflightCache(),
+		lastData:   map[string]int64{}}
 	checks.ConfigurePlugins(cfg.Checks.PluginDir)
 	tok := os.Getenv("SLENS_API_TOKEN")
 	if tok == "" {
@@ -237,6 +240,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /dev/spa-target", hSPATarget)
 	mux.HandleFunc("POST /dev/spa-target/login", hSPATargetLogin)
 	mux.HandleFunc("POST /api/scan", s.hScan)
+	mux.HandleFunc("POST /api/preflight", s.hPreflight) // 扫描前只读预检（1 次 GET，供建议卡 + 首页复用）
 	mux.HandleFunc("GET /api/job/{id}", s.hJob)
 	mux.HandleFunc("POST /api/job/{id}/cancel", s.hJobCancel)
 	mux.HandleFunc("GET /api/job/{id}/results", s.hJobResults)
@@ -534,6 +538,12 @@ func (s *Server) hScan(w http.ResponseWriter, r *http.Request) {
 	urlStr = strings.TrimSpace(urlStr)
 
 	opts := scanOptions(body)
+	// 预检结果注入：命中且未过期时，引擎首页复用该响应（总请求不增加）。
+	if pid, _ := body["preflight_id"].(string); pid != "" {
+		if pf := s.preflights.get(pid); pf != nil {
+			opts.Preflight = pf
+		}
+	}
 	jobID := newID()
 	s.jobs.Create(jobID, "scan", map[string]any{"url": urlStr, "options": opts}, 100)
 	if _, _, _, verr := target.Validate(urlStr, s.cfg.Scan.Resolve); verr != nil {

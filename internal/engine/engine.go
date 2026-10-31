@@ -65,6 +65,7 @@ type Options struct {
 	Graph         bool                    // 收集结构化事实图（4.0 P2，默认关；关时与 3.0 行为一致）
 	OnEvent       func(kind, text string) // 实时事件回调（阶段/命中/认证，nil = 不回调）
 	OnLive        func(LiveStats)         // 实时统计回调（请求/页面/拦截/速率，节流 ~250ms，nil = 不回调）
+	Preflight     *Preflight              // 可选：扫描前预检结果；命中且未过期时复用为首页响应（不重复请求）
 }
 
 // DefaultOptions 对齐 Python 默认：deep 开、checks 关、其余关。
@@ -263,9 +264,21 @@ func (e *Engine) Scan(rawURL string, opts Options, onProgress progress, cancel f
 	dtHome, dsHome := diag.begin()
 	live.setPhase("home", "首页采集")
 	t0 := time.Now()
-	home, ferr := client.GetFollow(seedURL)
+	var home *httpx.Response
+	var ferr error
+	reused := false
+	if pf := opts.Preflight; pf.ValidFor(seedURL, opts.AuthCookie, time.Now()) {
+		home = pf.Response()
+		reused = true
+		diag.preflightReused = true
+	} else {
+		home, ferr = client.GetFollow(seedURL)
+	}
 	live.touch()
 	rtMS := time.Since(t0).Milliseconds()
+	if reused && opts.Preflight != nil {
+		rtMS = opts.Preflight.ResponseMS
+	}
 	if ferr != nil || home == nil {
 		// 底层错误带出（refused/timeout/SSRF 拒绝原因一目了然）
 		res.Error = "连接失败：" + seedURL

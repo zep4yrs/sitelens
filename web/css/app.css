@@ -239,3 +239,7 @@ table.list tbody tr{transition:background .15s}
   border-radius:var(--radius-sm);padding:6px 10px;margin:0 0 10px}
 .stage.active{color:var(--foreground);font-weight:600}
 .stage.active .s-ico{color:var(--primary)}
+/* 扫描前预检卡（1 次只读 GET + 建议卡；样式复用 plan-card 体系） */
+.plan-card a{color:var(--primary);text-decoration:none}
+.plan-card .btn.small{margin-top:6px}
+.plan-head .mono{font-family:var(--font-mono);font-size:11.5px}

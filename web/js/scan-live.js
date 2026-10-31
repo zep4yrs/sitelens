@@ -58,5 +58,49 @@
     return "低";
   }
 
-  return { validateTarget: validateTarget, etaSeconds: etaSeconds, requestBucket: requestBucket };
+  // suggest 根据预检结果给出建议档位（只建议，不自动改选项；app.js 由用户点「应用建议」）。
+  function suggest(pf) {
+    var p = pf || {};
+    var reasons = [];
+    var warnings = [];
+    var tech = (p.tech || []).join(" ").toLowerCase();
+    var server = String(p.server || "").toLowerCase();
+    var waf = !!p.blocked || /cloudflare|akamai|sucuri|imperva|big-?ip|f5|waf/.test(server);
+    var strength = "std";
+    var verify = { afp: true, dir: true, ws: true, dast: true };
+
+    if (waf) {
+      verify.dast = false;
+      reasons.push("检测到 WAF/限流特征" + (p.block_reason ? "（" + p.block_reason + "）" : "") + "：激进档会被拦，建议先降速");
+      warnings.push("已建议关闭 DAST；确认目标可承受后可手动打开");
+    } else if (/wordpress|drupal|joomla|thinkphp|spring|struts|laravel|django|rails|shiro/.test(tech)) {
+      reasons.push("识别到 " + (p.tech || []).slice(0, 3).join(" / ") + "：保留专项检测与指纹识别");
+    } else if (!tech && Number(p.status) >= 200 && Number(p.status) < 300) {
+      strength = "fast";
+      verify = { afp: false, dir: false, ws: false, dast: false };
+      reasons.push("未识别到框架或参数入口：建议快速档，减少无效请求");
+    }
+
+    var st = Number(p.status) || 0;
+    if (st === 401) warnings.push("目标要求认证：请填写认证 Cookie 后再扫描");
+    if (st === 403) warnings.push("目标返回 403：可尝试开启浏览器 UA");
+    if (st === 429 || st === 503) warnings.push("目标限流/暂不可用：建议 polite 档或稍后再扫");
+    if (Number(p.response_ms) > 2000) warnings.push("目标响应较慢（" + p.response_ms + "ms）：建议降低速率");
+    try {
+      var a = new URL(p.requested_url || "");
+      var b = new URL(p.final_url || "");
+      if (a.hostname && b.hostname && a.hostname !== b.hostname) {
+        warnings.push("目标跳转到其他主机（" + b.hostname + "）：请确认授权范围");
+      }
+    } catch (e) { /* URL 不完整时忽略 */ }
+
+    return {
+      strength: strength,
+      verify: verify,
+      reasons: reasons.slice(0, 3),
+      warnings: warnings.slice(0, 3)
+    };
+  }
+
+  return { validateTarget: validateTarget, etaSeconds: etaSeconds, requestBucket: requestBucket, suggest: suggest };
 });

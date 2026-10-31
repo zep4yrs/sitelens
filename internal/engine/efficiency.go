@@ -143,6 +143,8 @@ type diagRecorder struct {
 	streaming bool
 	rateMode  string
 	maxRPS    int
+	// preflightReused：本次扫描首页复用了预检响应（未重复请求）。
+	preflightReused bool
 }
 
 func newDiagRecorder(client *httpx.Client, blocked *blockedTracker, streaming bool, rateMode string, maxRPS int) *diagRecorder {
@@ -178,15 +180,16 @@ func (d *diagRecorder) result(start time.Time) *ScanDiagnostics {
 	s := d.client.Stats()
 	el := time.Since(start)
 	out := &ScanDiagnostics{
-		Phases:        append([]PhaseDiagnostics{}, d.phases...),
-		Requests:      s.Requests,
-		Blocked:       s.Blocked,
-		Backoffs:      s.Backoffs,
-		DurationMS:    el.Milliseconds(),
-		RateMode:      d.rateMode,
-		MaxRPS:        d.maxRPS,
-		EffectiveMS:   s.Interval.Milliseconds(),
-		StreamingUsed: d.streaming,
+		Phases:          append([]PhaseDiagnostics{}, d.phases...),
+		Requests:        s.Requests,
+		Blocked:         s.Blocked,
+		Backoffs:        s.Backoffs,
+		DurationMS:      el.Milliseconds(),
+		RateMode:        d.rateMode,
+		MaxRPS:          d.maxRPS,
+		EffectiveMS:     s.Interval.Milliseconds(),
+		StreamingUsed:   d.streaming,
+		PreflightReused: d.preflightReused,
 	}
 	if d.blocked != nil {
 		out.WAFReasons = d.blocked.reasonsSnapshot()

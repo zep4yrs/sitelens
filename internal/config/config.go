@@ -126,6 +126,7 @@ type ScanConfig struct {
 	RateIntervalMS int    `yaml:"rate_interval_ms"` // 请求最小间隔（毫秒）——0/负值回退默认 400；polite 档固定间隔
 	RateMode       string `yaml:"rate_mode"`        // 限速档位：balanced（自适应，默认）/ polite（固定 rate_interval_ms，兼容旧行为）
 	RateMaxRPS     int    `yaml:"rate_max_rps"`     // balanced 档硬上限（req/s/主机，默认 8≈125ms；调低更保守，调高最多 10）
+	Preflight      bool   `yaml:"preflight"`        // 输入目标后自动发 1 次只读预检（供建议卡；开始扫描时复用为首页）；false = 完全关闭
 	TimeoutSec     int    `yaml:"timeout_sec"`      // 单请求超时（秒）
 	MaxHops        int    `yaml:"max_hops"`         // 重定向最大跳数
 	MaxBodyMB      int    `yaml:"max_body_mb"`      // 正文留存上限（MB）
@@ -281,6 +282,7 @@ func Default() *Config {
 			RateIntervalMS: 400,
 			RateMode:       "balanced",
 			RateMaxRPS:     8,
+			Preflight:      true,
 			TimeoutSec:     15,
 			MaxHops:        6,
 			MaxBodyMB:      3,

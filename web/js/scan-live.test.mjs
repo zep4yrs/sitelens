@@ -45,3 +45,29 @@ test("requestBucket：DAST/全量模板/主动模块抬升请求量级", () => {
   assert.equal(live.requestBucket({ deep: true, dast: true }), "中");
   assert.equal(live.requestBucket({ deep: true, dast: true, checks: "all", dir_scan: true }), "高");
 });
+
+test("suggest：WAF 目标降 DAST、CMS 保留专项、静态站给快速档", () => {
+  const waf = live.suggest({ status: 403, blocked: true, block_reason: "waf-header:cf-ray", tech: [] });
+  assert.equal(waf.strength, "std");
+  assert.equal(waf.verify.dast, false);
+  assert.ok(waf.reasons.some((r) => /WAF/.test(r)));
+
+  const cms = live.suggest({ status: 200, tech: ["WordPress", "nginx"] });
+  assert.equal(cms.strength, "std");
+  assert.equal(cms.verify.dast, true);
+  assert.ok(cms.reasons.some((r) => /WordPress/.test(r)));
+
+  const stat = live.suggest({ status: 200, tech: [], server: "nginx" });
+  assert.equal(stat.strength, "fast");
+  assert.equal(stat.verify.dast, false);
+  assert.equal(stat.verify.dir, false);
+});
+
+test("suggest：401/403/429/慢响应/跨主机给出警告", () => {
+  assert.ok(live.suggest({ status: 401 }).warnings.some((w) => /认证/.test(w)));
+  assert.ok(live.suggest({ status: 403 }).warnings.some((w) => /浏览器 UA/.test(w)));
+  assert.ok(live.suggest({ status: 429 }).warnings.some((w) => /polite/.test(w)));
+  assert.ok(live.suggest({ status: 200, response_ms: 3000 }).warnings.some((w) => /响应较慢/.test(w)));
+  const cross = live.suggest({ status: 200, requested_url: "https://a.com/", final_url: "https://b.com/" });
+  assert.ok(cross.warnings.some((w) => /其他主机/.test(w)));
+});

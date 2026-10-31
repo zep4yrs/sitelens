@@ -171,6 +171,7 @@ function updatePlan() {
   var raw = input ? input.value : "";
   /* 空输入：不占版面、不报错（保持原交互：点开始会聚焦输入框） */
   if (!String(raw || "").trim()) {
+    clearPreflight();
     el.hidden = true;
     el.innerHTML = "";
     var goEmpty = document.getElementById("go");
@@ -197,6 +198,7 @@ function updatePlan() {
   }
   var html = "";
   if (!v.ok) {
+    clearPreflight();
     html += '<div class="plan-warn">' + esc(v.error) + "</div>";
   } else {
     html += '<div class="plan-head"><b>扫描计划</b><span class="hint mono">' + esc(v.normalized || raw) + "</span></div>";
@@ -220,8 +222,8 @@ function wirePlan() {
   var input = document.getElementById("url");
   if (input && !input.__slPlanWired) {
     input.__slPlanWired = true;
-    input.addEventListener("input", updatePlan);
-    input.addEventListener("change", updatePlan);
+    input.addEventListener("input", function () { updatePlan(); maybePreflight(); });
+    input.addEventListener("change", function () { updatePlan(); maybePreflight(); });
   }
   ["scope-row", "verify-row", "st-row"].forEach(function (id) {
     var row = document.getElementById(id);
@@ -230,8 +232,121 @@ function wirePlan() {
       row.addEventListener("click", function () { setTimeout(updatePlan, 0); });
     }
   });
+  var preCb = document.getElementById("opt-preflight");
+  if (preCb) {
+    try {
+      var saved = localStorage.getItem("sitelens-preflight");
+      if (saved === "0") preCb.checked = false;
+    } catch (e) {}
+    if (!preCb.__slWired) {
+      preCb.__slWired = true;
+      preCb.addEventListener("change", function () {
+        try { localStorage.setItem("sitelens-preflight", preCb.checked ? "1" : "0"); } catch (e) {}
+        maybePreflight();
+      });
+    }
+  }
+  ["opt-cookie", "opt-ua"].forEach(function (id) {
+    var el = document.getElementById(id);
+    if (el && !el.__slPreWired) {
+      el.__slPreWired = true;
+      el.addEventListener("change", function () { maybePreflight(); });
+    }
+  });
   updatePlan();
 }
+
+/* ---- 扫描前预检（1 次只读 GET；结果在开始扫描时复用为首页，总请求不增加） ---- */
+var preflightId = null, preflightFor = "", preflightSeq = 0, preflightTimer = null, lastSuggestion = null;
+
+function preflightEnabled() {
+  var cb = document.getElementById("opt-preflight");
+  if (cb) return !!cb.checked;
+  try { return localStorage.getItem("sitelens-preflight") !== "0"; } catch (e) { return true; }
+}
+function clearPreflight() { preflightId = null; preflightFor = ""; lastSuggestion = null; }
+
+function maybePreflight() {
+  if (preflightTimer) clearTimeout(preflightTimer);
+  var input = document.getElementById("url");
+  var raw = input ? input.value.trim() : "";
+  var v = window.slLive ? window.slLive.validateTarget(raw) : { ok: false };
+  if (!v.ok || !preflightEnabled()) { clearPreflight(); updatePlan(); return; }
+  if (raw === preflightFor && preflightId) return;
+  preflightTimer = setTimeout(function () { runPreflight(raw); }, 600);
+}
+
+function runPreflight(url) {
+  var el = document.getElementById("plan");
+  var seq = ++preflightSeq;
+  if (el) {
+    el.hidden = false;
+    el.innerHTML = '<div class="plan-head"><b>预检中…</b><span class="hint">1 次只读请求</span></div>';
+  }
+  var body = { url: url };
+  if (document.getElementById("opt-ua") && document.getElementById("opt-ua").checked) body.browser_ua = true;
+  var ck = document.getElementById("opt-cookie") ? document.getElementById("opt-cookie").value.trim() : "";
+  if (ck) body.auth_cookie = ck;
+  api.post("/api/preflight", body).then(function (r) {
+    if (seq !== preflightSeq) return;
+    preflightId = r.preflight_id || null;
+    preflightFor = url;
+    renderPreflight(r, null);
+  }).catch(function (e) {
+    if (seq !== preflightSeq) return;
+    clearPreflight();
+    renderPreflight(null, e && e.message ? e.message : "预检失败");
+  });
+}
+
+function renderPreflight(pf, err) {
+  var el = document.getElementById("plan");
+  if (!el) return;
+  if (err) {
+    el.hidden = false;
+    el.innerHTML = '<div class="plan-head"><b>预检失败</b><span class="hint">' + esc(err) + "</span></div>" +
+      '<div class="plan-eta">仍可直接开始扫描；也可 <a href="#" onclick="retryPreflight();return false;">重试预检</a></div>';
+    return;
+  }
+  var s = window.slLive ? window.slLive.suggest(pf) : { strength: "std", verify: {}, reasons: [], warnings: [] };
+  lastSuggestion = s;
+  var tech = (pf.tech || []).slice(0, 6).join(" · ");
+  var level = s.strength === "fast" ? "快速档" : s.strength === "full" ? "完整档" : "标准档";
+  var html = '<div class="plan-head"><b>目标预检</b><span class="hint mono">' + esc(pf.final_url || pf.requested_url || "") + "</span></div>" +
+    '<div class="plan-items">' +
+    '<span class="plan-item">HTTP ' + (Number(pf.status) || 0) + "</span>" +
+    (pf.title ? '<span class="plan-item">' + esc(pf.title) + "</span>" : "") +
+    (pf.server ? '<span class="plan-item">' + esc(pf.server) + "</span>" : "") +
+    '<span class="plan-item">' + (Number(pf.response_ms) || 0) + "ms</span>" +
+    (tech ? '<span class="plan-item">' + esc(tech) + "</span>" : "") + "</div>";
+  if (pf.blocked) html += '<div class="plan-warn">WAF/限流：' + esc(pf.block_reason || "已拦截") + "</div>";
+  if ((s.reasons || []).length) {
+    html += '<div class="plan-head" style="margin-top:8px"><b>建议</b><span class="hint">' + esc(level) + "</span></div>";
+    s.reasons.forEach(function (r) { html += '<div class="plan-eta">· ' + esc(r) + "</div>"; });
+  }
+  (s.warnings || []).forEach(function (w) { html += '<div class="plan-warn">' + esc(w) + "</div>"; });
+  html += '<div class="plan-eta"><button class="btn ghost small" onclick="applySuggestion()">应用建议</button> ' +
+    '<button class="btn ghost small" onclick="retryPreflight()">重新预检</button></div>';
+  el.hidden = false;
+  el.innerHTML = html;
+}
+
+window.retryPreflight = function () {
+  var input = document.getElementById("url");
+  if (input && input.value.trim()) runPreflight(input.value.trim());
+};
+window.applySuggestion = function () {
+  var s = lastSuggestion;
+  if (!s) return;
+  var st = document.querySelector('#st-row .seg-opt[data-st="' + s.strength + '"]');
+  if (st && !st.classList.contains("on")) st.click();
+  Object.keys(s.verify || {}).forEach(function (k) {
+    var chip = document.querySelector('#verify-row [data-verify="' + k + '"]');
+    if (chip && chip.classList.contains("on") !== !!s.verify[k]) chip.click();
+  });
+  toast("已应用建议：" + s.strength + " 档", "ok");
+  updatePlan();
+};
 
 /* 本机未装 ddddocr 时禁用需要 OCR 的验证码模式 */
 api.get("/api/captcha/capability").then(function (c) {
@@ -384,6 +499,7 @@ function startScan() {
 
   /* 后端 /api/scan 从 body 顶层读取各选项（data.get("deep") 等），必须平铺不能嵌套 */
   var payload = Object.assign({ url: url }, options);
+  if (preflightId && preflightFor === url) payload.preflight_id = preflightId;
   api.post("/api/scan", payload)
     .then(function (r) {
       currentJobId = r.job_id;
