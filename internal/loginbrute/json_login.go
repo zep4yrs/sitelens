@@ -12,6 +12,11 @@ import (
 // JSONBrute JSON API 登录爆破：返回命中列表（命中一组即停）。
 // JSONTemplate 为含 {user}/{pass} 占位符的 JSON 模板；JSONEndpoint
 // 为空时 POST 到登录页地址。maxTries/intervalMS 同表单模式语义。
+//
+// LB-01 护栏与表单模式一致：锁号/限流信号（429/403 或响应含锁定/限流
+// 特征）立即停止；连续失败达阈值停止或指数退避；每账号尝试数受限；
+// 命中附响应差异摘要 + Set-Cookie + 跳转 + curl。JSON 接口无表单 CSRF
+// 字段，故不做登录页 token 重取（N/A）。
 func JSONBrute(p Poster, o Options, onProgress func(done, total int, msg string)) ([]Hit, error) {
 	if onProgress == nil {
 		onProgress = func(int, int, string) {}
@@ -22,50 +27,67 @@ func JSONBrute(p Poster, o Options, onProgress func(done, total int, msg string)
 	if o.MaxTries <= 0 {
 		o.MaxTries = 300
 	}
+	maxPerUser, maxFails := resolveGuard(&o)
 	endpoint := o.JSONEndpoint
 	if endpoint == "" {
 		endpoint = o.PageURL
 	}
 
-	type combo struct{ u, pw string }
-	var combos []combo
-	for _, u := range o.Users {
-		for _, pw := range o.Passwords {
-			if len(combos) >= o.MaxTries {
-				break
-			}
-			combos = append(combos, struct{ u, pw string }{u, pw})
-		}
-	}
+	combos := buildCombos(o.Users, o.Passwords, o.MaxTries, maxPerUser)
 	total := len(combos)
 
-	// 失败基线：一组必然错误的提交（仅取响应体尺寸）
-	_, bBody, berr := p.PostJSON(endpoint, applyJSON(o.JSONTemplate, "__nl__", "__nl__"))
+	// 失败基线：一组必然错误的提交（仅取响应体尺寸/状态）。
+	bStatus, bBody, _, berr := postJSONFull(p, endpoint, applyJSON(o.JSONTemplate, "__nl__", "__nl__"))
 	baseSize := len(bBody)
 	if berr != nil {
 		baseSize = 0
+	} else if sig := lockoutSignal(bStatus, bBody); sig != "" {
+		return nil, fmt.Errorf("失败基线即触发锁号/限流信号（%s）：已停止对 %s 的 JSON 登录爆破，避免误锁真实账号", sig, endpoint)
 	}
 
 	var hits []Hit
+	fails, backoffLevel := 0, 0
 	for i, c := range combos {
 		if o.Cancel != nil && o.Cancel() {
 			break // 已取消：停止后续登录尝试，命中结果照常返回
 		}
 		sleepInterval(o.IntervalMS, i)
 		body := applyJSON(o.JSONTemplate, c.u, c.pw)
-		status, rbody, rerr := p.PostJSON(endpoint, body)
+		status, rbody, header, rerr := postJSONFull(p, endpoint, body)
 		onProgress(i+2, total, c.u+" / "+strings.Repeat("*", len(c.pw)))
 		if rerr != nil {
 			continue
 		}
+		// LB-01 锁号保护：失败响应出现锁号/限流特征或 429/403 → 立即停止
+		if sig := lockoutSignal(status, rbody); sig != "" {
+			return hits, fmt.Errorf("检测到锁号/限流信号（%s）：已立即停止对 %s 的 JSON 登录爆破"+
+				"（已尝试 %d/%d 组）。请稍后人工复核，避免锁死真实账号", sig, endpoint, i+1, len(combos))
+		}
 		if status == 200 &&
 			(o.SuccessContains == "" || strings.Contains(rbody, o.SuccessContains)) &&
 			(baseSize == 0 || rbody != bBody) {
+			ev := jsonEvidence(endpoint, body, status, rbody, header, bStatus, baseSize)
 			hits = append(hits, Hit{
 				Type: "json-api", User: c.u, Password: c.pw, URL: endpoint,
-				Note: "JSON API 登录命中为启发式判定，请人工复核",
+				Note:     "JSON API 登录命中为启发式判定，请人工复核",
+				Evidence: ev.Summary, Redirect: ev.Redirect,
+				SetCookie: ev.SetCookie, Curl: ev.Curl,
 			})
 			break
+		}
+		fails++
+		if maxFails > 0 && fails >= maxFails {
+			if o.FailBackoffMS > 0 {
+				d := backoffDelay(o.FailBackoffMS, backoffLevel)
+				backoffLevel++
+				onProgress(i+2, total, fmt.Sprintf("连续失败 %d 次，指数退避 %s 后继续", fails, d))
+				sleepMS(int(d.Milliseconds()))
+				fails = 0
+				continue
+			}
+			return hits, fmt.Errorf("连续失败 %d 次达到阈值：已停止对 %s 的 JSON 登录爆破，避免锁死真实账号"+
+				"（可用 Options.MaxConsecutiveFails 调整，负值关闭；或配 Options.FailBackoffMS 改为退避）",
+				fails, endpoint)
 		}
 	}
 	return hits, nil

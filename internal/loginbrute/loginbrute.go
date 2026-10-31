@@ -2,7 +2,11 @@
 //
 // 流程：GET 登录页 → 解析含密码框的表单（字段名缺失按 id/placeholder 推断）
 // → 字典组合 POST 提交 → 按「失败基线 + 响应差异」判定命中。
-// 安全护栏：请求总量硬上限（config LoginBrute.MaxTries）、复用全局限速、
+// 安全护栏（LB-01，5.2）：请求总量硬上限（config LoginBrute.MaxTries）、
+// 复用全局限速；锁号/限流信号（锁定/冻结/locked/too many attempts、429/403）
+// 立即停止；连续失败阈值（默认 5）停止或指数退避；每账号尝试上限（默认 3）；
+// 每次 POST 前重取登录页刷新 hidden/CSRF token；命中附响应差异摘要 +
+// Set-Cookie + 跳转 + 可复制 curl 证据（命中判定逻辑不变）。
 // 授权确认由调用方（UI/文档）承载。
 // 验证码识别（ddddocr）未迁移至 Go 版：要求验证码的表单会明确报错拒绝。
 // 移植自 python 分支 scanner/loginbrute.py。
@@ -154,6 +158,11 @@ type Hit struct {
 	Password string `json:"password"`
 	URL      string `json:"url"`
 	Note     string `json:"note,omitempty"` // 人工复核提示（如提交目标为登录页自身）
+	// 成功证据（LB-01，additive）：命中判定逻辑不变，仅补充可复核证据。
+	Evidence  string   `json:"evidence,omitempty"`   // 响应差异摘要（状态/正文尺寸对比失败基线）
+	Redirect  string   `json:"redirect,omitempty"`   // 成功跳转目标（Location 或正文跳转提示）
+	SetCookie []string `json:"set_cookie,omitempty"` // 成功响应 Set-Cookie（需 Poster 实现 ResponsePoster，否则为空）
+	Curl      string   `json:"curl,omitempty"`       // 可复制复现命令
 }
 
 // BasicAuthBrute 对一组 401 路径做 HTTP Basic 弱口令尝试（命中即停/路径）。
@@ -208,14 +217,19 @@ func sleepInterval(intervalMS, attemptIndex int) {
 	}
 }
 
-// solveCaptcha 刷新登录页取新验证码图，拉取字节后经 ddddocr sidecar 识别。
+// solveCaptcha 取登录页中的验证码图，拉取字节后经 ddddocr sidecar 识别。
+// pageBody 非空时复用调用方刚刷新的页面正文（LB-01 的 CSRF 刷新与验证码
+// 刷新共用一次 GET，避免每次尝试两个 GET）；为空时自行拉取登录页。
 // digits：仅保留字母数字；calc：从识别文本解析两步算术并计算。
-func solveCaptcha(p Poster, opts Options, pageURL string, fallbackImgs []string) (string, error) {
-	_, body, err := p.GetSmall(pageURL)
-	if err != nil {
-		return "", err
+func solveCaptcha(p Poster, opts Options, pageURL, pageBody string, fallbackImgs []string) (string, error) {
+	if pageBody == "" {
+		_, body, err := p.GetSmall(pageURL)
+		if err != nil {
+			return "", err
+		}
+		pageBody = body
 	}
-	imgs := htmlx.Parse(body).CaptchaImgs
+	imgs := htmlx.Parse(pageBody).CaptchaImgs
 	if len(imgs) == 0 {
 		imgs = fallbackImgs
 	}
@@ -306,6 +320,40 @@ type Options struct {
 	JSONTemplate    string                              // 含 {user}/{pass} 占位符的 JSON 模板
 	SuccessContains string                              // json 模式可选成功特征
 	Cancel          func() bool                         // 取消轮询：返回 true 时爆破提前终止（由调用方注入，nil = 不可取消）
+
+	// ---- LB-01 安全护栏（additive；零值 = 默认护栏，显式负值 = 关闭/不限） ----
+
+	// MaxPerUser 同一用户名最多尝试次数（0 = 默认 3；<0 = 不限制）。
+	// 目的：避免把真实账号连续打满触发锁定。
+	MaxPerUser int
+	// MaxConsecutiveFails 连续失败阈值（0 = 默认 5；<0 = 关闭该保护）。
+	// 达到阈值后：FailBackoffMS <= 0 → 立即停止并返回原因；
+	// FailBackoffMS > 0 → 指数退避后继续（总尝试仍受 MaxTries 约束）。
+	MaxConsecutiveFails int
+	// FailBackoffMS 连续失败达阈值后的指数退避基数（毫秒；0 = 直接停止）。
+	// 实际等待 = base << level（level 从 0 递增），封顶 30s。
+	FailBackoffMS int
+	// DisableTokenRefresh 关闭「每次 POST 前重取登录页刷新 hidden/CSRF
+	// token」的额外 GET（默认 false = 启用）。启用时含隐藏字段/验证码的
+	// 表单每次尝试额外 1 个 GET；POST 尝试数仍受 MaxTries 硬上限约束。
+	DisableTokenRefresh bool
+}
+
+// refreshLoginForm 重取登录页，刷新 hidden/CSRF 字段与验证码图（LB-01）。
+// 一次性 token 站点（每次 GET 换 token）靠它避免「用旧 token 提交」的
+// 误判；GET 失败/解析不到表单时返回 ok=false，调用方沿用旧表单继续
+// （不因刷新失败中断爆破）。
+func refreshLoginForm(p Poster, pageURL string) (hidden map[string]string, captchaImgs []string, body string, ok bool) {
+	st, body, err := p.GetSmall(pageURL)
+	if err != nil || st == 0 || st >= 400 {
+		return nil, nil, "", false
+	}
+	doc := htmlx.Parse(body)
+	f, _ := AnalyzeWithDiag(doc, pageURL)
+	if f == nil {
+		return nil, nil, "", false
+	}
+	return f.Hidden, doc.CaptchaImgs, body, true
 }
 
 // Brute 执行爆破：返回命中列表（命中一组即停，控制请求量）。
@@ -314,6 +362,11 @@ type Options struct {
 // 会解析不到表单并明确报错。
 // CaptchaType=digits/calc 时需配 OCRURL（ddddocr sidecar）：
 // 每次尝试前刷新登录页取新验证码图，OCR 识别后自动填入验证码字段。
+//
+// LB-01 护栏：每次 POST 前重取登录页刷新 hidden/CSRF token（可用
+// Options.DisableTokenRefresh 关闭）；失败响应命中锁号/限流信号立即停止；
+// 连续失败达阈值停止（或指数退避）；每账号尝试数受限。命中判定逻辑
+// （isSuccess）不变，Hit 只追加证据字段。
 func Brute(p Poster, opts Options, onProgress func(done, total int, msg string)) ([]Hit, error) {
 	if onProgress == nil {
 		onProgress = func(int, int, string) {}
@@ -325,6 +378,7 @@ func Brute(p Poster, opts Options, onProgress func(done, total int, msg string))
 	if opts.MaxTries <= 0 {
 		opts.MaxTries = 300
 	}
+	maxPerUser, maxFails := resolveGuard(&opts)
 	pageURL := opts.PageURL
 
 	pageBody := opts.RenderedBody
@@ -354,25 +408,14 @@ func Brute(p Poster, opts Options, onProgress func(done, total int, msg string))
 		form.HasCaptcha = true
 	}
 
-	// 组合生成：MaxTries-1 为基线预留 1 次；两层循环都要看总预算——
-	// 只在内层 break 会让外层继续叠加，实际请求数超出硬上限（安全护栏失效）。
-	combos := []struct{ u, pw string }{}
+	// 组合生成（LB-01）：MaxTries-1 为基线预留 1 次；每账号最多
+	// maxPerUser 次（避免连续打同一真实账号触发锁定）。
 	budget := opts.MaxTries - 1
 	if budget <= 0 {
 		budget = 1
 	}
-	for _, u := range opts.Users {
-		for _, pw := range opts.Passwords {
-			if len(combos) >= budget {
-				break
-			}
-			combos = append(combos, struct{ u, pw string }{u, pw})
-		}
-		if len(combos) >= budget {
-			break
-		}
-	}
-	total := len(combos) + 1
+	combos := buildCombos(opts.Users, opts.Passwords, budget, maxPerUser)
+	total := len(combos) + 1 // +1 = 失败基线
 
 	// 提交目标诚实标注：表单无 action 时按惯例 POST 到登录页自身，
 	// 命中证据里注明，提醒人工复核该结果的提交语义
@@ -381,46 +424,112 @@ func Brute(p Poster, opts Options, onProgress func(done, total int, msg string))
 		submitTargetNote = "；表单未声明 action，提交目标为登录页自身，建议人工复核"
 	}
 
-	// 失败基线：一组必然错误的提交
-	bStatus, bBody, berr := p.PostForm(form.Action, map[string]string{
-		form.UserField: "__nl_probe__", form.PassField: "__nl_probe__"})
+	// 需要刷新 token 的表单：含隐藏字段（CSRF/一次性 token）或验证码
+	// （验证码图每次 GET 更新）。无 token 的表单不做额外 GET，避免请求量翻倍。
+	needRefresh := len(form.Hidden) > 0 || form.CaptchaField != ""
+	// refreshPage 重取登录页：返回刷新后的 hidden 字段、验证码图与正文。
+	// 刷新失败、或刷新到的静态页没有可用 token/验证码（SPA 静态壳场景）
+	// 时回退初始表单数据，不中断爆破。
+	refreshPage := func() (map[string]string, []string, string) {
+		if needRefresh && !opts.DisableTokenRefresh {
+			if h, imgs, body, ok := refreshLoginForm(p, pageURL); ok && (len(h) > 0 || len(imgs) > 0) {
+				return h, imgs, body
+			}
+		}
+		return form.Hidden, doc.CaptchaImgs, ""
+	}
+
+	// 失败基线：一组必然错误的提交（带刷新后的 hidden/CSRF，使基线差异
+	// 来自「错误口令」而不是「无效 token」）。验证码表单尽量解出验证码后
+	// 再取基线；OCR 失败时不把 403/429 当锁号（可能是验证码无效造成）。
+	baseHidden, baseImgs, baseBody := refreshPage()
+	baselineFields := make(map[string]string, len(baseHidden)+2)
+	for k, v := range baseHidden {
+		baselineFields[k] = v
+	}
+	baselineFields[form.UserField] = "__nl_probe__"
+	baselineFields[form.PassField] = "__nl_probe__"
+	baselineCaptchaOK := true
+	if form.CaptchaField != "" {
+		code, cerr := solveCaptcha(p, opts, pageURL, baseBody, baseImgs)
+		if cerr != nil {
+			baselineCaptchaOK = false
+			onProgress(1, total, "基线验证码识别失败，继续（基线差异仅供参考）："+cerr.Error())
+		} else {
+			baselineFields[form.CaptchaField] = code
+		}
+	}
+	bStatus, bBody, _, berr := postFormFull(p, form.Action, baselineFields)
 	baseSize := len(bBody)
 	if berr != nil {
 		bStatus = 0
 	}
+	if berr == nil {
+		if sig := lockoutSignal(bStatus, bBody); sig != "" {
+			selfInflicted := form.CaptchaField != "" && !baselineCaptchaOK &&
+				(bStatus == 403 || bStatus == 429)
+			if !selfInflicted {
+				return nil, fmt.Errorf("失败基线即触发锁号/限流信号（%s）：已停止对 %s 的爆破，避免误锁真实账号", sig, pageURL)
+			}
+		}
+	}
 
 	var hits []Hit
+	fails, backoffLevel := 0, 0
 	for i, c := range combos {
 		if opts.Cancel != nil && opts.Cancel() {
 			break // 已取消：停止后续登录尝试，命中结果照常返回
 		}
 		sleepInterval(opts.IntervalMS, i)
-		fields := map[string]string{}
-		for k, v := range form.Hidden {
+		hidden, captchaImgs, refreshBody := refreshPage()
+		fields := make(map[string]string, len(hidden)+3)
+		for k, v := range hidden {
 			fields[k] = v
 		}
 		fields[form.UserField] = c.u
 		fields[form.PassField] = c.pw
 		if form.CaptchaField != "" {
-			// 每次尝试前刷新登录页取新验证码图（旧码通常已失效）
-			code, cerr := solveCaptcha(p, opts, pageURL, doc.CaptchaImgs)
+			// 复用同一次刷新 GET 取验证码图（旧码通常已失效）
+			code, cerr := solveCaptcha(p, opts, pageURL, refreshBody, captchaImgs)
 			if cerr != nil {
 				onProgress(i+2, total, "验证码识别失败，跳过 "+c.u+"："+cerr.Error())
 				continue
 			}
 			fields[form.CaptchaField] = code
 		}
-		rStatus, rBody, rerr := p.PostForm(form.Action, fields)
+		rStatus, rBody, rHeader, rerr := postFormFull(p, form.Action, fields)
 		onProgress(i+2, total, c.u+" / "+strings.Repeat("*", len(c.pw)))
 		if rerr != nil {
 			continue
 		}
+		// LB-01 锁号保护：失败响应出现锁号/限流特征或 429/403 → 立即停止
+		if sig := lockoutSignal(rStatus, rBody); sig != "" {
+			return hits, fmt.Errorf("检测到锁号/限流信号（%s）：已立即停止对 %s 的爆破"+
+				"（已尝试 %d/%d 组）。请稍后人工复核，避免锁死真实账号", sig, pageURL, i+1, len(combos))
+		}
 		if isSuccess(rStatus, rBody, bStatus, baseSize) {
+			ev := formEvidence(form.Action, fields, rStatus, rBody, rHeader, bStatus, baseSize)
 			hits = append(hits, Hit{
 				User: c.u, Password: c.pw, URL: form.Action,
-				Note: submitTargetNote,
+				Note:     submitTargetNote,
+				Evidence: ev.Summary, Redirect: ev.Redirect,
+				SetCookie: ev.SetCookie, Curl: ev.Curl,
 			})
 			break
+		}
+		fails++
+		if maxFails > 0 && fails >= maxFails {
+			if opts.FailBackoffMS > 0 {
+				d := backoffDelay(opts.FailBackoffMS, backoffLevel)
+				backoffLevel++
+				onProgress(i+2, total, fmt.Sprintf("连续失败 %d 次，指数退避 %s 后继续", fails, d))
+				time.Sleep(d)
+				fails = 0
+				continue
+			}
+			return hits, fmt.Errorf("连续失败 %d 次达到阈值：已停止对 %s 的爆破，避免锁死真实账号"+
+				"（可用 Options.MaxConsecutiveFails 调整，负值关闭；或配 Options.FailBackoffMS 改为退避）",
+				fails, pageURL)
 		}
 	}
 	return hits, nil
