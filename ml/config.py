@@ -12,7 +12,7 @@ argparse 默认值，导致本仓无法重训。现在所有路径统一从这�
 | `SITLENS_ML_OUT` | `<repo>/data/ml` | 产物根（dataset / experiments / metrics / dist） |
 | `SITLENS_ML_ASSETS` | `<bench_root>/models` | 预训练底座权重根（distilbert-base-uncased/ 等） |
 | `SITLENS_ML_BENCH` | `<repo>/data/bench` | 基准/外部资产根（models/、external/ 的上一级） |
-| `SITLENS_ML_GO_ASSETS` | `<repo>/data/go/ml_assets` | Go 引擎资产导出目录 |
+| `SITLENS_ML_GO_ASSETS` | `<repo>/ml/models/go/ml_assets` | Go 引擎资产导出目录 |
 | `SITLENS_FARM_HISTORY` | `<SITLENS_DATA_ROOT>/state/history.json` | 靶场扫描历史（EXP-1101/1102 标签来源） |
 
 真实数据与产物一律不进 git（.gitignore）。
@@ -132,9 +132,9 @@ def base_model_dir(
 
 
 def go_assets_dir() -> Path:
-    """Go 引擎资产导出目录：SITLENS_ML_GO_ASSETS > <repo>/data/go/ml_assets。"""
+    """Go 引擎资产导出目录：SITLENS_ML_GO_ASSETS > <repo>/ml/models/go/ml_assets。"""
     raw = os.environ.get("SITLENS_ML_GO_ASSETS")
-    return (Path(raw) if raw else repo_root() / "data" / "go" / "ml_assets").resolve()
+    return (Path(raw) if raw else repo_root() / "ml" / "models" / "go" / "ml_assets").resolve()
 
 
 def ml_artifact(rel: str | os.PathLike) -> Path:

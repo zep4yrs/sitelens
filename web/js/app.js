@@ -163,6 +163,191 @@ function buildOptions() {
   return r.options;
 }
 
+/* ---- 扫描前反馈：目标预检 + 扫描计划（不发任何请求，纯本地计算） ---- */
+function updatePlan() {
+  var el = document.getElementById("plan");
+  if (!el) return;
+  var input = document.getElementById("url");
+  var raw = input ? input.value : "";
+  /* 空输入：不占版面、不报错（保持原交互：点开始会聚焦输入框） */
+  if (!String(raw || "").trim()) {
+    clearPreflight();
+    el.hidden = true;
+    el.innerHTML = "";
+    var goEmpty = document.getElementById("go");
+    if (goEmpty) { goEmpty.disabled = false; goEmpty.title = ""; }
+    return;
+  }
+  var v = window.slLive ? window.slLive.validateTarget(raw) : { ok: !!raw, warnings: [] };
+  var b = null;
+  try { b = scanOpts.build({ scope: scopeSet, verify: verifySet, strength: stValue }); } catch (e) { b = null; }
+  var opts = (b && b.ok) ? b.options : null;
+  var items = [];
+  if (opts) {
+    items.push(opts.deep ? "同域浅爬取" : "仅入口页");
+    if (opts.dast) items.push("参数级 DAST");
+    if (opts.passive) items.push("被动检测（零额外请求）");
+    if (opts.dir_scan) items.push("目录探测");
+    if (opts.subdomain) items.push("子域枚举");
+    if (opts.service_probe) items.push("端口识别");
+    if (opts.checks === "core") items.push("模板检测 core");
+    if (opts.checks === "all") items.push("模板检测 all");
+    if (opts.exploit) items.push("利用级验证");
+    if (opts.js_map) items.push("JS 攻击面");
+    items.push("请求量级 " + (window.slLive ? window.slLive.requestBucket(opts) : "-"));
+  }
+  var html = "";
+  if (!v.ok) {
+    clearPreflight();
+    html += '<div class="plan-warn">' + esc(v.error) + "</div>";
+  } else {
+    html += '<div class="plan-head"><b>扫描计划</b><span class="hint mono">' + esc(v.normalized || raw) + "</span></div>";
+    if (items.length) {
+      html += '<div class="plan-items">' + items.map(function (x) {
+        return '<span class="plan-item">' + esc(x) + "</span>";
+      }).join("") + "</div>";
+    }
+    if (opts) html += '<div class="plan-eta">预计耗时 <b>' + fmtT(estimateSeconds(opts)) +
+      "</b> · 经验值，随站点规模浮动</div>";
+  }
+  var warns = (v.warnings || []).concat((b && b.warnings) || []);
+  if (opts && opts.dast && opts.checks === "all") warns.push("DAST + 全量模板：请求量较大，确认目标可承受");
+  warns.forEach(function (w) { html += '<div class="plan-warn">' + esc(w) + "</div>"; });
+  el.innerHTML = html;
+  el.hidden = !html;
+  var go = document.getElementById("go");
+  if (go) { go.disabled = !v.ok; go.title = v.ok ? "" : v.error; }
+}
+function wirePlan() {
+  var input = document.getElementById("url");
+  if (input && !input.__slPlanWired) {
+    input.__slPlanWired = true;
+    input.addEventListener("input", function () { updatePlan(); maybePreflight(); });
+    input.addEventListener("change", function () { updatePlan(); maybePreflight(); });
+  }
+  ["scope-row", "verify-row", "st-row"].forEach(function (id) {
+    var row = document.getElementById(id);
+    if (row && !row.__slPlanWired) {
+      row.__slPlanWired = true;
+      row.addEventListener("click", function () { setTimeout(updatePlan, 0); });
+    }
+  });
+  var preCb = document.getElementById("opt-preflight");
+  if (preCb) {
+    try {
+      var saved = localStorage.getItem("sitelens-preflight");
+      if (saved === "0") preCb.checked = false;
+    } catch (e) {}
+    if (!preCb.__slWired) {
+      preCb.__slWired = true;
+      preCb.addEventListener("change", function () {
+        try { localStorage.setItem("sitelens-preflight", preCb.checked ? "1" : "0"); } catch (e) {}
+        maybePreflight();
+      });
+    }
+  }
+  ["opt-cookie", "opt-ua"].forEach(function (id) {
+    var el = document.getElementById(id);
+    if (el && !el.__slPreWired) {
+      el.__slPreWired = true;
+      el.addEventListener("change", function () { maybePreflight(); });
+    }
+  });
+  updatePlan();
+}
+
+/* ---- 扫描前预检（1 次只读 GET；结果在开始扫描时复用为首页，总请求不增加） ---- */
+var preflightId = null, preflightFor = "", preflightSeq = 0, preflightTimer = null, lastSuggestion = null;
+
+function preflightEnabled() {
+  var cb = document.getElementById("opt-preflight");
+  if (cb) return !!cb.checked;
+  try { return localStorage.getItem("sitelens-preflight") !== "0"; } catch (e) { return true; }
+}
+function clearPreflight() { preflightId = null; preflightFor = ""; lastSuggestion = null; }
+
+function maybePreflight() {
+  if (preflightTimer) clearTimeout(preflightTimer);
+  var input = document.getElementById("url");
+  var raw = input ? input.value.trim() : "";
+  var v = window.slLive ? window.slLive.validateTarget(raw) : { ok: false };
+  if (!v.ok || !preflightEnabled()) { clearPreflight(); updatePlan(); return; }
+  if (raw === preflightFor && preflightId) return;
+  preflightTimer = setTimeout(function () { runPreflight(raw); }, 600);
+}
+
+function runPreflight(url) {
+  var el = document.getElementById("plan");
+  var seq = ++preflightSeq;
+  if (el) {
+    el.hidden = false;
+    el.innerHTML = '<div class="plan-head"><b>预检中…</b><span class="hint">1 次只读请求</span></div>';
+  }
+  var body = { url: url };
+  if (document.getElementById("opt-ua") && document.getElementById("opt-ua").checked) body.browser_ua = true;
+  var ck = document.getElementById("opt-cookie") ? document.getElementById("opt-cookie").value.trim() : "";
+  if (ck) body.auth_cookie = ck;
+  api.post("/api/preflight", body).then(function (r) {
+    if (seq !== preflightSeq) return;
+    preflightId = r.preflight_id || null;
+    preflightFor = url;
+    renderPreflight(r, null);
+  }).catch(function (e) {
+    if (seq !== preflightSeq) return;
+    clearPreflight();
+    renderPreflight(null, e && e.message ? e.message : "预检失败");
+  });
+}
+
+function renderPreflight(pf, err) {
+  var el = document.getElementById("plan");
+  if (!el) return;
+  if (err) {
+    el.hidden = false;
+    el.innerHTML = '<div class="plan-head"><b>预检失败</b><span class="hint">' + esc(err) + "</span></div>" +
+      '<div class="plan-eta">仍可直接开始扫描；也可 <a href="#" onclick="retryPreflight();return false;">重试预检</a></div>';
+    return;
+  }
+  var s = window.slLive ? window.slLive.suggest(pf) : { strength: "std", verify: {}, reasons: [], warnings: [] };
+  lastSuggestion = s;
+  var tech = (pf.tech || []).slice(0, 6).join(" · ");
+  var level = s.strength === "fast" ? "快速档" : s.strength === "full" ? "完整档" : "标准档";
+  var html = '<div class="plan-head"><b>目标预检</b><span class="hint mono">' + esc(pf.final_url || pf.requested_url || "") + "</span></div>" +
+    '<div class="plan-items">' +
+    '<span class="plan-item">HTTP ' + (Number(pf.status) || 0) + "</span>" +
+    (pf.title ? '<span class="plan-item">' + esc(pf.title) + "</span>" : "") +
+    (pf.server ? '<span class="plan-item">' + esc(pf.server) + "</span>" : "") +
+    '<span class="plan-item">' + (Number(pf.response_ms) || 0) + "ms</span>" +
+    (tech ? '<span class="plan-item">' + esc(tech) + "</span>" : "") + "</div>";
+  if (pf.blocked) html += '<div class="plan-warn">WAF/限流：' + esc(pf.block_reason || "已拦截") + "</div>";
+  if ((s.reasons || []).length) {
+    html += '<div class="plan-head" style="margin-top:8px"><b>建议</b><span class="hint">' + esc(level) + "</span></div>";
+    s.reasons.forEach(function (r) { html += '<div class="plan-eta">· ' + esc(r) + "</div>"; });
+  }
+  (s.warnings || []).forEach(function (w) { html += '<div class="plan-warn">' + esc(w) + "</div>"; });
+  html += '<div class="plan-eta"><button class="btn ghost small" onclick="applySuggestion()">应用建议</button> ' +
+    '<button class="btn ghost small" onclick="retryPreflight()">重新预检</button></div>';
+  el.hidden = false;
+  el.innerHTML = html;
+}
+
+window.retryPreflight = function () {
+  var input = document.getElementById("url");
+  if (input && input.value.trim()) runPreflight(input.value.trim());
+};
+window.applySuggestion = function () {
+  var s = lastSuggestion;
+  if (!s) return;
+  var st = document.querySelector('#st-row .seg-opt[data-st="' + s.strength + '"]');
+  if (st && !st.classList.contains("on")) st.click();
+  Object.keys(s.verify || {}).forEach(function (k) {
+    var chip = document.querySelector('#verify-row [data-verify="' + k + '"]');
+    if (chip && chip.classList.contains("on") !== !!s.verify[k]) chip.click();
+  });
+  toast("已应用建议：" + s.strength + " 档", "ok");
+  updatePlan();
+};
+
 /* 本机未装 ddddocr 时禁用需要 OCR 的验证码模式 */
 api.get("/api/captcha/capability").then(function (c) {
   if (c.ocr) return;
@@ -179,16 +364,21 @@ api.get("/api/captcha/capability").then(function (c) {
     '<span style="color:var(--warn)">⚠ 本机未安装 ddddocr，验证码识别模式不可用（pip install ddddocr 后重启生效）。</span>';
 }).catch(function (e) { window.slReportError(e, { quiet: true }); });
 
-var liveTimer = null, liveStart = 0, liveEst = 0;
+var liveTimer = null, liveStart = 0, liveEst = 0, livePct = 3, liveElapsed = 0;
 function renderLivePanel(options) {
   liveEst = estimateSeconds(options);
   liveStart = Date.now();
+  livePct = 3;
+  liveElapsed = 0;
   var rows = STAGES.map(function (st, i) {
     return '<div class="stage" id="stage-' + i + '"><span class="s-ico">○</span> ' + st[1] + "</div>";
   }).join("");
   document.getElementById("result").innerHTML =
     '<div class="livebox card"><div class="lv-head">扫描进行中' +
-    '<button class="btn ghost small" id="cancel-btn" onclick="cancelScan()">取消扫描</button></div>' + rows +
+    '<button class="btn ghost small" id="cancel-btn" onclick="cancelScan()">取消扫描</button></div>' +
+    '<div class="lv-stats" id="lv-stats"></div>' +
+    '<div class="lv-warn" id="lv-warn" hidden></div>' +
+    rows +
     '<div class="lv-feed" id="lv-feed"></div>' +
     '<div class="lv-meta">已用时 <b id="lv-elapsed">0 秒</b> · 预计剩余 <b id="lv-eta">' +
     fmtT(liveEst) + "</b></div></div>";
@@ -198,7 +388,7 @@ function renderLivePanel(options) {
     var el2 = document.getElementById("lv-elapsed");
     if (!eta) { clearInterval(liveTimer); return; }
     el2.textContent = fmtT(el);
-    eta.textContent = fmtT(Math.max(liveEst - el, 3));
+    eta.textContent = fmtT(window.slLive ? window.slLive.etaSeconds(livePct, el, liveEst) : Math.max(liveEst - el, 3));
   }, 1000);
 }
 function markStage(p) {
@@ -207,11 +397,60 @@ function markStage(p) {
     if (el && p > st[0]) { el.querySelector(".s-ico").textContent = "✓"; el.classList.add("done"); }
   });
 }
+/* 引擎实时阶段 → 时间线高亮（比纯百分比更准：DAST 可能长时间停在 85%） */
+var PHASE_STAGE = {
+  prepare: 0, home: 1, jsmap: 2, crawl: 2, fingerprint: 3, security: 4,
+  checks: 5, passive: 6, nuclei: 7, dast: 8, exploit: 8, active: 9, done: 10
+};
+function markPhase(phase) {
+  var idx = PHASE_STAGE[phase];
+  if (idx == null) return;
+  STAGES.forEach(function (st, i) {
+    var el = document.getElementById("stage-" + i);
+    if (!el) return;
+    el.classList.toggle("active", i === idx);
+    if (i < idx) { el.querySelector(".s-ico").textContent = "✓"; el.classList.add("done"); }
+  });
+}
+/* 实时统计条：请求/页面/被拦/瞬时速率（来自 job.live = engine.LiveStats） */
+function statChips(L) {
+  var rate = Number(L.rate || 0);
+  var cells = [
+    ["阶段", L.phase_name || L.phase || "-"],
+    ["请求", L.requests || 0],
+    ["页面", L.pages || 0],
+    ["被拦", L.blocked || 0],
+    ["速率", rate > 0 ? rate.toFixed(1) + " req/s" : "—"]
+  ];
+  return cells.map(function (c) {
+    var danger = (c[0] === "被拦" && Number(L.blocked || 0) > 0) ? " danger" : "";
+    return '<div class="lv-stat' + danger + '"><span>' + esc(c[0]) + "</span><b>" + esc(String(c[1])) + "</b></div>";
+  }).join("");
+}
 function setProgress(p, msg, job) {
+  livePct = p;
   document.getElementById("bar").style.width = p + "%";
   document.getElementById("st-state").textContent = "scanning";
   document.getElementById("st-msg").textContent = msg || "";
   markStage(p);
+
+  /* 实时统计 + WAF 拦截提示 + 阶段时间线（job.live 为引擎节流推送） */
+  var L = job && job.live;
+  if (L) {
+    liveElapsed = (L.elapsed_ms || 0) / 1000;
+    var stats = document.getElementById("lv-stats");
+    if (stats) stats.innerHTML = statChips(L);
+    var warn = document.getElementById("lv-warn");
+    if (warn) {
+      if (Number(L.blocked || 0) > 0) {
+        warn.hidden = false;
+        warn.textContent = "⚠ 目标疑似 WAF/限流：已拦 " + L.blocked + " 次，扫描器已自动降速；被拦响应不参与判定。";
+      } else {
+        warn.hidden = true;
+      }
+    }
+    markPhase(L.phase);
+  }
 
   /* 实时动态：引擎事件流（阶段/命中/绕过/认证）尾部 8 条，命中计数高亮 */
   var feedEl = document.getElementById("lv-feed");
@@ -238,7 +477,14 @@ function setProgress(p, msg, job) {
 
 function startScan() {
   var url = document.getElementById("url").value.trim();
-  if (!url) { document.getElementById("url").focus(); return; }
+  var v = window.slLive ? window.slLive.validateTarget(url) : { ok: !!url };
+  if (!v.ok) {
+    var h = document.getElementById("hint");
+    if (h) { h.textContent = v.error; h.className = "hint warn"; }
+    updatePlan();
+    document.getElementById("url").focus();
+    return;
+  }
   var options = buildOptions();
   if (!options) return; // 范围校验失败（如全不选），buildOptions 已给出提示
   var ck = document.getElementById("opt-cookie").value.trim();
@@ -253,6 +499,7 @@ function startScan() {
 
   /* 后端 /api/scan 从 body 顶层读取各选项（data.get("deep") 等），必须平铺不能嵌套 */
   var payload = Object.assign({ url: url }, options);
+  if (preflightId && preflightFor === url) payload.preflight_id = preflightId;
   api.post("/api/scan", payload)
     .then(function (r) {
       currentJobId = r.job_id;
@@ -315,6 +562,61 @@ var CAT_NAMES = {};
 api.get("/api/categories").then(function (r) {
   r.categories.forEach(function (c) { CAT_NAMES[c.id] = c.name; });
 }).catch(function (e) { window.slReportError(e, { quiet: true }); });
+
+/* 扫描覆盖度/诊断卡（5.2 效率轮 diagnostics，additive）：
+   把「这次到底扫了多少、有没有被拦、请求省了多少」摊开给用户看——
+   被 WAF/限流拦截的响应不参与判定，必须在报告里显式声明，避免"静默少报"。 */
+var PHASE_NAMES = {
+  home: "首页", jsmap: "JS 端点", crawl: "爬取", fingerprint: "指纹",
+  security: "安全头", dast: "DAST"
+};
+function coverageCard(r) {
+  var d = r && r.diagnostics;
+  if (!d) return "";
+  var pages = (r.pages || []).length;
+  var blocked = Number(d.blocked || 0);
+  var phases = d.phases || [];
+  var waf = d.waf_reasons || {};
+  var wafKeys = Object.keys(waf);
+  var rateTxt = (d.rate_mode === "polite")
+    ? "polite 固定间隔"
+    : "balanced ≤" + (d.max_rps || 8) + " req/s";
+  var cells = [
+    ["访问页面", pages + " 页"],
+    ["实际请求", (d.requests || 0) + " 次"],
+    ["去重省下", (d.dedup_hits || 0) + " 次"],
+    ["被 WAF/限流拦截", blocked + " 次"],
+    ["平均速率", Number(d.avg_rps || 0).toFixed(1) + " req/s"],
+    ["限速档", rateTxt]
+  ];
+  var h = '<div class="cov-card"><div class="cov-head"><b>扫描覆盖度</b>' +
+    '<span class="hint">按实际发出的请求统计；被拦响应不参与任何判定</span></div>' +
+    '<div class="cov-grid">' + cells.map(function (c) {
+      var cls = (c[0].indexOf("拦截") >= 0 && blocked > 0) ? "danger" : "";
+      return '<div class="cov-cell"><span>' + esc(c[0]) + '</span><b class="' + cls + '">' + esc(c[1]) + "</b></div>";
+    }).join("") + "</div>";
+  if (wafKeys.length) {
+    h += '<div class="cov-note warn">WAF/限流原因：' + wafKeys.map(function (k) {
+      return esc(k) + " ×" + waf[k];
+    }).join(" · ") + "</div>";
+  }
+  var rows = phases.filter(function (p) { return (p.requests || 0) > 0 || (p.blocked || 0) > 0; });
+  if (rows.length) {
+    h += '<div class="tbl-wrap" style="margin-top:10px"><table class="vulns cov-table">' +
+      "<tr><th>阶段</th><th>请求</th><th>去重省下</th><th>被拦</th><th>耗时</th></tr>";
+    rows.forEach(function (p) {
+      var dur = (p.duration_ms || 0) >= 1000
+        ? ((p.duration_ms || 0) / 1000).toFixed(1) + " s"
+        : (p.duration_ms || 0) + " ms";
+      h += "<tr><td>" + esc(PHASE_NAMES[p.phase] || p.phase) + "</td><td>" + (p.requests || 0) +
+        "</td><td>" + (p.dedup_hits || 0) + "</td><td>" + (p.blocked || 0) + "</td><td>" + dur + "</td></tr>";
+    });
+    h += "</table></div>";
+  }
+  h += '<div class="cov-note">覆盖声明：以上为本次扫描实际触达范围；未列出的模块（未开启或未命中）不在覆盖内。' +
+    (blocked > 0 ? "被拦部分可能造成漏报，建议降低速率/更换出口后重扫。" : "") + "</div></div>";
+  return h;
+}
 
 function renderResult(r, scanId) {
   var html = "";
@@ -395,6 +697,7 @@ function renderResult(r, scanId) {
         sevBadge(v.severity) +
         '<span class="hint">证据 ' + evN + "/5 · " + (v.confirmed ? "二次确认通过" : "单轮命中") + "</span></div>" +
         '<div class="mono" style="word-break:break-all;font-size:12.5px;margin-top:6px">' + esc(v.url || "") + "</div>" +
+        (v.advice ? '<div class="hint" style="margin-top:4px">建议：' + esc(v.advice) + "</div>" : "") +
         replayDetails(v.replay || "") +
         "</div>";
     });
@@ -446,6 +749,9 @@ function renderResult(r, scanId) {
       html += '<p class="hint">AI 预测说明：严重度来源 ' + sevParts.join(" · ") + sevNote + "。</p>";
   }
 
+  /* 扫描覆盖度（diagnostics）：放在摘要之后、明细之前——先讲清"扫了多少/有没有被拦" */
+  html += coverageCard(r);
+
   var techs = r.technologies || [];
   html += '<div class="sec-title">指纹识别 <span class="count">' + techs.length + " 项</span>" +
     '<span class="right">' + exportButtons() + "</span></div>";
@@ -482,8 +788,9 @@ function renderResult(r, scanId) {
       if (v.impact === "proven") imp = ' <span class="badge danger">影响已证明</span>';
       else if (v.impact === "observed") imp = ' <span class="badge warn">可利用面观测</span>';
       var impEv = v.impact_evidence ? '<div style="font-size:12px;color:var(--muted-fg)">利用级：' + esc(v.impact_evidence) + "</div>" : "";
+      var evN = 1 + (v.request ? 1 : 0) + (v.response ? 1 : 0) + ((v.signals || []).length ? 1 : 0) + (v.confirmed ? 1 : 0);
       html += "<tr><td>" + sevBadge(v.severity) + "</td>" +
-        '<td class="mono">' + esc(v.check) + " " + esc(v.title) + imp + "</td>" +
+        '<td class="mono"><span class="badge">证据 ' + evN + "/5</span> " + esc(v.check) + " " + esc(v.title) + imp + "</td>" +
         '<td class="mono" style="font-size:12px;word-break:break-all">' + esc(v.url) +
         "（" + esc(v.evidence) + "）" + impEv + block + "</td><td>" + esc(v.advice) + "</td></tr>";
     });
@@ -884,3 +1191,6 @@ window.exportHits = function () {
     apply();
   }
 })();
+
+/* 扫描前反馈：首次渲染 + Turbo 换页重放（元素级 __slPlanWired 防重复监听） */
+if (typeof wirePlan === 'function') wirePlan();

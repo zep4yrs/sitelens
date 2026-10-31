@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -137,4 +138,37 @@ func (h *httpPoster) PostJSON(rawURL, body string) (int, string, error) {
 		return 0, "", err
 	}
 	return r.Status, r.Body, nil
+}
+
+// PostFormResponse / PostJSONResponse：实现 loginbrute 可选 ResponsePoster /
+// JSONResponsePoster，让命中证据带 Set-Cookie / Location（成功证据四件套）。
+func (h *httpPoster) PostFormResponse(rawURL string, fields map[string]string) (int, string, http.Header, error) {
+	r, err := h.c.PostForm(rawURL, fields)
+	if err != nil || r == nil {
+		return 0, "", nil, err
+	}
+	return r.Status, r.Body, responseHeader(r), nil
+}
+
+func (h *httpPoster) PostJSONResponse(rawURL, body string) (int, string, http.Header, error) {
+	r, err := h.c.PostJSON(rawURL, body)
+	if err != nil || r == nil {
+		return 0, "", nil, err
+	}
+	return r.Status, r.Body, responseHeader(r), nil
+}
+
+// responseHeader 把 httpx.Response 的响应头/Set-Cookie 转成 http.Header（证据用）。
+func responseHeader(r *httpx.Response) http.Header {
+	if r == nil {
+		return nil
+	}
+	h := make(http.Header, len(r.Headers)+1)
+	for k, v := range r.Headers {
+		h.Set(k, v)
+	}
+	for _, sc := range r.SetCookies {
+		h.Add("Set-Cookie", sc)
+	}
+	return h
 }

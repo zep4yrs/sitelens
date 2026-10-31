@@ -375,6 +375,19 @@ type Job struct {
 	Payload  map[string]any `json:"payload"`
 	Result   map[string]any `json:"result"`
 	Events   []JobEvent     `json:"events,omitempty"` // 实时事件流（环形，新事件在尾部）
+	Live     *LiveStats     `json:"live,omitempty"`   // 扫描实时统计（请求/页面/拦截/速率；仅扫描任务）
+}
+
+// LiveStats 扫描进行中的实时统计（与 engine.LiveStats 同构；store 不依赖
+// engine，服务端负责转换）。只读展示，不参与判定。
+type LiveStats struct {
+	Phase     string  `json:"phase"`
+	PhaseName string  `json:"phase_name"`
+	Requests  int64   `json:"requests"`
+	Pages     int64   `json:"pages"`
+	Blocked   int64   `json:"blocked"`
+	Rate      float64 `json:"rate"`
+	ElapsedMS int64   `json:"elapsed_ms"`
 }
 
 // JobEvent 扫描实时事件（阶段切换/命中/认证/绕过…），供前端实时动态面板。

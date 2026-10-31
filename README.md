@@ -1,5 +1,5 @@
 <div align="center">
-  <img src="assets/logo.png" width="110" alt="SiteLens logo">
+  <img src="docs/assets/logo.png" width="110" alt="SiteLens logo">
 </div>
 
 <br>
@@ -65,16 +65,35 @@ web                 内嵌前端（HTML/CSS/JS，零构建）
 
 **关键设计**：指纹库（`sitelens.Matcher`）与情报库（`intel.KB`）支持运行期热替换，进行中的扫描持旧快照、新扫描取新数据，互不干扰；单次扫描全程用同一份数据快照，保证结果自洽。
 
-### 三条交付形态
+### 交付形态
 
 | 形态 | 入口 | 说明 |
 |---|---|---|
 | 桌面版 | 安装包 `SiteLens-Setup-*.exe` | **Wails 壳**（Go + 系统 WebView2）+ 引擎，安装即用（唯一正式交付形态） |
-| CLI | `sitelens scan <url>` | 全流水线扫描，stdout 出 JSON，可直接管道消费 |
+| CLI | `sitelens scan <url>` | 全流水线扫描，stdout 出 JSON，可直接管道消费；经 npm 包 `@fengqiao666/sitelens-cli`（`tui/`）分发 |
 | Web 控制台 | `sitelens serve` | 内嵌 SPA + REST API，默认 `http://127.0.0.1:5000` |
 | 白盒审计 | `sitelens audit <dir>` | 源码污点分析，输出 JSON 报告 |
 
-三者共用同一个 `internal/engine` 编排器与 `internal/store` 历史库——**同一套引擎，三种用法**。
+以上形态共用同一个 `internal/engine` 编排器与 `internal/store` 历史库——**同一套引擎，多种用法**。
+
+### 仓库结构
+
+| 目录 | 职责 |
+|---|---|
+| `cmd/` | Go 入口：`sitelens`（CLI，随 TUI npm 线分发）、`sitelens-engine`（桌面引擎） |
+| `internal/` | 引擎主体（扫描 / 检查 / 情报 / 存储 / 服务） |
+| `web/` | 前端源码，经 `go:embed` 编进引擎二进制 |
+| `ml/` | ML 子系统：Python 训练 / 导出流水线 + 模型资产（`ml/models/`，线性模型随仓库分发） |
+| `data/` | 运行时数据（NVD 快照 / 情报 / 字典） |
+| `packs/` | 模板池（含 `src/protocol/` 模板源） |
+| `desktop-wails/` | 桌面壳（Wails + WebView2）+ 安装器（`installer/`），拉起引擎并加载其 HTTP UI |
+| `tui/` | 命令行 npm 包（唯一 CLI 入口） |
+| `tools/` | 构建 / 发版 / CI 脚本（含 `build-engine.js`） |
+| `docs/` | 文档（`docs/assets/` 放 README 配图） |
+| `vendor/` | Go 依赖（离线构建） |
+| `.archive/` | **保留但不参与构建/测试/发版**的退役产物（Electron 壳、旧发行说明、旧图等），见 [.archive/README.md](.archive/README.md) |
+
+依赖关系：`tui/` 打包 `cmd/sitelens`；`desktop-wails/` 拉起 `cmd/sitelens-engine`；两者共用 `internal/` 引擎，`web/` 由 `go:embed` 编进引擎二进制。
 
 模块划分与扩展方式见 [开发文档](docs/开发文档.md)。
 
@@ -111,7 +130,7 @@ go build -o sitelens.exe ./cmd/sitelens
 - **监听非回环地址时务必配 API Token**：把 `web.listen` 改成 `0.0.0.0:5000` 这类非回环地址、且未配置 token 时，启动只会打一条醒目告警并照常监听（`internal/server/server.go` 的 SEC-8 加固）——**告警不是硬闸**，但此时全部 `/api/*`（含主动扫描能力）对所在网络开放，生产部署请设 `SLENS_API_TOKEN` 或 `web.api_token`；配了 token 后 `/api/*` 一律要求 `X-Token` 头（常量时间比较），鉴权行为与既往版本一致；
 - 主动验证能力默认关闭，只有显式开启才会发包（且带硬上限）；
 - `target.allow_private` 是私网/本机扫描的安全闸，默认关，仅授权靶场开启；
-- 5.0 ML 预测由 `ml.predict`（默认开）控制总闸、`ml.assets_dir`（默认 `data/go/ml_assets`，仓内缺失时自动回退仓库内建 `models/go/ml_assets`）指定模型资产目录：资产缺失静默跳过预测，损坏则本进程禁用；5.2 阶段 1/2 起预测字段一律**查表优先、模型兜底**——`tech_top5` 优先 NVD CPE / 情报行 product（`tech_source=nvd/intel`）、`cwe_type` 优先 NVD weaknesses（`cwe_source=nvd`）、`sev_score` 优先 NVD/情报 CVSS 分（`sev_source=nvd`，其次 0.7MB `ml.sev_linear` 线性回归兜底，留出 MAE 1.180）；前置调度通道改为**指纹技术名 → 产品映射**（确定性，不依赖模型），指纹无命中才回退 cve-tech 文本模型；查表全覆盖时不加载 94MB 模型资产，ONNX 降为可选高级包（`ml.sev_onnx` 默认关，安装包默认不含 ONNX 模型与 onnxruntime，ML 资产从 748.9 MiB 降到约 106 MiB）；预测呈现为先验参考字段（结果 JSON 的 `predictions`，含 `sev_source/tech_source/cwe_source` 来源；前置先验信息在 `extras.ml_prior`）——**ML 先验只调整执行顺序与核心档位下的扩展集纳入（只增不删，all 档全集已跑、无增量），不改变任何 check 的命中判定、不凭模型直接产生发现**；仓库自 5.2 起不再携带 ONNX 资产（完整 clone 约 0.5GB，见 [docs/release-5.2.0/仓库瘦身-5.2.0.md](docs/release-5.2.0/仓库瘦身-5.2.0.md)）。
+- 5.0 ML 预测由 `ml.predict`（默认开）控制总闸、`ml.assets_dir`（默认 `data/go/ml_assets`，仓内缺失时自动回退仓库内建 `ml/models/go/ml_assets`）指定模型资产目录：资产缺失静默跳过预测，损坏则本进程禁用；5.2 阶段 1/2 起预测字段一律**查表优先、模型兜底**——`tech_top5` 优先 NVD CPE / 情报行 product（`tech_source=nvd/intel`）、`cwe_type` 优先 NVD weaknesses（`cwe_source=nvd`）、`sev_score` 优先 NVD/情报 CVSS 分（`sev_source=nvd`，其次 0.7MB `ml.sev_linear` 线性回归兜底，留出 MAE 1.180）；前置调度通道改为**指纹技术名 → 产品映射**（确定性，不依赖模型），指纹无命中才回退 cve-tech 文本模型；查表全覆盖时不加载 94MB 模型资产，ONNX 降为可选高级包（`ml.sev_onnx` 默认关，安装包默认不含 ONNX 模型与 onnxruntime，ML 资产从 748.9 MiB 降到约 106 MiB）；预测呈现为先验参考字段（结果 JSON 的 `predictions`，含 `sev_source/tech_source/cwe_source` 来源；前置先验信息在 `extras.ml_prior`）——**ML 先验只调整执行顺序与核心档位下的扩展集纳入（只增不删，all 档全集已跑、无增量），不改变任何 check 的命中判定、不凭模型直接产生发现**；仓库自 5.2 起不再携带 ONNX 资产（完整 clone 约 0.5GB，见 [docs/release-5.2.0/仓库瘦身-5.2.0.md](docs/release-5.2.0/仓库瘦身-5.2.0.md)）。
 
 ## 七种扫描模式
 
@@ -181,7 +200,7 @@ go build -o sitelens.exe ./cmd/sitelens
 ## 路线图 —— 产品远景
 
 <div align="center">
-  <img src="assets/roadmap-banner.png" width="100%" alt="SiteLens 产品远景路线图：从发现到智能，构建面向未来的红队验证与安全智能系统">
+  <img src="docs/assets/roadmap-banner.png" width="100%" alt="SiteLens 产品远景路线图：从发现到智能，构建面向未来的红队验证与安全智能系统">
 </div>
 
 **不是工具的堆叠，而是红队能力与机器学习的深度融合。** 从发现到自进化，让安全验证更智能、更高效、更有价值。
@@ -205,11 +224,11 @@ go build -o sitelens.exe ./cmd/sitelens
 **已定型的版本宣发图**（3.0 利用器 / 4.0 攻击链）：
 
 <div align="center">
-<img src="assets/release-3.0.0.png" width="100%" alt="SiteLens 3.0.0 利用器 — 让漏洞从可能到可利用。更大规模的检测覆盖、更深入的影响证明、更全面的情报数据。">
+<img src="docs/assets/release-3.0.0.png" width="100%" alt="SiteLens 3.0.0 利用器 — 让漏洞从可能到可利用。更大规模的检测覆盖、更深入的影响证明、更全面的情报数据。">
 </div>
 
 <div align="center">
-  <img src="assets/banner-4.0-attackchain.png" width="100%" alt="SiteLens 4.0 攻击链·黑白盒验证 — 从单点突破，到攻击链分析。Attack Chain Analysis">
+  <img src="docs/assets/banner-4.0-attackchain.png" width="100%" alt="SiteLens 4.0 攻击链·黑白盒验证 — 从单点突破，到攻击链分析。Attack Chain Analysis">
 </div>
 
 ## 合规

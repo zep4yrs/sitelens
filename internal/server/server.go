@@ -93,6 +93,8 @@ type Server struct {
 	osvLastTime string
 	osvLastMsg  string
 	osvLastN    int
+
+	preflights *preflightCache // 扫描前预检缓存（TTL/上限/in-flight 去重）
 }
 
 // New 装配服务（加载指纹库/知识库/历史存储/用户插件）。
@@ -101,8 +103,9 @@ func New(cfg *config.Config, cfgPath string) (*Server, error) {
 		cfgPath = ".sitelens.yml"
 	}
 	s := &Server{cfg: cfg, cfgPath: cfgPath, jobs: store.NewJobManagerWithCap(200),
-		sem:      make(chan struct{}, cfg.Scan.MaxConcurrent),
-		lastData: map[string]int64{}}
+		sem:        make(chan struct{}, cfg.Scan.MaxConcurrent),
+		preflights: newPreflightCache(),
+		lastData:   map[string]int64{}}
 	checks.ConfigurePlugins(cfg.Checks.PluginDir)
 	tok := os.Getenv("SLENS_API_TOKEN")
 	if tok == "" {
@@ -237,6 +240,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /dev/spa-target", hSPATarget)
 	mux.HandleFunc("POST /dev/spa-target/login", hSPATargetLogin)
 	mux.HandleFunc("POST /api/scan", s.hScan)
+	mux.HandleFunc("POST /api/preflight", s.hPreflight) // 扫描前只读预检（1 次 GET，供建议卡 + 首页复用）
 	mux.HandleFunc("GET /api/job/{id}", s.hJob)
 	mux.HandleFunc("POST /api/job/{id}/cancel", s.hJobCancel)
 	mux.HandleFunc("GET /api/job/{id}/results", s.hJobResults)
@@ -534,6 +538,12 @@ func (s *Server) hScan(w http.ResponseWriter, r *http.Request) {
 	urlStr = strings.TrimSpace(urlStr)
 
 	opts := scanOptions(body)
+	// 预检结果注入：命中且未过期时，引擎首页复用该响应（总请求不增加）。
+	if pid, _ := body["preflight_id"].(string); pid != "" {
+		if pf := s.preflights.get(pid); pf != nil {
+			opts.Preflight = pf
+		}
+	}
 	jobID := newID()
 	s.jobs.Create(jobID, "scan", map[string]any{"url": urlStr, "options": opts}, 100)
 	if _, _, _, verr := target.Validate(urlStr, s.cfg.Scan.Resolve); verr != nil {
@@ -635,6 +645,15 @@ func (s *Server) runScanJob(jobID, urlStr string, opts engine.Options) {
 	opts.OnEvent = func(kind, text string) {
 		s.jobs.AppendEvent(jobID, kind, text)
 	}
+	// 实时统计：请求数/页面数/拦截数/瞬时速率（引擎节流 ~250ms 推送）。
+	opts.OnLive = func(st engine.LiveStats) {
+		s.jobs.Update(jobID, func(j *store.Job) {
+			j.Live = &store.LiveStats{
+				Phase: st.Phase, PhaseName: st.PhaseName, Requests: st.Requests,
+				Pages: st.Pages, Blocked: st.Blocked, Rate: st.Rate, ElapsedMS: st.ElapsedMS,
+			}
+		})
+	}
 
 	res := s.eng.Scan(urlStr, opts, func(p int, msg string) {
 		s.jobs.Update(jobID, func(j *store.Job) { j.Progress = p; j.Message = msg })
@@ -677,6 +696,10 @@ func (s *Server) jobOut(w http.ResponseWriter, id string, withResults bool) {
 	out := map[string]any{
 		"job_id": j.ID, "status": j.Status, "progress": j.Progress,
 		"message": j.Message, "done": j.Done, "total": j.Total,
+	}
+	// 扫描实时统计（请求/页面/拦截/速率）——前端实时面板消费，additive。
+	if j.Live != nil {
+		out["live"] = j.Live
 	}
 	// 实时事件流：最多带最近 40 条（前端实时动态面板）
 	if n := len(j.Events); n > 0 {
@@ -988,18 +1011,25 @@ func (s *Server) hNetsec(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 400, map[string]any{"error": "请输入域名"})
 		return
 	}
-	_, host, port, err := target.Validate(host, s.cfg.Scan.Resolve)
+	scheme, host, port, err := target.Validate(host, s.cfg.Scan.Resolve)
 	if err != nil {
 		writeJSON(w, 400, map[string]any{"error": err.Error()})
 		return
 	}
-	if port == 0 || port == 80 {
-		port = 443
+	tlsPort := port
+	if tlsPort == 0 || tlsPort == 80 {
+		tlsPort = 443
 	}
-	findings := netsec.CheckTLS(host, port)
+	findings := netsec.CheckTLS(host, tlsPort)
 	if s.cfg.Netsec.MailCheck {
 		findings = append(findings, netsec.CheckDNSMail(host)...)
 	}
+	// HSTS / HTTP→HTTPS 跳转：一次只读 GET（≤5s、丢弃正文）。
+	probeURL := scheme + "://" + host
+	if port > 0 && !(scheme == "http" && port == 80) && !(scheme == "https" && port == 443) {
+		probeURL = fmt.Sprintf("%s://%s:%d", scheme, host, port)
+	}
+	findings = append(findings, netsec.CheckHTTP(probeURL)...)
 	writeJSON(w, 200, map[string]any{"host": host, "findings": findings})
 }
 

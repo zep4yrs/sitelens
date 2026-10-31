@@ -37,10 +37,10 @@
 
 路径（环境变量优先，默认仓库相对，不写死开发机绝对路径）
     SITLENS_NVD_DUMP       默认 <repo>/data/nvd_cves.json.gz
-    SITLENS_ML_GO_ASSETS   默认 <repo>/models/go/ml_assets
+    SITLENS_ML_GO_ASSETS   默认 <repo>/ml/models/go/ml_assets
     注意：ml/config.py 的 go_assets_dir() 默认是 <repo>/data/go/ml_assets（旧导出位置）；
-    本脚本默认改为 <repo>/models/go/ml_assets，因为「模型进仓库本体」后运行时
-    （internal/ml/locate.go、internal/engine/ml.go）实际加载的是 models/go/ml_assets
+    本脚本默认改为 <repo>/ml/models/go/ml_assets，因为「模型进仓库本体」后运行时
+    （internal/ml/locate.go、internal/engine/ml.go）实际加载的是 ml/models/go/ml_assets
     （cve-tech / cwe-type 就在那里），导出物必须落在运行时真正读的目录。
 
 可复现命令（仓库根目录，任意 cwd 均可，路径按 __file__ 解析）
@@ -111,7 +111,7 @@ def nvd_dump_path() -> Path:
 
 
 def out_dir() -> Path:
-    """导出目录：SITLENS_ML_GO_ASSETS > <repo>/models/go/ml_assets（见文件头说明）。"""
+    """导出目录：SITLENS_ML_GO_ASSETS > <repo>/ml/models/go/ml_assets（见文件头说明）。"""
     raw = os.environ.get("SITLENS_ML_GO_ASSETS")
     return Path(raw).expanduser().resolve() if raw else (repo_root() / "models" / "go" / "ml_assets")
 

@@ -1,3 +1,4 @@
+@import url("/css/tokens.css");
 /* SiteLens 前端统一样式层（4.0 样式重构 A+B）。
    由 web/js/common.js 内联注入改为独立文件（go:embed 打包，无外链）。
 
@@ -10,14 +11,7 @@
 
    纪律：不改品牌资产（logo 原样）；色板沿用原令牌值，仅补齐刻度与层级。 */
 
-:root{--background:#fafafa;--foreground:#1a1a1a;--primary:#3e3f3f;--primary-fg:#ffffff;--secondary:#f1f5f9;--muted:#f8fafc;--muted-fg:#64748b;--accent:#f1f5f9;--border:#e2e8f0;--input:#ffffff;--ring:#3e3f3f;--card:#ffffff;--radius:.35rem;--ok:#16a34a;--warn:#d97706;--danger:#dc2626;--info:#2563eb;--shadow-2xs:0 2px 0 0 rgba(51,51,51,.07);--shadow-sm:0 2px 0 0 rgba(51,51,51,.15),0 1px 2px -1px rgba(51,51,51,.15);--shadow-md:0 2px 0 0 rgba(51,51,51,.15),0 2px 4px -1px rgba(51,51,51,.15);--top-h:50px;
-    /* 4.0 样式重构：补齐刻度（原只有单一 --radius 与三档硬边阴影） */
-    --radius-sm:6px;--radius-md:10px;--radius-lg:14px;--radius-pill:999px;
-    --space-1:4px;--space-2:8px;--space-3:12px;--space-4:16px;--space-5:22px;--space-6:30px;
-    --shadow-1:0 1px 2px rgba(15,23,42,.06),0 1px 3px rgba(15,23,42,.08);
-    --shadow-2:0 2px 4px rgba(15,23,42,.06),0 4px 12px rgba(15,23,42,.08);
-    --shadow-3:0 6px 16px rgba(15,23,42,.10),0 12px 32px rgba(15,23,42,.10);
-    --ring-w:2px;--fw-normal:400;--fw-strong:600;--font-sans:"LXGW WenKai","Noto Sans SC","Source Han Sans SC",-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;--font-mono:ui-monospace,SFMono-Regular,"SF Mono",Consolas,"Liberation Mono",Menlo,"Cascadia Code","LXGW WenKai Mono","LXGW WenKai",monospace;}.dark{--background:#0d0d0f;--foreground:#ececf1;--primary:#e0e0e3;--primary-fg:#111113;--secondary:#1c1c20;--muted:#1c1c20;--muted-fg:#9b9ba4;--accent:#26262b;--border:#26262b;--input:#141417;--ring:#9b9ba4;--card:#141417;}*,*::before,*::after{box-sizing:border-box;}html{scroll-behavior:smooth;}html,body{height:100%;}
+*,*::before,*::after{box-sizing:border-box;}html{scroll-behavior:smooth;}html,body{height:100%;}
 body{margin:0;background:var(--background);color:var(--foreground);font-family:var(--font-sans);font-size:15px;line-height:1.6;-webkit-font-smoothing:antialiased;}
 /* 4.0 布局：侧栏 fixed + 内容区占满剩余视口；顶部自然排布、水平居中 */
 body{padding-top:var(--top-h);}
@@ -140,10 +134,7 @@ body{animation:sl-fadeIn var(--t-fast) var(--ease)}
 /* ============ 动效基准（25C Corporate 全站统一） ============
    签名缓动 cubic-bezier(0.2,0,0,1)；时长三档 快150/标准250/慢400；
    入场=淡入+小幅上移（≤8px），无 overshoot；禁 linear 空间位移 */
-:root{
-  --t-fast:150ms;--t-med:250ms;--t-slow:400ms;
-  --ease:cubic-bezier(0.2,0,0,1);
-}
+
 @keyframes sl-underline{from{transform:scaleX(0)}to{transform:scaleX(1)}}
 @keyframes sl-rowIn{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
 /* 列表/卡片级联入场：前 12 行 25ms 步进（预算 ≤300ms），其后直接呈现 */
@@ -207,3 +198,48 @@ table.list tbody tr{transition:background .15s}
   .tw-modes .tab span{display:none}
   .tw-modes .tab{height:42px}
 }
+
+/* ============ 扫描覆盖度卡（5.2 效率轮 diagnostics，additive） ============
+   结果页先讲清"扫了多少 / 有没有被拦 / 省了多少请求"，再进明细。
+   数据来自 Result.Diagnostics；旧记录无该字段时整块不渲染。 */
+.cov-card{border:1px solid var(--border);background:var(--card);border-radius:var(--radius-md);
+  box-shadow:var(--shadow-1);padding:var(--space-4);margin:0 0 var(--space-5)}
+.cov-head{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap;margin-bottom:10px}
+.cov-head b{font-size:14px}
+.cov-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:8px}
+.cov-cell{background:var(--muted);border:1px solid var(--border);border-radius:var(--radius-sm);padding:8px 10px}
+.cov-cell span{display:block;font-size:11.5px;color:var(--muted-fg);margin-bottom:2px}
+.cov-cell b{font-size:15px;font-variant-numeric:tabular-nums}
+.cov-cell b.danger{color:var(--danger)}
+.cov-note{font-size:12px;color:var(--muted-fg);margin-top:8px;line-height:1.6}
+.cov-note.warn{color:var(--warn)}
+.cov-table th,.cov-table td{padding:6px 10px;font-size:12.5px}
+/* ============ 扫描前计划卡 / 扫描中实时统计（5.2 反馈层） ============
+   计划卡：目标预检 + 将运行项 + 请求量级 + 经验估时（纯本地计算，不发请求）；
+   实时统计：engine.LiveStats 节流推送（阶段/请求/页面/被拦/瞬时速率）+ WAF 拦截提示。 */
+.plan-card{border:1px solid var(--border);background:var(--card);border-radius:var(--radius-md);
+  box-shadow:var(--shadow-1);padding:var(--space-4);margin:0 0 var(--space-4)}
+.plan-head{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap}
+.plan-head b{font-size:14px}
+.plan-head .hint{word-break:break-all}
+.plan-items{display:flex;flex-wrap:wrap;gap:6px;margin:10px 0 4px}
+.plan-item{font-size:11.5px;color:var(--foreground);background:var(--muted);border:1px solid var(--border);
+  border-radius:var(--radius-pill);padding:2px 9px}
+.plan-eta{font-size:12.5px;color:var(--muted-fg);margin-top:6px}
+.plan-eta b{color:var(--foreground);font-variant-numeric:tabular-nums}
+.plan-warn{font-size:12.5px;color:var(--warn);margin-top:6px;line-height:1.6}
+.lv-stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(96px,1fr));gap:6px;margin:10px 0}
+.lv-stat{background:var(--muted);border:1px solid var(--border);border-radius:var(--radius-sm);padding:6px 9px}
+.lv-stat span{display:block;font-size:10.5px;color:var(--muted-fg);margin-bottom:1px}
+.lv-stat b{font-size:13.5px;font-variant-numeric:tabular-nums}
+.lv-stat.danger b{color:var(--danger)}
+.lv-warn{font-size:12.5px;color:var(--warn);line-height:1.5;
+  background:color-mix(in srgb,var(--warn) 10%,transparent);
+  border:1px solid color-mix(in srgb,var(--warn) 35%,transparent);
+  border-radius:var(--radius-sm);padding:6px 10px;margin:0 0 10px}
+.stage.active{color:var(--foreground);font-weight:600}
+.stage.active .s-ico{color:var(--primary)}
+/* 扫描前预检卡（1 次只读 GET + 建议卡；样式复用 plan-card 体系） */
+.plan-card a{color:var(--primary);text-decoration:none}
+.plan-card .btn.small{margin-top:6px}
+.plan-head .mono{font-family:var(--font-mono);font-size:11.5px}

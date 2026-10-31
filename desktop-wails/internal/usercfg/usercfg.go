@@ -65,7 +65,7 @@ func (m Managed) WritableDirs() []string {
 //
 // 只读资产（指纹库 / ML 资产 / onnxruntime）刻意不写：引擎默认值
 // `data/go/...` 已是相对 cwd 的正确值，显式写绝对路径反而会把开发态
-// （cwd=仓库 desktop/engine）钉死在某个构建产物目录上。
+// （cwd=仓库 build/engine）钉死在某个构建产物目录上。
 func ApplyManaged(cfg map[string]any, listen string, m Managed) {
 	web := sub(cfg, "web")
 	web["listen"] = listen

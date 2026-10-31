@@ -97,6 +97,8 @@ type ScanDiagnostics struct {
 	MaxRPS        int                `json:"max_rps"`
 	EffectiveMS   int64              `json:"effective_interval_ms"` // 收尾时实际生效的限速间隔
 	StreamingUsed bool               `json:"streaming_used"`
+	// PreflightReused：首页响应复用了扫描前预检结果（本次扫描未重复请求首页）。
+	PreflightReused bool `json:"preflight_reused,omitempty"`
 }
 
 // techAcc 技术聚合器：同名合并、证据累加、每次独立命中置信 +5（上限 100）。

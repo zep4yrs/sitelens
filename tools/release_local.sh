@@ -21,8 +21,8 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 PUBLISH=0
 [ "${1:-}" = "--publish" ] && PUBLISH=1
 
-# 版本号单一来源：desktop-wails/version.go（切 wails 交付后不再是
-# desktop/package.json——那是 Electron 壳的产物）。
+# 版本号单一来源：desktop-wails/version.go（已退役 Electron 壳的 package.json
+# 见 .archive/desktop-electron/，不再是版本权威）。
 VER="$(grep -oP 'const Version = "\K[0-9.]+' "$ROOT/desktop-wails/version.go" | head -1)"
 TAG="v$VER"
 echo "== SiteLens 本地发版（Wails 线）：$VER（tag $TAG）=="
@@ -43,7 +43,7 @@ for f in "$STAGE/sitelens.exe" "$STAGE/engine/sitelens.exe"; do
 done
 echo "  ✓ 壳 + 引擎 PE 头正确"
 
-# 3) 打包 NSIS 安装包（复用 installer/installer.nsi；Linux 上经 ci_nsis_exe.sh
+# 3) 打包 NSIS 安装包（复用 desktop-wails/installer/installer.nsi；Linux 上经 ci_nsis_exe.sh
 #    套 xvfb-run，无 display driver 时 32 位引导程序必秒退）。
 echo "== [3/4] 打包安装包 =="
 mkdir -p "$ROOT/dist/release"
@@ -53,7 +53,7 @@ bash "$ROOT/tools/ci_nsis_exe.sh" \
   -DSRCDIR="$ROOT/dist/wails" \
   -DSTAGEDIR="SiteLens" \
   -DOUTFILE="$OUTFILE" \
-  "$ROOT/installer/installer.nsi"
+  "$ROOT/desktop-wails/installer/installer.nsi"
 [ -s "$OUTFILE" ] || { echo "× 未产出安装包：$OUTFILE" >&2; exit 1; }
 echo "  ✓ 安装包：$OUTFILE（$(stat -c%s "$OUTFILE" 2>/dev/null || wc -c <"$OUTFILE") bytes）"
 

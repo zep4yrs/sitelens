@@ -42,7 +42,7 @@
     var p = {};
     try { p = JSON.parse(localStorage.getItem("sitelens-prefs") || "{}") || {}; } catch (e) { p = {}; }
     if (!p.theme) {
-      try { p.theme = localStorage.getItem("sitelens-theme") || "light"; } catch (e) { p.theme = "light"; }
+      try { p.theme = localStorage.getItem("sitelens-theme") || "auto"; } catch (e) { p.theme = "auto"; }
     }
     if (!p.accent) p.accent = "";
     if (!p.fontScale) p.fontScale = "md";
@@ -188,7 +188,7 @@
       applyFontScale();
     },
     reset: function () {
-      PREFS = { theme: "light", accent: "", fontScale: "md", lang: "zh-CN" };
+      PREFS = { theme: "auto", accent: "", fontScale: "md", lang: "zh-CN" };
       savePrefs(PREFS);
       applyTheme();
       applyAccent();

@@ -4,7 +4,11 @@
 import fs from "fs";
 
 const TOKEN = process.env.CNB_TOKEN;
-const TAG = process.env.SITLENS_TAG || "v" + JSON.parse(fs.readFileSync(new URL("../desktop/package.json", import.meta.url), "utf8")).version;
+// 版本号单一来源：desktop-wails/version.go（与 tools/release_local.sh 同源）。
+const VER_SRC = fs.readFileSync(new URL("../desktop-wails/version.go", import.meta.url), "utf8");
+const VER = (VER_SRC.match(/const Version = "([0-9.]+)"/) || [])[1];
+if (!VER) throw new Error("版本号读取失败：desktop-wails/version.go 缺 const Version");
+const TAG = process.env.SITLENS_TAG || "v" + VER;
 const BODY_FILE = process.env.SITLENS_BODY_FILE;
 const REPO = process.env.SITLENS_REPO || "feng-qiao/sitelens";
 const API = `https://api.cnb.cool/${REPO}`;

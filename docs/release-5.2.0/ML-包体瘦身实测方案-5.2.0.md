@@ -19,7 +19,7 @@
 
 ## 1. 现状体积（实测）
 
-### 1.1 ML 资产逐文件（实测：2026-10-29，`Get-ChildItem models/go/ml_assets | Measure-Object Length -Sum`）
+### 1.1 ML 资产逐文件（实测：2026-10-29，`Get-ChildItem ml/models/go/ml_assets | Measure-Object Length -Sum`）
 
 | 文件 | 字节数 | MiB（1024 进制） | 用途 | 推理必需？ |
 |---|---:|---:|---|---|
@@ -52,7 +52,7 @@
 | sev 词表 + sev 夹具 | 295,216 | 0.28 | 0.04% | 0.03% |
 | 线性对拍夹具 `fixtures.json` | 238,630 | 0.23 | 0.03% | 0.03% |
 
-补充实测：仓库内已内置 `models/onnxruntime/onnxruntime.dll`，**16,462,648 字节（15.70 MiB）**——这份不算在 ML 资产的 748.93 MiB 里，但同属安装包成本。
+补充实测：仓库内已内置 `ml/models/onnxruntime/onnxruntime.dll`，**16,462,648 字节（15.70 MiB）**——这份不算在 ML 资产的 748.93 MiB 里，但同属安装包成本。
 
 ### 1.2 与规划文档数字的对照
 
@@ -135,8 +135,8 @@ int8 单件 69,334,437 B（66.12 MiB），方案①可再省 66.12 MiB → **314
 |---|---|---|
 | CGO | `CGO_ENABLED=1` | ❌ `go env CGO_ENABLED` = **0** |
 | C 编译器 | 能用 `gcc`（Windows 装 mingw-w64 并把 `bin` 加进 PATH） | ❌ `Get-Command gcc` 无结果 |
-| onnxruntime 共享库 | `onnxruntime.dll` | ✅ 仓库已内置 `models/onnxruntime/onnxruntime.dll`（16,462,648 B） |
-| ONNX 资产 | 4 件（fp32 a/b + int8 a/b）、`sev-prior-v3.1.vocab.txt`、`sev-fixtures.json` | ✅ `models/go/ml_assets/` 齐全（见 §1.1） |
+| onnxruntime 共享库 | `onnxruntime.dll` | ✅ 仓库已内置 `ml/models/onnxruntime/onnxruntime.dll`（16,462,648 B） |
+| ONNX 资产 | 4 件（fp32 a/b + int8 a/b）、`sev-prior-v3.1.vocab.txt`、`sev-fixtures.json` | ✅ `ml/models/go/ml_assets/` 齐全（见 §1.1） |
 | 内存 | 4 个 session 常驻约 **1.2 GiB** | 建议 ≥8 GB 机器 |
 | 时间 | CPU 120 条 × 4 模型，约 1–3 分钟（视 CPU）；session 加载数秒 | — |
 | 网络 | **不需要**（Go 依赖已 vendor） | ✅ |
@@ -146,7 +146,7 @@ int8 单件 69,334,437 B（66.12 MiB），方案①可再省 66.12 MiB → **314
 ```powershell
 # 1) 打开 CGO（需 gcc 在 PATH；否则下一步会报 cgo: C compiler "gcc" not found）
 $env:CGO_ENABLED = "1"
-# 2) 共享库：不设则自动找 data/onnxruntime → models/onnxruntime（本仓内建后者）
+# 2) 共享库：不设则自动找 data/onnxruntime → ml/models/onnxruntime（本仓内建后者）
 $env:SITLENS_ORT_DLL = "<仓库根>\models\onnxruntime\onnxruntime.dll"  # 也可不设，测试会自动探测
 # 3) 测量机建议加上这句：前置缺失时「失败」而不是「跳过」，避免跳过被当成通过
 $env:SITLENS_INT8_MEASURE_REQUIRED = "1"
@@ -187,7 +187,7 @@ go test -tags onnx ./internal/ml -run TestSevOnnxInt8VsFp32 -v -count=1 -timeout
 ```
 
 把 `MAE / p95 / max / 翻转率` 四项抄进 §5 的决策矩阵即可得出结论。**夹具文本与真值都随仓库分发
-（`models/go/ml_assets/sev-fixtures.json`），同一份资产在别人的机器上应得到同一数量级的结果。**
+（`ml/models/go/ml_assets/sev-fixtures.json`），同一份资产在别人的机器上应得到同一数量级的结果。**
 
 ### 4.5 当前本机实测状态（如实记录）
 
@@ -308,15 +308,15 @@ python -m ml.export_sev_v31_pair
 | 安装包/仓库合计 | 891.4 MB | `docs/bug清单-5.1.0.md` BUG-035 实测构成表；`docs/release-5.2.0/升级规划-5.2.0.md` §04 |
 | ML 资产合计 | 748.9 MB（84%） | 同上；本文实测 785,312,460 B = 748.93 MiB |
 | 4 个 ONNX 合计 | 643.3 MB | 同上；本文实测 674,541,084 B = 643.29 MiB |
-| 各文件字节数 | §1.1 表 | 实测：`Get-ChildItem models/go/ml_assets -File \| Measure-Object Length -Sum`（2026-10-29） |
-| `onnxruntime.dll` | 16,462,648 B | 实测：`models/onnxruntime/onnxruntime.dll` |
+| 各文件字节数 | §1.1 表 | 实测：`Get-ChildItem ml/models/go/ml_assets -File \| Measure-Object Length -Sum`（2026-10-29） |
+| `onnxruntime.dll` | 16,462,648 B | 实测：`ml/models/onnxruntime/onnxruntime.dll` |
 | Python 侧 int8 对拍 | MAE 0.0127（logits 尺度）< 0.05 闸门 | `docs/release-5.0.0/TRAINING_PARAMS.md` §3.9（2026-09-29 部署重训记录）；代码闸门 `ml/export_sev_v31_pair.py:111-112` |
 | Python 侧导出闸门 | fp32 MAE<0.02、int8 MAE<0.05（logits） | `TRAINING_PARAMS.md` §3.1（ONNX 导出条目）；`ml/export_sev_v31_pair.py:10` |
 | 单模/集成 test MAE | 1.0722 / 1.0699 | `TRAINING_PARAMS.md` §3.9 |
 | 引擎模型 glob 顺序 | fp32 → int8 → 单文件 | `internal/engine/ml.go:93-106` |
 | 集成平均口径 | logits 平均 ×10，clamp 0-10 | `internal/ml/sev_onnx.go:85-118` |
 | 呈现「分数 ± 1.07」 | — | `web/app.js:528,544-546` |
-| 夹具规模 | n=120，seq=192，ensemble="v3.1 a+b" | 实测：`models/go/ml_assets/sev-fixtures.json` 顶层字段 |
+| 夹具规模 | n=120，seq=192，ensemble="v3.1 a+b" | 实测：`ml/models/go/ml_assets/sev-fixtures.json` 顶层字段 |
 | **Go 侧 int8 vs fp32 精度数字** | **待实测** | 本机无 CGO/gcc 无法执行；命令见 §4.3，测试见 `internal/ml/sev_onnx_int8_test.go` |
 
 > 本机环境实测（供复核）：`go env CGO_ENABLED` = `0`；`Get-Command gcc` 无结果；

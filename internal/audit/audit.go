@@ -203,9 +203,11 @@ func run(root string, cfg config.AuditConfig, onProgress func(done, total int, m
 			continue
 		}
 		// 25A：finding 路径写相对斜杠路径（与 sources/contents 同键）——
-		// 前端标注/跳转按此对齐；绝对路径+反斜杠曾致标注映射失败
+		// 前端标注/跳转按此对齐；绝对路径+反斜杠曾致标注映射失败。
+		// 单文件审计（root==fp）时 Rel 返回 "."，不是可用路径：退化到基名
+		// （JSON 的 file 与 SARIF 的 artifactLocation.uri 都依赖它）。
 		rel, rerr := filepath.Rel(root, fp)
-		if rerr != nil {
+		if rerr != nil || rel == "." {
 			rel = filepath.Base(fp)
 		}
 		rel = filepath.ToSlash(rel)
@@ -223,6 +225,9 @@ func run(root string, cfg config.AuditConfig, onProgress func(done, total int, m
 		if cfg.ASTEnabled {
 			astFind, an := astAnalyze(fp, data, cfg.MaxFindingsPerRule)
 			for _, f := range astFind {
+				// AST 发现此前写绝对路径，与行级规则口径不一致（同一份报告里
+				// 两种路径形态会破坏前端标注与 SARIF uri 归一）；统一为相对路径
+				f.File = rel
 				rep.Findings = append(rep.Findings, f)
 			}
 			if wb != nil && an != nil {
@@ -236,6 +241,7 @@ func run(root string, cfg config.AuditConfig, onProgress func(done, total int, m
 				if taintHits >= cfg.MaxFindingsPerRule {
 					break
 				}
+				f.File = rel // 同上：统一相对路径
 				rep.Findings = append(rep.Findings, f)
 				taintHits++
 			}

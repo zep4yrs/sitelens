@@ -207,6 +207,7 @@
 <body>
 <script src="/js/common.js"></script>
 <script src="/js/scan-options.js"></script>
+<script src="/js/scan-live.js"></script>
 
 <div class="tw-app">
   <!-- ============ 左：控制台 ============ -->
@@ -267,6 +268,7 @@
           <div class="tw-fold-sep"></div>
           <input class="tb" id="opt-cookie" style="margin-bottom:12px" placeholder="认证会话（可选）Cookie: session=…" autocomplete="off">
           <label class="tw-toggle" style="margin:0"><input type="checkbox" id="opt-ua" class="tw-switch"> 浏览器 UA（应对按 UA 降级的站点）</label>
+          <label class="tw-toggle" style="margin:0"><input type="checkbox" id="opt-preflight" class="tw-switch" checked> 输入后自动预检（1 次只读请求，可关）</label>
       </div>
       <button class="btn tw-run" id="go" onclick="startScan()"><span class="arr">▷</span> 开始扫描</button>
       <p class="hint" id="hint" style="text-align:center"></p>
@@ -361,6 +363,7 @@
     <div class="tw-canvas">
       <!-- 综合扫描：输出画布（空载留白，引导在左栏） -->
       <section class="tw-canvaspane active" data-pane="scan">
+        <div id="plan" class="plan-card" hidden></div>
         <div id="result"></div>
       </section>
       <!-- 网络层检测：输出 -->

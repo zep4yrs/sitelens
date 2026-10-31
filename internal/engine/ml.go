@@ -36,10 +36,10 @@ func (e *Engine) mlFor() *ml.Assets {
 	if e.mlAssets != nil {
 		return e.mlAssets
 	}
-	// 资产目录候选：配置优先 → 运行时常规路径 → 仓库内建 models/（克隆
+	// 资产目录候选：配置优先 → 运行时常规路径 → 仓库内建 ml/models/（克隆
 	// 即用，免配置零拷贝）。候选表收敛在 ml.LocateAssetsDir，对拍测试同源
 	// 引用——曾因两处各自维护、测试漏跟迁移而恒读不到资产。
-	dir := ml.LocateAssetsDir(e.cfg.ML.AssetsDir, "data/go/ml_assets", "models/go/ml_assets")
+	dir := ml.LocateAssetsDir(e.cfg.ML.AssetsDir, "data/go/ml_assets", "ml/models/go/ml_assets")
 	if dir == "" {
 		return nil
 	}
@@ -53,10 +53,10 @@ func (e *Engine) mlFor() *ml.Assets {
 }
 
 // sevAssetsDir 解析 sev-prior ONNX 资产目录：与 mlFor 同源候选
-// （配置优先 → 运行时常规路径 → 仓库内建 models/）。
+// （配置优先 → 运行时常规路径 → 仓库内建 ml/models/）。
 //
 // BUG-019：原实现直接用 e.cfg.ML.AssetsDir——默认值 data/go/ml_assets
-// 在仓内不存在（资产随「模型进仓库本体」迁到 models/go/ml_assets），
+// 在仓内不存在（资产随「模型进仓库本体」迁到 ml/models/go/ml_assets），
 // 于是 ONNX glob 恒落空、sev_onnx 通道恒不可用并静默回退 NVD 先验。
 // 与 mlFor 一样收敛到 ml.LocateAssetsDir，避免两处各自维护候选表。
 // 候选全不合格时退回配置值：自定义部署可能只投放 ONNX 文件（无线性
@@ -67,7 +67,7 @@ func (e *Engine) sevAssetsDir() string {
 	}
 	if dir := ml.LocateAssetsDir(e.cfg.ML.AssetsDir,
 		filepath.Join("data", "go", "ml_assets"),
-		filepath.Join("models", "go", "ml_assets")); dir != "" {
+		filepath.Join("ml", "models", "go", "ml_assets")); dir != "" {
 		return dir
 	}
 	return e.cfg.ML.AssetsDir
@@ -105,10 +105,10 @@ func (e *Engine) mlSevScorer() *ml.SevScorer {
 		}
 	}
 	vocab := filepath.Join(assets, "sev-prior-v3.1.vocab.txt")
-	// 共享库候选：配置 → 运行时路径 → 仓库内建 models/（克隆即用）
+	// 共享库候选：配置 → 运行时路径 → 仓库内建 ml/models/（克隆即用）
 	dll := e.cfg.ML.OnnxrtDLL
 	dllCands := []string{dll, filepath.Join("data", "onnxruntime", "onnxruntime.dll"),
-		filepath.Join("models", "onnxruntime", "onnxruntime.dll")}
+		filepath.Join("ml", "models", "onnxruntime", "onnxruntime.dll")}
 	dll = ""
 	for _, cand := range dllCands {
 		if cand != "" {
