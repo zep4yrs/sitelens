@@ -62,33 +62,37 @@
   WebView2 工作台渲染、Ctrl+Shift+S/Q 全局快捷键注册）、静默卸载、重装均通过；
   **修复**：旧安装缺少 InstallLocation 时升级会落到默认目录形成双安装，安装器已补
   InstallLocation 与卸载表回退解析；
-- 靶场：本机无 Docker/PHP，使用**自建合成靶场**跑 `benchmark/run.ps1`（10 目标 /
-  SQLi+XSS+CSRF+路径穿越 / 含 2 个安全用例）：P=1.0 R=1.0 F1=1.0、FP=0、FN=0，
-  预期类型覆盖 4/4、目录类型覆盖 13.3%（4/30）；**这不是 DVWA/pikachu 标准矩阵**，
-  标准矩阵仍待有 Docker 环境补跑；明细与复现见
-  [`benchmark-selfhosted-2026-11-01.md`](benchmark-selfhosted-2026-11-01.md)；
-- 待补：标准靶场矩阵、SARIF GitHub code scanning 解析；
-  安装包体积 / SHA256：135,534,192 字节（约 129.3 MiB）/
-  `37DBC64DD9B409792BE02452DC2DD87A2700599B8E5D9236CD7BA072D985D4C9`。
+- 靶场：本地两套验收——
+  ① 自建合成靶场（10 目标：SQLi/XSS/CSRF/路径穿越 + 安全×2）：P=1.0 R=1.0 F1=1.0、FP=0、FN=0；
+  ② WSL2 标准靶场子集（Ubuntu 24.04 + DVWA low / xss-labs / upload-labs，7 目标）：
+  P=R=F1=0.8333（DVWA SQLi/XSS/LFI/CSRF 与 xsslabs 全中；upload-labs `file_upload`
+  默认 dry-run 未检出，上传表单报 csrf）；
+  两套均**不是完整 DVWA/pikachu 矩阵**，完整矩阵（pikachu/sqli-labs/bWAPP/Juice Shop/WebGoat）待补；
+  明细见 [`benchmark-selfhosted-2026-11-01.md`](benchmark-selfhosted-2026-11-01.md)、
+  [`benchmark-wsl-standard-2026-11-01.md`](benchmark-wsl-standard-2026-11-01.md)；
+- 待补：完整标准矩阵、SARIF GitHub code scanning 解析；
+  安装包体积 / SHA256：135,597,192 字节（约 129.3 MiB）/
+  `531F2361B6E3317768B4C330E5D48B33F3A832EAA9FE725883045AD1AAF9E833`。
 
 ## 已知限制
 
 - 高级 Web 检测默认关；IDOR 需显式会话；logic/upload 默认 dry-run；
 - 企业化“已接线、待规模验证”：无 SSO/HA/多节点/审计日志；
-- 召回无实测基线；benchmark 套件已交付、真实结果待跑；
+- 召回只有本地子集基线（合成 + DVWA/xsslabs/upload-labs）；完整标准矩阵/授权站点未跑；
 - 无埋点/遥测；诊断包不含日志全文；更新通道无官方 checksum；
 - 白盒污点无 sanitizer；非 HTTP 协议通道 DNS 重绑定缺口未修；ML 排序模型未交付；
 - 正式交付仅 Windows；品牌更名暂缓；a11y 20 项允许例外计划 5.3 补；
 - 安装包使用**自签名**证书（内部验收口径，CN=SiteLens Internal Self-Signed，
   RSA3072/SHA256 + DigiCert 时间戳；安装器/壳/引擎均已签）：公网用户会看到
   “未知发布者”，正式发布前需替换为受信任代码签名证书；
-- 标准 DVWA/pikachu 靶场矩阵未跑（本机无 Docker/PHP），当前召回数据来自自建合成靶场。
+- 标准矩阵只跑通 DVWA/xss-labs/upload-labs 子集（WSL2 本地），pikachu/sqli-labs/bWAPP/
+  Juice Shop/WebGoat 未部署（sqli-labs 依赖 PHP 5 `mysql_*`）；upload-labs 的主动上传默认 dry-run。
 
 ## 下载
 
 - 桌面安装器（推荐，全能力）：`SiteLens-Setup-5.2.3.exe`
-  135,534,192 字节（约 129.3 MiB），SHA256
-  `37DBC64DD9B409792BE02452DC2DD87A2700599B8E5D9236CD7BA072D985D4C9`
+  135,597,192 字节（约 129.3 MiB），SHA256
+  `531F2361B6E3317768B4C330E5D48B33F3A832EAA9FE725883045AD1AAF9E833`
   —— **只含引擎与界面，不含命令行工具**；已自签名（证书见上）
 - 命令行工具（CLI，独立分发）：`npm install -g @fengqiao666/sitelens-cli`
 - 升级：桌面端自动覆盖升级；离线环境下载安装器覆盖安装。

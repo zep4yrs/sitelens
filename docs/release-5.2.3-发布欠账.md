@@ -25,6 +25,7 @@
 | 自签名 | ✅ 安装器/壳/引擎均 `Valid` | CN=SiteLens Internal Self-Signed（RSA3072/SHA256 + DigiCert 时间戳）；内部信任，公网需换证书 |
 | 真机 | ✅ 安装/升级/启动/卸载/重装 | 注册表 5.2.3、InstallLocation 正确、引擎 API 5.2.3、WebView2 渲染、快捷键注册；修复旧安装缺 InstallLocation 的双目录问题 |
 | 靶场（自建合成） | ✅ P=1.0 R=1.0 F1=1.0（10 目标/4 类型） | SQLi×4 / XSS×2 / CSRF / 路径穿越 / 安全×2；TP=8 FP=0 FN=0；目录覆盖 13.3%（4/30） |
+| 靶场（WSL 标准子集） | ✅ P=R=F1=0.8333（7 目标） | DVWA low/xsslabs/upload-labs；DVWA SQLi/XSS/LFI/CSRF + xsslabs 全中；upload-labs `file_upload` dry-run 未检出、上传表单报 csrf；CSRF GET 误报已修（FP 3→1） |
 | benchmark 口径 | ✅ 修复情报污染 | `score.mjs` 排除 `verdict=possible`；36 断言 selftest PASS |
 | `govulncheck -tags onnx ./...` | ✅ PASS | `No vulnerabilities found`（MinGW gcc 16.1.0 + CGO_ENABLED=1） |
 | `CGO_ENABLED=1 go test -race ./internal/... ./cmd/...` | ✅ PASS | 全包 race 通过（server 132s / intel 64s / engine 34s；MinGW gcc 16.1.0） |
@@ -106,9 +107,10 @@
 
 ## 2. P1：发布前应完成（不阻断，但影响质量/口径）
 
-1. **真跑 benchmark**（G01/G02）：✅ 已用自建合成靶场（10 目标 / 4 类型，P/R/F1=1.0、FP=0）
-   完成首轮验收；**标准 DVWA/pikachu 矩阵 + 20 个授权样本仍未跑**（本机无 Docker/PHP），
-   对外“更准”只能写“合成靶场已过，标准矩阵待补”。
+1. **真跑 benchmark**（G01/G02）：✅ 已用自建合成靶场（10 目标，P/R/F1=1.0）与
+   WSL 标准靶场子集（DVWA/xsslabs/upload-labs，7 目标，P/R/F1=0.8333）完成首轮验收；
+   **完整标准矩阵（pikachu/sqli-labs/bWAPP/Juice Shop/WebGoat）+ 20 个授权样本仍未跑**，
+   对外“更准”只能写“子集已过，完整矩阵待补”。
 2. **文档同步**：本次已更新 `竞品对标与追赶方案`（v1.1，3.68）、`产品说明`（v5.2.3）、
    `企业版-6.x`（v0.2 已接线）；还需同步：
    - `README.md` 的“为什么是 SiteLens”与下载入口（版本号/能力描述）；
@@ -143,7 +145,7 @@
 - 正式交付仍 Windows-only，macOS/Linux 桌面未交付；
 - 企业化：无 SSO/HA/多节点/审计日志/规模压测；RBAC 实际三档（viewer/operator/admin）；
 - 高级 Web 检测默认关；IDOR 需显式会话；logic/upload 默认 dry-run；
-- 召回无实测基线；benchmark 只有套件与 selftest；
+- 召回只有本地子集基线（合成 10 目标 + WSL 标准子集 7 目标）；完整矩阵未跑；
 - 企业化：SQL 驱动已编入默认构建（SQLite 已 E2E；PostgreSQL 未连真实实例验证）；无 SSO/HA/多节点/审计日志；
 - 品牌更名暂缓；a11y 20 项允许例外。
 
@@ -180,6 +182,8 @@
 - [ ] 4. CI：gofmt / vet / test / 前端 / `-race` / `govulncheck -tags onnx` 全绿（本地已全绿，待 CI 二次确认）；
 - [x] 5. 出包：本机手工等价步骤（Wails shell `go build` + `node tools/build-engine.js --target=engine`
       + NSIS `makensis`；ASCII staging 规避中文路径）；产物已过 PE 校验；
+      **前置：构建机需联网一次**——`desktop-wails` 是无 vendor 的独立 module，首次需解析 wails 依赖
+      （`(cd desktop-wails && go mod download)` 预热，详见 `desktop-wails/README.md`「构建与发版」）；
 - [x] 6. 回填发行说明的体积/SHA256；生成/校验 `latest.yml`；
 - [x] 7. `pwsh scripts/release/check.ps1 -ExpectedVersion 5.2.3 -Strict -RequireSigned`：
       PASS=12 / WARN=0 / FAIL=0 / SKIP=1（SKIP=CLI 包）；
@@ -196,10 +200,11 @@
 ## 6. 一句话结论
 
 **发布物已就绪（内部验收口径）**：版本号 5.2.3、CHANGELOG/发行说明、安装包
-`SiteLens-Setup-5.2.3.exe`（**135,534,192 字节 / SHA256 `37DBC64D…D985D4C9`**，已自签名）、
+`SiteLens-Setup-5.2.3.exe`（**135,597,192 字节 / SHA256 `531F2361…AF9E833`**，已自签名）、
 `latest.yml` 均已生成；`check.ps1 -Strict -RequireSigned` = **PASS=12 / WARN=0 / FAIL=0 / SKIP=1**。
 代码层面 `build/test/vet/race/govulncheck` 全绿，SQLite 后端 E2E 通过；
-真机安装/升级/启动/卸载/重装通过；自建合成靶场 P/R/F1=1.0（FP=FN=0）。
-**剩余非阻断项**：自签名证书非公信（公网发布需换受信任证书）、标准 DVWA/pikachu 矩阵、
+真机安装/升级/启动/卸载/重装通过；自建合成靶场 P/R/F1=1.0；WSL 标准子集 P/R/F1=0.8333
+（CSRF GET 误报已修，file_upload 默认 dry-run 未检出）。
+**剩余非阻断项**：自签名证书非公信（公网发布需换受信任证书）、完整标准矩阵、
 CLI 五平台引擎包（R12 SKIP）、PostgreSQL 真实实例验证、请求级/UI 人工走查。
 这些完成前，对外材料不要宣称“已公信签名/标准矩阵实测召回”。

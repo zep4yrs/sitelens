@@ -39,6 +39,9 @@
 ### 修复
 
 - 目录探测不再把 WAF/兜底 200 页当成真实文件（xgzwk 类站点误报修复）；
+- `csrf-form` 收窄 GET 表单判定：只认密码/更新/删除/转账等强状态字段，排除
+  `submit/button/reset/image` 控件，修复标准靶场（DVWA SQLi/XSS 搜索表单）误报
+  （回归：`internal/passive/passive_test.go:TestCSRFFormGetSearchNotFlagged`）；
 - 安装器：写入 `InstallLocation`，旧安装缺该键时回退 `UninstallString` 父目录，
   修复 5.2.0→5.2.3 静默升级可能落到默认目录形成双安装的问题（真机回归发现）；
 - benchmark `score.mjs`：`vulnerabilities[]` 中 `verdict=possible/potential/unverified`

@@ -195,16 +195,16 @@ var csrfFieldNames = map[string]bool{
 	"xsrf-token": true, "csrf": true, "token": true,
 }
 
-// stateChangeNames 状态变更类字段名（提交/更新/删除/转账/改密等）。
-// 拓宽依据：CSRF 的真实攻击面不止登录表单。DVWA 的 CSRF 模块是一个改密
-// 表单（password_new/password_conf 两字段、GET/POST 皆可触发），它既没有
-// 密码输入框、也不在登录页——旧实现只认 HasPassword，DVWA 这条必然漏报。
-var stateChangeNames = map[string]bool{
+// strongStateChangeNames GET 表单的「强状态变更」字段名。
+//
+// 只用于 GET 表单判定：DVWA CSRF low 档的改密表单（password_new/password_conf）
+// 必须命中；而搜索/查询表单里的 name/id/action 等通用字段、以及 submit 按钮
+// 不能当成状态变更（标准靶场实测：DVWA SQLi/XSS 搜索表单被误报 csrf-form）。
+var strongStateChangeNames = map[string]bool{
 	"password_new": true, "password_conf": true, "password": true, "passwd": true,
 	"new_password": true, "newpassword": true, "pass": true,
-	"update": true, "submit": true, "save": true, "delete": true,
-	"email": true, "transfer": true, "amount": true, "action": true,
-	"name": true, "user": true, "username": true, "comment": true, "content": true,
+	"update": true, "save": true, "delete": true,
+	"transfer": true, "amount": true,
 }
 
 // stateChangeActions 动作语义（URL/action 里出现即视为状态变更端点）。
@@ -247,7 +247,11 @@ func isStateChanging(f htmlx.Form) bool {
 
 func hasStateField(f htmlx.Form) bool {
 	for _, in := range f.Inputs {
-		if stateChangeNames[strings.ToLower(in.Name)] {
+		switch strings.ToLower(in.Type) {
+		case "submit", "button", "reset", "image":
+			continue // 按钮不是状态字段
+		}
+		if strongStateChangeNames[strings.ToLower(in.Name)] {
 			return true
 		}
 	}
