@@ -14,6 +14,9 @@ func (s *Server) hBatchSchedulesList(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 500, map[string]any{"error": "读取定时任务失败：" + err.Error()})
 		return
 	}
+	if list == nil {
+		list = []Schedule{}
+	}
 	writeJSON(w, 200, map[string]any{"schedules": list})
 }
 
