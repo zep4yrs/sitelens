@@ -148,7 +148,7 @@ func TestSavePartialNilSafe(t *testing.T) {
 // 且带 scan_id/续扫目标；已结束任务 → 拒绝状态迁移但数据仍落库（零丢失）。
 func TestSavePartialJobTransitions(t *testing.T) {
 	st := newPartialTestStore(t)
-	s := &Server{jobs: store.NewJobManagerWithCap(10), st: st}
+	s := &Server{jobs: store.NewJobManagerWithCap(10), st: store.WrapTiered(st, 0)}
 	s.jobs.Create("job-run", "scan", map[string]any{"url": "https://t.example"}, 100)
 	s.jobs.Update("job-run", func(j *store.Job) { j.Status = "running" })
 

@@ -97,6 +97,9 @@ type Client struct {
 	maxHops   int
 	maxBody   int
 	cookie    string
+	// extraHeaders 持久附加请求头（CP-02 认证矩阵：Authorization / X-API-Key 等）。
+	// 由 SetHeader 注入；newRequest 合并到每个请求（同名头覆盖默认值）。
+	extraHeaders map[string]string
 	// limiterCfg 限速参数（E1）：令牌桶按 host:port 全进程共享，Client 只携带
 	// 配置；base=0 表示不限速（沿用 Interval<=0 的历史语义，不注册限速器）。
 	limiterCfg limiterConfig
@@ -542,17 +545,33 @@ func (c *Client) Stats() Stats {
 	}
 }
 
-// newRequest 构造带自报 UA 与授权 Cookie 的请求。
+// newRequest 构造带自报 UA、授权 Cookie 与持久附加头的请求。
 func (c *Client) newRequest(method, rawURL string) (*http.Request, error) {
 	req, err := http.NewRequest(method, rawURL, nil)
 	if err != nil {
 		return nil, err
 	}
+	// 快照持久头（SetHeader 可能并发更新）：拷贝后即释放锁，不持锁发请求。
+	c.mu.Lock()
+	cookie := c.cookie
+	var extra map[string]string
+	if len(c.extraHeaders) > 0 {
+		extra = make(map[string]string, len(c.extraHeaders))
+		for k, v := range c.extraHeaders {
+			extra[k] = v
+		}
+	}
+	c.mu.Unlock()
+
 	req.Header.Set("User-Agent", c.userAgent)
 	req.Header.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
 	req.Header.Set("Accept-Language", "zh-CN,zh;q=0.9,en;q=0.8")
-	if c.cookie != "" {
-		req.Header.Set("Cookie", c.cookie)
+	if cookie != "" {
+		req.Header.Set("Cookie", cookie)
+	}
+	// 附加头最后应用：同头名覆盖默认 UA/Accept/Cookie（认证注入优先）。
+	for k, v := range extra {
+		req.Header.Set(k, v)
 	}
 	return req, nil
 }
@@ -561,6 +580,23 @@ func (c *Client) newRequest(method, rawURL string) (*http.Request, error) {
 func (c *Client) SetCookie(cookie string) {
 	c.mu.Lock()
 	c.cookie = cookie
+	c.mu.Unlock()
+}
+
+// SetHeader 运行时注入/覆盖一个持久请求头（CP-02 认证矩阵入口）。
+// 头名去空白后为空则忽略（不 panic、不改客户端状态）；注入后对所有后续
+// 请求生效，同名头覆盖默认 UA/Accept/Cookie。凭据非空由调用方校验
+// （authn.Config 已做空凭据拒绝）。
+func (c *Client) SetHeader(name, value string) {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return
+	}
+	c.mu.Lock()
+	if c.extraHeaders == nil {
+		c.extraHeaders = make(map[string]string, 2)
+	}
+	c.extraHeaders[name] = value
 	c.mu.Unlock()
 }
 

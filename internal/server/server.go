@@ -36,6 +36,7 @@ import (
 	"cnb.cool/feng-qiao/sitelens/internal/loginbrute"
 	"cnb.cool/feng-qiao/sitelens/internal/modules"
 	"cnb.cool/feng-qiao/sitelens/internal/netsec"
+	"cnb.cool/feng-qiao/sitelens/internal/nuclei"
 	"cnb.cool/feng-qiao/sitelens/internal/replay"
 	"cnb.cool/feng-qiao/sitelens/internal/resource"
 	"cnb.cool/feng-qiao/sitelens/internal/sitelens"
@@ -75,8 +76,8 @@ type Server struct {
 	eng     *engine.Engine
 	matcher *sitelens.Matcher
 	kb      atomic.Pointer[intel.KB] // 热替换安全：指向当前知识库快照
-	st      *store.Store
-	jobs    *store.JobManager
+	st      *store.Tiered            // CP-06 分层归档视图：List/Get 跨档透明（签名不变）
+	jobs    *store.JobManager        // 作业注册表（/api/tasks 经可选 List() 接口接入）
 	sem     chan struct{}
 	// apiToken / tech 均以原子快照整体换枪：热更新写侧与请求读侧
 	// 不共享可变内存（此前 string / slice header 无锁换枪 → 撕裂）。
@@ -142,7 +143,9 @@ func New(cfg *config.Config, cfgPath string) (*Server, error) {
 		}
 		s.kb.Store(kb)
 	}
-	st, err := store.New(cfg.Store.DataDir, cfg.Store.MaxRecords)
+	// CP-06 分层归档：主库保留最近 cfg.Store.ArchiveKeep 条（默认 2000），
+	// 更旧记录自动移入 dataDir/archive/<year>.json；List/Get 跨档透明。
+	st, err := store.NewTiered(cfg.Store.DataDir, cfg.Store.ArchiveKeep)
 	if err != nil {
 		return nil, err
 	}
@@ -212,6 +215,12 @@ func (s *Server) Handler() http.Handler {
 			s.serveAsset(w, file)
 		})
 	}
+	// 设计系统页（FE-10）：仅当嵌入资源存在时注册（未发布 design.html 时不加路由）
+	if _, derr := web.FS.ReadFile("design.html"); derr == nil {
+		mux.HandleFunc("GET /design", func(w http.ResponseWriter, r *http.Request) {
+			s.serveAsset(w, "design.html")
+		})
+	}
 	mux.HandleFunc("/", s.hRoot)
 	// 兼容旧路由：独立页已并入工作台标签
 	mux.HandleFunc("/netsec", redirect("/app#netsec"))
@@ -232,6 +241,10 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/osv-sync", s.hOsvSync)
 	mux.HandleFunc("GET /api/osv-sync", s.hOsvStatus)
 	mux.HandleFunc("GET /api/categories", s.hCategories)
+	// 收尾接线：任务聚合（内存作业 + 可续跑批量 + 定时批量）、证书到期资产数据
+	mux.HandleFunc("GET /api/tasks", s.hTasks)
+	mux.HandleFunc("GET /api/assets/cert-expiry", s.hCertExpiry)
+	mux.HandleFunc("GET /api/assets/ports", s.hAssetPorts)
 	// 5.2 反馈与诊断：本机生成脱敏诊断包 + 可选提交到用户自建端点
 	// （产品不做常驻埋点——见《用户服务协议》）。
 	mux.HandleFunc("GET /api/diagnostics", s.hDiagnostics)
@@ -1022,7 +1035,15 @@ func (s *Server) hExport(w http.ResponseWriter, r *http.Request) {
 	}
 	switch r.URL.Query().Get("fmt") {
 	case "json", "":
-		data, _ := json.MarshalIndent(rec.Result, "", "  ")
+		// CP-10：报告 JSON 只增字段——check_runs 汇总为每来源 runs/pass/fail。
+		// nil Result 保持既有 "null" 输出（导入迁移/写库中断形态）。
+		payload := any(rec.Result)
+		if rec.Result != nil {
+			if stats := s.sourceStats(rec.Result.CheckRuns); len(stats) > 0 {
+				payload = exportReport{Result: rec.Result, SourceStats: stats}
+			}
+		}
+		data, _ := json.MarshalIndent(payload, "", "  ")
 		w.Header().Set("Content-Type", "application/json; charset=utf-8")
 		w.Header().Set("Content-Disposition",
 			fmt.Sprintf("attachment; filename=sitelens-%d.json", id))
@@ -1085,6 +1106,23 @@ func (s *Server) hExport(w http.ResponseWriter, r *http.Request) {
 	default:
 		writeJSON(w, 400, map[string]any{"error": "未知格式"})
 	}
+}
+
+// exportReport 报告 JSON 附加字段载体：内嵌 *engine.Result 保持既有字段原序，
+// 仅追加 source_stats（CP-10；additive，omitempty 不改变无 runs 时的旧输出形态）。
+type exportReport struct {
+	*engine.Result
+	SourceStats []checks.SourcePassRate `json:"source_stats,omitempty"`
+}
+
+// sourceStats 每来源 runs/pass/fail 统计（CP-10 报告链路）。
+// 模板条目取本地索引缓存（热路径）；无 runs 时返回 nil（JSON 省略该字段）。
+func (s *Server) sourceStats(runs []checks.CheckRun) []checks.SourcePassRate {
+	if len(runs) == 0 || s.cfg == nil {
+		return nil
+	}
+	entries := nuclei.IndexCached(filepath.Join(s.cfg.Store.DataDir, "nuclei_index.json"))
+	return checks.AggregateCheckRuns(runs, nuclei.SourceResolver(entries))
 }
 
 // hBeacon SSRF 出带回调接收端：记录路径随机令牌（/b/<token>）。

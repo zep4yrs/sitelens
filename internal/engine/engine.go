@@ -67,6 +67,9 @@ type Options struct {
 	OnEvent       func(kind, text string) // 实时事件回调（阶段/命中/认证，nil = 不回调）
 	OnLive        func(LiveStats)         // 实时统计回调（请求/页面/拦截/速率，节流 ~250ms，nil = 不回调）
 	Preflight     *Preflight              // 可选：扫描前预检结果；命中且未过期时复用为首页响应（不重复请求）
+	// CP-05（additive；零值 = 关闭，行为与旧版完全一致）：分片执行。
+	ShardWorkers    int    // >0 启用页面/模板批次分片（SplitShards+RunShards；并发夹到 ≤4）
+	ShardCheckpoint []byte // 可选：模板批次续扫 checkpoint（上次落盘的分片计划 JSON）
 }
 
 // DefaultOptions 对齐 Python 默认：deep 开、checks 关、其余关。
@@ -228,6 +231,15 @@ func (e *Engine) Scan(rawURL string, opts Options, onProgress progress, cancel f
 
 	client := e.newClient(opts)
 	authDone := false
+	// CP-02：认证矩阵注入（SLENS_AUTH_*；无配置零行为变化）。既有表单登录流
+	// 在下方 authn.Login 路径保持不变；矩阵配置非法时显式失败（不静默降级）。
+	if authMode, aerr := applyAuthMatrix(client); aerr != nil {
+		res.Error = aerr.Error()
+		finish()
+		return res
+	} else if authMode != "" {
+		res.Extras["auth_matrix"] = authMode
+	}
 	// 效率轮 E2：请求账本 / 只读 GET 复用 / WAF 拦截隔离。
 	// diag：阶段级请求数/耗时/去重命中/blocked（additive 诊断输出）。
 	// roCache：单次扫描内复用的只读页面响应（首页/种子/爬取页；DAST payload
@@ -489,13 +501,18 @@ func (e *Engine) Scan(rawURL string, opts Options, onProgress progress, cancel f
 	if matcher != nil {
 		onProgress(55, fmt.Sprintf("指纹识别（%d 页）…", len(pages)))
 		live.setPhase("fingerprint", "指纹识别")
+		// CP-11：逐页命中 → 置信信号（CP-05：可选页面批次分片收集）。
+		signals, shardStats := collectFingerprintSignals(pages, stream.fpHits, opts.ShardWorkers)
 		for _, hits := range stream.fpHits {
 			for _, h := range hits {
 				acc.add(h.Name, h.Website, h.Version, h.Evidence, h.Conf, h.Cats)
 			}
 		}
+		res.Technologies = calibrateTechnologies(acc.list(), signals)
+		putPageBatchStats(res.Extras, shardStats)
+	} else {
+		res.Technologies = acc.list()
 	}
-	res.Technologies = acc.list()
 	if col != nil {
 		col.captureTechs(res.Technologies)
 	}
@@ -647,14 +664,17 @@ func (e *Engine) Scan(rawURL string, opts Options, onProgress progress, cancel f
 			// 而这两者的命中概率差一个量级（EXP-1003：info 暴露面类
 			// lift 12 倍 vs 带 CVE 的复现类长期 0 命中）。
 			res.Extras["nuclei"] = stat
-			nHits, nRuns := checks.RunListWithLog(client, baseURL, nl, e.cfg.Checks.Workers, cancelled,
+			// CP-05：模板批次接入分片执行（默认 ShardWorkers=0 走原路径）。
+			nHits, nRuns, shardInfo := runCheckList(client, baseURL, nl,
+				e.cfg.Checks.Workers, cancelled,
 				func(done, total int, msg string) {
 					if total > 0 {
 						onProgress(84, fmt.Sprintf("nuclei %d/%d", done, total))
 					}
 				}, func(h checks.Hit) {
 					emit("hit", h.Severity+" · "+h.Title+" — "+h.URL)
-				})
+				}, opts.ShardWorkers, opts.ShardCheckpoint)
+			putShardStats(res.Extras, "templates", shardInfo)
 			res.CheckRuns = append(res.CheckRuns, nRuns...)
 			for _, h := range nHits {
 				// 被 WAF/限流拦截的响应不参与判定（同 checks 通道）。

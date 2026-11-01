@@ -127,7 +127,7 @@ func (s *Server) SavePartialJob(jobID string, res *engine.Result, options map[st
 	if s == nil || s.st == nil {
 		return 0, nil
 	}
-	scanID, rec := SavePartialAt(s.st, res, options, interruptedPhase)
+	scanID, rec := SavePartialAt(s.st.Store, res, options, interruptedPhase)
 	if rec != nil {
 		rec.JobID = jobID
 	}

@@ -526,3 +526,49 @@ html:not(.dark) .badge.ok { color: #166534; }
 html:not(.dark) .badge.warn { color: #92400e; }
 html:not(.dark) .badge.danger { color: #b91c1c; }
 html:not(.dark) .badge.info { color: #075985; }
+/* ==========================================================================
+   5.2.x 收尾二：CP-09 证书到期卡 / XC-01 任务中心抽屉（FE-10 预览页见 /design）
+   ========================================================================== */
+
+/* ---- CP-09：网络层页签「证书到期」小卡片（剩余天数 + 颜色分级） ---- */
+.cert-card { margin-top: 12px; padding: 10px 12px; border: 1px solid var(--border);
+  border-left: 3px solid var(--muted-fg); border-radius: var(--radius-md);
+  background: var(--card); box-shadow: var(--shadow-2xs); }
+.cert-card[hidden] { display: none !important; }
+.cert-line { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.cert-title { font-size: 12.5px; color: var(--muted-fg); font-family: var(--font-mono); }
+.cert-sub { margin-top: 4px; font-size: 11.5px; color: var(--muted-fg); word-break: break-all; }
+.cert-card.ok { border-left-color: var(--ok); }
+.cert-card.warn { border-left-color: var(--warn); }
+.cert-card.danger { border-left-color: var(--danger); }
+
+/* ---- XC-01：任务中心抽屉（工作台右上角按钮触发；关闭即停止轮询） ---- */
+.tasks-btn { position: relative; }
+.tasks-backdrop { position: fixed; inset: 0; z-index: 130; background: rgba(15, 23, 42, .38); }
+.tasks-backdrop[hidden] { display: none !important; }
+.tasks-drawer { position: fixed; top: 0; right: 0; bottom: 0; z-index: 131;
+  width: min(430px, 92vw); display: flex; flex-direction: column;
+  background: var(--card); border-left: 1px solid var(--border);
+  box-shadow: var(--shadow-3); }
+.tasks-drawer[hidden] { display: none !important; }
+.tasks-drawer.open { animation: sl-fadeIn var(--t-med) var(--ease) both; }
+.tasks-head { display: flex; align-items: center; gap: 8px; padding: 12px 14px;
+  border-bottom: 1px solid var(--border); }
+.tasks-head b { font-size: 14.5px; }
+.tasks-head #tasks-meta { flex: 1; }
+.tasks-body { flex: 1; overflow-y: auto; padding: 10px 14px; }
+.tasks-foot { padding: 10px 14px 14px; margin: 0; border-top: 1px solid var(--border); }
+.tasks-row { padding: 10px 0; border-bottom: 1px solid color-mix(in srgb, var(--border) 60%, transparent); }
+.tasks-row:last-child { border-bottom: none; }
+.tasks-row-top { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.tasks-kind { font-size: 13.5px; }
+.tasks-time { margin-left: auto; font-size: 11.5px; color: var(--muted-fg); }
+.tasks-actions { flex: none; }
+.tasks-url { margin-top: 3px; font-size: 11.5px; color: var(--muted-fg); word-break: break-all; }
+.tasks-msg { margin-top: 3px; font-size: 12.5px; color: var(--muted-fg); }
+.tasks-progwrap { display: flex; align-items: center; gap: 8px; margin-top: 6px; }
+.tasks-progwrap .progressbar { flex: 1; margin: 0; }
+.tasks-empty { display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 10px; min-height: 42vh; color: var(--muted-fg); font-size: 13px; text-align: center; }
+.tasks-empty .big { font-size: 30px; opacity: .5; }
+@media (prefers-reduced-motion: reduce) { .tasks-drawer.open { animation: none; } }

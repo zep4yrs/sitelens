@@ -1,0 +1,418 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>设计系统与组件预览 — SiteLens</title>
+<script>if(localStorage.getItem("sitelens-theme")==="dark")document.documentElement.classList.add("dark")</script>
+<!-- FE-10 组件预览页：自包含静态页（无接口依赖）。样式全部消费 app.css/tokens.css
+     的既有令牌与组件；本页只额外声明预览页自身的排版（不在 app.css 里加一次性样式）。 -->
+<link rel="stylesheet" href="/css/tokens.css">
+<link rel="stylesheet" href="/css/app.css">
+<style>
+  body { padding-top: 0; }
+  .page.design { max-width: 1120px; }
+  .design-head { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; margin-bottom: 6px; }
+  .design-head h1 { margin: 0; }
+  .design-head .right { margin-left: auto; display: flex; gap: 8px; }
+  .demo-sec { margin: 30px 0 0; padding-top: 18px; border-top: 1px solid var(--border); }
+  .demo-sec > .sec-title { margin-top: 0; }
+  .demo-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 12px; }
+  .demo-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin: 8px 0; }
+  .demo-label { min-width: 96px; font-size: 12px; color: var(--muted-fg); font-family: var(--font-mono); }
+  .demo-box { padding: 16px; border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--card); }
+  .demo-box > .demo-label { display: block; margin-bottom: 8px; }
+  .swatches { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 8px; }
+  .swatch { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border: 1px solid var(--border);
+    border-radius: var(--radius-sm); background: var(--card); cursor: pointer; }
+  .swatch:hover { background: var(--accent); }
+  .swatch .chip-color { width: 26px; height: 26px; flex: none; border-radius: 6px; border: 1px solid var(--border); }
+  .swatch .meta { min-width: 0; }
+  .swatch .name { display: block; font-family: var(--font-mono); font-size: 11.5px; color: var(--muted-fg); }
+  .swatch .val { display: block; font-family: var(--font-mono); font-size: 12.5px; }
+  .swatch .ratio { margin-left: auto; font-family: var(--font-mono); font-size: 11.5px; color: var(--muted-fg); }
+  .swatch .ratio.pass { color: var(--ok); }
+  .swatch .ratio.fail { color: var(--danger); }
+  .scale-bar { height: 8px; border-radius: var(--radius-pill); background: var(--secondary); overflow: hidden; margin-top: 6px; }
+  .scale-bar i { display: block; height: 100%; background: var(--primary); }
+  .kbd { padding: 1px 6px; font-family: var(--font-mono); font-size: 12px; background: var(--muted);
+    border: 1px solid var(--border); border-bottom-width: 2px; border-radius: 4px; }
+  .demo-code { margin: 6px 0 0; padding: 8px 10px; font-family: var(--font-mono); font-size: 11.5px;
+    background: var(--muted); border-radius: var(--radius-sm); overflow-x: auto; white-space: pre; }
+  .status-demo { display: grid; gap: 8px; }
+  .status-line { display: flex; align-items: center; gap: 8px; font-size: 13px; }
+  .toast-demo { position: static; opacity: 1; transform: none; display: inline-block; margin: 0 8px 8px 0; pointer-events: auto; }
+  .a11y-note { font-size: 12.5px; color: var(--muted-fg); line-height: 1.9; }
+  .a11y-note code { font-family: var(--font-mono); font-size: 12px; }
+</style>
+</head>
+<body>
+<script src="/js/common.js"></script>
+
+<main class="page design">
+  <div class="design-head">
+    <h1>设计系统 / 组件预览</h1>
+    <span class="hint" style="margin:0">FE-10 · 静态自包含页（引用 /css/tokens.css + /css/app.css + /js/common.js）</span>
+    <span class="right">
+      <button type="button" class="btn ghost small" onclick="slDemoToggleTheme()">切换明暗</button>
+      <a class="btn ghost small" href="/app">返回工作台</a>
+    </span>
+  </div>
+  <p class="sub">本页是 <code class="mono">web/css/app.css</code> 的活契约：
+    所有组件只消费 design tokens（<code class="mono">--ok / --danger / --radius-md / --space-4 / --shadow-3 / --t-med</code>…），
+    新组件请先在这里加样例、再在业务页使用。深色主题为 <code class="mono">html.dark</code>（common.js 切换，auto 跟随系统）。</p>
+
+  <!-- ============ 1. 令牌色板 ============ -->
+  <section class="demo-sec" id="tokens">
+    <div class="sec-title">设计令牌 <span class="count">来自 tokens.css（点击色块复制值）</span></div>
+    <p class="hint" style="margin:0 0 10px">颜色行右侧是相对 <code class="mono">--background</code> 的 WCAG 对比度；
+      ≥4.5:1 标绿（正文级）、2.5–4.5:1 标灰（大字/图形可用）、其余标红（仅装饰）。</p>
+    <div class="swatches" id="swatches"></div>
+    <div class="demo-grid" style="margin-top:14px">
+      <div class="demo-box"><span class="demo-label">圆角刻度</span>
+        <div class="demo-row"><span class="badge">--radius-sm</span><span class="badge">--radius</span><span class="badge">--radius-md</span><span class="badge">--radius-lg</span></div>
+        <div class="demo-row">
+          <span style="width:34px;height:34px;background:var(--secondary);border:1px solid var(--border);border-radius:var(--radius-sm)"></span>
+          <span style="width:34px;height:34px;background:var(--secondary);border:1px solid var(--border);border-radius:var(--radius)"></span>
+          <span style="width:34px;height:34px;background:var(--secondary);border:1px solid var(--border);border-radius:var(--radius-md)"></span>
+          <span style="width:34px;height:34px;background:var(--secondary);border:1px solid var(--border);border-radius:var(--radius-lg)"></span>
+        </div>
+      </div>
+      <div class="demo-box"><span class="demo-label">间距刻度（4 的倍数）</span>
+        <div class="demo-row" id="spacing-demo"></div>
+      </div>
+      <div class="demo-box"><span class="demo-label">阴影层级</span>
+        <div class="demo-row">
+          <span style="width:52px;height:34px;background:var(--card);border-radius:var(--radius-sm);box-shadow:var(--shadow-2xs)"></span>
+          <span style="width:52px;height:34px;background:var(--card);border-radius:var(--radius-sm);box-shadow:var(--shadow-1)"></span>
+          <span style="width:52px;height:34px;background:var(--card);border-radius:var(--radius-sm);box-shadow:var(--shadow-2)"></span>
+          <span style="width:52px;height:34px;background:var(--card);border-radius:var(--radius-sm);box-shadow:var(--shadow-3)"></span>
+        </div>
+      </div>
+      <div class="demo-box"><span class="demo-label">动效（三档时长 + 签名缓动）</span>
+        <div class="demo-row"><span class="badge">--t-fast 150ms</span><span class="badge">--t-med 250ms</span><span class="badge">--t-slow 400ms</span></div>
+        <div class="scale-bar" title="--ease cubic-bezier(.2,0,0,1)"><i style="width:62%"></i></div>
+        <p class="hint" style="margin:6px 0 0">prefers-reduced-motion 时动画关闭（各组件已内置降级）。</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ 2. 按钮 ============ -->
+  <section class="demo-sec" id="buttons">
+    <div class="sec-title">按钮 <span class="count">.btn / .ghost / .small / .danger / :disabled</span></div>
+    <div class="demo-row">
+      <span class="demo-label">常规</span>
+      <button type="button" class="btn">主操作</button>
+      <button type="button" class="btn ghost">次操作</button>
+      <button type="button" class="btn ghost small">小号次操作</button>
+      <button type="button" class="btn danger">危险操作</button>
+      <button type="button" class="btn" disabled>禁用</button>
+    </div>
+    <div class="demo-row">
+      <span class="demo-label">图标按钮</span>
+      <button type="button" class="theme-btn" aria-label="切换明暗（图标按钮示例）">◐</button>
+      <span class="hint" style="margin:0">图标按钮必须有 aria-label；SVG 加 aria-hidden="true"。</span>
+    </div>
+    <pre class="demo-code">&lt;button type="button" class="btn ghost small"&gt;次操作&lt;/button&gt;</pre>
+  </section>
+
+  <!-- ============ 3. 表单 ============ -->
+  <section class="demo-sec" id="forms">
+    <div class="sec-title">表单 <span class="count">.url-input / .tb / .sel / textarea</span></div>
+    <div class="demo-grid">
+      <div class="demo-box">
+        <span class="demo-label">url-input（单行，等宽）</span>
+        <input class="url-input" placeholder="https://example.com" aria-label="目标网址示例">
+        <p class="hint">聚焦态使用 --ring 做 3px 光晕；占位色 = --muted-fg。</p>
+      </div>
+      <div class="demo-box">
+        <span class="demo-label">tb（行内小输入）</span>
+        <input class="tb" placeholder="example.com" aria-label="行内输入示例">
+        <div class="demo-row" style="margin:8px 0 0">
+          <select class="sel" aria-label="选择器示例"><option>默认选项</option><option>第二项</option></select>
+          <span class="hint" style="margin:0">.sel 与 .tb 同高 38px。</span>
+        </div>
+      </div>
+      <div class="demo-box">
+        <span class="demo-label">textarea / 文本域</span>
+        <textarea class="tb" style="height:74px;padding:8px 12px;font-family:var(--font-mono)" placeholder="多行输入示例" aria-label="多行输入示例"></textarea>
+      </div>
+      <div class="demo-box">
+        <span class="demo-label">原生控件（复选框/单选）</span>
+        <label class="hint" style="margin:0;display:flex;gap:6px;align-items:center;font-size:13px">
+          <input type="checkbox" checked> 复选框示例
+        </label>
+        <label class="hint" style="margin:6px 0 0;display:flex;gap:6px;align-items:center;font-size:13px">
+          <input type="radio" name="demo-radio" checked> 单选 A
+        </label>
+        <label class="hint" style="margin:6px 0 0;display:flex;gap:6px;align-items:center;font-size:13px">
+          <input type="radio" name="demo-radio"> 单选 B
+        </label>
+        <p class="hint" style="margin:8px 0 0">工作台的三维芯片 / iOS 开关（.chip / .seg / .tw-switch）样式在 app.html 页内，未进 app.css。</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ 4. 徽章 ============ -->
+  <section class="demo-sec" id="badges">
+    <div class="sec-title">徽章 <span class="count">.badge + ok / warn / danger / info / acc</span></div>
+    <div class="demo-row">
+      <span class="demo-label">语义</span>
+      <span class="badge">默认</span>
+      <span class="badge ok">通过 / 完成</span>
+      <span class="badge warn">警告 / 临期</span>
+      <span class="badge danger">危险 / 失败</span>
+      <span class="badge info">信息 / 运行中</span>
+      <span class="badge acc">强调</span>
+    </div>
+    <div class="demo-row">
+      <span class="demo-label">状态机</span>
+      <span class="badge info">运行中</span>
+      <span class="badge">排队中</span>
+      <span class="badge ok">完成</span>
+      <span class="badge warn">已中断</span>
+      <span class="badge danger">失败</span>
+      <span class="badge">已取消</span>
+    </div>
+    <p class="hint" style="margin:6px 0 0">浅色主题下 ok/warn/danger/info 文字对比度已调至 ≥4.5:1（app.css 末端覆盖，深色主题不变）。</p>
+  </section>
+
+  <!-- ============ 5. 状态卡 / 统计卡 ============ -->
+  <section class="demo-sec" id="cards">
+    <div class="sec-title">状态卡与统计卡 <span class="count">.card / .summary / .cell</span></div>
+    <div class="summary" style="margin-bottom:12px">
+      <div class="cell"><span>扫描次数</span><b>128</b></div>
+      <div class="cell"><span>站点数</span><b>42</b></div>
+      <div class="cell"><span>平均技术数</span><b>6.3</b></div>
+      <div class="cell"><span>发现数</span><b>17</b></div>
+    </div>
+    <div class="demo-grid">
+      <div class="card">
+        <div class="status-line"><span class="badge info">运行中</span><b>扫描 example.com</b></div>
+        <div class="progressbar" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="62" aria-label="示例进度"><i style="width:62%"></i></div>
+        <p class="hint" style="margin:0">阶段：主动探测 · 62%</p>
+      </div>
+      <div class="card">
+        <div class="status-line"><span class="badge ok">完成</span><b>扫描完成</b></div>
+        <p class="hint" style="margin:8px 0 0">记录 #128 · 2026-11-01 08:00 · 用时 12.4s</p>
+      </div>
+      <div class="card" style="border-left:3px solid var(--warn)">
+        <div class="status-line"><span class="badge warn">已中断</span><b>部分结果已保存</b></div>
+        <p class="hint" style="margin:8px 0 0">已采集 12 页 / 6 项技术；可继续扫描。</p>
+        <div class="demo-row" style="margin:8px 0 0"><button type="button" class="btn small">继续扫描</button></div>
+      </div>
+      <div class="card" style="border-left:3px solid var(--danger)">
+        <div class="status-line"><span class="badge danger">失败</span><b>目标不可达</b></div>
+        <p class="hint" style="margin:8px 0 0">DNS 解析失败 / 连接超时；已记录诊断信息。</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ 6. 骨架 / 空态 / 进度 ============ -->
+  <section class="demo-sec" id="states">
+    <div class="sec-title">加载态与空态 <span class="count">.skeleton / .empty / .progressbar</span></div>
+    <div class="demo-grid">
+      <div class="demo-box">
+        <span class="demo-label">骨架屏（shimmer）</span>
+        <div class="skeleton" style="height:14px;margin-bottom:8px"></div>
+        <div class="skeleton" style="height:14px;width:72%;margin-bottom:8px"></div>
+        <div class="skeleton" style="height:14px;width:46%"></div>
+      </div>
+      <div class="demo-box">
+        <span class="demo-label">空态</span>
+        <div class="empty" style="min-height:120px;padding:16px">
+          <span class="big" aria-hidden="true">▤</span>
+          <span>暂无数据 —— 去工作台扫一个站点吧</span>
+        </div>
+      </div>
+      <div class="demo-box">
+        <span class="demo-label">进度条 / 提示行</span>
+        <div class="progressbar"><i style="width:38%"></i></div>
+        <p class="hint" style="margin:6px 0 0">.hint = 12.5px 次级提示；.muted = 更弱的辅助文本。</p>
+        <p class="muted" style="font-size:13px;margin:4px 0 0">muted 文本示例</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ 7. 弹层 ============ -->
+  <section class="demo-sec" id="dialogs">
+    <div class="sec-title">弹层 <span class="count">.sl-dialog-backdrop / .sl-dialog（role=dialog + aria-modal）</span></div>
+    <div class="demo-row">
+      <button type="button" class="btn" id="demo-dialog-btn" onclick="slDemoDialog()">打开示例弹层</button>
+      <span class="hint" style="margin:0">Esc 关闭、点遮罩关闭、Tab 焦点陷阱、关闭后焦点回到触发按钮——均由 common.js 的 slDialog 统一处理。</span>
+    </div>
+    <div class="sl-dialog-backdrop" id="demo-dialog" hidden>
+      <div class="sl-dialog" role="dialog" aria-modal="true" aria-labelledby="demo-dialog-title">
+        <div class="sl-dialog-head">
+          <h2 class="sl-dialog-title" id="demo-dialog-title">示例弹层</h2>
+          <button type="button" class="btn ghost small sl-dialog-close" aria-label="关闭示例弹层"
+                  onclick="slDemoClose()">✕</button>
+        </div>
+        <p style="margin:0;font-size:13.5px">这是通用弹层外观：标题 + 关闭按钮 + 任意内容。
+          业务弹层直接复用这组类名即可获得一致的无障碍行为与深色主题适配。</p>
+        <p class="sl-dialog-note">sl-dialog-note：弱化的脚注文本。</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ 8. 表格 ============ -->
+  <section class="demo-sec" id="tables">
+    <div class="sec-title">表格 <span class="count">.tbl-wrap / table.list</span></div>
+    <div class="tbl-wrap">
+      <table class="list">
+        <thead><tr><th>记录</th><th>站点</th><th>状态</th><th>发现</th><th>扫描时间</th></tr></thead>
+        <tbody>
+          <tr><td class="mono">#128</td><td class="mono">example.com</td><td><span class="badge ok">完成</span></td><td>3</td><td class="mono">2026-11-01 08:00</td></tr>
+          <tr><td class="mono">#127</td><td class="mono">a.example.org</td><td><span class="badge warn">已中断</span></td><td>1</td><td class="mono">2026-11-01 07:40</td></tr>
+          <tr><td class="mono">#126</td><td class="mono">b.example.net</td><td><span class="badge danger">失败</span></td><td>0</td><td class="mono">2026-10-31 22:10</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- ============ 9. 提示 / 动效 ============ -->
+  <section class="demo-sec" id="feedback">
+    <div class="sec-title">提示与动效 <span class="count">.toast / fade-up / prefers-reduced-motion</span></div>
+    <div class="demo-row">
+      <span class="demo-label">Toast</span>
+      <span class="toast toast-demo">普通提示</span>
+      <span class="toast toast-demo ok">成功提示</span>
+      <span class="toast toast-demo err">错误提示</span>
+    </div>
+    <p class="hint" style="margin:6px 0 0">实际 toast 固定在右下角、2.6s 自动消失（common.js 的 <code class="mono">toast(msg, cls)</code>）；此处仅展示配色。</p>
+    <div class="demo-row" style="margin-top:12px">
+      <span class="demo-label">入场动效</span>
+      <span class="badge fade-up">fade-up（--t-med --ease）</span>
+      <span class="badge">骨架 shimmer 1.4s</span>
+      <span class="badge">prefers-reduced-motion: reduce 时全部关闭</span>
+    </div>
+  </section>
+
+  <!-- ============ 10. 无障碍约定 ============ -->
+  <section class="demo-sec" id="a11y">
+    <div class="sec-title">无障碍与质量门禁 <span class="count">约定（脚本校验见 scripts/frontend-check.mjs）</span></div>
+    <div class="a11y-note">
+      · 所有交互控件有可访问名（可见文本、<code>aria-label</code> 或 <code>aria-labelledby</code>）；图标 SVG 加 <code>aria-hidden="true"</code> / <code>focusable="false"</code>。<br>
+      · 焦点可见态统一用 <code>:focus-visible</code> + <code>--ring</code>；弹层用 <code>role="dialog" aria-modal="true"</code> 且焦点陷阱交给 <code>window.slDialog</code>。<br>
+      · 正文文字对比度 ≥4.5:1（浅色主题徽章已修）；<code>键盘</code>：<kbd class="kbd">Ctrl</kbd>+<kbd class="kbd">Enter</kbd> 开始扫描、<kbd class="kbd">Esc</kbd> 取消/关闭弹层、<kbd class="kbd">Ctrl</kbd>+<kbd class="kbd">E</kbd> 导出（CJK 输入法组合期间不触发）。<br>
+      · 状态变化用 <code>role="status" / aria-live="polite"</code>（如证书到期卡、任务进度）——不要用颜色单独传达状态。
+    </div>
+  </section>
+
+  <p class="hint" style="margin-top:26px">文件：<code class="mono">web/design.html</code>（新增页，路由由 Lead 接线：建议 <code class="mono">/design → design.html</code>，
+    并加入 server.go 的页面白名单）。本页无接口调用，断网/引擎未启动也能打开。</p>
+</main>
+
+<script>
+/* ---------------- 令牌色板（读 computed style，保证预览与真实主题一致） ---------------- */
+var COLOR_TOKENS = [
+  "--background", "--foreground", "--card", "--muted", "--accent", "--secondary",
+  "--muted-fg", "--border", "--input", "--ring",
+  "--primary", "--primary-fg", "--ok", "--warn", "--danger", "--info"
+];
+var SPACE_TOKENS = ["--space-1", "--space-2", "--space-3", "--space-4", "--space-5", "--space-6"];
+
+function cssVar(name) {
+  return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+}
+function parseColor(v) {
+  v = String(v || "").trim();
+  var m = /^#([0-9a-f]{3}|[0-9a-f]{6})$/i.exec(v);
+  if (m) {
+    var h = m[1];
+    if (h.length === 3) h = h[0] + h[0] + h[1] + h[1] + h[2] + h[2];
+    return [parseInt(h.slice(0, 2), 16), parseInt(h.slice(2, 4), 16), parseInt(h.slice(4, 6), 16)];
+  }
+  m = /^rgba?\(([^)]+)\)$/i.exec(v);
+  if (m) {
+    var p = m[1].split(",").map(function (x) { return parseFloat(x); });
+    return [p[0] || 0, p[1] || 0, p[2] || 0];
+  }
+  return null;
+}
+function relLum(rgb) {
+  function f(x) {
+    x = x / 255;
+    return x <= 0.03928 ? x / 12.92 : Math.pow((x + 0.055) / 1.055, 2.4);
+  }
+  return 0.2126 * f(rgb[0]) + 0.7152 * f(rgb[1]) + 0.0722 * f(rgb[2]);
+}
+function contrast(a, b) {
+  var l1 = Math.max(relLum(a), relLum(b));
+  var l2 = Math.min(relLum(a), relLum(b));
+  return (l1 + 0.05) / (l2 + 0.05);
+}
+function escHTML(s) {
+  return String(s == null ? "" : s).replace(/[&<>"']/g, function (c) {
+    return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c];
+  });
+}
+function copyText(t) {
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(t);
+  } else {
+    var ta = document.createElement("textarea");
+    ta.value = t;
+    document.body.appendChild(ta);
+    ta.select();
+    document.execCommand("copy");
+    document.body.removeChild(ta);
+  }
+  if (window.toast) toast("已复制：" + t, "ok");
+}
+function paintTokens() {
+  var bg = parseColor(cssVar("--background")) || [255, 255, 255];
+  var out = COLOR_TOKENS.map(function (name) {
+    var val = cssVar(name);
+    var rgb = parseColor(val);
+    var ratioTxt = "", cls = "";
+    if (rgb) {
+      var r = contrast(rgb, bg);
+      ratioTxt = r.toFixed(2) + ":1";
+      cls = r >= 4.5 ? "pass" : (r >= 2.5 ? "" : "fail");
+    }
+    return '<button type="button" class="swatch" onclick="slDemoCopy(\'' + name + '\')" ' +
+      'title="点击复制令牌值" aria-label="令牌 ' + escHTML(name) + ' ' + escHTML(val) + '">' +
+      '<span class="chip-color" style="background:' + escHTML(val) + '"></span>' +
+      '<span class="meta"><span class="name">' + escHTML(name) + "</span>" +
+      '<span class="val">' + escHTML(val || "-") + "</span></span>" +
+      (ratioTxt ? '<span class="ratio ' + cls + '">' + ratioTxt + "</span>" : "") +
+      "</button>";
+  }).join("");
+  var el = document.getElementById("swatches");
+  if (el) el.innerHTML = out;
+
+  var sp = SPACE_TOKENS.map(function (name) {
+    var v = cssVar(name);
+    return '<span class="badge" title="' + escHTML(name) + '">' + escHTML(name.replace("--space-", "")) + " = " + escHTML(v) + "</span>";
+  }).join("");
+  var spEl = document.getElementById("spacing-demo");
+  if (spEl) spEl.innerHTML = sp;
+}
+function slDemoCopy(name) {
+  var v = cssVar(name);
+  copyText("var(" + name + ") /* " + v + " */");
+}
+function slDemoToggleTheme() {
+  if (window.toggleTheme) window.toggleTheme();
+  else document.documentElement.classList.toggle("dark");
+  setTimeout(paintTokens, 30); // 等 theme 应用后重读 computed value
+}
+function slDemoDialog() {
+  var el = document.getElementById("demo-dialog");
+  if (window.slDialog) window.slDialog.open(el, document.getElementById("demo-dialog-btn"));
+  else el.hidden = false;
+}
+function slDemoClose() {
+  var el = document.getElementById("demo-dialog");
+  if (window.slDialog) window.slDialog.close(el);
+  else el.hidden = true;
+}
+if (document.readyState === "loading") {
+  document.addEventListener("DOMContentLoaded", paintTokens);
+} else {
+  paintTokens();
+}
+</script>
+</body>
+</html>
