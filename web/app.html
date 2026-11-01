@@ -431,9 +431,38 @@
     <div class="tw-progress-row"><div class="progressbar" id="pw" style="display:none"><i id="bar"></i></div></div>
     <div class="adv-note" id="adv-note" role="status" aria-live="polite" hidden></div>
     <div class="tw-canvas">
-      <!-- 综合扫描：输出画布（空载留白，引导在左栏） -->
+      <!-- 综合扫描：输出画布（空态展示 hero：引导/示例/快捷入口/最近历史） -->
       <section class="tw-canvaspane active" data-pane="scan">
         <div id="plan" class="plan-card" hidden></div>
+        <!-- 空态 hero：未扫描时替代右栏空白（扫描开始/有结果隐藏；取消/清空恢复） -->
+        <div class="wb-hero" id="wb-hero">
+          <h2 class="wb-hero-title">输入网址开始</h2>
+          <p class="wb-hero-sub">三步完成一次扫描；结果自动保存到历史，可随时导出。</p>
+          <ol class="wb-hero-steps">
+            <li><b aria-hidden="true">1</b><span>在左栏填写目标网址</span></li>
+            <li><b aria-hidden="true">2</b><span>按需选择范围、验证方式与强度档位</span></li>
+            <li><b aria-hidden="true">3</b><span>点「开始扫描」，或按 <kbd>Ctrl</kbd>+<kbd>Enter</kbd></span></li>
+          </ol>
+          <div class="wb-hero-block">
+            <span class="wb-hero-label">示例目标</span>
+            <div class="wb-hero-chips">
+              <button type="button" class="btn ghost small" data-hero-url="http://127.0.0.1:5011/">http://127.0.0.1:5011/</button>
+              <button type="button" class="btn ghost small" data-hero-url="https://example.com">https://example.com</button>
+            </div>
+          </div>
+          <div class="wb-hero-block">
+            <span class="wb-hero-label">快捷入口</span>
+            <div class="wb-hero-chips">
+              <button type="button" class="btn ghost small" data-hero-goto="batch">批量扫描</button>
+              <button type="button" class="btn ghost small" data-hero-goto="audit">源码审计</button>
+              <a class="btn ghost small" href="/history">历史记录</a>
+            </div>
+          </div>
+          <div class="wb-hero-block" id="wb-hero-recent-wrap" hidden>
+            <span class="wb-hero-label">最近扫描</span>
+            <div class="wb-hero-recent" id="wb-hero-recent"></div>
+          </div>
+        </div>
         <div id="result" role="region" aria-label="扫描结果"></div>
       </section>
       <!-- 网络层检测：输出 -->

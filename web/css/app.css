@@ -573,3 +573,44 @@ html:not(.dark) .badge.info { color: #075985; }
   gap: 10px; min-height: 42vh; color: var(--muted-fg); font-size: 13px; text-align: center; }
 .tasks-empty .big { font-size: 30px; opacity: .5; }
 @media (prefers-reduced-motion: reduce) { .tasks-drawer.open { animation: none; } }
+/* ==========================================================================
+   6.x UI 体验：工作台空态 hero（未扫描时替代右栏空白）
+   ========================================================================== */
+.wb-hero { max-width: 640px; margin: 12px auto 0; padding: 28px 30px;
+  border: 1px solid var(--border); border-radius: var(--radius-lg);
+  background: var(--card); box-shadow: var(--shadow-2); }
+.wb-hero[hidden] { display: none !important; }
+.wb-hero-title { margin: 0 0 6px; font-family: var(--font-mono); font-size: 22px; font-weight: 700; }
+.wb-hero-sub { margin: 0 0 16px; font-size: 13px; color: var(--muted-fg); }
+.wb-hero-steps { list-style: none; margin: 0 0 18px; padding: 0; display: grid; gap: 8px; }
+.wb-hero-steps li { display: flex; align-items: center; gap: 10px; font-size: 13px; }
+.wb-hero-steps b { width: 22px; height: 22px; flex: none; display: grid; place-items: center;
+  border-radius: 50%; background: var(--secondary); color: var(--foreground);
+  font-family: var(--font-mono); font-size: 12px; }
+.wb-hero-steps kbd { padding: 1px 5px; font-family: var(--font-mono); font-size: 11px;
+  background: var(--muted); border: 1px solid var(--border); border-bottom-width: 2px; border-radius: 4px; }
+.wb-hero-block { margin-top: 14px; }
+.wb-hero-label { display: block; margin-bottom: 6px; font-size: 11.5px;
+  color: var(--muted-fg); font-family: var(--font-mono); }
+.wb-hero-chips { display: flex; gap: 8px; flex-wrap: wrap; }
+.wb-hero-recent { display: grid; gap: 6px; }
+.wb-hero-recent-item { display: flex; align-items: center; gap: 8px; padding: 6px 10px;
+  border: 1px solid var(--border); border-radius: 8px; background: var(--muted);
+  color: var(--foreground); font-size: 12.5px; text-decoration: none; }
+.wb-hero-recent-item:hover { background: var(--accent); }
+.wb-hero-recent-item .hint { margin: 0 0 0 auto; white-space: nowrap; }
+@media (max-width: 900px) { .wb-hero { padding: 20px; margin-top: 4px; } }
+
+/* ==========================================================================
+   6.x UI 体验：设置页左侧「设置分组」纵向导航（随 ≤900px 侧栏抽屉折叠）
+   ========================================================================== */
+.settings-nav { display: grid; gap: 2px; padding: 8px 10px 14px; margin-top: 6px; }
+.settings-nav[hidden] { display: none !important; }
+.settings-nav .sn-item { display: flex; align-items: center; gap: 8px; width: 100%;
+  padding: 8px 10px; border: none; border-radius: 8px; background: transparent;
+  color: var(--muted-fg); font: inherit; font-size: 13px; text-align: left; cursor: pointer; }
+.settings-nav .sn-item:hover { background: var(--accent); color: var(--foreground); }
+.settings-nav .sn-item.active { background: var(--secondary); color: var(--foreground); font-weight: 600; }
+.settings-nav .sn-item::before { content: ""; width: 3px; height: 14px; flex: none;
+  border-radius: 2px; background: transparent; }
+.settings-nav .sn-item.active::before { background: var(--primary); }

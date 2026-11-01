@@ -85,7 +85,10 @@
 <script src="/js/common.js"></script>
 
 <div class="tw-app">
-  <aside class="tw-left"><div class="tw-modes tabs" id="tw-modeslot"></div></aside>
+  <aside class="tw-left">
+    <div class="tw-modes tabs" id="tw-modeslot"></div>
+    <nav class="settings-nav" id="settings-nav" aria-label="设置分组"></nav>
+  </aside>
   <div class="tw-right">
     <div class="tw-toolbar">
       <span class="tw-pagetitle">设置</span>
@@ -93,8 +96,7 @@
     </div>
     <div class="tw-canvas">
       <main class="page">
-  <p class="sub">外观与语言即时生效并本机记住；引擎配置保存后：扫描 / 爬取 / Token 立即生效
-    （对下一次扫描），监听地址需重启服务。</p>
+  <p class="sub">外观与语言即时生效；引擎配置保存后对下一次扫描生效，监听地址需重启。</p>
 
   <div class="tabs" id="tabs"></div>
 
@@ -110,14 +112,13 @@
         <button data-v="dark">深色</button>
         <button data-v="auto">跟随系统</button>
       </div>
-      <p class="note">跟随系统：按操作系统的明暗偏好自动切换。</p>
+      <p class="note">跟随系统明暗。</p>
     </div>
 
     <div class="sec">
       <div class="sec-title">主题色（皮肤）</div>
       <div class="swatches" id="swatches"></div>
-      <p class="note">自定义色请用末尾的调色器；选择即时生效并本机记住。换肤只影响本浏览器，
-        不影响其他访问者，也不改动引擎配置。</p>
+      <p class="note">即时生效、本机记住；仅本机生效。</p>
     </div>
 
     <div class="sec">
@@ -136,8 +137,7 @@
         <button data-v="zh-CN">简体中文</button>
         <button data-v="en-US">English</button>
       </div>
-      <p class="note">界面框架（导航 / 设置页）随语言切换；各业务页面正逐步接入，
-        未覆盖文案暂以简体中文显示。</p>
+      <p class="note">界面框架已接入，业务页逐步覆盖。</p>
     </div>
 
     <div class="sec">
@@ -149,7 +149,7 @@
         <button class="btn ghost small" id="skinReset">恢复默认外观</button>
         <span id="skinMsg" style="font-size:13px"></span>
       </div>
-      <p class="note">把配置文本发给同事即可分享同款外观；导入内容仅含主题 / 主题色 / 字号 / 语言四项。</p>
+      <p class="note">可分享同款外观；仅含主题/主题色/字号/语言。</p>
     </div>
   </div>
 
@@ -166,8 +166,7 @@
         <button class="btn danger small" id="clearHist">清空全部扫描历史</button>
         <span id="clearMsg" style="font-size:13px"></span>
       </div>
-      <p class="note">清空为不可恢复操作（删除前请确认无需留档）；单条删除仍可在「历史」页逐条进行。
-        扫描报告可先在「历史」页逐条导出留档。</p>
+      <p class="note">清空不可恢复；单条删除与导出在「历史」页。</p>
     </div>
 
     <div class="sec">
@@ -178,8 +177,7 @@
         <input type="file" id="prefFile" accept="application/json,.json" style="display:none">
         <span id="prefMsg" style="font-size:13px"></span>
       </div>
-      <p class="note">偏好 = 外观 / 语言 / 字号 / 主题色（含 API Token 之外的全部本机设置），
-        导出为 JSON 文件，可在多台机器间迁移。</p>
+      <p class="note">外观/语言/字号/主题色等本机设置（不含 Token），可跨机迁移。</p>
     </div>
 
     <div class="sec">
@@ -203,10 +201,19 @@
       </div>
       <div class="row">
         <label>API Token</label>
-        <input type="text" id="api_token" placeholder="空 = 不启用鉴权">
+        <input type="password" id="api_token" placeholder="空 = 不启用鉴权" autocomplete="new-password">
         <span class="badge hot">立即生效</span>
       </div>
-      <p class="note">设置 Token 后，/api/* 需携带 X-Token 请求头（前端自动携带，存储键 sitelens-token）。</p>
+      <p class="note" id="api_token_note">设置后 /api/* 需 X-Token（前端自动携带，存 sitelens-token）。</p>
+      <div class="row">
+        <label>清除 Token</label>
+        <input type="checkbox" id="api_token_clear">
+        <span class="hint inline">勾选后保存将关闭鉴权</span>
+      </div>
+      <p class="note" id="api_token_local" style="display:none">
+        本机 Token 与服务端不一致。
+        <button class="btn ghost small" type="button" id="tokReset">清除本机 Token 并重载</button>
+      </p>
     </div>
 
     <div class="sec">
@@ -231,7 +238,7 @@
         <label>遵循 robots.txt</label>
         <input type="checkbox" id="respect_robots">
         <span class="badge hot">立即生效</span>
-        <span class="hint inline">扫描本地 / 靶场（robots 全站禁爬）时需关闭</span>
+        <span class="hint inline">本地/靶场（robots 禁爬）需关闭</span>
       </div>
     </div>
 
@@ -240,17 +247,17 @@
       <div class="row">
         <label>AI 总闸（predict）</label>
         <input type="checkbox" id="ml_predict">
-        <span class="hint inline">开启后：cve-tech 产品先验实时调度检测项（提权+核心档位增量纳入，只增不删）、扫描收尾输出 AI 预测。关闭即回到 4.0 扫描行为。</span>
+        <span class="hint inline">开启：按产品先验增量调度检测项并输出 AI 预测；关闭即 4.0 行为。</span>
       </div>
       <div class="row">
         <label>线性严重度兜底（sev_linear）</label>
         <input type="checkbox" id="ml_sev_linear">
-        <span class="hint inline">默认开：NVD/情报行查不到 CVSS 分时，用 0.7MB 线性回归给 sev_score（±1.19 区间呈现，来源徽章「线性模型」）。资产缺失时静默跳过；关闭后无 NVD 分的条目不再给严重度先验。</span>
+        <span class="hint inline">默认开：无 CVSS 分时线性模型给 sev_score（±1.19，徽章「线性模型」）；缺资产静默跳过。</span>
       </div>
       <div class="row">
         <label>严重度模型推理（sev_onnx）</label>
         <input type="checkbox" id="ml_sev_onnx">
-        <span class="hint inline">可选高级包：sev-prior 双种子集成模型给出 sev_score（±1.07 区间呈现，来源徽章「模型推理」）。默认安装包不含 ONNX 模型与运行时，此项默认关；仅在装了 ONNX 高级包的机器上打开才生效，关闭或推理失败自动回退线性/NVD。</span>
+        <span class="hint inline">可选高级包：ONNX 双种子集成（±1.07，徽章「模型推理」）；默认不含模型，失败自动回退。</span>
       </div>
     </div>
 
@@ -260,7 +267,7 @@
         <label>利用级验证</label>
         <input type="checkbox" id="exploit_enabled">
         <span class="badge danger">危险</span>
-        <span class="hint inline">开启后，扫描勾选「利用级验证」时对已验证发现发送受控影响证明探针（只读无害：不落盘、不提权、不外发数据）。gov.cn 政府网站受代码级硬保护，任何配置下都拒绝请求。目标是否可用本工具测试，由你自行判断并承担责任。</span>
+        <span class="hint inline">开启后对已验证发现发只读影响证明探针；gov.cn 硬拒绝；授权与责任自负。</span>
       </div>
     </div>
 
@@ -270,7 +277,7 @@
         <label>rate_interval_ms</label>
         <input type="number" id="rate_interval_ms" min="0">
         <span class="badge hot">立即生效</span>
-        <span class="hint inline">请求最小间隔（限速），0 = 不限</span>
+        <span class="hint inline">请求最小间隔（0 = 不限）</span>
       </div>
       <div class="row">
         <label>单请求超时（秒）</label>
@@ -291,8 +298,7 @@
         <button class="btn ghost" id="osvBtn">从 OSV.dev 同步</button>
         <span id="osvMsg"></span>
       </div>
-      <p class="note">为 vuln_kb 全部 CVE 补全受影响区间与 CVSS 评分（api.osv.dev 公开接口）。
-        结果写入 overrides 文件并即时合并进知识库；同步进行中不可重复触发。</p>
+      <p class="note">为 vuln_kb 补全影响区间与 CVSS（api.osv.dev）；写入 overrides 并即时合并。</p>
     </div>
 
     <div class="sec">
@@ -341,7 +347,7 @@
         <div class="cell"><span>漏洞情报</span><b id="stIntel">-</b></div>
         <div class="cell"><span>NVD 字典</span><b id="stNvd">-</b></div>
       </div>
-      <p class="note">统计为引擎已加载规模；NVD 显示 0 表示尚未同步（update-nvd 可拉取全量 371,755 条）。</p>
+      <p class="note">引擎已加载规模；NVD 为 0 表示未同步（update-nvd 拉取）。</p>
     </div>
   </div>
 
@@ -374,9 +380,7 @@
         <li><b>桌面版怎么手动检查更新？</b>托盘图标右键 → 检查更新。</li>
         <li><b>换电脑迁移？</b>导出偏好；扫描历史整目录拷贝 %APPDATA%\SiteLens\state。</li>
       </ul>
-      <p class="note">反馈请附：引擎版本（关于页）、目标环境特征、脱敏后的请求 / 响应摘要；
-        切勿附带未授权目标的完整数据。反馈前可先阅读下方《用户服务协议》第四条——
-        未授权目标的扫描数据不属于可提交的反馈内容。</p>
+      <p class="note">反馈请附引擎版本、环境特征与脱敏摘要；勿附未授权目标数据。</p>
     </div>
 
     <div class="sec">
@@ -581,8 +585,7 @@
           </tbody>
         </table>
       </div>
-      <p class="note">上表为主要组件摘要，全文声明可在上方「服务与协议」选《开源软件声明》阅读。
-        各组件版权归原作者所有，本项目的分发义务依 GPL-3.0 及各组件许可证履行。</p>
+      <p class="note">主要组件摘要；全文见「服务与协议」→《开源软件声明》。</p>
     </div>
   </div>
 
@@ -603,7 +606,7 @@
         <span class="mono" id="dkDataDir" style="font-size:12px;word-break:break-all">-</span>
         <button class="btn ghost small" id="dkOpenData">打开数据目录</button>
       </div>
-      <p class="note">扫描历史、模板池与偏好都在数据目录；升级与卸载（勾选保留时）不会动它。</p>
+      <p class="note">历史/模板池/偏好均在数据目录；升级卸载不删。</p>
     </div>
 
     <div class="sec">
@@ -611,7 +614,7 @@
       <div class="row">
         <label>开机自启</label>
         <input type="checkbox" id="dkAutoStart">
-        <span class="hint inline">登录 Windows 后自动在后台启动（引擎随壳启动）</span>
+        <span class="hint inline">登录后后台启动（引擎随壳）。</span>
       </div>
       <div class="row">
         <label>点击窗口 × 时</label>
@@ -620,8 +623,7 @@
           <button data-v="quit">直接退出</button>
         </div>
       </div>
-      <p class="note">「收入托盘」下长扫描不会被误关；需要彻底退出用托盘右键菜单的「退出」。
-        窗口大小与位置总是自动记忆，无需设置。</p>
+      <p class="note">「收入托盘」下长扫描不会误关；彻底退出用托盘「退出」。</p>
     </div>
   </div>
       </main>
@@ -670,24 +672,50 @@
     if (dp) dp.removeAttribute("hidden");
   }
   var tabsEl = $("tabs");
-  TABS.forEach(function (t, i) {
-    var b = document.createElement("button");
-    b.className = "tab" + (i === 0 ? " active" : "");
-    b.textContent = t[1];
-    b.addEventListener("click", function () {
-      tabsEl.querySelectorAll(".tab").forEach(function (x) { x.classList.remove("active"); });
-      document.querySelectorAll(".tabpanel").forEach(function (x) { x.classList.remove("active"); });
-      b.classList.add("active");
-      var panel = document.querySelector('.tabpanel[data-tab="' + t[0] + '"]');
-      panel.classList.add("active");
-      location.hash = t[0];
+  var settingsNav = $("settings-nav");
+  /* 统一激活入口：页签行 + 左侧分组导航同步高亮（nav 由 TABS 自动生成） */
+  function activateTab(key, writeHash) {
+    tabsEl.querySelectorAll(".tab").forEach(function (x) {
+      var on = x.getAttribute("data-key") === key;
+      x.classList.toggle("active", on);
+      if (on) x.setAttribute("aria-current", "true");
+      else x.removeAttribute("aria-current");
     });
+    document.querySelectorAll(".tabpanel").forEach(function (p) {
+      p.classList.toggle("active", p.getAttribute("data-tab") === key);
+    });
+    if (settingsNav) {
+      settingsNav.querySelectorAll(".sn-item").forEach(function (x) {
+        var on = x.getAttribute("data-key") === key;
+        x.classList.toggle("active", on);
+        if (on) x.setAttribute("aria-current", "true");
+        else x.removeAttribute("aria-current");
+      });
+    }
+    if (writeHash !== false) location.hash = key;
+  }
+  TABS.forEach(function (t) {
+    var b = document.createElement("button");
+    b.className = "tab";
+    b.textContent = t[1];
+    b.setAttribute("data-key", t[0]);
+    b.setAttribute("role", "tab");
+    b.addEventListener("click", function () { activateTab(t[0]); });
     tabsEl.appendChild(b);
+    if (settingsNav) {
+      var s = document.createElement("button");
+      s.type = "button";
+      s.className = "sn-item";
+      s.textContent = t[1];
+      s.setAttribute("data-key", t[0]);
+      s.addEventListener("click", function () { activateTab(t[0]); });
+      settingsNav.appendChild(s);
+    }
   });
   (function openHash() {
     var h = (location.hash || "").replace("#", "");
     var hit = TABS.some(function (t) { return t[0] === h; });
-    if (hit) tabsEl.children[TABS.map(function (t) { return t[0]; }).indexOf(h)].click();
+    activateTab(hit ? h : TABS[0][0], false);
   })();
 
   /* ---- 分段选择器 ---- */
@@ -844,28 +872,102 @@
   });
 
   /* ---- 引擎配置 ---- */
+  /* D-04 / F5 契约：GET /api/settings **不再返回明文 token**，只给
+     api_token_set（bool）+ api_token_mask（掩码）。旧引擎仍可能回 api_token
+     明文，但那只是「留空保存时原样回写」的兼容值，绝不回填到输入框。 */
+  var tokenState = { set: false, legacy: "" };
+  function paintTokenState() {
+    var tokEl = $("api_token");
+    if (tokEl) {
+      tokEl.value = ""; // 任何情况下都不回填明文（含刚保存的值）
+      tokEl.placeholder = tokenState.set ? "已设置（留空则不修改）" : "空 = 不启用鉴权";
+    }
+    var note = $("api_token_note");
+    if (note) {
+      note.textContent = tokenState.set
+        ? "当前已启用鉴权。留空保存不会改动现有 Token；要关闭鉴权请勾选下方「清除 Token」。"
+        : "设置 Token 后，/api/* 需携带 X-Token 请求头（前端自动携带，存储键 sitelens-token）。";
+    }
+  }
+  /* applySettings：把 GET /api/settings 的响应回填到表单。
+     纯函数（不碰 DOM，便于 node 冒烟：web/js/settings-shape.test.mjs）。
+
+     兼容两种响应形态（F5 契约变更）：
+       - 扁平（新）：{ listen, api_token_set, crawler:{...}, scan:{...}, checks:{...},
+                       exploit:{...}, ml:{...}, intel:{...}, [config_path] }
+       - 旧形态：{ web:{ listen }, crawler:{...}, ... }（web 段包裹 listen）
+     注意：api_token_set 一律从**响应顶层**读；web.api_token 已不再下发，
+     只在旧引擎上作为"留空保存时原样回写"的兼容值使用，绝不回填输入框。
+     config_path 仅 admin 可见且本页不展示（避免非 admin 泄漏主机路径）。 */
+  function applySettings(c, ui) {
+    c = c || {};
+    var w = c.web || {};
+    var sec = function (name) { return c[name] || {}; };
+    var crawler = sec("crawler"), scan = sec("scan"), checks = sec("checks");
+    var exploit = sec("exploit"), ml = sec("ml"), intel = sec("intel");
+    ui.setv("listen", c.listen != null ? c.listen : w.listen);
+    ui.setv("max_pages", crawler.max_pages);
+    ui.setv("max_links_per_page", crawler.max_links_per_page);
+    ui.setv("crawl_timeout", crawler.timeout_sec);
+    ui.setChecked("respect_robots", crawler.respect_robots);
+    ui.setv("rate_interval_ms", scan.rate_interval_ms);
+    ui.setv("scan_timeout", scan.timeout_sec);
+    ui.setv("nuclei_cap", checks.nuclei_cap);
+    ui.setChecked("exploit_enabled", exploit.enabled);
+    ui.setChecked("ml_predict", ml.predict);
+    ui.setChecked("ml_sev_linear", ml.sev_linear);
+    ui.setChecked("ml_sev_onnx", ml.sev_onnx);
+    ui.setv("overrides_path", intel.overrides_path);
+    return {
+      tokenSet: c.api_token_set === true ||
+        w.api_token_set === true ||
+        (typeof w.api_token === "string" && w.api_token !== ""),
+      tokenLegacy: typeof w.api_token === "string" ? w.api_token : ""
+    };
+  }
   window.api.get("/api/settings").then(function (c) {
-    setv("listen", c.web.listen);
-    setv("api_token", c.web.api_token || "");
-    setv("max_pages", c.crawler.max_pages);
-    setv("max_links_per_page", c.crawler.max_links_per_page);
-    setv("crawl_timeout", c.crawler.timeout_sec);
-    $("respect_robots").checked = !!c.crawler.respect_robots;
-    $("exploit_enabled").checked = !!(c.exploit && c.exploit.enabled);
-    $("ml_predict").checked = !!(c.ml && c.ml.predict);
-    $("ml_sev_linear").checked = !!(c.ml && c.ml.sev_linear);
-    $("ml_sev_onnx").checked = !!(c.ml && c.ml.sev_onnx);
-    setv("rate_interval_ms", c.scan.rate_interval_ms);
-    setv("scan_timeout", c.scan.timeout_sec);
-    setv("nuclei_cap", c.checks.nuclei_cap);
-    setv("overrides_path", c.intel.overrides_path);
-  }).catch(function (e) { window.slReportError(e, { quiet: true }); });
+    var st = applySettings(c, {
+      setv: setv,
+      setChecked: function (id, v) { var el = $(id); if (el) el.checked = !!v; }
+    });
+    tokenState.set = st.tokenSet;
+    tokenState.legacy = st.tokenLegacy;
+    paintTokenState();
+  }).catch(function (e) {
+    /* 401 = 本机存的 Token 与服务端不一致（旧配置/换端口）：给出可恢复入口，
+       否则设置页永远打不开、用户无从自救。 */
+    if (/未授权|401/.test(String(e && e.message ? e.message : e))) {
+      var box = $("api_token_local");
+      if (box) box.style.display = "";
+    }
+    window.slReportError(e, { quiet: true });
+  });
+  var tokResetBtn = $("tokReset");
+  if (tokResetBtn) {
+    tokResetBtn.addEventListener("click", function () {
+      if (window.slStoreToken) window.slStoreToken("");
+      location.reload();
+    });
+  }
 
   $("save").addEventListener("click", function () {
     var b = $("save"), m = $("saveMsg");
     b.disabled = true; m.textContent = "保存中…"; m.className = "";
+    var typed = getv("api_token");
+    var clearTok = !!($("api_token_clear") && $("api_token_clear").checked);
+    /* D-04 / F5 契约：web.api_token 缺省 = 保持不变，显式 "" = 清除。
+       - 勾选「清除 Token」→ 发 ""；
+       - 用户新填 → 发新值，保存成功后写入本机 localStorage；
+       - 留空且已有 token → 不发该字段（旧引擎兼容：回写它刚返回的明文）；
+       - 留空且从未设置 → 不发（保持「不鉴权」）。
+       旧实现无条件发 api_token: ""，留空保存会把已设置的 token 清掉。 */
+    var web = { listen: getv("listen") };
+    var nextToken = null; // null = 不改动本机存储
+    if (clearTok) { web.api_token = ""; nextToken = ""; }
+    else if (typed) { web.api_token = typed; nextToken = typed; }
+    else if (tokenState.set && tokenState.legacy) { web.api_token = tokenState.legacy; }
     window.api.put("/api/settings", {
-      web: { listen: getv("listen"), api_token: getv("api_token") },
+      web: web,
       crawler: {
         max_pages: num("max_pages"),
         respect_robots: $("respect_robots").checked,
@@ -881,9 +983,26 @@
         sev_onnx: $("ml_sev_onnx").checked
       },
       intel: { overrides_path: getv("overrides_path") }
-    }).then(function () {
+    }).then(function (resp) {
       b.disabled = false;
-      m.className = "ok"; m.textContent = "已保存";
+      /* D-04 的核心修复：新 token 必须落到本机存储。tok() 每次请求现读
+         localStorage，所以保存后**立即**生效，不会再出现「设了 token 就
+         全站 401」。清空时 removeItem。 */
+      if (nextToken !== null) {
+        if (window.slStoreToken) window.slStoreToken(nextToken);
+        tokenState.set = nextToken !== "";
+        tokenState.legacy = nextToken;
+      } else if (resp && typeof resp.api_token_set === "boolean") {
+        /* 服务端回执是权威值（F5 契约：PUT 响应带 api_token_set / token_cleared） */
+        tokenState.set = resp.api_token_set;
+      }
+      var clr = $("api_token_clear");
+      if (clr) clr.checked = false;
+      paintTokenState();
+      m.className = "ok";
+      m.textContent = clearTok || (resp && resp.token_cleared) ? "已保存：鉴权已关闭"
+        : (typed ? "已保存：Token 已写入本机浏览器；其它已打开的页面刷新后继续可用"
+          : "已保存");
     }).catch(function (e) {
       b.disabled = false;
       m.className = "err"; m.textContent = e.message;
@@ -1037,9 +1156,17 @@
         sec.style.display = hit ? "" : "none";
         if (hit && searching) secHit = true;
       });
-      p.classList.toggle("active", searching ? secHit : p.getAttribute("data-tab") === "look");
+      /* 搜索结束回到当前分组（而非固定 look），并同步左栏导航高亮 */
+      p.classList.toggle("active", searching ? secHit : p.getAttribute("data-tab") === currentTabKey());
+    });
+    var nav = document.getElementById("settings-nav");
+    if (nav) nav.querySelectorAll(".sn-item").forEach(function (x) {
+      x.classList.toggle("active", !searching && x.getAttribute("data-key") === currentTabKey());
     });
   });
+  function currentTabKey() {
+    return (location.hash || "").replace("#", "") || "look";
+  }
 })();
 </script>
 </body>

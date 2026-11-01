@@ -137,3 +137,19 @@ func TestCSRFFormGetSearchNotFlagged(t *testing.T) {
 		t.Fatalf("POST 表单应报 csrf-form: %+v", got)
 	}
 }
+
+// 跨源表单（文章内嵌 jsfiddle/codepen 示例）不属于本站 CSRF 面；同源绝对地址仍要报。
+func TestCSRFFormCrossOriginNotFlagged(t *testing.T) {
+	cross := `<form action="https://jsfiddle.net/api/post/library/pure/" method="post">
+<input name="html" type="text"></form>`
+	got := onlyCheck(Run(respWithCookie(""), htmlx.Parse(cross), "https://blog.example/posts/x.html"), "csrf-form")
+	if len(got) != 0 {
+		t.Fatalf("跨源表单不应报 csrf-form: %+v", got)
+	}
+
+	same := `<form action="https://blog.example/update" method="post"><input name="pass"></form>`
+	got = onlyCheck(Run(respWithCookie(""), htmlx.Parse(same), "https://blog.example/posts/x.html"), "csrf-form")
+	if len(got) != 1 {
+		t.Fatalf("同源绝对地址表单应报 csrf-form: %+v", got)
+	}
+}

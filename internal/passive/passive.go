@@ -10,6 +10,7 @@ package passive
 
 import (
 	"fmt"
+	"net/url"
 	"strings"
 
 	"cnb.cool/feng-qiao/sitelens/internal/htmlx"
@@ -268,6 +269,32 @@ func actionSuggestsStateChange(action string) bool {
 	return false
 }
 
+// sameOriginFormAction 表单 action 是否与页面同源（空/相对路径视为同源）。
+//
+// 跨源表单（博客文章里嵌入的 jsfiddle/codepen 示例表单）不需要本站 CSRF
+// token 校验，按本站 CSRF 报只会是误报（2026-11-01 真实站点实测）。
+func sameOriginFormAction(pageURL, action string) bool {
+	a := strings.TrimSpace(action)
+	if a == "" {
+		return true
+	}
+	au, err := url.Parse(a)
+	if err != nil || au.Host == "" {
+		return true // 解析失败/相对路径：保守按同源处理
+	}
+	pu, err := url.Parse(pageURL)
+	if err != nil || pu.Host == "" {
+		return true
+	}
+	if !strings.EqualFold(au.Host, pu.Host) {
+		return false
+	}
+	if au.Scheme != "" && pu.Scheme != "" && !strings.EqualFold(au.Scheme, pu.Scheme) {
+		return false
+	}
+	return true
+}
+
 // checkCSRF 状态变更表单是否缺少 CSRF token 字段。
 // 拓宽：触发面从「登录表单」扩到「全部状态变更表单」，并按缺失程度分级——
 // 无 token 为 high，token 存在但可预测（短/固定）为 medium。
@@ -276,6 +303,9 @@ func checkCSRF(doc *htmlx.Doc, pageURL string) []Hit {
 	for _, f := range doc.Forms {
 		if !isStateChanging(f) {
 			continue
+		}
+		if !sameOriginFormAction(pageURL, f.Action) {
+			continue // 跨源表单不属于本站 CSRF 面
 		}
 		if hasCSRFToken(f) {
 			continue

@@ -653,6 +653,7 @@ function startScan() {
 /* runScanPayload 提交扫描并轮询；与表单解耦，供「继续扫描」按原参数重提复用。 */
 function runScanPayload(payload, options) {
   clearPartialBanner();
+  hideHero(); // 扫描开始：收起空态 hero
   document.getElementById("idle-wrap").style.display = "none";
   document.getElementById("pw").style.display = "block";
   document.getElementById("go").disabled = true;
@@ -685,9 +686,9 @@ function runScanPayload(payload, options) {
       if (job && job.cancelled) {
         document.getElementById("st-state").textContent = "cancelled";
         document.getElementById("st-msg").textContent = "已取消";
-        document.getElementById("result").innerHTML =
-          '<div class="empty"><span class="big">⊘</span>扫描已取消<br>' +
-          '<span class="hint">已完成阶段的结果可能已保存到历史（见历史页）</span></div>';
+        /* 取消后回到空态：清空画布并恢复 hero（已完成阶段可能已入历史） */
+        document.getElementById("result").innerHTML = "";
+        showHero();
         return null;
       }
       document.getElementById("st-state").textContent = "done";
@@ -1183,6 +1184,7 @@ function renderResult(r, scanId) {
   });
 
   document.getElementById("result").innerHTML = html;
+  hideHero(); // 有结果：收起空态 hero
   if (scanId) document.getElementById("st-time").textContent = "记录 #" + scanId;
   /* CP-08：人工复核（误报/确认/忽略）+ 白名单灰显。异步加载，接口未接/旧引擎
      时 triage 内部静默降级，不影响结果页任何既有内容。 */
@@ -1213,12 +1215,22 @@ window.exportAs = function (fmt) {
     .catch(function (e) { toast("导出失败：" + e.message, "err"); });
 };
 
-/* ?url= 自动开扫（首页搜索框跳转入口） */
+/* ?url= 预填 + 自动开扫（首页搜索框跳转入口）
+   D-10：自动发起主动扫描前必须用户显式确认——否则任意外部链接
+   （http://127.0.0.1:<port>/app?url=<目标>）被点开就等价于以本机为出口
+   对任意目标发起扫描，既是未授权扫描风险，也把用户变成攻击跳板。 */
 (function () {
   var q = new URLSearchParams(location.search).get("url");
-  if (q) {
-    document.getElementById("url").value = q;
+  if (!q) return;
+  var input = document.getElementById("url");
+  if (input) input.value = q;
+  if (window.confirm("是否立即扫描该目标？\n\n" + q)) {
     startScan();
+  } else {
+    /* 已预填，用户可自行点「开始扫描」 */
+    var hint = document.getElementById("hint");
+    if (hint) { hint.textContent = "已填入目标，确认后点「开始扫描」"; hint.className = "hint"; }
+    if (window.toast) window.toast("已填入目标，未自动开扫", "ok");
   }
 })();
 
@@ -1470,6 +1482,64 @@ window.exportHits = function () {
   document.addEventListener("mouseup", window.__slSplitUp);
 })();
 
+/* ================= 工作台空态 hero（未扫描时替代右栏空白） ================= */
+function hideHero() {
+  var el = document.getElementById("wb-hero");
+  if (el) el.hidden = true;
+}
+
+/* 最近 3 条历史：失败静默（接口不可用/旧引擎时 hero 其余部分照常） */
+function loadHeroRecent() {
+  var wrap = document.getElementById("wb-hero-recent-wrap");
+  var box = document.getElementById("wb-hero-recent");
+  if (!wrap || !box || !window.api) return;
+  api.get("/api/history?limit=3").then(function (res) {
+    var rows = (res && res.scans) || [];
+    if (!rows.length) { wrap.hidden = true; return; }
+    wrap.hidden = false;
+    box.innerHTML = rows.map(function (s) {
+      var grade = s && s.security_grade
+        ? '<span class="badge">' + esc(String(s.security_grade)) + "</span>" : "";
+      var at = String((s && s.scanned_at) || "").replace("T", " ").slice(0, 16);
+      return '<a class="wb-hero-recent-item" href="/history?id=' + encodeURIComponent(String(s.id)) + '">' +
+        '<span class="mono">' + esc(String((s && (s.host || s.url)) || "")) + "</span>" + grade +
+        '<span class="hint">' + esc(at) + "</span></a>";
+    }).join("");
+  }).catch(function () { wrap.hidden = true; });
+}
+
+function showHero() {
+  var el = document.getElementById("wb-hero");
+  if (!el) return;
+  var go = document.getElementById("go");
+  if (go && go.disabled) return; // 扫描中不显示
+  el.hidden = false;
+  loadHeroRecent();
+}
+
+function initHero() {
+  var el = document.getElementById("wb-hero");
+  if (!el) return;
+  el.addEventListener("click", function (e) {
+    var ex = e.target.closest ? e.target.closest("[data-hero-url]") : null;
+    if (ex) {
+      var url = document.getElementById("url");
+      if (url) {
+        url.value = ex.getAttribute("data-hero-url");
+        url.dispatchEvent(new Event("input", { bubbles: true }));
+        url.focus();
+      }
+      return;
+    }
+    var goTo = e.target.closest ? e.target.closest("[data-hero-goto]") : null;
+    if (goTo && typeof switchTab === "function") switchTab(goTo.getAttribute("data-hero-goto"));
+  });
+  var result = document.getElementById("result");
+  if (!result || !result.innerHTML.trim()) showHero();
+}
+
+initHero();
+
 /* ================= UI 细节：多选下拉 / URL 清空 / 状态点 ================= */
 (function () {
   // 多选下拉（范围/验证）：按钮开合、点芯片不收起、外部点击收起、摘要同步
@@ -1508,7 +1578,19 @@ window.exportHits = function () {
     var wrap = url.closest(".tw-urlwrap");
     var sync = function () { wrap.classList.toggle("has-text", !!url.value); };
     url.addEventListener("input", sync);
-    clearBtn.addEventListener("click", function () { url.value = ""; sync(); url.focus(); });
+    clearBtn.addEventListener("click", function () {
+      url.value = "";
+      sync();
+      url.focus();
+      /* 清空输入 = 回到空态：重置右栏并恢复 hero（扫描进行中不动） */
+      var go = document.getElementById("go");
+      if (go && go.disabled) return;
+      document.getElementById("result").innerHTML = "";
+      hideAdvNote();
+      clearPartialBanner();
+      updatePlan();
+      showHero();
+    });
     sync();
   }
 
