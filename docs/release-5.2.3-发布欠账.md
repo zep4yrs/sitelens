@@ -187,7 +187,7 @@
 - [x] 6. 回填发行说明的体积/SHA256；生成/校验 `latest.yml`；
 - [x] 7. `pwsh scripts/release/check.ps1 -ExpectedVersion 5.2.3 -Strict -RequireSigned`：
       PASS=12 / WARN=0 / FAIL=0 / SKIP=1（SKIP=CLI 包）；
-- [x] 8. 桌面真机冒烟：5.2.0→5.2.3 安装/升级/启动/卸载/重装通过；托盘/Mica/通知为目视项；
+- [x] 8. 桌面真机冒烟：5.2.0 开发版→5.2.3 安装/升级/启动/卸载/重装通过；托盘/Mica/通知为目视项；
       真机发现旧安装缺 InstallLocation 导致双目录，安装器已补写入与卸载表回退解析并重签；
 - [ ] 9. CNB Release：上传安装器 + 发行说明（不上传 latest.yml/blockmap，防双源漂移）；
       GitHub desktop-stable 上传 exe + blockmap + latest.yml；
