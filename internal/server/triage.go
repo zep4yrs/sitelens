@@ -189,7 +189,7 @@ func (s *Server) triageStore(w http.ResponseWriter) *store.Store {
 		})
 		return nil
 	}
-	return s.st
+	return s.st.Store
 }
 
 // triageScanID 解析路径参数 {scanID}（正整数），失败写 400。

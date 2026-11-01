@@ -104,6 +104,10 @@ type OobConfig struct {
 type StoreConfig struct {
 	DataDir    string `yaml:"data_dir"`    // 状态目录（history.json 所在）
 	MaxRecords int    `yaml:"max_records"` // 历史记录留存上限（超出裁掉最旧）
+	// ArchiveKeep 分层归档保留条数（CP-06）：主库超过该值即把最旧记录移入
+	// <data_dir>/archive/<year>.json（服务端历史 List/Get 跨档透明读取）；
+	// 0/负值 = 默认 2000。
+	ArchiveKeep int `yaml:"archive_keep"`
 }
 
 // ActiveConfig 主动探测模块阈值（默认关；目标合规责任在使用者）。
@@ -364,7 +368,7 @@ func Default() *Config {
 			HistoryCap: 200, ShutdownSec: 5,
 		},
 		Modules: ModulesConfig{},
-		Store:   StoreConfig{DataDir: "data/state", MaxRecords: 500},
+		Store:   StoreConfig{DataDir: "data/state", MaxRecords: 500, ArchiveKeep: 2000},
 		Active: ActiveConfig{
 			DirMaxPaths: 300, SubMaxWords: 2000, SubWorkers: 20,
 			ShellMaxPaths: 200, FPMaxRequests: 30, TakeoverMax: 50,
@@ -539,6 +543,7 @@ func (c *Config) fillDefaults() {
 		c.Store.DataDir = d.Store.DataDir
 	}
 	fillInt(&c.Store.MaxRecords, d.Store.MaxRecords)
+	fillInt(&c.Store.ArchiveKeep, d.Store.ArchiveKeep)
 
 	// overrides_path 归一到数据目录：它**运行期会被写**（设置页保存 / update-osv），
 	// 默认值 "data/intel_overrides.json" 是相对路径——安装到 Program Files 后

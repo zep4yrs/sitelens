@@ -414,6 +414,12 @@ function loadVerified() {
 }
 
 load();
+
+/* XC-01：任务中心「查看结果」深链（/history?id=N）——有 id 参数时自动展开详情 */
+(function () {
+  var deepId = Number(new URLSearchParams(location.search).get("id"));
+  if (deepId > 0) setTimeout(function () { openDetail(deepId); }, 60);
+})();
 </script>
 </body>
 </html>

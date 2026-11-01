@@ -19,7 +19,7 @@ func newTriageTestAPI(t *testing.T) (*Server, *store.Store, *http.ServeMux) {
 	if err != nil {
 		t.Fatalf("store.New: %v", err)
 	}
-	s := &Server{st: st}
+	s := &Server{st: store.WrapTiered(st, 0)}
 	if _, err := st.Import(store.ScanRecord{ScanSummary: store.ScanSummary{
 		ID: 1, URL: "https://a.example.com", Host: "a.example.com",
 		Title: "A", ScannedAt: "2026-11-01 07:00:00",

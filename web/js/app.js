@@ -1063,17 +1063,81 @@ window.exportAs = function (fmt) {
   }
 })();
 
+/* ================= CP-09 证书到期提醒 ================= */
+/* 数据源（资产提醒任务提供）：GET /api/assets/cert-expiry?host=
+     {ok:true, host, not_after:"2026-12-31T00:00:00Z", days:88}
+   兼容 days_left / remaining_days / notAfter；接口未接（404/网络异常）时回退到
+   本次 /api/netsec 返回的 assets.days_left；两者都没有则隐藏卡片（静默降级）。 */
+function certGrade(days) {
+  if (days == null || !isFinite(days)) return { cls: "", label: "未知" };
+  if (days < 0) return { cls: "danger", label: "已过期" };
+  if (days <= 7) return { cls: "danger", label: "剩余 " + days + " 天（紧急）" };
+  if (days <= 30) return { cls: "warn", label: "剩余 " + days + " 天（临期）" };
+  return { cls: "ok", label: "剩余 " + days + " 天" };
+}
+
+function hideCertCard() {
+  var el = document.getElementById("ns-cert");
+  if (el) el.hidden = true;
+}
+
+function renderCertCard(host, days, notAfter, via) {
+  var el = document.getElementById("ns-cert");
+  if (!el) return;
+  if (days == null && !notAfter) { el.hidden = true; return; }
+  var g = certGrade(days);
+  var when = notAfter
+    ? String(notAfter).replace("T", " ").replace(/(\.\d+)?Z$/, "").slice(0, 16)
+    : "";
+  el.hidden = false;
+  el.className = "cert-card" + (g.cls ? " " + g.cls : "");
+  el.innerHTML = '<div class="cert-line"><span class="cert-title">证书到期</span>' +
+    '<span class="badge ' + (g.cls || "") + '">' + esc(g.label) + "</span></div>" +
+    '<div class="cert-sub mono">' + esc(host) + (when ? " · 到期 " + esc(when) : "") +
+    (via ? " · " + esc(via) : "") + "</div>";
+}
+
+function renderCertFromAssets(host, a) {
+  if (!a) { hideCertCard(); return; }
+  var days = a.days_left != null ? Number(a.days_left)
+    : a.days != null ? Number(a.days) : NaN;
+  var notAfter = a.not_after || a.notAfter || "";
+  if (!isFinite(days) && !notAfter) { hideCertCard(); return; }
+  renderCertCard(host, isFinite(days) ? days : null, notAfter, "来自本次网络层检测");
+}
+
+function loadCertExpiry(host, assetsFallback) {
+  hideCertCard();
+  if (!host) return;
+  api.get("/api/assets/cert-expiry?host=" + encodeURIComponent(host)).then(function (r) {
+    r = r || {};
+    if (r.ok === false) { hideCertCard(); return; }
+    var raw = r.days != null ? r.days
+      : r.days_left != null ? r.days_left
+        : r.remaining_days != null ? r.remaining_days : null;
+    var days = raw == null ? NaN : Number(raw);
+    var notAfter = r.not_after || r.notAfter || r.expires_at || "";
+    if (!isFinite(days) && !notAfter) { renderCertFromAssets(host, assetsFallback); return; }
+    renderCertCard(host, isFinite(days) ? days : null, notAfter, "");
+  }).catch(function () {
+    /* 接口未接/异常：静默回退到本次 netsec 结果里的证书资产（若有） */
+    renderCertFromAssets(host, assetsFallback);
+  });
+}
+
 /* ================= 网络层检测 ================= */
 function runNetsec() {
   var host = document.getElementById("ns-host").value.trim();
   if (!host) return;
   var portsEl = document.getElementById("ns-ports");
   var wantPorts = !!(portsEl && portsEl.checked);
+  hideCertCard();
   document.getElementById("ns-go").disabled = true;
   document.getElementById("ns-out").innerHTML =
     '<div class="skeleton" style="height:60px"></div><p class="hint">检测中…（TLS 握手 + DNS 查询' + (wantPorts ? " + 端口探测" : "") + "）</p>";
   api.post("/api/netsec" + (wantPorts ? "?ports=1" : ""), { host: host }).then(function (r) {
     document.getElementById("ns-go").disabled = false;
+    loadCertExpiry(host, r.assets);
     var hits = (r.findings || []).concat(r.ports || []);
     var head = "";
     if (r.assets) {
@@ -1104,6 +1168,7 @@ function runNetsec() {
     document.getElementById("ns-out").innerHTML = head + '<div class="ns-grid">' + cards.join("") + "</div>";
   }).catch(function (e) {
     document.getElementById("ns-go").disabled = false;
+    loadCertExpiry(host, null); // netsec 失败但证书到期接口可能可用：独立再试一次
     document.getElementById("ns-out").innerHTML =
       '<p style="color:var(--danger);font-size:13.5px">' + esc(e.message) + "</p>";
   });
@@ -1111,6 +1176,7 @@ function runNetsec() {
 document.getElementById("ns-host").addEventListener("keydown", function (e) {
   if (e.key === "Enter") runNetsec();
 });
+document.getElementById("ns-host").addEventListener("input", hideCertCard);
 
 /* ================= 登录爆破 ================= */
 var lbAuth = document.getElementById("lb-authed");

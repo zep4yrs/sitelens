@@ -24,7 +24,7 @@ func newDiffTestServer(t *testing.T) (*Server, *store.Store) {
 		Store: config.StoreConfig{DataDir: dir},
 		Web:   config.WebConfig{HistoryCap: 100},
 	}
-	return &Server{st: st, cfg: cfg}, st
+	return &Server{st: store.WrapTiered(st, 0), cfg: cfg}, st
 }
 
 // saveTestScan 直接落一条历史扫描结果（只填 diff 相关字段）。
