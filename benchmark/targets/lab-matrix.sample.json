@@ -1,0 +1,67 @@
+{
+  "_comment": "教学靶场矩阵样例：每个 URL 是一个「已知漏洞入口」；id 必须与 ground-truth 的 target id 一致（raw 文件名 = <id>.json）。端口/路径按本地部署调整。",
+  "suite": "lab-matrix",
+  "version": "sample-2026Q4",
+  "targets": [
+    {
+      "id": "dvwa-sqli-low",
+      "url": "http://127.0.0.1:8081/vulnerabilities/sqli/?id=1&Submit=Submit",
+      "tags": ["dvwa", "sqli"]
+    },
+    {
+      "id": "dvwa-xss-reflected",
+      "url": "http://127.0.0.1:8081/vulnerabilities/xss_r/?name=test",
+      "tags": ["dvwa", "xss"]
+    },
+    {
+      "id": "dvwa-csrf",
+      "url": "http://127.0.0.1:8081/vulnerabilities/csrf/",
+      "tags": ["dvwa", "csrf"]
+    },
+    {
+      "id": "dvwa-fi-lfi",
+      "url": "http://127.0.0.1:8081/vulnerabilities/fi/?page=include.php",
+      "tags": ["dvwa", "path_traversal"]
+    },
+    {
+      "id": "pikachu-sqli",
+      "url": "http://127.0.0.1:8082/vul/sqli/sqli_str.php?name=1&submit=1",
+      "tags": ["pikachu", "sqli"]
+    },
+    {
+      "id": "pikachu-xss",
+      "url": "http://127.0.0.1:8082/vul/xss/xss_reflected_get.php?message=1&submit=1",
+      "tags": ["pikachu", "xss"]
+    },
+    {
+      "id": "sqli-labs-less1",
+      "url": "http://127.0.0.1:8083/Less-1/?id=1",
+      "tags": ["sqli-labs", "sqli"]
+    },
+    {
+      "id": "upload-labs-pass01",
+      "url": "http://127.0.0.1:8084/Pass-01/index.php",
+      "tags": ["upload-labs", "file_upload"]
+    },
+    {
+      "id": "xsslabs-level1",
+      "url": "http://127.0.0.1:8085/level1.php?name=test",
+      "tags": ["xsslabs", "xss"]
+    },
+    {
+      "id": "bwapp-sqli",
+      "url": "http://127.0.0.1:8086/bWAPP/sqli_1.php?title=1&action=search",
+      "tags": ["bwapp", "sqli"]
+    },
+    {
+      "id": "juice-shop-search",
+      "url": "http://127.0.0.1:3000/#/search?q=1",
+      "tags": ["juice-shop", "spa", "api"]
+    },
+    {
+      "id": "webgoat-start",
+      "url": "http://127.0.0.1:8087/WebGoat/start.mvc",
+      "tags": ["webgoat", "auth"]
+    }
+  ]
+}

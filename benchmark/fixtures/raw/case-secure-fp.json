@@ -1,0 +1,28 @@
+{
+  "_comment": "安全用例：xss 检出 = 误报；tls-weak-cipher 不在 fixture 目录内 → 应被忽略（不计 FP）。",
+  "url": "http://127.0.0.1:8081/login.php",
+  "host": "127.0.0.1",
+  "status": 200,
+  "scanned_at": "2026-11-01T00:00:03Z",
+  "duration": 0.28,
+  "error": "",
+  "vulnerabilities": [],
+  "verified": [
+    {
+      "check": "xss-reflected",
+      "title": "反射型跨站脚本（XSS）",
+      "severity": "medium",
+      "url": "http://127.0.0.1:8081/login.php?next=1",
+      "evidence": "误报夹具",
+      "src": "dast"
+    },
+    {
+      "check": "tls-weak-cipher",
+      "title": "协商到 CBC 模式套件（无 AEAD，易受填充攻击）",
+      "severity": "low",
+      "url": "127.0.0.1",
+      "evidence": "TLS 1.2 TLS_ECDHE_RSA_WITH_AES_128_CBC_SHA",
+      "src": "netsec"
+    }
+  ]
+}

@@ -1,0 +1,28 @@
+{
+  "_comment": "真实站点盲测目标模板（仅示例占位！必须替换为已获得书面授权的目标）。规则见 README §7：20-50 个授权站点、gov.cn 不参评、扫描窗口与流量报备、双人标注。",
+  "suite": "blind-real-sites",
+  "version": "2026Q4-template",
+  "targets": [
+    {
+      "id": "site-001",
+      "url": "https://www.example.com/",
+      "tags": ["authorized", "signed-demo"],
+      "authorized": true,
+      "authorization_ref": "授权书编号/邮件日期（归档到 eval/authorizations/）"
+    },
+    {
+      "id": "site-002",
+      "url": "https://app.example.org/login",
+      "tags": ["authorized", "auth"],
+      "authorized": true,
+      "authorization_ref": "授权书编号/邮件日期"
+    },
+    {
+      "id": "site-003",
+      "url": "https://shop.example.net/search?q=1",
+      "tags": ["authorized", "ecommerce"],
+      "authorized": true,
+      "authorization_ref": "授权书编号/邮件日期"
+    }
+  ]
+}

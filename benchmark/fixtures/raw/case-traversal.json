@@ -1,0 +1,31 @@
+{
+  "url": "http://127.0.0.1:8081/vulnerabilities/fi/?page=1",
+  "host": "127.0.0.1",
+  "status": 200,
+  "scanned_at": "2026-11-01T00:00:02Z",
+  "duration": 0.55,
+  "error": "",
+  "vulnerabilities": [
+    {
+      "id": 7,
+      "tech": "php",
+      "name": "路径穿越（Directory Traversal）",
+      "title": "路径穿越（Directory Traversal）",
+      "cve": "",
+      "type": "path_traversal",
+      "severity": "high",
+      "src": "check",
+      "verdict": "confirmed"
+    }
+  ],
+  "verified": [
+    {
+      "check": "dast-path-traversal",
+      "title": "路径穿越（Directory Traversal）",
+      "severity": "high",
+      "url": "http://127.0.0.1:8081/vulnerabilities/fi/?page=../../../../etc/passwd",
+      "evidence": "读取到 passwd 特征",
+      "src": "dast"
+    }
+  ]
+}

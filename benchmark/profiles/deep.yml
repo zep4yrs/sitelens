@@ -1,0 +1,19 @@
+# CP-04 benchmark profile：deep（深度档；按需用于盲测/复现争议用例，耗时显著更高）。
+# 用法：run.ps1 -Mode deep / run.sh --mode deep
+target:
+  allow_private: true
+scan:
+  deep: true
+  rate_mode: polite
+  rate_interval_ms: 200
+  timeout_sec: 20
+  max_hops: 8
+crawler:
+  max_pages: 80
+  timeout_sec: 180
+checks:
+  level: all
+modules:
+  netsec: true
+netsec:
+  mail_check: false

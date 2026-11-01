@@ -1,0 +1,18 @@
+# CP-04 benchmark profile：fast（冒烟/回归用，不用于对外口径）。
+# 用法：run.ps1 -Mode fast / run.sh --mode fast
+# 差异只在爬取深度/探测预算；限速档位固定 polite，保证同类扫描可复现。
+target:
+  allow_private: true # 本机靶场（127.0.0.1/内网）；公网盲测请改用 -Config 自定义配置
+scan:
+  deep: false
+  rate_mode: polite
+  rate_interval_ms: 100
+  timeout_sec: 10
+checks:
+  level: core
+dast:
+  max_probes_per_class: 3
+crawler:
+  max_pages: 20
+netsec:
+  mail_check: false # 邮件安全与检测能力 P/R 无关，评测默认关（避免 DNS 抖动影响）

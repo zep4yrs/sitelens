@@ -47,6 +47,10 @@ type PageInfo struct {
 //
 // Diagnostics（5.2 效率轮 E2）：additive 请求账本——每阶段请求数/耗时/
 // 去重命中/blocked/RPS。只增键，不改任何既有键语义；旧消费者可忽略。
+//
+// Partial（5.2.x FE-12）：additive 部分结果标记。扫描被取消/中断时，
+// server 落库前调用 engine.MarkPartial 置 true，并带上已结束阶段与中断
+// 阶段；正常完成的扫描不输出这些字段（omitempty，JSON 与旧版一致）。
 type Result struct {
 	URL             string            `json:"url"`
 	Host            string            `json:"host"`
@@ -67,6 +71,10 @@ type Result struct {
 	Pages           []PageInfo        `json:"pages"`
 	Graph           *model.ScanGraph  `json:"graph,omitempty"`
 	Diagnostics     *ScanDiagnostics  `json:"diagnostics,omitempty"`
+	// FE-12 部分结果标记（取消/中断时由 server 落库前设置）。
+	Partial          bool     `json:"partial,omitempty"`
+	InterruptedPhase string   `json:"interrupted_phase,omitempty"` // 中断时所在阶段（live 名）
+	CompletedPhases  []string `json:"completed_phases,omitempty"`  // 已结束阶段（诊断账本）
 }
 
 // PhaseDiagnostics 单个扫描阶段的请求账本。

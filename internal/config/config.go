@@ -164,6 +164,7 @@ type ChecksConfig struct {
 // CrawlerConfig 同域爬取。
 type CrawlerConfig struct {
 	MaxPages           int    `yaml:"max_pages"`            // 最多爬取的页面数
+	MaxDepth           int    `yaml:"max_depth"`            // 最大爬取深度（首页=0；0=默认 2；超深不跟进但仍记录链接）
 	RespectRobots      bool   `yaml:"respect_robots"`       // 是否遵循 robots.txt
 	MaxLinksPerPage    int    `yaml:"max_links_per_page"`   // 每页最多提取的链接数
 	TimeoutSec         int    `yaml:"timeout_sec"`          // 爬取阶段总时长上限（秒）——0/负值回退默认 60，当前实现不支持 0=不限

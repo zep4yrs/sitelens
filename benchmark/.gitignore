@@ -1,0 +1,8 @@
+# 评测产物是可再生的，不入库（raw/summary/run-meta/日志）
+out/
+
+# 本地授权材料与标注草稿（如需入库请放 docs/ 或内部评估库）
+local/
+
+# 扫描日志（raw/*.json 在 out/ 下已忽略；这里兜底）
+*.log

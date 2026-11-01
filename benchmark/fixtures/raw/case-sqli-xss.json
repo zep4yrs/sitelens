@@ -1,0 +1,36 @@
+{
+  "_comment": "fixture：sitelens scan 输出的最小真实形态（字段与 engine.Result JSON 一致）。同一类型多条检出应去重后只算 1 个 TP。",
+  "url": "http://127.0.0.1:8081/vulnerabilities/sqli/?id=1",
+  "host": "127.0.0.1",
+  "status": 200,
+  "scanned_at": "2026-11-01T00:00:00Z",
+  "duration": 0.42,
+  "error": "",
+  "vulnerabilities": [],
+  "verified": [
+    {
+      "check": "dast-sqli-blind",
+      "title": "SQL 注入（时间盲注）",
+      "severity": "high",
+      "url": "http://127.0.0.1:8081/vulnerabilities/sqli/?id=1",
+      "evidence": "延迟 5.0s（基线 0.02s）",
+      "src": "dast"
+    },
+    {
+      "check": "dast-sqli-bool",
+      "title": "SQL 注入（布尔盲注）",
+      "severity": "high",
+      "url": "http://127.0.0.1:8081/vulnerabilities/sqli/?id=1",
+      "evidence": "真/假响应差异 87%",
+      "src": "dast"
+    },
+    {
+      "check": "xss-reflected",
+      "title": "反射型跨站脚本（XSS）",
+      "severity": "medium",
+      "url": "http://127.0.0.1:8081/vulnerabilities/sqli/?id=1",
+      "evidence": "payload 原名反射",
+      "src": "dast"
+    }
+  ]
+}

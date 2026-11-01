@@ -1,0 +1,40 @@
+{
+  "_comment": "标注模板：复制为 <suite>.ground-truth.json 后填写。规则见 benchmark/README.md §5 与 docs/基准评测-5.2.md。要点：targets[].id 必须与目标清单 id 一致（raw 文件名 = <id>.json）；expected=[] 表示安全用例（期望零检出）；expected[].type 必须存在于 coverage-catalog.json；expected[].match 可选，是本目标的额外匹配别名（用于目录别名覆盖不到的写法）；catalog 可选，指向本套件专用目录（相对本文件）。",
+  "suite": "example-suite",
+  "version": "2026Q4-v1",
+  "catalog": "../coverage-catalog.json",
+  "frozen": {
+    "product": "SiteLens",
+    "version": "5.2.x",
+    "commit": "<git rev-parse --short HEAD>",
+    "mode": "standard",
+    "config_sha256": "<run-meta.json 中的 configSha256>",
+    "sitelens_sha256": "<可执行文件 SHA256>",
+    "templates_index": "<模板索引版本/条目数（如有）>",
+    "date": "2026-11-01",
+    "operator": "标注人 A / 标注人 B（双人独立标注，分歧仲裁）"
+  },
+  "targets": [
+    {
+      "id": "example-sqli",
+      "url": "http://127.0.0.1:8081/vulnerabilities/sqli/?id=1",
+      "expected": [
+        {
+          "type": "sql_injection",
+          "note": "低难度；参数 id；证据：报错/时间差分均可接受"
+        }
+      ]
+    },
+    {
+      "id": "example-xss",
+      "url": "http://127.0.0.1:8081/vulnerabilities/xss_r/?name=test",
+      "expected": [{ "type": "xss", "note": "反射型；payload 未编码回显" }]
+    },
+    {
+      "id": "example-secure",
+      "url": "http://127.0.0.1:8081/login.php",
+      "expected": [],
+      "_comment": "安全用例：出现任何目录内类型检出即记误报用例（caseFPR 分母）"
+    }
+  ]
+}

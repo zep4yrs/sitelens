@@ -28,6 +28,7 @@ checks:
 
 crawler:
   max_pages: 40
+  max_depth: 2             # 最大爬取深度（首页=0；0=默认 2；超深不跟进但仍记录链接）
   respect_robots: true    # 遵循 robots.txt（Allow/Disallow 最长匹配）。
                           # 注意：目标若设 `Disallow: /` 封禁整站，爬取会
                           # 塌缩到入口页（扫描时会有明确提示）。授权目标如需
