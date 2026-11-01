@@ -25,21 +25,26 @@ const preflightMaxBody = 256 << 10
 // Preflight 一次只读预检的结果（additive：仅供建议卡展示与首页复用，
 // 不参与任何漏洞判定）。
 type Preflight struct {
-	RequestedURL string            `json:"requested_url"`
-	FinalURL     string            `json:"final_url"`
-	Status       int               `json:"status"`
-	Title        string            `json:"title"`
-	Server       string            `json:"server"`
-	ContentType  string            `json:"content_type"`
-	Headers      map[string]string `json:"headers,omitempty"`
-	SetCookies   []string          `json:"set_cookies,omitempty"`
-	Body         string            `json:"-"`
-	Blocked      bool              `json:"blocked"`
-	BlockReason  string            `json:"block_reason,omitempty"`
-	ResponseMS   int64             `json:"response_ms"`
-	Tech         []string          `json:"tech,omitempty"`
-	CookieHash   string            `json:"-"`
-	CreatedAt    time.Time         `json:"-"`
+	// InputURL 用户原始输入；NormalizedURL 归一化后的请求地址；
+	// URLCorrections 本次自动修正说明（空 = 无需修正）。
+	InputURL       string            `json:"input_url,omitempty"`
+	NormalizedURL  string            `json:"normalized_url,omitempty"`
+	URLCorrections []string          `json:"url_corrections,omitempty"`
+	RequestedURL   string            `json:"requested_url"`
+	FinalURL       string            `json:"final_url"`
+	Status         int               `json:"status"`
+	Title          string            `json:"title"`
+	Server         string            `json:"server"`
+	ContentType    string            `json:"content_type"`
+	Headers        map[string]string `json:"headers,omitempty"`
+	SetCookies     []string          `json:"set_cookies,omitempty"`
+	Body           string            `json:"-"`
+	Blocked        bool              `json:"blocked"`
+	BlockReason    string            `json:"block_reason,omitempty"`
+	ResponseMS     int64             `json:"response_ms"`
+	Tech           []string          `json:"tech,omitempty"`
+	CookieHash     string            `json:"-"`
+	CreatedAt      time.Time         `json:"-"`
 }
 
 // Response 把预检缓存转成扫描可复用的首页响应（含 WAF 拦截标记）。
@@ -77,6 +82,14 @@ func (p *Preflight) ValidFor(seedURL, authCookie string, now time.Time) bool {
 // 提取状态/标题/服务器/技术指纹/WAF 判定/正文（截断），供前端建议卡与
 // 扫描首页复用。不发 payload、不爬取、不写历史。
 func (e *Engine) Preflight(rawURL string, opts Options) (*Preflight, error) {
+	inputURL := rawURL
+	var corrections []string
+	if e.cfg.Target.AutoNormalize {
+		if nr := target.Normalize(rawURL); len(nr.Changes) > 0 {
+			rawURL = nr.URL
+			corrections = nr.Changes
+		}
+	}
 	scheme, host, port, err := target.Validate(rawURL, e.cfg.Scan.Resolve)
 	if err != nil {
 		return nil, err
@@ -89,18 +102,21 @@ func (e *Engine) Preflight(rawURL string, opts Options) (*Preflight, error) {
 		return nil, fmt.Errorf("预检失败：%w", err)
 	}
 	pf := &Preflight{
-		RequestedURL: seed,
-		FinalURL:     resp.FinalURL,
-		Status:       resp.Status,
-		Server:       resp.Header("Server"),
-		ContentType:  resp.Header("Content-Type"),
-		Headers:      resp.Headers,
-		SetCookies:   resp.SetCookies,
-		Blocked:      resp.Blocked,
-		BlockReason:  resp.BlockReason,
-		ResponseMS:   time.Since(start).Milliseconds(),
-		CookieHash:   cookieHash(opts.AuthCookie),
-		CreatedAt:    time.Now(),
+		InputURL:       inputURL,
+		NormalizedURL:  seed,
+		URLCorrections: corrections,
+		RequestedURL:   seed,
+		FinalURL:       resp.FinalURL,
+		Status:         resp.Status,
+		Server:         resp.Header("Server"),
+		ContentType:    resp.Header("Content-Type"),
+		Headers:        resp.Headers,
+		SetCookies:     resp.SetCookies,
+		Blocked:        resp.Blocked,
+		BlockReason:    resp.BlockReason,
+		ResponseMS:     time.Since(start).Milliseconds(),
+		CookieHash:     cookieHash(opts.AuthCookie),
+		CreatedAt:      time.Now(),
 	}
 	if body := resp.Body; len(body) > preflightMaxBody {
 		pf.Body = body[:preflightMaxBody]
@@ -153,9 +169,12 @@ func cookieHash(cookie string) string {
 	return hex.EncodeToString(sum[:])
 }
 
-// NormalizePreflightURL 归一化预检 URL（去 fragment、去尾部斜杠、host 小写），
-// 供服务端缓存按 URL 去重。
+// NormalizePreflightURL 归一化预检 URL（先做输入纠错，再去 fragment、
+// 去尾部斜杠、host 小写），供服务端缓存按 URL 去重。
 func NormalizePreflightURL(raw string) string {
+	if nr := target.Normalize(raw); len(nr.Changes) > 0 {
+		raw = nr.URL
+	}
 	u, err := url.Parse(strings.TrimSpace(raw))
 	if err != nil || u.Scheme == "" || u.Host == "" {
 		return strings.TrimSpace(raw)

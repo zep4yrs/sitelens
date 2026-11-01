@@ -19,6 +19,8 @@ scan:
 
 target:
   allow_private: false       # 允许扫描私网/本机地址（授权靶场才开，安全闸默认关）
+  auto_normalize: true       # URL 输入自动修正：补协议/去标点/hxxp 还原/默认端口；
+                             # 只改格式不改目标（不猜域名、不切 www/apex、不扩范围）
 
 checks:
   level: all                 # none | core | all
@@ -74,6 +76,16 @@ dast:
   upload_bypass: true        # 上传绕过验证：危险扩展名/伪造 MIME/双扩展名
                              # 是否被服务端放行（upload-labs 21 关类）。提交内容
                              # 始终是无害文本标记，只判"收没收"，不落地不执行
+  # G09/G10 进阶面（additive，默认全关：关 = 零请求零行为变化）
+  proto: false               # 协议面：ws/wss 明文/未校验 Origin、h2c/HTTP2 ALPN
+  deser: false               # 反序列化入口标记识别（Java/PHP/.NET/Python；纯识别，
+                             # 零额外请求）
+  logic: false               # 业务逻辑探测（数量/价格/优惠券/幂等）；默认 dry-run
+                             # 只生成计划写入 extras.web_advanced，不发请求
+  upload: false              # 上传面探测计划；默认 dry-run 只生成计划，不发请求
+  idor: false                # 多会话越权检测（需调用方在引擎 Options.Sessions
+                             # 提供 ≥1 个 authn.Session，否则跳过）
+  max_requests: 20           # 上述进阶面单次请求硬上限（仅开关开启时生效）
 
 intel:
   dump_path: data/intel_dump.json.gz

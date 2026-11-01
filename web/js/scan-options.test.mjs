@@ -135,3 +135,69 @@ test("结构化事实图：被动模式下不消费（随扫描顺带，但被�
   assert.strictEqual(r.options.graph, undefined);
   assert.ok(r.warnings.some(w => w.indexOf("被动") >= 0));
 });
+
+/* ---------------- G09/G10 高级 Web 检测（options.dast 对象形态） ---------------- */
+
+test("高级检测全关：保持旧布尔语义（参数注入勾选 → dast=true）", () => {
+  const r = scanOpts.build({
+    scope: { web: true },
+    verify: { dast: true },
+    strength: "std",
+    advanced: { idor: false, logic: false, upload: false, deser: false, proto: false }
+  });
+  assert.strictEqual(r.options.dast, true, "全关时不下发对象，行为与旧版一致");
+});
+
+test("高级检测全关且未勾参数注入：不下发 dast", () => {
+  const r = scanOpts.build({
+    scope: { web: true }, verify: {}, strength: "std",
+    advanced: { idor: false, logic: false, upload: false, deser: false, proto: false }
+  });
+  assert.strictEqual(r.options.dast, undefined);
+});
+
+test("高级检测开关：下发 options.dast 五键对象", () => {
+  const r = scanOpts.build({
+    scope: { web: true },
+    verify: {},
+    strength: "std",
+    advanced: { idor: true, logic: false, upload: true, deser: false, proto: true }
+  });
+  assert.deepStrictEqual(r.options.dast, {
+    idor: true, logic: false, upload: true, deser: false, proto: true
+  });
+  assert.ok(r.warnings.some(w => w.includes("dry-run")), "应提示默认 dry-run/零额外请求");
+  assert.deepStrictEqual(scanOpts.advancedLabels(r.options), ["越权矩阵", "上传绕过", "WS/HTTP2"]);
+});
+
+test("高级检测 + 参数注入同时勾选：对象形态覆盖布尔（不再发 true）", () => {
+  const r = scanOpts.build({
+    scope: { web: true },
+    verify: { dast: true },
+    strength: "std",
+    advanced: { idor: true }
+  });
+  assert.strictEqual(typeof r.options.dast, "object");
+  assert.strictEqual(r.options.dast.idor, true);
+  assert.strictEqual(r.options.dast.proto, false);
+});
+
+test("高级检测在被动模式下被忽略（零请求红线）", () => {
+  const r = scanOpts.build({
+    scope: { web: true, sub: true },
+    verify: { passive: true },
+    strength: "full",
+    advanced: { idor: true, upload: true }
+  });
+  assert.strictEqual(r.options.dast, undefined, "被动模式不得下发高级检测");
+  assert.ok(r.warnings.some(w => w.includes("高级 Web 检测已忽略")));
+});
+
+test("耗时预估：高级检测对象形态计入计划开销", () => {
+  const base = scanOpts.build({ scope: { web: true }, verify: {}, strength: "fast" }).options;
+  const adv = scanOpts.build({
+    scope: { web: true }, verify: {}, strength: "fast", advanced: { logic: true }
+  }).options;
+  assert.ok(scanOpts.estimateSeconds(adv) > scanOpts.estimateSeconds(base));
+});
+

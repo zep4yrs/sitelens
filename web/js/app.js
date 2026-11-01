@@ -149,8 +149,23 @@ function setHint() {
   });
 })();
 
+/* G09/G10 高级 Web 检测子开关（默认全关；提交为 options.dast 对象）。
+   UI 在左栏「高级 Web 检测」折叠组，五个 checkbox 与 ADV_KEYS 一一对应。 */
+var advSet = { idor: false, logic: false, upload: false, deser: false, proto: false };
+(function () {
+  scanOpts.ADV_KEYS.forEach(function (k) {
+    var el = document.getElementById("adv-" + k);
+    if (el) el.addEventListener("change", function () {
+      advSet[k] = !!el.checked;
+      updateAdvNote();
+    });
+  });
+})();
+
 function buildOptions() {
-  var r = scanOpts.build({ scope: scopeSet, verify: verifySet, strength: stValue });
+  var r = scanOpts.build({
+    scope: scopeSet, verify: verifySet, strength: stValue, advanced: advSet
+  });
   if (!r.ok) {
     var h = document.getElementById("hint");
     if (h) { h.textContent = r.error; h.className = "hint warn"; }
@@ -164,6 +179,136 @@ function buildOptions() {
     setHint();
   }
   return r.options;
+}
+
+/* ---- G09/G10 高级检测：扫描中提示 / 计划-发现结果卡 ---- */
+
+/* 扫描中提示：进度条下方一行说明（左栏开关变化时同步）。 */
+function updateAdvNote() {
+  var el = document.getElementById("adv-note");
+  if (!el) return;
+  var on = scanOpts.ADV_KEYS.filter(function (k) { return advSet[k]; });
+  if (!on.length) { hideAdvNote(); return; }
+  el.hidden = false;
+  el.textContent = "高级 Web 检测已启用：" +
+    on.map(function (k) { return scanOpts.ADV_LABELS[k]; }).join(" / ") +
+    " · 默认 dry-run / 零额外请求（仅模块显式执行时才发探测）";
+}
+
+function hideAdvNote() {
+  var el = document.getElementById("adv-note");
+  if (el) { el.hidden = true; el.textContent = ""; }
+}
+
+/* 按实际下发参数显示提示（「继续扫描」复用旧 payload 时也准确）。 */
+function setAdvNoteFromOptions(options) {
+  var labels = scanOpts.advancedLabels ? scanOpts.advancedLabels(options) : [];
+  var el = document.getElementById("adv-note");
+  if (!el) return;
+  if (!labels.length) { hideAdvNote(); return; }
+  el.hidden = false;
+  el.textContent = "高级 Web 检测已启用：" + labels.join(" / ") +
+    " · 默认 dry-run / 零额外请求（仅模块显式执行时才发探测）";
+}
+
+var ADV_MODULE_LABELS = {
+  idor: "越权矩阵", logic: "业务逻辑", upload: "上传绕过",
+  deser: "反序列化", proto: "WS/HTTP2"
+};
+
+function advPlanText(p) {
+  if (p == null) return "";
+  if (typeof p === "string") return p;
+  if (typeof p === "object") {
+    return String(p.title || p.check || p.name || p.desc || p.url || "");
+  }
+  return String(p);
+}
+
+function advFindingHTML(f) {
+  var sev = String((f && (f.severity || f.level)) || "").toLowerCase();
+  var cls = (sev === "high" || sev === "critical") ? "danger" : (sev === "medium" ? "warn" : "info");
+  var check = String((f && (f.check || f.id || f.name)) || "检测项");
+  var title = String((f && (f.title || f.desc || "")) || "");
+  var url = String((f && (f.url || f.target || f.path)) || "");
+  var ev = String((f && (f.evidence || f.detail || f.summary)) || "");
+  return '<li class="adv-find"><span class="badge ' + cls + '">' + esc(sev || "info") + "</span> " +
+    '<b class="mono">' + esc(check) + "</b>" + (title ? " " + esc(title) : "") +
+    (url ? '<div class="adv-find-sub mono">' + esc(url) + "</div>" : "") +
+    (ev ? '<div class="adv-find-sub">' + esc(ev) + "</div>" : "") + "</li>";
+}
+
+/* 结果卡：读取 result.extras.web_advanced（契约见引擎 G09/G10 接线）。
+   兼容三种形态：{plan,findings} / {idor:{plan,findings},...} / 发现数组；
+   缺字段/空对象 → 返回 ""（结果页不占位）。 */
+function advancedCard(r) {
+  var wa = r && r.extras && r.extras.web_advanced;
+  if (!wa) return "";
+  var modules = [];
+  var plan = [];
+  var findings = [];
+  if (Array.isArray(wa)) {
+    wa.forEach(function (x) {
+      if (x && typeof x === "object") findings.push(x);
+      else if (x) plan.push(advPlanText(x));
+    });
+  } else if (typeof wa === "object") {
+    var topDry = wa.dry_run === true || wa.dryRun === true;
+    Object.keys(wa).forEach(function (k) {
+      var v = wa[k];
+      if (k === "dry_run" || k === "dryRun" || k === "enabled" || v == null) return;
+      if (k === "plan" && Array.isArray(v)) {
+        plan = plan.concat(v.map(advPlanText).filter(Boolean));
+        return;
+      }
+      if (k === "findings" && Array.isArray(v)) { findings = findings.concat(v); return; }
+      if (typeof v === "object") {
+        modules.push({
+          key: k,
+          label: ADV_MODULE_LABELS[k] || String(v.name || v.label || k),
+          dryRun: v.dry_run === true || v.dryRun === true || topDry,
+          plan: Array.isArray(v.plan) ? v.plan.map(advPlanText).filter(Boolean) : [],
+          findings: Array.isArray(v.findings) ? v.findings : []
+        });
+      }
+    });
+  }
+  if (!modules.length && plan.length === 0 && findings.length === 0) return "";
+
+  var modHTML = "";
+  modules.forEach(function (m) {
+    findings = findings.concat(m.findings);
+    modHTML += '<div class="adv-mod"><span class="badge">' + esc(m.label) + "</span>" +
+      (m.dryRun ? ' <span class="badge ok">dry-run</span>' : "") +
+      '<span class="hint" style="margin:0">计划 ' + m.plan.length + " 项 · 发现 " + m.findings.length + " 项</span>" +
+      (m.plan.length
+        ? '<ul class="adv-plan">' + m.plan.slice(0, 6).map(function (p) {
+            return "<li>" + esc(p) + "</li>";
+          }).join("") + "</ul>"
+        : "") +
+      "</div>";
+  });
+
+  var html = '<div class="adv-card card"><div class="adv-head"><b>高级 Web 检测</b>' +
+    '<span class="badge ok">默认 dry-run</span>' +
+    '<span class="hint" style="margin:0">零额外请求；仅模块显式执行时才发探测</span></div>';
+  if (modHTML) {
+    html += '<div class="adv-mods">' + modHTML + "</div>";
+  } else if (plan.length) {
+    html += '<ul class="adv-plan">' + plan.slice(0, 8).map(function (p) {
+      return "<li>" + esc(p) + "</li>";
+    }).join("") + "</ul>";
+  }
+  if (findings.length) {
+    html += '<div class="adv-finds"><b>发现 ' + findings.length + " 项</b><ul>" +
+      findings.slice(0, 20).map(advFindingHTML).join("") + "</ul>" +
+      (findings.length > 20
+        ? '<p class="hint">… 其余 ' + (findings.length - 20) + " 条见导出文件</p>"
+        : "") + "</div>";
+  } else {
+    html += '<p class="hint">本次未发现高级检测问题（dry-run 计划已记录在结果 extras）。</p>';
+  }
+  return html + "</div>";
 }
 
 /* ---- 扫描前反馈：目标预检 + 扫描计划（不发任何请求，纯本地计算） ---- */
@@ -183,12 +328,16 @@ function updatePlan() {
   }
   var v = window.slLive ? window.slLive.validateTarget(raw) : { ok: !!raw, warnings: [] };
   var b = null;
-  try { b = scanOpts.build({ scope: scopeSet, verify: verifySet, strength: stValue }); } catch (e) { b = null; }
+  try {
+    b = scanOpts.build({ scope: scopeSet, verify: verifySet, strength: stValue, advanced: advSet });
+  } catch (e) { b = null; }
   var opts = (b && b.ok) ? b.options : null;
   var items = [];
   if (opts) {
     items.push(opts.deep ? "同域浅爬取" : "仅入口页");
-    if (opts.dast) items.push("参数级 DAST");
+    var advLabels = scanOpts.advancedLabels ? scanOpts.advancedLabels(opts) : [];
+    if (advLabels.length) items.push("高级 Web 检测（" + advLabels.join("/") + "）");
+    else if (opts.dast) items.push("参数级 DAST");
     if (opts.passive) items.push("被动检测（零额外请求）");
     if (opts.dir_scan) items.push("目录探测");
     if (opts.subdomain) items.push("子域枚举");
@@ -509,15 +658,21 @@ function runScanPayload(payload, options) {
   document.getElementById("go").disabled = true;
   renderLivePanel(options || payload);
   setProgress(3, "提交任务…");
+  setAdvNoteFromOptions(options || payload); // G09/G10：扫描中提示（进度条下方一行）
 
   api.post("/api/scan", payload)
     .then(function (r) {
+      /* URL 自动修正回显：后端只改格式不改目标，修正说明必须让用户看见 */
+      if (r && r.url_corrections && r.url_corrections.length) {
+        toast("地址已自动修正：" + r.url_corrections.join("、"), "ok");
+      }
       currentJobId = r.job_id;
       return pollJob(r.job_id, setProgress);
     })
     .then(function (job) {
       document.getElementById("go").disabled = false;
       if (liveTimer) clearInterval(liveTimer);
+      hideAdvNote(); // 扫描结束（done/partial/cancelled）即收提示
       /* FE-12：被中断的扫描不再「结果全丢」——引擎已把部分结果落库 */
       if (job && job.partial) {
         document.getElementById("st-state").textContent = "partial";
@@ -545,6 +700,7 @@ function runScanPayload(payload, options) {
     .catch(function (e) {
       document.getElementById("go").disabled = false;
       if (liveTimer) clearInterval(liveTimer);
+      hideAdvNote();
       document.getElementById("st-state").textContent = "error";
       document.getElementById("st-msg").textContent = e.message;
       document.getElementById("result").innerHTML =
@@ -836,6 +992,9 @@ function renderResult(r, scanId) {
 
   /* 扫描覆盖度（diagnostics）：放在摘要之后、明细之前——先讲清"扫了多少/有没有被拦" */
   html += coverageCard(r);
+
+  /* G09/G10：高级 Web 检测（计划 / 发现）；result.extras.web_advanced 缺失时整卡不渲染 */
+  html += advancedCard(r);
 
   var techs = r.technologies || [];
   html += '<div class="sec-title">指纹识别 <span class="count">' + techs.length + " 项</span>" +

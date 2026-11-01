@@ -25,6 +25,7 @@ import (
 	"cnb.cool/feng-qiao/sitelens/internal/resource"
 	"cnb.cool/feng-qiao/sitelens/internal/server"
 	"cnb.cool/feng-qiao/sitelens/internal/sitelens"
+	"cnb.cool/feng-qiao/sitelens/internal/target"
 )
 
 func main() {
@@ -203,6 +204,13 @@ func main() {
 }
 
 func runScan(cfg *config.Config, rawURL string) {
+	// URL 输入自动修正（与 serve/桌面一致）：修正说明打到 stderr，stdout 保持纯 JSON。
+	if cfg.Target.AutoNormalize {
+		if nr := target.Normalize(rawURL); len(nr.Changes) > 0 {
+			fmt.Fprintf(os.Stderr, "地址已自动修正：%s\n", nr.String())
+			rawURL = nr.URL
+		}
+	}
 	checks.ConfigurePlugins(cfg.Checks.PluginDir)
 	matcher, err := sitelens.LoadMatcher(cfg.Intel.TechnologiesPath)
 	if err != nil {

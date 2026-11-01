@@ -76,7 +76,7 @@ type Server struct {
 	eng     *engine.Engine
 	matcher *sitelens.Matcher
 	kb      atomic.Pointer[intel.KB] // 热替换安全：指向当前知识库快照
-	st      *store.Tiered            // CP-06 分层归档视图：List/Get 跨档透明（签名不变）
+	st      scanStore                // 历史存储：JSON/Tiered/SQL 统一接口（默认 JSON 分层归档）
 	jobs    *store.JobManager        // 作业注册表（/api/tasks 经可选 List() 接口接入）
 	sem     chan struct{}
 	// apiToken / tech 均以原子快照整体换枪：热更新写侧与请求读侧
@@ -103,6 +103,16 @@ type Server struct {
 func New(cfg *config.Config, cfgPath string) (*Server, error) {
 	if cfgPath == "" {
 		cfgPath = ".sitelens.yml"
+	}
+	// 企业化认证模式校验：none（默认，沿用 X-Token）| token（RBAC Bearer）。
+	switch strings.ToLower(strings.TrimSpace(cfg.Web.AuthMode)) {
+	case "", "none":
+	case "token":
+		if strings.TrimSpace(cfg.Web.AuthSecret) == "" {
+			return nil, fmt.Errorf("web.auth_mode=token 需要配置 web.auth_secret（authz 令牌 HMAC 密钥）")
+		}
+	default:
+		return nil, fmt.Errorf("web.auth_mode 非法：%q（可选 none/token）", cfg.Web.AuthMode)
 	}
 	s := &Server{cfg: cfg, cfgPath: cfgPath, jobs: store.NewJobManagerWithCap(200),
 		sem:        make(chan struct{}, cfg.Scan.MaxConcurrent),
@@ -143,9 +153,9 @@ func New(cfg *config.Config, cfgPath string) (*Server, error) {
 		}
 		s.kb.Store(kb)
 	}
-	// CP-06 分层归档：主库保留最近 cfg.Store.ArchiveKeep 条（默认 2000），
-	// 更旧记录自动移入 dataDir/archive/<year>.json；List/Get 跨档透明。
-	st, err := store.NewTiered(cfg.Store.DataDir, cfg.Store.ArchiveKeep)
+	// 企业化 6.x：历史存储后端可切换（json 默认 | sqlite | postgres）。
+	// 非 JSON 后端不可用（driver 未注册/连接/迁移失败）时回退 JSON 并打日志。
+	st, err := s.openScanStore(cfg)
 	if err != nil {
 		return nil, err
 	}
@@ -376,10 +386,23 @@ func (s *Server) startKEVDaemon() {
 
 // ---- 中间件 ----
 
-// guard 可选 API 鉴权：设置 token 后 /api/* 需要 X-Token 头。
+// guard 可选 API 鉴权。
+//
+// 两种模式：
+//   - token（企业化 RBAC）：/api/* 需 Authorization: Bearer <authz 令牌>，
+//     按 角色×动作×资源 鉴权（写操作需写权限；租户头不匹配 403）；
+//   - none（默认，兼容旧行为）：配置了 api_token 时 /api/* 需 X-Token 头。
+//
 // 比较用常量时间实现（防时序侧信道逐字节猜 token）。
 func (s *Server) guard(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if s.authMode() == "token" && strings.HasPrefix(r.URL.Path, "/api/") {
+			if !s.authorizeRBAC(w, r) {
+				return
+			}
+			next.ServeHTTP(w, r)
+			return
+		}
 		if tok := s.token(); tok != "" && strings.HasPrefix(r.URL.Path, "/api/") {
 			if subtle.ConstantTimeCompare([]byte(r.Header.Get("X-Token")), []byte(tok)) != 1 {
 				writeJSON(w, 401, map[string]any{"error": "未授权：缺少或错误的 X-Token"})
@@ -566,6 +589,17 @@ func (s *Server) hScan(w http.ResponseWriter, r *http.Request) {
 	urlStr, _ := body["url"].(string)
 	urlStr = strings.TrimSpace(urlStr)
 
+	// URL 输入自动修正（只改格式、不改目标）：补协议/去标点/hxxp 还原等。
+	// 修正在响应里回显，前端 toast + 结果 extras 留痕。
+	inputURL := urlStr
+	var urlCorrections []string
+	if s.cfg.Target.AutoNormalize {
+		if nr := target.Normalize(urlStr); len(nr.Changes) > 0 {
+			urlStr = nr.URL
+			urlCorrections = nr.Changes
+		}
+	}
+
 	opts := scanOptions(body)
 	// 预检结果注入：命中且未过期时，引擎首页复用该响应（总请求不增加）。
 	if pid, _ := body["preflight_id"].(string); pid != "" {
@@ -586,7 +620,15 @@ func (s *Server) hScan(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	go s.runScanJob(jobID, urlStr, opts)
-	writeJSON(w, 200, map[string]any{"job_id": jobID})
+	resp := map[string]any{
+		"job_id":         jobID,
+		"input_url":      inputURL,
+		"normalized_url": urlStr,
+	}
+	if len(urlCorrections) > 0 {
+		resp["url_corrections"] = urlCorrections
+	}
+	writeJSON(w, 200, resp)
 }
 
 // levelPresets 语义化扫描模式（level 参数）：先套预设，显式键仍可逐项覆盖。
@@ -629,7 +671,17 @@ func scanOptions(body map[string]any) engine.Options {
 	o.WeakAudit = boolOf(body["weak_audit"], false)
 	o.Webshell = boolOf(body["webshell"], false)
 	o.Netsec = boolOf(body["netsec"], false)
-	o.DAST = boolOf(body["dast"], false)
+	if v, ok := body["dast"].(map[string]any); ok {
+		// 前端高级检测对象：{idor,logic,upload,deser,proto}（G09/G10 per-scan 覆盖）
+		o.DAST = true
+		o.AdvIDOR = boolOf(v["idor"], false)
+		o.AdvLogic = boolOf(v["logic"], false)
+		o.AdvUpload = boolOf(v["upload"], false)
+		o.AdvDeser = boolOf(v["deser"], false)
+		o.AdvProto = boolOf(v["proto"], false)
+	} else {
+		o.DAST = boolOf(body["dast"], false)
+	}
 	o.Exploit = boolOf(body["exploit"], false) // config exploit.enabled 为总闸
 	o.Passive = boolOf(body["passive"], false)
 	o.JSMap = boolOf(body["js_map"], false)      // JS 攻击面提取（可独立于 DAST）
@@ -799,7 +851,8 @@ func (s *Server) hBatch(w http.ResponseWriter, r *http.Request) {
 // batchMaxAttempts 单条 URL 最大尝试次数（失败重试，指数退避）。
 const batchMaxAttempts = 3
 
-func (s *Server) runBatch(jobID string, items []batchItem, st *batchState) {
+// runBatchLegacy 旧批量并发路径（Batch.UseWorkerPool=false，默认行为零变化）。
+func (s *Server) runBatchLegacy(jobID string, items []batchItem, st *batchState) {
 	workers := s.cfg.Batch.Workers
 	if workers <= 0 {
 		workers = 3
@@ -850,30 +903,7 @@ func (s *Server) runBatch(jobID string, items []batchItem, st *batchState) {
 					}
 					mu.Unlock()
 				} else {
-					start := time.Now()
-					opts := engine.DefaultOptions()
-					if it.Level != "" {
-						opts = scanOptions(map[string]any{"level": it.Level})
-					}
-					var res *engine.Result
-					attempts := 0
-					hostLock := lockFor(it.URL)
-					for attempt := 1; attempt <= batchMaxAttempts; attempt++ {
-						attempts = attempt
-						s.sem <- struct{}{}
-						hostLock.Lock()
-						res = s.eng.Scan(it.URL, opts, nil,
-							func() bool { return s.jobs.CancelRequested(jobID) })
-						hostLock.Unlock()
-						<-s.sem
-						if res.Error == "" || s.jobs.CancelRequested(jobID) {
-							break
-						}
-						if attempt < batchMaxAttempts {
-							time.Sleep(time.Duration(attempt*300) * time.Millisecond)
-						}
-					}
-					elapsed := time.Since(start).Milliseconds()
+					res, attempts, elapsed := s.scanBatchURL(jobID, it, lockFor)
 					if res.Error != "" {
 						mu.Lock()
 						lines = append(lines, it.URL+" -> 失败（"+res.Error+"，尝试 "+fmt.Sprint(attempts)+" 次）")

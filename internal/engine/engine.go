@@ -39,37 +39,45 @@ import (
 
 // Options 每次扫描可单独指定的开关（对齐 /api/scan 平铺 payload）。
 type Options struct {
-	Deep          bool                    // 同域浅爬取
-	ActiveFP      bool                    // FingerDir 主动路径指纹
-	DirScan       bool                    // 目录探测
-	DirBypass     bool                    // 403 绕过重试
-	Subdomain     bool                    // 子域名枚举
-	ServiceProbe  bool                    // 端口服务识别
-	BrowserUA     bool                    // 浏览器 UA
-	WeakAudit     bool                    // 敏感信息审计
-	Webshell      bool                    // WebShell 探测
-	Takeover      bool                    // 子域名接管探测（需先开 Subdomain 产出候选）
-	Netsec        bool                    // TLS/DNS 安全检测
-	DAST          bool                    // 参数级注入探测
-	Exploit       bool                    // 利用级无害验证请求开关（总闸：exploit.enabled / 设置页）
-	Passive       bool                    // 被动安全检测
-	JSMap         bool                    // JS 攻击面提取（独立于 DAST 可开：bundle 端点/SourceMap，只读）
-	NetProto      bool                    // 协议模板检测（不开端口服务识别时仅跑 dns 类模板）
-	Checks        string                  // none | core | all
-	NucleiCap     int                     // Nuclei 单次模板上限（0 = 用配置默认 nuclei_cap）
-	DirMaxPaths   int                     // 目录探测字典上限（0 = 用配置默认）
-	DirFullWords  bool                    // 目录探测用全量词表（3.2k+6k 并集；大词表档位置位）
-	ShellMaxPaths int                     // WebShell 字典上限（0 = 用配置默认）
-	SubMaxWords   int                     // 子域名字典词数上限（0 = 用配置默认）
-	ProbePorts    []int                   // 端口探测端口集（nil = 用配置/默认常见端口集）
-	AuthCookie    string                  // 授权扫描 Cookie
-	Graph         bool                    // 收集结构化事实图（4.0 P2，默认关；关时与 3.0 行为一致）
-	OnEvent       func(kind, text string) // 实时事件回调（阶段/命中/认证，nil = 不回调）
-	OnLive        func(LiveStats)         // 实时统计回调（请求/页面/拦截/速率，节流 ~250ms，nil = 不回调）
-	Preflight     *Preflight              // 可选：扫描前预检结果；命中且未过期时复用为首页响应（不重复请求）
+	Deep           bool                    // 同域浅爬取
+	ActiveFP       bool                    // FingerDir 主动路径指纹
+	DirScan        bool                    // 目录探测
+	DirBypass      bool                    // 403 绕过重试
+	Subdomain      bool                    // 子域名枚举
+	ServiceProbe   bool                    // 端口服务识别
+	BrowserUA      bool                    // 浏览器 UA
+	WeakAudit      bool                    // 敏感信息审计
+	Webshell       bool                    // WebShell 探测
+	Takeover       bool                    // 子域名接管探测（需先开 Subdomain 产出候选）
+	Netsec         bool                    // TLS/DNS 安全检测
+	DAST           bool                    // 参数级注入探测
+	AdvProto       bool                    // G09/G10：WS/HTTP2 协议面（per-scan 覆盖）
+	AdvDeser       bool                    // G09/G10：反序列化标记
+	AdvLogic       bool                    // G09/G10：业务逻辑 dry-run 计划
+	AdvUpload      bool                    // G09/G10：上传绕过 dry-run 计划
+	AdvIDOR        bool                    // G09/G10：越权矩阵（需 Sessions）
+	AdvMaxRequests int                     // G09/G10：进阶面请求上限（0=配置默认）
+	Exploit        bool                    // 利用级无害验证请求开关（总闸：exploit.enabled / 设置页）
+	Passive        bool                    // 被动安全检测
+	JSMap          bool                    // JS 攻击面提取（独立于 DAST 可开：bundle 端点/SourceMap，只读）
+	NetProto       bool                    // 协议模板检测（不开端口服务识别时仅跑 dns 类模板）
+	Checks         string                  // none | core | all
+	NucleiCap      int                     // Nuclei 单次模板上限（0 = 用配置默认 nuclei_cap）
+	DirMaxPaths    int                     // 目录探测字典上限（0 = 用配置默认）
+	DirFullWords   bool                    // 目录探测用全量词表（3.2k+6k 并集；大词表档位置位）
+	ShellMaxPaths  int                     // WebShell 字典上限（0 = 用配置默认）
+	SubMaxWords    int                     // 子域名字典词数上限（0 = 用配置默认）
+	ProbePorts     []int                   // 端口探测端口集（nil = 用配置/默认常见端口集）
+	AuthCookie     string                  // 授权扫描 Cookie
+	Graph          bool                    // 收集结构化事实图（4.0 P2，默认关；关时与 3.0 行为一致）
+	OnEvent        func(kind, text string) // 实时事件回调（阶段/命中/认证，nil = 不回调）
+	OnLive         func(LiveStats)         // 实时统计回调（请求/页面/拦截/速率，节流 ~250ms，nil = 不回调）
+	Preflight      *Preflight              // 可选：扫描前预检结果；命中且未过期时复用为首页响应（不重复请求）
 	// CP-05（additive；零值 = 关闭，行为与旧版完全一致）：分片执行。
 	ShardWorkers    int    // >0 启用页面/模板批次分片（SplitShards+RunShards；并发夹到 ≤4）
 	ShardCheckpoint []byte // 可选：模板批次续扫 checkpoint（上次落盘的分片计划 JSON）
+	// G10（additive）：多角色会话（IDOR 越权矩阵用）。空 = 跳过 IDOR 检测。
+	Sessions []authn.Session
 }
 
 // DefaultOptions 对齐 Python 默认：deep 开、checks 关、其余关。
@@ -196,6 +204,17 @@ func (e *Engine) Scan(rawURL string, opts Options, onProgress progress, cancel f
 		budgetDegrades = append(budgetDegrades, what)
 	}
 
+	// 0) URL 输入自动修正：只做格式归一（补协议/去标点/hxxp 还原/默认端口），
+	//    不猜域名、不切 www/apex、不扩范围；修正在 extras 留痕供前端/报告回显。
+	rawURLInput := rawURL
+	var urlCorrections []string
+	if e.cfg.Target.AutoNormalize {
+		if nr := target.Normalize(rawURL); len(nr.Changes) > 0 {
+			rawURL = nr.URL
+			urlCorrections = nr.Changes
+		}
+	}
+
 	// 1) 校验（含 SSRF 防护）
 	scheme, host, port, err := target.Validate(rawURL, e.cfg.Scan.Resolve)
 	if err != nil {
@@ -207,6 +226,11 @@ func (e *Engine) Scan(rawURL string, opts Options, onProgress progress, cancel f
 		res.Error = "目标不在 allow_hosts 授权白名单：" + host
 		finish()
 		return res
+	}
+	if len(urlCorrections) > 0 {
+		res.Extras["url_input"] = rawURLInput
+		res.Extras["url_normalized"] = rawURL
+		res.Extras["url_corrections"] = urlCorrections
 	}
 	baseURL := scheme + "://" + host
 	if port > 0 && !(scheme == "http" && port == 80) && !(scheme == "https" && port == 443) {
@@ -874,6 +898,11 @@ func (e *Engine) Scan(rawURL string, opts Options, onProgress progress, cancel f
 				col.addDASTFinding(dastAll[i], m)
 			}
 		}
+		// 8.1) G09/G10 进阶面（additive，config.DAST 五个开关默认全关）：
+		// 协议面 / 反序列化标记 / 业务逻辑与上传 dry-run 计划 / 多会话越权。
+		// 全关时无请求、无输出；开关开启也只做只读探测（logic/upload 仅计划）。
+		e.runWebAdvanced(client, blocked, pages, dastFormTargets, dastLinks, baseURL,
+			res, opts, opts.Sessions, onProgress, live, emit)
 		// 去重命中 = 引擎只读页复用 + DAST benign 基线跨通道复用（payload 不复用）。
 		diag.end("dast", dtDAST, dsDAST, (roCache.Hits()-dedupBefore)+r.BaseCacheHits())
 	}
