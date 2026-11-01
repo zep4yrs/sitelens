@@ -109,10 +109,10 @@ func (t *toolbox) capabilitiesTool() Tool {
 func (t *toolbox) scanTool() Tool {
 	return Tool{
 		Name:        "scan",
-		Description: "对授权目标提交一次 SiteLens 扫描（异步）。返回 job_id；用 scan_status 轮询，完成后用 scan_result 取验证发现与证据链。",
+		Description: "对授权目标提交一次 SiteLens 扫描（异步）。返回 job_id；用 scan_status 轮询，完成后用 scan_result 取验证发现与证据链。URL 可粘贴脏地址（缺协议/hxxp/[.]/全角），服务端会做格式归一并在响应回传 input_url/normalized_url/url_corrections。",
 		Active:      true,
 		InputSchema: objectSchema(map[string]any{
-			"url":   strProp("目标 URL（http/https；必须已获授权，且通过 SiteLens allow_hosts / gov.cn 硬闸门）"),
+			"url":   strProp("目标 URL（可含缺协议/hxxp/[.]/全角等脏形式，服务端自动归一；必须已获授权，且通过 SiteLens allow_hosts / gov.cn 硬闸门）"),
 			"level": enumProp("扫描档位预设；缺省由 options 决定", "quick", "standard", "deep", "full", "assets", "stealth", "apocalypse"),
 			"options": map[string]any{
 				"type":                 "object",
@@ -130,8 +130,11 @@ func (t *toolbox) scanTool() Tool {
 			if err != nil {
 				return nil, err
 			}
-			if !strings.HasPrefix(target, "http://") && !strings.HasPrefix(target, "https://") {
-				return nil, fmt.Errorf("url 必须是 http(s) 绝对地址")
+			// 不在 MCP 层预判 URL 形态：服务端会做 URL 自动修正（补协议/hxxp/[.]/
+			// 全角/默认端口等），并把 input_url/normalized_url/url_corrections 回传。
+			// 这里只要求非空，格式错误由服务端返回可读错误。
+			if strings.TrimSpace(target) == "" {
+				return nil, fmt.Errorf("url 不能为空")
 			}
 			body := map[string]any{"url": target}
 			if v, ok := m["options"]; ok && v != nil {

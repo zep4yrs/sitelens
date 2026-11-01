@@ -1,0 +1,25 @@
+{
+  "suite": "wsl-standard-lab",
+  "version": "2026-11-01",
+  "catalog": "../../coverage-catalog.json",
+  "frozen": {
+    "product": "SiteLens",
+    "version": "5.2.3",
+    "commit": "d4011e4",
+    "mode": "dast-lite（profile.yml：不深爬，仅入口页 DAST）",
+    "config_sha256": "benchmark/labs/wsl-standard/profile.yml",
+    "sitelens_sha256": "see run-meta.json",
+    "templates_index": "n/a（DVWA/xsslabs/upload-labs 本地部署）",
+    "date": "2026-11-01",
+    "operator": "Lead（单操作员；WSL2 Ubuntu 24.04 + PHP 8.3 + MariaDB 10.11）"
+  },
+  "targets": [
+    { "id": "dvwa-sqli", "url": "http://127.0.0.1/dvwa/vulnerabilities/sqli/?id=1&Submit=Submit", "expected": [{ "type": "sql_injection", "note": "DVWA low；id 参数" }] },
+    { "id": "dvwa-xss", "url": "http://127.0.0.1/dvwa/vulnerabilities/xss_r/?name=test", "expected": [{ "type": "xss", "note": "DVWA low；name 反射" }] },
+    { "id": "dvwa-lfi", "url": "http://127.0.0.1/dvwa/vulnerabilities/fi/?page=include.php", "expected": [{ "type": "path_traversal", "note": "DVWA low；page 文件包含" }] },
+    { "id": "dvwa-csrf", "url": "http://127.0.0.1/dvwa/vulnerabilities/csrf/", "expected": [{ "type": "csrf", "note": "DVWA low；改密表单无 token" }] },
+    { "id": "xsslabs-level1", "url": "http://127.0.0.1/xsslabs/level1.php?name=test", "expected": [{ "type": "xss", "note": "xss-labs level1；name 反射" }] },
+    { "id": "upload-labs-pass01", "url": "http://127.0.0.1/upload-labs/Pass-01/index.php", "expected": [{ "type": "file_upload", "note": "upload-labs Pass-01；前端后缀校验" }] },
+    { "id": "safe-page", "url": "http://127.0.0.1/safe/", "expected": [] }
+  ]
+}

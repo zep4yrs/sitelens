@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -87,6 +88,11 @@ func TestDirFindingFiltered(t *testing.T) {
 		{modules.PageHit{Path: "/upload/index.php", Status: 200}, ""},
 		{modules.PageHit{Path: "/x.zip", Status: 200}, "exposed-endpoint"},
 		{modules.PageHit{Path: "/x.env", Status: 200}, "exposed-endpoint"},
+		// 5.2.3：敏感形态路径返回 HTML = 兜底/拦截页，不是文件。
+		{modules.PageHit{Path: "/x.zip", Status: 200, ContentType: "text/html; charset=utf-8"}, ""},
+		{modules.PageHit{Path: "/x.yml", Status: 200, ContentType: "text/html"}, ""},
+		{modules.PageHit{Path: "/x.zip", Status: 200, ContentType: "application/zip"}, "exposed-endpoint"},
+		{modules.PageHit{Path: "/x.yml", Status: 200, ContentType: "text/yaml"}, "exposed-endpoint"},
 		{modules.PageHit{Path: "/dir", Status: 200, DirIndex: true}, "dir-listing"},
 		{modules.PageHit{Path: "/a", Status: 403, Bypass: "X-Forwarded-For"}, "dir-bypass-403"},
 	}
@@ -111,5 +117,33 @@ func TestFullWordlistUnion(t *testing.T) {
 	}
 	if !found {
 		t.Fatalf("全量词表并集应含 upload.php，实得 %d 条", len(words))
+	}
+}
+
+// TestDirScanCatchAllNotVerified 5.2.3 回归：站点对所有路径返回 200 同一
+// 兜底页（WAF/Next.js catch-all 实测形态）时，不得产生目录/端点类发现。
+func TestDirScanCatchAllNotVerified(t *testing.T) {
+	const page = `<html><head><title>404</title></head><body>` +
+		`<a href="/db-backup.sql">backup</a><a href="/upload/">upload</a></body></html>`
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		fmt.Fprint(w, page)
+	}))
+	defer srv.Close()
+
+	cfg := config.Default()
+	cfg.Scan.Resolve = false
+	cfg.Scan.RateIntervalMS = 0
+	cfg.Crawler.MaxPages = 4
+	e := New(cfg, nil, nil)
+	res := e.Scan(srv.URL, Options{Deep: true, DirScan: true, Checks: "none"}, nil, nil)
+	if res.Error != "" {
+		t.Fatalf("扫描不应报错：%s", res.Error)
+	}
+	for _, v := range res.Verified {
+		switch v["check"] {
+		case "exposed-endpoint", "dir-listing":
+			t.Fatalf("catch-all 兜底页不应产生目录类发现：%v", v)
+		}
 	}
 }

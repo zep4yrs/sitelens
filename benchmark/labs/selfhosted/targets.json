@@ -1,0 +1,17 @@
+{
+  "_comment": "SiteLens 自建合成靶场（Docker 不可用）：每个端点实现真实漏洞行为；本清单仅用于 5.2.3 本地验收，不是标准 DVWA 矩阵。",
+  "suite": "selfhosted-lab",
+  "version": "2026-11-01",
+  "targets": [
+    { "id": "sqli-error", "url": "http://127.0.0.1:8081/vulnerabilities/sqli/?id=1", "tags": ["selfhosted", "sqli"] },
+    { "id": "sqli-labs-less1", "url": "http://127.0.0.1:8081/Less-1/?id=1", "tags": ["selfhosted", "sqli"] },
+    { "id": "pikachu-sqli", "url": "http://127.0.0.1:8081/vul/sqli/sqli_str.php?name=1", "tags": ["selfhosted", "sqli"] },
+    { "id": "bwapp-sqli", "url": "http://127.0.0.1:8081/bWAPP/sqli_1.php?title=1&action=search", "tags": ["selfhosted", "sqli"] },
+    { "id": "xss-reflect", "url": "http://127.0.0.1:8081/vulnerabilities/xss_r/?name=test", "tags": ["selfhosted", "xss"] },
+    { "id": "xsslabs-level1", "url": "http://127.0.0.1:8081/level1.php?name=test", "tags": ["selfhosted", "xss"] },
+    { "id": "lfi", "url": "http://127.0.0.1:8081/vulnerabilities/fi/?page=include.php", "tags": ["selfhosted", "path_traversal"] },
+    { "id": "csrf", "url": "http://127.0.0.1:8081/vulnerabilities/csrf/", "tags": ["selfhosted", "csrf"] },
+    { "id": "safe-login", "url": "http://127.0.0.1:8081/login.php", "tags": ["selfhosted", "safe"] },
+    { "id": "safe-webgoat", "url": "http://127.0.0.1:8081/WebGoat/start.mvc", "tags": ["selfhosted", "safe"] }
+  ]
+}

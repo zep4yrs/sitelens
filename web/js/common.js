@@ -10,6 +10,11 @@
 (function () {
   "use strict";
 
+  /* 全局共享状态（弹层栈 / 一次性监听标记 / IME 组合态）。
+     FE-04 起多处引用 SL.xxx；必须在此定义，否则后续 api/initCDD 等
+     定义全部不会执行（外壳不渲染、导航消失）。 */
+  var SL = window.SL = window.SL || { dialogs: [], globalReady: false, imeComposing: false };
+
   /* ---------------- 霞鹜文楷字体（CDN 分包按需加载，断网回退系统字体栈） ---------------- */
   function injectHeadLinks() {
     var fontLink = document.createElement("link");
@@ -658,12 +663,60 @@
       return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;", "`": "&#96;" }[c];
     });
   };
+  /* JS 字符串上下文转义（D-15）：往内联事件处理器里传数据时必须用它。
+     esc() 只保证 HTML 属性不被闭合——浏览器会**先做实体解码再把属性值交给
+     JS 解析**，所以 onclick="f(' + esc(v) + ')" 里形如 x&#39;);alert(1)// 的
+     值解码后仍是 x');alert(1)//，直接逃逸出 JS 字符串（D-03 的真实成因）。
+     本函数产出「HTML 转义后的 JSON 字符串字面量」：解码后是合法 JS 字符串，
+     任何引号/反斜杠/换行都已在 JSON 层转义，无法闭合字符串。
+     用法：'onclick="f(' + escJs(v) + ')"'  → f("v")。 */
+  window.escJs = function (s) {
+    return window.esc(JSON.stringify(String(s == null ? "" : s)));
+  };
 
   function tok() {
     var t = "";
     try { t = localStorage.getItem("sitelens-token") || ""; } catch (e) {}
     return t ? { "X-Token": t } : {};
   }
+  /* ---------------- API Token 的本机存储（D-04） ----------------
+     读侧是上面的 tok()（每次请求现读 localStorage）；写侧此前**全仓不存在**，
+     于是设置页保存 api_token 后引擎立刻要求 X-Token，而前端手里没有 token →
+     每个 /api/* 都 401，连设置页自身都打不开（只能手改 config.yml 才能恢复）。
+     现在唯一写入口就是这里，设置页保存成功后调用。 */
+  window.slStoreToken = function (t) {
+    var v = String(t == null ? "" : t).trim();
+    try {
+      if (v) localStorage.setItem("sitelens-token", v);
+      else localStorage.removeItem("sitelens-token");
+    } catch (e) { /* 隐私模式/配额异常：静默降级（请求会 401，页面有提示） */ }
+    return v;
+  };
+  window.slReadToken = function () {
+    try { return localStorage.getItem("sitelens-token") || ""; } catch (e) { return ""; }
+  };
+  /* ---------------- 统一请求头（CSRF 自定义头 + 可选 X-Token） ----------------
+     F5 的 internal/server/origin_guard.go 对危险端点（PUT /api/settings、
+     POST /api/history/clear、/api/batch/schedules*、/api/admin/*）要求
+     "显式来源证据"：自定义头或 JSON Content-Type 二选一；requireCSRFHeaderStrict
+     打开后必须带 X-Requested-With: sitelens。
+     跨站 JS 无法在不触发 CORS 预检的前提下携带自定义头（表单更不可能），
+     所以这是 CSRF 防护的最后一块。所有请求都从这里取头：
+       - api.get/post/put/del（本文件 request/api）
+       - slDownload（下载/导出）
+       - 裸 fetch（audit.js 的 FormData 上传、chain.html 的图查询）用 apiTok() */
+  var CSRF_HEADER_NAME = "X-Requested-With";
+  var CSRF_HEADER_VALUE = "sitelens";
+  window.slHeaders = function (extra) {
+    var h = {};
+    h[CSRF_HEADER_NAME] = CSRF_HEADER_VALUE;
+    var t = tok();
+    for (var k in t) { if (Object.prototype.hasOwnProperty.call(t, k)) h[k] = t[k]; }
+    if (extra) {
+      for (var e in extra) { if (Object.prototype.hasOwnProperty.call(extra, e)) h[e] = extra[e]; }
+    }
+    return h;
+  };
   /* ---------------- API 与错误分级（BUG-034）----------------
      三类失败必须可区分，且必须带上下文：
        1) 网络失败（引擎未启动 / 已退出 / 端口不通）→ 浏览器原生 "Failed to fetch"
@@ -699,18 +752,19 @@
   function request(method, u, d) {
     return fetch(u, {
       method: method,
-      headers: Object.assign({ "Content-Type": "application/json" }, tok()),
+      headers: window.slHeaders({ "Content-Type": "application/json" }),
       body: d === undefined ? undefined : JSON.stringify(d)
     }).then(function (r) { return asJson(r, u); });
   }
   window.api = {
-    get: function (u) { return fetch(u, { headers: tok() }).then(function (r) { return asJson(r, u); }); },
+    get: function (u) { return fetch(u, { headers: window.slHeaders() }).then(function (r) { return asJson(r, u); }); },
     post: function (u, d) { return request("POST", u, d || {}); },
     put: function (u, d) { return request("PUT", u, d || {}); },
     del: function (u, d) { return request("DELETE", u, d); }
   };
-  // 供无法走 api 封装的裸 fetch（如 FormData 上传）手动补 X-Token 头
-  window.apiTok = tok;
+  // 供无法走 api 封装的裸 fetch（如 FormData 上传）取统一请求头：
+  // 返回 X-Requested-With: sitelens（CSRF 显式头）+ 可选 X-Token。
+  window.apiTok = window.slHeaders;
 
   /* 引擎不可达时的界面态：明确告诉用户"引擎没响应"，而不是一片空白。
      语义：这是阻塞式错误对话框（role=dialog + aria-modal），不做 Esc 关闭
@@ -779,9 +833,10 @@
 
   /* 带 X-Token 的下载：location.href 导航无法携带自定义头，token 模式下
      /api/* 导航必 401，故统一 fetch→Blob→a.download。preferOpen 为真且
-     响应无 attachment 头（如 HTML 报告预览）时改为新开标签。 */
+     响应无 attachment 头（如 HTML 报告预览）时改为新开标签。
+     请求头统一走 slHeaders()（含 CSRF 自定义头，见上方注释）。 */
   window.slDownload = function (url, fallbackName, preferOpen) {
-    return fetch(url, { headers: tok() }).then(function (r) {
+    return fetch(url, { headers: window.slHeaders() }).then(function (r) {
       if (!r.ok) {
         return r.json().catch(function () { return {}; }).then(function (j) {
           throw new Error(j.error || "HTTP " + r.status);

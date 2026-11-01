@@ -1,0 +1,19 @@
+# 标准靶场（WSL 本地 DVWA / xsslabs / upload-labs）验收用 profile。
+#
+# 为什么不用 benchmark/profiles/standard.yml：DVWA 页面/链接多，standard 档深爬
+# 单目标会跑 5–10 分钟（实测 2255+ 请求仍未结束），不适合逐 URL 验收。
+# 本 profile 只对给定入口做 DAST（不深爬），对外标准口径仍是 standard.yml。
+target:
+  allow_private: true
+scan:
+  deep: false
+  rate_mode: polite
+  rate_interval_ms: 80
+  timeout_sec: 10
+  max_hops: 3
+checks:
+  level: core
+crawler:
+  max_pages: 1
+netsec:
+  mail_check: false

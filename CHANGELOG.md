@@ -1,5 +1,61 @@
 # 更新日志
 
+## v5.2.3（2026-11-01，待发布）
+
+> 本版汇总：5.2.x 第二/三/四批收尾 + G09/G10 全量接线 + 企业化 6.x 基座 + MCP/辰极接口 +
+> URL 自动修正 + 目录探测误报修复。完整发行说明见
+> [`docs/release-5.2.3/release-body-5.2.3.md`](docs/release-5.2.3/release-body-5.2.3.md)
+> （出包后回填体积/SHA256）；发布欠账清单见
+> [`docs/release-5.2.3-发布欠账.md`](docs/release-5.2.3-发布欠账.md)。
+
+### 高级 Web 检测（G09/G10，默认关）
+
+- 越权矩阵（IDOR/水平/垂直）接进引擎，需调用方提供多角色会话（`Options.Sessions`）；
+- 业务逻辑探测（数量/价格/优惠券/幂等）接进引擎，默认 **dry-run 只出计划**，显式授权才发请求；
+- 上传绕过（危险扩展名/伪造 MIME/双扩展名）、反序列化入口标记识别接进引擎；
+- WebSocket 明文/未校验 Origin、h2c/HTTP2 ALPN 协议面检查接进 DAST 阶段；
+- 本批新增的配置项集中在 `dast.*` 的 6 个键（`proto`/`deser`/`logic`/`upload`/`idor`/`max_requests`），**这 6 项默认关**；
+  注意 `dast.*` 里**既有**的深度探测面（`deep_probes`/`cmd_inject`/`stored_xss`/`upload_bypass` 等）仍**默认开**，
+  完整开关矩阵见 `.sitelens.example.yml` 的 `dast:` 段；
+- 前端新增「高级 Web 检测」折叠组、扫描中提示与结果卡。
+
+### 企业化 6.x 基座（additive，默认不启用）
+
+> 默认构建已编入 sqlite（modernc，纯 Go）与 postgres（pgx stdlib）驱动；SQLite 已实测
+> 建表/落库/历史读取，PostgreSQL 需自备实例（驱动与方言 DDL 已就绪）。
+
+- 存储：`store.driver=json|sqlite|postgres` + `store.dsn`；SQLite/PG 自动迁移，失败回退 JSON；
+- 鉴权：`web.auth_mode=token` + `web.auth_secret` 启用 HMAC-SHA256 令牌、`X-Tenant-ID` 租户校验、
+  RBAC（viewer/operator/admin）；
+- 批量：`batch.use_worker_pool=true` 走 `MemoryQueue + WorkerPool`（同 host 串行/重试/进度/取消/Webhook）。
+
+### 生态与接口
+
+- `sitelens mcp`：MCP stdio server（13 工具：capabilities/scan/scan_status/scan_result/scan_cancel/
+  history/history_get/graph/export/triage/apispec/graphql_introspect/assets），辰极 Lodestar 可直接接入；
+- URL 输入自动修正：补协议/去标点/hxxp 还原/全角转半角/默认端口，**只改格式不改目标**，
+  修正说明在响应/extras/前端留痕；`target.auto_normalize: false` 可关闭。
+
+### 修复
+
+- 目录探测不再把 WAF/兜底 200 页当成真实文件（xgzwk 类站点误报修复）；
+- `csrf-form` 收窄 GET 表单判定：只认密码/更新/删除/转账等强状态字段，排除
+  `submit/button/reset/image` 控件，修复标准靶场（DVWA SQLi/XSS 搜索表单）误报
+  （回归：`internal/passive/passive_test.go:TestCSRFFormGetSearchNotFlagged`）；
+- 安装器：写入 `InstallLocation`，旧安装缺该键时回退 `UninstallString` 父目录，
+  修复 5.2.0→5.2.3 静默升级可能落到默认目录形成双安装的问题（真机回归发现）；
+- benchmark `score.mjs`：`vulnerabilities[]` 中 `verdict=possible/potential/unverified`
+  的未验证情报不再计分，避免 CVE 情报被当作误报污染 P/R/F1；
+- 5.2.x 第二/三/四批内容（爬虫深度、认证矩阵、API spec、triage、SARIF、合规报告、分片/续跑、
+  归档、模板治理、指纹置信、无障碍/i18n/桌面）见下方预留章节明细。
+
+### 升级说明
+
+- 不启用新配置时行为与 5.2.0 等价；企业能力与 G09/G10 均为 additive、默认关；
+- URL 自动修正默认开（仅格式归一），如需严格旧行为设 `target.auto_normalize: false`；
+- SQL 后端限制：`Import` 不支持（用 `store.MigrateFromJSON` 一次性迁移）、`Verified` 暂不提供；
+- 已知限制见发行说明；`-race` 与 `govulncheck -tags onnx` 已在本地 MinGW/CGO 环境通过，CI 复核。
+
 ## v5.2.x 第二批 / 第三批（**未发布**；预留章节）
 
 > 已实现，随下一次 5.2.x 发版整理；对应 main 分支 `13b688b`（第二批）+ `41a5514`（第三批）。

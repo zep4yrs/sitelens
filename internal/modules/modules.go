@@ -6,6 +6,7 @@
 package modules
 
 import (
+	"crypto/sha256"
 	"fmt"
 	"net"
 	"net/http"
@@ -37,6 +38,11 @@ type PageHit struct {
 	// Via 命中来源：空 = 词表原生；否则为「爬取链接扩展」（带出触发它的页面），
 	// 供证据链回链——避免"报了却不知道从哪来的"。
 	Via string `json:"via,omitempty"`
+	// ContentType / BodySHA256：命中响应的内容类型与正文哈希（证据留痕）。
+	// 5.2.3 起用于区分「真文件」与「WAF/兜底 200 页」：报告只写
+	// "HTTP 200 · 988B" 无法自证，带上这两项才能复核是不是同一个兜底页。
+	ContentType string `json:"content_type,omitempty"`
+	BodySHA256  string `json:"body_sha256,omitempty"`
 }
 
 // loadWords 字典加载：去空行 + 截取上限。
@@ -62,16 +68,141 @@ func loadWords(dir, name string, limit int) []string {
 	return out
 }
 
-// soft404Sizes 基线：探测随机不存在路径的响应尺寸集合。
-func soft404Sizes(client *httpx.Client, baseURL string) map[int]bool {
-	sizes := map[int]bool{}
-	for _, p := range []string{"sl-nope-9f3a2", "sl-nope-81b7d?q=x"} {
-		u := strings.TrimRight(baseURL, "/") + "/" + p
-		if r, err := client.GetFollow(u); err == nil && r != nil {
-			sizes[len(r.Body)] = true
+// soft404ProbePaths 软 404 基线探测路径：普通随机名 + 敏感文件形态随机名。
+//
+// 5.2.3 误报修复（EdgeOne 站点实测）：WAF/兜底页常只对「敏感形态路径」返回
+// 200（纯随机名照常 404），只用随机名做基线拿不到它的尺寸/正文，于是 25 个
+// 配置/备份路径全被当成真实文件。必须用同形态路径探测。
+var soft404ProbePaths = []string{
+	"sl-nope-9f3a2",
+	"sl-nope-81b7d?q=x",
+	".sl-nope-9f3a2.yml",
+	".sl-nope-81b7d.conf",
+	".sl-nope-2c4e.env",
+	"sl-nope-7d1f.zip",
+	".sl-nope-5a6b.bak",
+	".sl-nope-3e8c.crt",
+}
+
+// soft404Baseline 软 404 基线：响应尺寸集合 + 正文哈希集合。
+// 尺寸挡「同一兜底页、长度随路径微变」；哈希挡「逐字节相同的 catch-all 页」。
+type soft404Baseline struct {
+	sizes  map[int]bool
+	hashes map[string]bool
+}
+
+// soft404BaselineOf 探测基线路径，返回尺寸与正文哈希集合。
+func soft404BaselineOf(client *httpx.Client, baseURL string) soft404Baseline {
+	b := soft404Baseline{sizes: map[int]bool{}, hashes: map[string]bool{}}
+	base := strings.TrimRight(baseURL, "/")
+	for _, p := range soft404ProbePaths {
+		r, err := client.GetFollow(base + "/" + p)
+		if err != nil || r == nil {
+			continue
+		}
+		b.sizes[len(r.Body)] = true
+		b.hashes[bodyDigest(r.Body)] = true
+	}
+	return b
+}
+
+// bodyDigest 正文 sha256 十六进制（识别「同一兜底页」）。
+func bodyDigest(body string) string {
+	return fmt.Sprintf("%x", sha256.Sum256([]byte(body)))
+}
+
+// SensitiveSuffix 路径后缀是否为「本不该被直接读取」的配置/备份/归档形态。
+// 脚本端点（.php/.asp/...）返回 false：正常可达，是否存在缺陷要靠内容判定。
+// 与 engine.dirFindingOf 的分类口径同源（引擎侧直接调用本函数，避免两处维护）。
+func SensitiveSuffix(p string) bool {
+	low := strings.ToLower(p)
+	dot := strings.LastIndex(low, ".")
+	if dot < 0 {
+		return false
+	}
+	switch low[dot:] {
+	case ".bak", ".backup", ".old", ".orig", ".save", ".swp", ".swo", ".tmp",
+		".sql", ".tar", ".tar.gz", ".tgz", ".zip", ".rar", ".7z", ".gz",
+		".conf", ".config", ".ini", ".yml", ".yaml", ".env", ".log",
+		".key", ".pem", ".crt", ".p12", ".jks":
+		return true
+	}
+	return false
+}
+
+// isHTMLResponse 响应是否 HTML 形态：Content-Type 优先，缺失时看正文开头。
+func isHTMLResponse(contentType, body string) bool {
+	if strings.Contains(strings.ToLower(contentType), "html") {
+		return true
+	}
+	head := strings.ToLower(strings.TrimSpace(body))
+	if len(head) > 512 {
+		head = head[:512]
+	}
+	return strings.HasPrefix(head, "<!doctype html") || strings.HasPrefix(head, "<html") ||
+		strings.HasPrefix(head, "<head") || strings.HasPrefix(head, "<body")
+}
+
+// archiveMagicOK 归档类后缀的正文魔数校验（防 JSON/纯文本拦截页冒充文件）。
+// 无魔数定义的后缀返回 true（HTML 冒充已由 isHTMLResponse 拦掉）。
+func archiveMagicOK(path, body string) bool {
+	low := strings.ToLower(path)
+	switch {
+	case strings.HasSuffix(low, ".zip"):
+		return strings.HasPrefix(body, "PK")
+	case strings.HasSuffix(low, ".7z"):
+		return strings.HasPrefix(body, "7z\xbc\xaf\x27\x1c")
+	case strings.HasSuffix(low, ".rar"):
+		return strings.HasPrefix(body, "Rar!")
+	case strings.HasSuffix(low, ".gz"), strings.HasSuffix(low, ".tgz"):
+		return strings.HasPrefix(body, "\x1f\x8b")
+	case strings.HasSuffix(low, ".tar"):
+		return len(body) > 262 && body[257:262] == "ustar"
+	}
+	return true
+}
+
+// blockPageMarkers WAF/拦截/挑战页正文特征（小写匹配；仅用于敏感文件形态
+// 路径，避免误伤正常页面）。
+var blockPageMarkers = []string{
+	"请求被拦截", "访问被拒绝", "访问被拦截", "安全策略", "人机验证", "滑动验证",
+	"验证码", "challenge-platform", "cf-chl", "just a moment", "captcha",
+	"access denied", "request blocked", "requestid", "request id", "edgeone",
+}
+
+// looksGenericPage 200 响应是否为「通用兜底/拦截页」而非真实资源。
+//
+// 判定（任一命中即视为兜底，不产生目录/端点发现）：
+//  1. 客户端已判 WAF/限流拦截（httpx.Response.Blocked）；
+//  2. 正文与软 404 基线某次探测逐字节相同（catch-all 200）；
+//  3. 敏感文件形态路径返回 HTML 正文或拦截页特征（真实 yml/zip/env 不会是 HTML）；
+//  4. 归档后缀但正文魔数不符（JSON/纯文本拦截页冒充 zip）。
+//
+// 非敏感路径（普通入口页/目录）不受 3/4 影响——目录索引页本身是 HTML。
+func looksGenericPage(path string, r *httpx.Response, base soft404Baseline) bool {
+	if r == nil || r.Blocked {
+		return true
+	}
+	if base.hashes[bodyDigest(r.Body)] {
+		return true
+	}
+	if !SensitiveSuffix(path) {
+		return false
+	}
+	ct := ""
+	if r.Headers != nil {
+		ct = r.Headers["Content-Type"]
+	}
+	if isHTMLResponse(ct, r.Body) {
+		return true
+	}
+	low := strings.ToLower(r.Body)
+	for _, m := range blockPageMarkers {
+		if strings.Contains(low, m) {
+			return true
 		}
 	}
-	return sizes
+	return !archiveMagicOK(path, r.Body)
 }
 
 // bypassMaxAttempts 单次扫描的绕过请求总量硬上限（无害化控量）。
@@ -125,18 +256,19 @@ func buildBypassVariants(u, path, baseURL string, rootSize int) []bypassVariant 
 //     （catch-all 站点对任意路径都回根页——拿根页当绕过成功 = 误报）
 //   - rewrite：根路径返回 200、正文含路径段关键词、尺寸异于根页和软 404 基线
 //   - method：HEAD/OPTIONS 返回 200
-func bypassHit(v bypassVariant, r *httpx.Response, rootSize int, baseline map[int]bool) bool {
-	if r == nil {
+func bypassHit(v bypassVariant, r *httpx.Response, rootSize int, base soft404Baseline) bool {
+	if r == nil || r.Blocked {
 		return false
 	}
 	switch v.kind {
 	case "rewrite":
-		return r.Status == 200 && len(r.Body) != rootSize && !baseline[len(r.Body)] &&
+		return r.Status == 200 && len(r.Body) != rootSize &&
+			!base.sizes[len(r.Body)] && !base.hashes[bodyDigest(r.Body)] &&
 			strings.Contains(strings.ToLower(r.Body), strings.ToLower(v.seg))
 	case "method":
 		return r.Status == 200
 	default:
-		if r.Status != 200 || baseline[len(r.Body)] {
+		if r.Status != 200 || base.sizes[len(r.Body)] || base.hashes[bodyDigest(r.Body)] {
 			return false
 		}
 		return rootSize <= 0 || len(r.Body) != rootSize
@@ -146,7 +278,7 @@ func bypassHit(v bypassVariant, r *httpx.Response, rootSize int, baseline map[in
 // tryBypass403 对单个 403 URL 顺序尝试全部变体，返回首个命中响应与技术名。
 // attempts 为跨命中共享的请求量计数（硬上限 bypassMaxAttempts）。
 func tryBypass403(client *httpx.Client, u, path, baseURL string, rootSize int,
-	baseline map[int]bool, attempts *int, cancel func() bool) (*httpx.Response, string) {
+	baseline soft404Baseline, attempts *int, cancel func() bool) (*httpx.Response, string) {
 	for _, v := range buildBypassVariants(u, path, baseURL, rootSize) {
 		if *attempts >= bypassMaxAttempts {
 			return nil, ""
@@ -229,7 +361,7 @@ func DirScanExtra(client *httpx.Client, baseURL string, cfg config.ActiveConfig,
 	words = normWords
 	extraList := normalizeExtras(extra, viaOf, baseURL, inWords)
 	base := strings.TrimRight(baseURL, "/")
-	baseline := soft404Sizes(client, baseURL)
+	baseline := soft404BaselineOf(client, baseURL)
 	// 根页基线尺寸：rewrite 类绕过需与根页区分（否则拿到的只是首页 = 误报）
 	rootSize := 0
 	if cfg.DirBypass403 {
@@ -290,17 +422,26 @@ func DirScanExtra(client *httpx.Client, baseURL string, cfg config.ActiveConfig,
 					bypassNote = via
 				}
 			}
-			if (status != 200 && status != 401 && status != 403) || baseline[len(r.Body)] {
+			if r.Blocked || (status != 200 && status != 401 && status != 403) ||
+				baseline.sizes[len(r.Body)] || baseline.hashes[bodyDigest(r.Body)] {
+				results <- dirResult{}
+				return
+			}
+			// 200 响应再做「真文件 vs 兜底/拦截页」判定；401/403 只承载存在性
+			// 与绕过语义（HTML 403 页是常态），不在此过滤。
+			if status == 200 && looksGenericPage("/"+cd.path, r, baseline) {
 				results <- dirResult{}
 				return
 			}
 			results <- dirResult{ok: true, hit: PageHit{
 				URL: u, Path: "/" + cd.path,
 				Status: status, Size: len(r.Body),
-				Title:    htmlx.Parse(r.Body).Title,
-				Bypass:   bypassNote,
-				DirIndex: dirIndexMark(r.Status, r.Body, r.Headers["Content-Type"]),
-				Via:      cd.via,
+				Title:       htmlx.Parse(r.Body).Title,
+				Bypass:      bypassNote,
+				DirIndex:    dirIndexMark(r.Status, r.Body, r.Headers["Content-Type"]),
+				Via:         cd.via,
+				ContentType: r.Headers["Content-Type"],
+				BodySHA256:  bodyDigest(r.Body),
 			}}
 		}(cd)
 	}
@@ -454,7 +595,7 @@ func WebshellProbe(client *httpx.Client, baseURL string, cfg config.ActiveConfig
 	base := strings.TrimRight(baseURL, "/")
 	// 软 404 基线：与 DirScan 同源——站点对不存在路径返回 200+内容时，
 	// 未过滤会把每个探测路径都误报成 webshell（tools 站实测暴露）
-	baseline := soft404Sizes(client, baseURL)
+	baseline := soft404BaselineOf(client, baseURL)
 	hits := []PageHit{}
 	for i, w := range words {
 		if cancel != nil && cancel() {
@@ -462,10 +603,17 @@ func WebshellProbe(client *httpx.Client, baseURL string, cfg config.ActiveConfig
 		}
 		u := base + "/" + strings.TrimLeft(w, "/")
 		r, err := client.GetFollow(u)
-		if err == nil && r != nil && r.Status == 200 && len(r.Body) > 0 && !baseline[len(r.Body)] {
+		if err == nil && r != nil && r.Status == 200 && len(r.Body) > 0 &&
+			!r.Blocked && !baseline.sizes[len(r.Body)] &&
+			!baseline.hashes[bodyDigest(r.Body)] {
+			ct := ""
+			if r.Headers != nil {
+				ct = r.Headers["Content-Type"]
+			}
 			hits = append(hits, PageHit{
 				URL: u, Path: "/" + strings.TrimLeft(w, "/"),
 				Status: 200, Size: len(r.Body),
+				ContentType: ct, BodySHA256: bodyDigest(r.Body),
 			})
 		}
 		if progress != nil {

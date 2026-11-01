@@ -112,3 +112,28 @@ func TestCookieEvidenceStable(t *testing.T) {
 		t.Fatalf("证据文案不符: %q", e)
 	}
 }
+
+// 标准靶场回归：GET 搜索/查询表单（name/id + submit 按钮）不得误报 CSRF；
+// GET 改密表单（password_new/password_conf）必须命中；POST 表单仍命中。
+func TestCSRFFormGetSearchNotFlagged(t *testing.T) {
+	search := `<form action="/dvwa/vulnerabilities/xss_r/" method="GET">
+<input name="name" type="text"><input name="Submit" type="submit" value="Submit"></form>`
+	got := onlyCheck(Run(respWithCookie(""), htmlx.Parse(search), "http://t/x"), "csrf-form")
+	if len(got) != 0 {
+		t.Fatalf("GET 搜索表单不应报 csrf-form: %+v", got)
+	}
+
+	changePwd := `<form action="#" method="GET">
+<input name="password_new" type="text"><input name="password_conf" type="text">
+<input name="Change" type="submit" value="Change"></form>`
+	got = onlyCheck(Run(respWithCookie(""), htmlx.Parse(changePwd), "http://t/csrf"), "csrf-form")
+	if len(got) != 1 {
+		t.Fatalf("GET 改密表单应报 csrf-form: %+v", got)
+	}
+
+	postForm := `<form action="/login" method="post"><input name="user"><input type="password" name="pass"></form>`
+	got = onlyCheck(Run(respWithCookie(""), htmlx.Parse(postForm), "http://t/login"), "csrf-form")
+	if len(got) != 1 {
+		t.Fatalf("POST 表单应报 csrf-form: %+v", got)
+	}
+}

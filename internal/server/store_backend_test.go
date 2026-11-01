@@ -4,13 +4,9 @@ package server
 
 import (
 	"bytes"
-	"database/sql"
-	"database/sql/driver"
-	"io"
 	"log"
 	"path/filepath"
 	"strings"
-	"sync"
 	"testing"
 
 	"cnb.cool/feng-qiao/sitelens/internal/config"
@@ -62,13 +58,13 @@ func TestOpenScanStoreUnsupportedDriverFallsBack(t *testing.T) {
 	}
 }
 
-// TestOpenScanStoreUnregisteredDriverFallsBack driver 未注册（sql.Open 报错）
-// → 明确告警 + 回退 JSON。
-func TestOpenScanStoreUnregisteredDriverFallsBack(t *testing.T) {
+// TestOpenScanStorePostgresUnreachableFallsBack PostgreSQL 驱动已注册但目标不可达
+// （Ping 失败）→ 明确告警 + 回退 JSON，不阻断启动。
+func TestOpenScanStorePostgresUnreachableFallsBack(t *testing.T) {
 	cfg := config.Default()
 	cfg.Store.DataDir = t.TempDir()
-	cfg.Store.Driver = "postgres" // 测试进程未注册该驱动
-	cfg.Store.DSN = "host=127.0.0.1 port=1 user=x"
+	cfg.Store.Driver = "postgres"
+	cfg.Store.DSN = "host=127.0.0.1 port=1 user=x connect_timeout=1"
 	var st scanStore
 	var err error
 	out := captureLog(t, func() { st, err = (&Server{}).openScanStore(cfg) })
@@ -99,77 +95,45 @@ func TestOpenScanStoreMissingDSNFallsBack(t *testing.T) {
 	}
 }
 
-// ---- fake database/sql driver（不依赖真实数据库/第三方驱动） ----
-
-var registerFakeSQLiteOnce sync.Once
-
-// registerFakeSQLiteDriver 注册最小 fake sqlite 驱动（幂等；已被注册时忽略）。
-func registerFakeSQLiteDriver() {
-	registerFakeSQLiteOnce.Do(func() {
-		defer func() { _ = recover() }()
-		sql.Register("sqlite", fakeSQLDriver{})
-	})
-}
-
-type fakeSQLDriver struct{}
-
-func (fakeSQLDriver) Open(string) (driver.Conn, error) { return &fakeConn{}, nil }
-
-type fakeConn struct{}
-
-func (c *fakeConn) Prepare(string) (driver.Stmt, error) { return &fakeStmt{}, nil }
-func (c *fakeConn) Close() error                        { return nil }
-func (c *fakeConn) Begin() (driver.Tx, error)           { return fakeTx{}, nil }
-
-type fakeTx struct{}
-
-func (fakeTx) Commit() error   { return nil }
-func (fakeTx) Rollback() error { return nil }
-
-type fakeStmt struct{}
-
-func (s *fakeStmt) Close() error  { return nil }
-func (s *fakeStmt) NumInput() int { return -1 }
-
-func (s *fakeStmt) Exec([]driver.Value) (driver.Result, error) { return fakeResult{}, nil }
-func (s *fakeStmt) Query([]driver.Value) (driver.Rows, error)  { return &fakeRows{}, nil }
-
-type fakeResult struct{}
-
-func (fakeResult) LastInsertId() (int64, error) { return 1, nil }
-func (fakeResult) RowsAffected() (int64, error) { return 1, nil }
-
-type fakeRows struct{}
-
-func (r *fakeRows) Columns() []string         { return nil }
-func (r *fakeRows) Close() error              { return nil }
-func (r *fakeRows) Next([]driver.Value) error { return io.EOF }
-
-// TestOpenSQLScanStoreFakeDriver fake driver 走通 SQL 后端装配与 scanStore 适配。
-func TestOpenSQLScanStoreFakeDriver(t *testing.T) {
-	registerFakeSQLiteDriver()
-	st, err := openSQLScanStore("sqlite", "fake-dsn")
+// TestOpenSQLScanStoreRealSQLite 真实 sqlite 驱动（modernc，纯 Go）走通 SQL 后端：
+// 建表迁移 → Save/List/Get/Delete/HistoryStats；不再依赖测试专用 fake driver。
+func TestOpenSQLScanStoreRealSQLite(t *testing.T) {
+	dsn := "file:" + filepath.Join(t.TempDir(), "scan.db") + "?_pragma=busy_timeout(5000)"
+	st, err := openSQLScanStore("sqlite", dsn)
 	if err != nil {
-		t.Fatalf("openSQLScanStore: %v", err)
+		t.Fatalf("openSQLScanStore(sqlite): %v", err)
 	}
+	// 测试结束前关掉底层连接，否则 Windows 上 TempDir 清理会报“文件被占用”。
+	defer func() {
+		if a, ok := st.(*sqlScanStore); ok {
+			if c, ok := a.db.DB().(interface{ Close() error }); ok {
+				_ = c.Close()
+			}
+		}
+	}()
 	if _, ok := st.(*sqlScanStore); !ok {
 		t.Fatalf("SQL 后端应为 sqlScanStore，实际 %T", st)
 	}
-	// Save：INSERT + LastInsertId（fake 返回 1）
-	id := st.Save(&engine.Result{URL: "https://x.example", Host: "x.example",
-		ScannedAt: "2026-01-01 00:00:00"}, nil)
+	id := st.Save(&engine.Result{
+		URL: "https://x.example", Host: "x.example", ScannedAt: "2026-01-01 00:00:00",
+	}, nil)
 	if id != 1 {
 		t.Fatalf("SQL Save 应返回自增 id=1，实际 %d", id)
 	}
-	// 读路径：fake 空结果集 → 空列表/nil，不 panic
-	if sums := st.List(10, ""); len(sums) != 0 {
-		t.Fatalf("fake 空结果集应返回空列表: %v", sums)
+	sums := st.List(10, "")
+	if len(sums) != 1 || sums[0].Host != "x.example" {
+		t.Fatalf("SQL List 结果异常: %+v", sums)
 	}
-	if rec := st.Get(1); rec != nil {
-		t.Fatalf("fake 空结果集 Get 应返回 nil: %+v", rec)
+	rec := st.Get(id)
+	if rec == nil || rec.Host != "x.example" {
+		t.Fatalf("SQL Get 结果异常: %+v", rec)
 	}
-	// fake driver 的 DELETE 影响行数恒为 1；这里只验证不 panic/不误报错误
-	_ = st.Delete(1)
+	if !st.Delete(id) {
+		t.Fatal("SQL Delete 应返回 true")
+	}
+	if rec := st.Get(id); rec != nil {
+		t.Fatalf("删除后 Get 应为 nil: %+v", rec)
+	}
 	// 不支持能力明确降级（不 panic、不阻塞接口）
 	if _, ierr := st.Import(store.ScanRecord{}); ierr == nil {
 		t.Fatal("SQL 后端 Import 应明确报错")
@@ -183,7 +147,6 @@ func TestOpenSQLScanStoreFakeDriver(t *testing.T) {
 	if st.HasGraph(1) || st.GraphIDs() != nil {
 		t.Fatal("SQL 后端图谱能力应降级")
 	}
-	// 统计/清空不 panic
 	if stats := st.HistoryStats(); stats == nil {
 		t.Fatal("HistoryStats 不应为 nil")
 	}

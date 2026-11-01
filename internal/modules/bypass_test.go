@@ -37,7 +37,7 @@ func TestTryBypass403PathTrailingSlash(t *testing.T) {
 
 	attempts := 0
 	resp, via := tryBypass403(client(), srv.URL+"/admin", "/admin", srv.URL, 0,
-		map[int]bool{19: true}, &attempts, nil)
+		soft404Baseline{sizes: map[int]bool{19: true}}, &attempts, nil)
 	if resp == nil {
 		t.Fatal("尾斜杠变体应命中")
 	}
@@ -64,7 +64,7 @@ func TestTryBypass403TrustHeader(t *testing.T) {
 
 	attempts := 0
 	resp, via := tryBypass403(client(), srv.URL+"/secret", "/secret", srv.URL, 0,
-		map[int]bool{19: true}, &attempts, nil)
+		soft404Baseline{sizes: map[int]bool{19: true}}, &attempts, nil)
 	if resp == nil {
 		t.Fatal("信任头变体应命中")
 	}
@@ -97,7 +97,7 @@ func TestTryBypass403RewriteHeader(t *testing.T) {
 	}
 	attempts := 0
 	resp, via := tryBypass403(root, srv.URL+"/console", "/console", srv.URL,
-		len(rootResp.Body), map[int]bool{19: true}, &attempts, nil)
+		len(rootResp.Body), soft404Baseline{sizes: map[int]bool{19: true}}, &attempts, nil)
 	if resp == nil {
 		t.Fatal("改写头变体应命中")
 	}
@@ -124,7 +124,7 @@ func TestTryBypass403HeadMethod(t *testing.T) {
 
 	attempts := 0
 	resp, via := tryBypass403(client(), srv.URL+"/panel", "/panel", srv.URL, 0,
-		map[int]bool{19: true}, &attempts, nil)
+		soft404Baseline{sizes: map[int]bool{19: true}}, &attempts, nil)
 	if resp == nil {
 		t.Fatal("HEAD 方法变体应命中")
 	}
@@ -141,7 +141,7 @@ func TestTryBypass403AllFail(t *testing.T) {
 
 	attempts := 0
 	if resp, _ := tryBypass403(client(), srv.URL+"/locked", "/locked", srv.URL, 0,
-		map[int]bool{19: true}, &attempts, nil); resp != nil {
+		soft404Baseline{sizes: map[int]bool{19: true}}, &attempts, nil); resp != nil {
 		t.Fatal("全部失败时不应返回命中")
 	}
 	want := len(buildBypassVariants(srv.URL+"/locked", "/locked", srv.URL, 0))
@@ -159,7 +159,7 @@ func TestTryBypass403AttemptsCap(t *testing.T) {
 
 	attempts := bypassMaxAttempts - 2 // 已接近上限
 	if resp, _ := tryBypass403(client(), srv.URL+"/x", "/x", srv.URL, 0,
-		map[int]bool{}, &attempts, nil); resp != nil {
+		soft404Baseline{}, &attempts, nil); resp != nil {
 		t.Fatal("不应命中")
 	}
 	if attempts > bypassMaxAttempts {
