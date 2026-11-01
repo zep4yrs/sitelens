@@ -1,4 +1,4 @@
-﻿; SiteLens 站点透视 — Windows 安装器 (NSIS)
+; SiteLens 站点透视 — Windows 安装器 (NSIS)
 ; CI 构建: makensis -V2 -DVERSION=1.0.0 -DSTAGEDIR=SiteLens -DOUTFILE=dist/SiteLens-1.0.0-setup.exe installer/installer.nsi
 ; 注意: 本文件必须保存为 UTF-8 with BOM（makensis 中文脚本要求）
 
@@ -22,6 +22,7 @@ ManifestDPIAware true
 
 !include "MUI2.nsh"
 !include "LogicLib.nsh"
+!include "FileFunc.nsh"
 
 Name "SiteLens 站点透视 ${VERSION}"
 OutFile "${OUTFILE}"
@@ -31,6 +32,22 @@ RequestExecutionLevel admin
 SetCompressor /SOLID lzma
 ShowInstDetails show
 ShowUnInstDetails show
+
+; 升级目录解析：优先 Software\SiteLens\InstallDir（InstallDirRegKey 已处理）；
+; 旧版本没有该键时回退卸载表 UninstallString 的父目录，避免静默安装默认落到
+; C:\Program Files 与旧目录形成双安装（2026-11-01 真机回归发现）。
+Function .onInit
+  ReadRegStr $0 HKLM "Software\SiteLens" "InstallDir"
+  ${If} $0 == ""
+    ReadRegStr $0 HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\SiteLens" "UninstallString"
+    ${If} $0 != ""
+      ${GetParent} "$0" $0
+    ${EndIf}
+  ${EndIf}
+  ${If} $0 != ""
+    StrCpy $INSTDIR "$0"
+  ${EndIf}
+FunctionEnd
 
 !define MUI_ABORTWARNING
 !define MUI_WELCOMEPAGE_TITLE "SiteLens 站点透视 安装向导"
@@ -89,6 +106,7 @@ Section "SiteLens 站点透视" SEC_MAIN
   WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\SiteLens" "UninstallString" "$INSTDIR\uninstall.exe"
   WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\SiteLens" "DisplayIcon" "$INSTDIR\sitelens.exe"
   WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\SiteLens" "DisplayVersion" "${VERSION}"
+  WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\SiteLens" "InstallLocation" "$INSTDIR"
   WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\SiteLens" "Publisher" "fengqiao"
   WriteRegDWORD HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\SiteLens" "NoModify" 1
   WriteRegDWORD HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\SiteLens" "NoRepair" 1

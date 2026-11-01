@@ -14,7 +14,9 @@
 - 业务逻辑探测（数量/价格/优惠券/幂等）接进引擎，默认 **dry-run 只出计划**，显式授权才发请求；
 - 上传绕过（危险扩展名/伪造 MIME/双扩展名）、反序列化入口标记识别接进引擎；
 - WebSocket 明文/未校验 Origin、h2c/HTTP2 ALPN 协议面检查接进 DAST 阶段；
-- 配置项集中在 `dast.*`（`proto`/`deser`/`logic`/`upload`/`idor`/`max_requests`），**默认全关**；
+- 本批新增的配置项集中在 `dast.*` 的 6 个键（`proto`/`deser`/`logic`/`upload`/`idor`/`max_requests`），**这 6 项默认关**；
+  注意 `dast.*` 里**既有**的深度探测面（`deep_probes`/`cmd_inject`/`stored_xss`/`upload_bypass` 等）仍**默认开**，
+  完整开关矩阵见 `.sitelens.example.yml` 的 `dast:` 段；
 - 前端新增「高级 Web 检测」折叠组、扫描中提示与结果卡。
 
 ### 企业化 6.x 基座（additive，默认不启用）
@@ -37,6 +39,10 @@
 ### 修复
 
 - 目录探测不再把 WAF/兜底 200 页当成真实文件（xgzwk 类站点误报修复）；
+- 安装器：写入 `InstallLocation`，旧安装缺该键时回退 `UninstallString` 父目录，
+  修复 5.2.0→5.2.3 静默升级可能落到默认目录形成双安装的问题（真机回归发现）；
+- benchmark `score.mjs`：`vulnerabilities[]` 中 `verdict=possible/potential/unverified`
+  的未验证情报不再计分，避免 CVE 情报被当作误报污染 P/R/F1；
 - 5.2.x 第二/三/四批内容（爬虫深度、认证矩阵、API spec、triage、SARIF、合规报告、分片/续跑、
   归档、模板治理、指纹置信、无障碍/i18n/桌面）见下方预留章节明细。
 

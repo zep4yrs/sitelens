@@ -1,0 +1,28 @@
+{
+  "suite": "selfhosted-lab",
+  "version": "2026-11-01",
+  "catalog": "../../coverage-catalog.json",
+  "frozen": {
+    "product": "SiteLens",
+    "version": "5.2.3",
+    "commit": "966e68b",
+    "mode": "standard",
+    "config_sha256": "benchmark/profiles/standard.yml",
+    "sitelens_sha256": "see run-meta.json",
+    "templates_index": "n/a（自建合成靶场）",
+    "date": "2026-11-01",
+    "operator": "Lead（单操作员；合成靶场，非标准 DVWA 矩阵）"
+  },
+  "targets": [
+    { "id": "sqli-error", "url": "http://127.0.0.1:8081/vulnerabilities/sqli/?id=1", "expected": [{ "type": "sql_injection", "note": "报错/布尔差分均可接受" }] },
+    { "id": "sqli-labs-less1", "url": "http://127.0.0.1:8081/Less-1/?id=1", "expected": [{ "type": "sql_injection", "note": "同 sqli-error 行为" }] },
+    { "id": "pikachu-sqli", "url": "http://127.0.0.1:8081/vul/sqli/sqli_str.php?name=1", "expected": [{ "type": "sql_injection", "note": "参数 name" }] },
+    { "id": "bwapp-sqli", "url": "http://127.0.0.1:8081/bWAPP/sqli_1.php?title=1&action=search", "expected": [{ "type": "sql_injection", "note": "参数 title" }] },
+    { "id": "xss-reflect", "url": "http://127.0.0.1:8081/vulnerabilities/xss_r/?name=test", "expected": [{ "type": "xss", "note": "name 原样回显" }] },
+    { "id": "xsslabs-level1", "url": "http://127.0.0.1:8081/level1.php?name=test", "expected": [{ "type": "xss", "note": "同 xss-reflect" }] },
+    { "id": "lfi", "url": "http://127.0.0.1:8081/vulnerabilities/fi/?page=include.php", "expected": [{ "type": "path_traversal", "note": "page=../../etc/passwd 返回 passwd 内容" }] },
+    { "id": "csrf", "url": "http://127.0.0.1:8081/vulnerabilities/csrf/", "expected": [{ "type": "csrf", "note": "状态变更表单无 anti-CSRF token" }] },
+    { "id": "safe-login", "url": "http://127.0.0.1:8081/login.php", "expected": [] },
+    { "id": "safe-webgoat", "url": "http://127.0.0.1:8081/WebGoat/start.mvc", "expected": [] }
+  ]
+}

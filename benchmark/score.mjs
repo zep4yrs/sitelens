@@ -304,6 +304,12 @@ function findingsOf(raw) {
     if (!Array.isArray(arr)) return;
     for (const f of arr) {
       if (!f || typeof f !== "object") continue;
+      // 未验证情报不计分：SiteLens 等扫描器会把 CVE/模板情报放进 vulnerabilities[]，
+      // 并标 verdict=possible；这类条目不是“检出”，计入会把情报当成 FP 污染 P/R/F1。
+      if (source === "vulnerabilities") {
+        const verdict = String(f.verdict || "").toLowerCase();
+        if (verdict === "possible" || verdict === "potential" || verdict === "unverified") continue;
+      }
       out.push({
         source,
         title: f.title || f.name || f.check || f.type || "",

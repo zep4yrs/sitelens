@@ -58,9 +58,18 @@
   `CGO_ENABLED=1 go test -race ./internal/... ./cmd/...`（全包通过）、
   `govulncheck ./...` 与 `govulncheck -tags onnx ./...`（均 No vulnerabilities found）、
   前端语法/门禁/i18n、`benchmark/score.mjs --selftest`、URL 归一化单测；
-- 待补：真实靶场 benchmark、桌面 Windows 真机验收、SARIF GitHub code scanning 解析；
-  安装包体积 / SHA256：135,508,022 字节（约 129.2 MiB）/
-  `EA5D1FAC3830B06A030386F202E89B706F266855180D7C00FCE3AF525D12CF8D`。
+- 真机（Windows 11，非虚拟机）：5.2.0→5.2.3 静默覆盖安装、启动（引擎 API 返回 5.2.3、
+  WebView2 工作台渲染、Ctrl+Shift+S/Q 全局快捷键注册）、静默卸载、重装均通过；
+  **修复**：旧安装缺少 InstallLocation 时升级会落到默认目录形成双安装，安装器已补
+  InstallLocation 与卸载表回退解析；
+- 靶场：本机无 Docker/PHP，使用**自建合成靶场**跑 `benchmark/run.ps1`（10 目标 /
+  SQLi+XSS+CSRF+路径穿越 / 含 2 个安全用例）：P=1.0 R=1.0 F1=1.0、FP=0、FN=0，
+  预期类型覆盖 4/4、目录类型覆盖 13.3%（4/30）；**这不是 DVWA/pikachu 标准矩阵**，
+  标准矩阵仍待有 Docker 环境补跑；明细与复现见
+  [`benchmark-selfhosted-2026-11-01.md`](benchmark-selfhosted-2026-11-01.md)；
+- 待补：标准靶场矩阵、SARIF GitHub code scanning 解析；
+  安装包体积 / SHA256：135,534,192 字节（约 129.3 MiB）/
+  `37DBC64DD9B409792BE02452DC2DD87A2700599B8E5D9236CD7BA072D985D4C9`。
 
 ## 已知限制
 
@@ -70,14 +79,16 @@
 - 无埋点/遥测；诊断包不含日志全文；更新通道无官方 checksum；
 - 白盒污点无 sanitizer；非 HTTP 协议通道 DNS 重绑定缺口未修；ML 排序模型未交付；
 - 正式交付仅 Windows；品牌更名暂缓；a11y 20 项允许例外计划 5.3 补；
-- 安装包未做 Authenticode 签名（占位口径）；桌面 Windows 真机冒烟与真实靶场 benchmark
-  未在发版前完成，分别列为发布后跟踪项。
+- 安装包使用**自签名**证书（内部验收口径，CN=SiteLens Internal Self-Signed，
+  RSA3072/SHA256 + DigiCert 时间戳；安装器/壳/引擎均已签）：公网用户会看到
+  “未知发布者”，正式发布前需替换为受信任代码签名证书；
+- 标准 DVWA/pikachu 靶场矩阵未跑（本机无 Docker/PHP），当前召回数据来自自建合成靶场。
 
 ## 下载
 
 - 桌面安装器（推荐，全能力）：`SiteLens-Setup-5.2.3.exe`
-  135,508,022 字节（约 129.2 MiB），SHA256
-  `EA5D1FAC3830B06A030386F202E89B706F266855180D7C00FCE3AF525D12CF8D`
-  —— **只含引擎与界面，不含命令行工具**
+  135,534,192 字节（约 129.3 MiB），SHA256
+  `37DBC64DD9B409792BE02452DC2DD87A2700599B8E5D9236CD7BA072D985D4C9`
+  —— **只含引擎与界面，不含命令行工具**；已自签名（证书见上）
 - 命令行工具（CLI，独立分发）：`npm install -g @fengqiao666/sitelens-cli`
 - 升级：桌面端自动覆盖升级；离线环境下载安装器覆盖安装。

@@ -4,9 +4,10 @@
 > 检查时间：2026-11-01
 > 用途：发版前逐项勾销；P0 不清零不发布，P1 尽量清零，P2 必须写进发行说明。
 >
-> **收尾状态（2026-11-01）**：P0-1/2/3/5/6 已清零；P0-4 自动化项全绿，仅剩桌面真机、真实靶场、
-> 请求级/UI 人工走查。`check.ps1 -ExpectedVersion 5.2.3 -Strict` = **PASS=11 / WARN=1 / FAIL=0 / SKIP=1**
-> （WARN=未签名占位；SKIP=CLI 五平台包未构建）。
+> **收尾状态（2026-11-01）**：P0-1/2/3/5/6 已清零；P0-4 自动化、真机、自建合成靶场均已完成，
+> 仅剩标准 DVWA/pikachu 矩阵、请求级/UI 人工走查、CLI 五平台包、PG 真实实例。
+> `check.ps1 -ExpectedVersion 5.2.3 -Strict -RequireSigned` = **PASS=12 / WARN=0 / FAIL=0 / SKIP=1**
+> （SKIP=CLI 五平台包未构建；安装器/壳/引擎已自签名）。
 
 ## 0. 当前自动化检查结果
 
@@ -20,7 +21,11 @@
 | `node --test scripts/i18n.test.mjs` | ✅ PASS | fail 0 |
 | `benchmark/score.mjs --selftest` | ✅ PASS | 36 条断言，P=0.8 R=0.6667 F1=0.7273 |
 | `go test ./internal/target`（URL 归一化） | ✅ PASS | 28 组表驱动 + 幂等 + host 不变量 |
-| `scripts/release/check.ps1 -ExpectedVersion 5.2.3 -Strict` | ✅ PASS=11 / WARN=1 / SKIP=1 | 版本/安装包/latest.yml/发行说明/CHANGELOG 全过；WARN=未签名；SKIP=CLI 包未构建 |
+| `scripts/release/check.ps1 -ExpectedVersion 5.2.3 -Strict -RequireSigned` | ✅ PASS=12 / WARN=0 / SKIP=1 | 版本/安装包/latest.yml/发行说明/CHANGELOG/签名全过；SKIP=CLI 包未构建 |
+| 自签名 | ✅ 安装器/壳/引擎均 `Valid` | CN=SiteLens Internal Self-Signed（RSA3072/SHA256 + DigiCert 时间戳）；内部信任，公网需换证书 |
+| 真机 | ✅ 安装/升级/启动/卸载/重装 | 注册表 5.2.3、InstallLocation 正确、引擎 API 5.2.3、WebView2 渲染、快捷键注册；修复旧安装缺 InstallLocation 的双目录问题 |
+| 靶场（自建合成） | ✅ P=1.0 R=1.0 F1=1.0（10 目标/4 类型） | SQLi×4 / XSS×2 / CSRF / 路径穿越 / 安全×2；TP=8 FP=0 FN=0；目录覆盖 13.3%（4/30） |
+| benchmark 口径 | ✅ 修复情报污染 | `score.mjs` 排除 `verdict=possible`；36 断言 selftest PASS |
 | `govulncheck -tags onnx ./...` | ✅ PASS | `No vulnerabilities found`（MinGW gcc 16.1.0 + CGO_ENABLED=1） |
 | `CGO_ENABLED=1 go test -race ./internal/... ./cmd/...` | ✅ PASS | 全包 race 通过（server 132s / intel 64s / engine 34s；MinGW gcc 16.1.0） |
 | `gofmt -l internal cmd` | ⚠ 本机大量命中 | 原因：工作区部分文件 `w/crlf`（`git ls-files --eol` 可见），非代码问题；以 **CI Linux 的 gofmt 阶段**为准 |
@@ -57,7 +62,7 @@
 - Authenticode 仍是占位（R8 SKIP/WARN）；若要签名，需接入证书后再跑
   `check.ps1 -RequireSigned -Strict`。
 
-### P0-4 验收报告未回填（🟡 自动化项已回填；人工/真机/真实靶场待补）
+### P0-4 验收报告未回填（✅ 自动化+真机+自建靶场已回填；标准矩阵/人工走查待补）
 
 `docs/验收报告-5.2.x.md` 仍是骨架（全部“待实测”）。发版前至少回填：
 
@@ -101,8 +106,9 @@
 
 ## 2. P1：发布前应完成（不阻断，但影响质量/口径）
 
-1. **真跑 benchmark**（G01/G02）：至少靶场矩阵 + 20 个授权样本；否则“更准”仍无数字，
-   发行说明只能写“能力已补，实测待跑”。
+1. **真跑 benchmark**（G01/G02）：✅ 已用自建合成靶场（10 目标 / 4 类型，P/R/F1=1.0、FP=0）
+   完成首轮验收；**标准 DVWA/pikachu 矩阵 + 20 个授权样本仍未跑**（本机无 Docker/PHP），
+   对外“更准”只能写“合成靶场已过，标准矩阵待补”。
 2. **文档同步**：本次已更新 `竞品对标与追赶方案`（v1.1，3.68）、`产品说明`（v5.2.3）、
    `企业版-6.x`（v0.2 已接线）；还需同步：
    - `README.md` 的“为什么是 SiteLens”与下载入口（版本号/能力描述）；
@@ -138,7 +144,7 @@
 - 企业化：无 SSO/HA/多节点/审计日志/规模压测；RBAC 实际三档（viewer/operator/admin）；
 - 高级 Web 检测默认关；IDOR 需显式会话；logic/upload 默认 dry-run；
 - 召回无实测基线；benchmark 只有套件与 selftest；
-- 企业化：默认构建无 SQL 驱动（sqlite/postgres 均回退 JSON）；无 SSO/HA/多节点/审计日志；
+- 企业化：SQL 驱动已编入默认构建（SQLite 已 E2E；PostgreSQL 未连真实实例验证）；无 SSO/HA/多节点/审计日志；
 - 品牌更名暂缓；a11y 20 项允许例外。
 
 ---
@@ -175,9 +181,10 @@
 - [x] 5. 出包：本机手工等价步骤（Wails shell `go build` + `node tools/build-engine.js --target=engine`
       + NSIS `makensis`；ASCII staging 规避中文路径）；产物已过 PE 校验；
 - [x] 6. 回填发行说明的体积/SHA256；生成/校验 `latest.yml`；
-- [x] 7. `pwsh scripts/release/check.ps1 -ExpectedVersion 5.2.3 -Strict`：
-      PASS=11 / WARN=1 / FAIL=0 / SKIP=1（WARN=未签名，SKIP=CLI 包）；
-- [ ] 8. 桌面真机冒烟：安装/升级/卸载/托盘/快捷键/通知/Mica；
+- [x] 7. `pwsh scripts/release/check.ps1 -ExpectedVersion 5.2.3 -Strict -RequireSigned`：
+      PASS=12 / WARN=0 / FAIL=0 / SKIP=1（SKIP=CLI 包）；
+- [x] 8. 桌面真机冒烟：5.2.0→5.2.3 安装/升级/启动/卸载/重装通过；托盘/Mica/通知为目视项；
+      真机发现旧安装缺 InstallLocation 导致双目录，安装器已补写入与卸载表回退解析并重签；
 - [ ] 9. CNB Release：上传安装器 + 发行说明（不上传 latest.yml/blockmap，防双源漂移）；
       GitHub desktop-stable 上传 exe + blockmap + latest.yml；
 - [ ] 10. 若发 CLI：`npm publish` `@fengqiao666/sitelens-cli` + 五平台引擎包；
@@ -188,10 +195,11 @@
 
 ## 6. 一句话结论
 
-**发布物已就绪**：版本号 5.2.3、CHANGELOG/发行说明、安装包
-`SiteLens-Setup-5.2.3.exe`（135,508,022 字节 / SHA256 `EA5D1FAC…D12CF8D`）、`latest.yml`
-均已生成，`check.ps1 -Strict` = **PASS=11 / WARN=1 / FAIL=0 / SKIP=1**。
-代码层面 `build/test/vet/race/govulncheck` 全绿，SQLite 后端 E2E 通过。
-**剩余非阻断项**：Authenticode 未签名（占位）、桌面 Windows 真机冒烟、真实靶场 benchmark、
-CLI 五平台引擎包（R12 SKIP）、PostgreSQL 真实实例验证。
-这些完成前，对外材料不要宣称“已签名/已真机验收/实测召回”。
+**发布物已就绪（内部验收口径）**：版本号 5.2.3、CHANGELOG/发行说明、安装包
+`SiteLens-Setup-5.2.3.exe`（**135,534,192 字节 / SHA256 `37DBC64D…D985D4C9`**，已自签名）、
+`latest.yml` 均已生成；`check.ps1 -Strict -RequireSigned` = **PASS=12 / WARN=0 / FAIL=0 / SKIP=1**。
+代码层面 `build/test/vet/race/govulncheck` 全绿，SQLite 后端 E2E 通过；
+真机安装/升级/启动/卸载/重装通过；自建合成靶场 P/R/F1=1.0（FP=FN=0）。
+**剩余非阻断项**：自签名证书非公信（公网发布需换受信任证书）、标准 DVWA/pikachu 矩阵、
+CLI 五平台引擎包（R12 SKIP）、PostgreSQL 真实实例验证、请求级/UI 人工走查。
+这些完成前，对外材料不要宣称“已公信签名/标准矩阵实测召回”。
