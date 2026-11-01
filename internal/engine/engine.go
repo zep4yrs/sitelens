@@ -1306,32 +1306,15 @@ func dirFindingOf(h modules.PageHit) (check, title string) {
 	case h.Bypass != "":
 		return "dir-bypass-403", "访问控制可绕过（403 变体命中）"
 	}
-	if !sensitiveSuffix(h.Path) {
+	if !modules.SensitiveSuffix(h.Path) {
+		return "", ""
+	}
+	// 内容闸门（5.2.3）：敏感形态路径返回 HTML 正文 = 兜底/拦截页，不是文件。
+	// 模块层已按正文/哈希过滤；这里再用内容类型兜一层（防旧调用方漏设字段）。
+	if h.Status == 200 && strings.Contains(strings.ToLower(h.ContentType), "html") {
 		return "", ""
 	}
 	return "exposed-endpoint", "端点为可直读的源/配置/备份形态：" + h.Path
-}
-
-// sensitiveSuffix 路径后缀是否为"本不该被直接读取"的形态。
-// 只按后缀判定，不看内容——内容判定交给 check 层的词匹配。
-func sensitiveSuffix(p string) bool {
-	low := strings.ToLower(p)
-	dot := strings.LastIndex(low, ".")
-	if dot < 0 {
-		return false
-	}
-	switch low[dot:] {
-	case ".php", ".php3", ".php4", ".php5", ".php7", ".phtml", ".pht", ".phps",
-		".asp", ".aspx", ".ashx", ".asmx", ".jsp", ".jspx", ".do", ".action",
-		".cgi", ".pl", ".py", ".rb", ".sh", ".cgi-bin":
-		return false // 脚本端点：正常可达，是否存在缺陷要靠内容判定
-	case ".bak", ".backup", ".old", ".orig", ".save", ".swp", ".swo", ".tmp",
-		".sql", ".tar", ".tar.gz", ".tgz", ".zip", ".rar", ".7z", ".gz",
-		".conf", ".config", ".ini", ".yml", ".yaml", ".env", ".log",
-		".key", ".pem", ".crt", ".p12", ".jks":
-		return true
-	}
-	return false
 }
 
 // dirSeverityOf 目录发现的严重度：直读备份/配置(key/pem/env)最重。
@@ -1370,6 +1353,18 @@ func dirEvidenceOf(h modules.PageHit) string {
 	}
 	if h.Via != "" {
 		b.WriteString(" · 来源 " + h.Via)
+	}
+	// 内容指纹留痕（5.2.3）：报告只写「HTTP 200 · 988B」无法复核；
+	// 带上内容类型与正文哈希，才能判断是同一兜底页还是真文件。
+	if h.ContentType != "" {
+		b.WriteString(" · CT " + h.ContentType)
+	}
+	if h.BodySHA256 != "" {
+		sum := h.BodySHA256
+		if len(sum) > 16 {
+			sum = sum[:16]
+		}
+		b.WriteString(" · sha256 " + sum)
 	}
 	return b.String()
 }
