@@ -1053,6 +1053,27 @@ func (s *Server) hExport(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Disposition",
 			fmt.Sprintf("attachment; filename=sitelens-%d.sarif", id))
 		_, _ = w.Write(data)
+	case "mlps", "asvs", "compliance":
+		fw := FrameworkMLPS
+		if r.URL.Query().Get("fmt") == "asvs" {
+			fw = FrameworkASVS
+		}
+		format := FormatMarkdown
+		if r.URL.Query().Get("format") == "html" {
+			format = FormatHTML
+		}
+		out, cerr := RenderCompliance(rec, fw, format)
+		if cerr != nil {
+			writeJSON(w, 400, map[string]any{"error": cerr.Error()})
+			return
+		}
+		ct := "text/markdown; charset=utf-8"
+		if format == FormatHTML {
+			ct = "text/html; charset=utf-8"
+		}
+		w.Header().Set("Content-Type", ct)
+		w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=sitelens-%d-%s.%s", id, string(fw), string(format)))
+		_, _ = w.Write([]byte(out))
 	case "html":
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		_, _ = w.Write([]byte(htmlReport(rec)))

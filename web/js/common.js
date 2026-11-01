@@ -165,6 +165,10 @@
       if (window.slUpdateNav) window.slUpdateNav();
       if (window.slUpdateSide) window.slUpdateSide();
       if (window.slUpdateModes) window.slUpdateModes();
+      // FE-09：hash 直达/前进后退到审计模式时触发 Monaco 懒加载
+      if (window.slAuditActivate && (location.hash || "").slice(1) === "audit") {
+        window.slAuditActivate();
+      }
     });
     // 模式行点击分派：工作台=即时 switchTab；被动页=Turbo 去对应模式。
     // 注意不能以「switchTab 函数存在」判定在工作台——Turbo 切页后 window 上的
@@ -179,6 +183,8 @@
       if (onWorkbench) {
         window.switchTab(name);
         if (window.slUpdateModes) window.slUpdateModes();
+        // FE-09：首次进入审计模式才加载 Monaco（懒加载瘦身；其它页无此函数）
+        if (name === "audit" && window.slAuditActivate) window.slAuditActivate();
       } else if (window.Turbo) {
         window.Turbo.visit("/app#" + name);
       }

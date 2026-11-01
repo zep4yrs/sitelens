@@ -202,6 +202,21 @@
   .audit-line-high{background:color-mix(in srgb,var(--danger) 10%,transparent)}
   .audit-line-medium{background:color-mix(in srgb,var(--warn) 10%,transparent)}
   .audit-line-low{background:color-mix(in srgb,var(--info) 8%,transparent)}
+  /* FE-09 Monaco 懒加载：加载中骨架占位 / 失败降级纯文本（app.css 不在此轮写域，样式随页内联） */
+  .audit-ed-loading{position:absolute;inset:0;z-index:2;display:flex;flex-direction:column;
+    justify-content:center;gap:12px;padding:18px 22px;background:var(--card)}
+  .audit-ed-loading[hidden]{display:none!important}
+  .audit-ed-loading .skel-group{width:100%}
+  .audit-ed-fallback{position:absolute;inset:0;z-index:3;width:100%;height:100%;margin:0;
+    padding:12px 14px;font-family:var(--font-mono);font-size:12.5px;line-height:1.6;
+    color:var(--foreground);background:var(--card);border:none;resize:none;outline:none;
+    white-space:pre;overflow:auto;tab-size:2}
+  .audit-ed-fallback[hidden]{display:none!important}
+  .audit-ed-fallback-hint{position:absolute;right:10px;bottom:8px;z-index:4;font-size:11.5px;
+    color:var(--warn);background:color-mix(in srgb,var(--card) 88%,transparent);
+    border:1px solid color-mix(in srgb,var(--warn) 35%,transparent);border-radius:var(--radius-sm);
+    padding:3px 8px;pointer-events:none}
+  .audit-ed-fallback-hint[hidden]{display:none!important}
 </style>
 </head>
 <body>
@@ -389,6 +404,20 @@
         <div class="audit-work">
           <div class="audit-edwrap">
             <div class="audit-editor" id="audit-editor"></div>
+            <!-- FE-09：Monaco 懒加载中显示骨架；失败降级为只读纯文本 -->
+            <div class="audit-ed-loading" id="audit-ed-loading" hidden>
+              <div class="skel-group" aria-hidden="true">
+                <div class="skel-block"><span class="skel skel-line w90"></span><span class="skel skel-line w70"></span></div>
+                <div class="skel-block"><span class="skel skel-line w50"></span><span class="skel skel-line w90"></span></div>
+                <div class="skel-block"><span class="skel skel-line w70"></span></div>
+              </div>
+              <p class="hint" style="margin:0">编辑器加载中…</p>
+            </div>
+            <textarea class="audit-ed-fallback" id="audit-fallback" readonly hidden
+                      aria-label="源码纯文本预览（编辑器组件加载失败降级）"></textarea>
+            <div class="audit-ed-fallback-hint" id="audit-ed-fallback-hint" hidden>
+              ⚠ 编辑器组件加载失败，已降级为纯文本预览
+            </div>
             <div class="audit-ed-empty" id="audit-ed-empty">
               <span class="big">▷</span>
               <span class="empty-title">审计结果将在这里打开</span>
@@ -447,6 +476,7 @@
 </div>
 
 <script src="/js/app.js"></script>
+<script src="/js/triage.js"></script>
 <script src="/js/audit.js"></script>
 <script src="/js/batch.js"></script>
 </body>
