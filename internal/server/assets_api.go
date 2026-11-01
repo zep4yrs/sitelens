@@ -55,10 +55,7 @@ func (s *Server) hCertExpiry(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	notAfter, days, ok := netsec.CertExpiry(vhost, tlsPort)
-	resp := map[string]any{
-		"host": vhost, "ok": ok,
-		"not_after": "", "days_left": 0,
-	}
+	resp := map[string]any{"host": vhost, "ok": ok}
 	if ok {
 		resp["not_after"] = notAfter.UTC().Format(time.RFC3339)
 		resp["days_left"] = days

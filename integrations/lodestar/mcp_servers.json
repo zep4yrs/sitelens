@@ -1,0 +1,10 @@
+[
+  {
+    "name": "sitelens",
+    "argv": [
+      "C:\\path\\to\\sitelens.exe",
+      "mcp",
+      "--allow-active"
+    ]
+  }
+]

@@ -92,7 +92,7 @@ func TestAssetCertExpiryFail(t *testing.T) {
 	if notAfter, _ := m["not_after"].(string); notAfter != "" {
 		t.Fatalf("失败时 not_after 应为空: %v", m)
 	}
-	for _, key := range []string{"host", "not_after", "days_left", "ok"} {
+	for _, key := range []string{"host", "ok"} {
 		if _, ok := m[key]; !ok {
 			t.Fatalf("响应缺字段 %q: %v", key, m)
 		}

@@ -63,6 +63,8 @@ func main() {
                                  读取结构化事实图：摘要或契约自检（只读）
   sitelens [flags] regression <scan_id>
                                  重放历史扫描的已验证发现（退出码表达回归）
+  sitelens [flags] mcp           MCP stdio server（供辰极 Lodestar 等智能体调用；
+                                 默认只读，--allow-active 启用扫描类工具）
 
 配置：%s（缺省用内置最佳实践默认值）
 
@@ -173,6 +175,10 @@ func main() {
 	case "migrate-pg":
 		loadEnvFile(g.Env)
 		os.Exit(migratePGCommand(g.Config))
+	case "mcp":
+		// 生态扩展：MCP stdio server，供辰极 Lodestar 等渗透智能体调用。
+		// 不依赖 cfg（只桥接本地 HTTP API），失败退出码由子命令给出。
+		os.Exit(mcpCommand(args[1:]))
 	case "serve":
 		srv, err := server.New(cfg, g.Config)
 		if err != nil {
