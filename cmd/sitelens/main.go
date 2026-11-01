@@ -236,6 +236,19 @@ func runScan(cfg *config.Config, rawURL string) {
 		Checks:  cfg.Checks.Level,
 		Netsec:  cfg.Modules.Netsec,
 		Passive: true,
+		// 主动模块：此前 CLI scan 只映射了 Netsec/Passive/DAST，[modules] 段
+		// （目录/子域/WebShell/指纹/端口/敏感信息）配置了也不生效——serve 线正常，
+		// CLI 线静默丢能力。这里全部按配置映射（默认 false，行为不变）。
+		ActiveFP:     cfg.Modules.ActiveFP,
+		DirScan:      cfg.Modules.DirScan,
+		DirBypass:    cfg.Active.DirBypass403,
+		Subdomain:    cfg.Modules.Subdomain,
+		Takeover:     cfg.Modules.Subdomain,
+		ServiceProbe: cfg.Modules.ServiceProbe,
+		NetProto:     cfg.Modules.ServiceProbe,
+		BrowserUA:    cfg.Modules.BrowserUA,
+		WeakAudit:    cfg.Modules.WeakAudit,
+		Webshell:     cfg.Modules.Webshell,
 		// DAST 主动注入探测：CLI scan 此前漏开（只有 serve 的 scanOptions 开了），
 		// 导致命令行扫描永远拿不到参数级注入发现——与"deep 档含 DAST"的
 		// 档位语义不符。此处按配置总闸打开（[dast] 段可关）。

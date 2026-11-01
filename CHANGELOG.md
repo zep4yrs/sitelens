@@ -40,8 +40,13 @@
 
 - 目录探测不再把 WAF/兜底 200 页当成真实文件（xgzwk 类站点误报修复）；
 - `csrf-form` 收窄 GET 表单判定：只认密码/更新/删除/转账等强状态字段，排除
-  `submit/button/reset/image` 控件，修复标准靶场（DVWA SQLi/XSS 搜索表单）误报
-  （回归：`internal/passive/passive_test.go:TestCSRFFormGetSearchNotFlagged`）；
+  `submit/button/reset/image` 控件，修复标准靶场（DVWA SQLi/XSS 搜索表单）误报；
+  跨源表单（文章内嵌 jsfiddle/codepen 示例）不再按本站 CSRF 上报
+  （回归：`internal/passive/passive_test.go:TestCSRFFormGetSearchNotFlagged`、
+  `TestCSRFFormCrossOriginNotFlagged`）；
+- CLI `scan` 补齐 `[modules]` 接线：此前只映射 Netsec/Passive/DAST，配置里的
+  目录探测/子域枚举/WebShell/主动指纹/端口服务/敏感信息审计在 CLI 线全部静默失效；
+  现按配置映射（默认 false，行为不变；`-config` 全开即可真正全开）；
 - 安装器：写入 `InstallLocation`，旧安装缺该键时回退 `UninstallString` 父目录，
   修复 5.2.0→5.2.3 静默升级可能落到默认目录形成双安装的问题（真机回归发现）；
 - benchmark `score.mjs`：`vulnerabilities[]` 中 `verdict=possible/potential/unverified`
