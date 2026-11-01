@@ -186,15 +186,16 @@ table.list tbody tr{transition:background .15s}
   container-type:inline-size} /* 窄栏自适应按左列自身宽度判定（分割条拖窄不受视口影响） */
 .tw-modes{display:grid;grid-template-columns:repeat(5,1fr);gap:3px;padding:0 6px;
   border-bottom:1px solid var(--border);margin:0 0 16px;flex:none}
-.tw-modes .tab{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:5px;
-  height:50px;padding:0 2px;border:none;border-radius:8px 8px 0 0;background:none;cursor:pointer;
-  color:var(--muted-fg);font-size:11px;font-family:inherit;white-space:nowrap}
-.tw-modes .tab svg{width:17px;height:17px;opacity:.75}
+.tw-modes .tab{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;
+  height:56px;padding:0 2px;border:none;border-radius:8px 8px 0 0;background:none;cursor:pointer;
+  color:var(--muted-fg);font-size:10px;line-height:1.2;font-family:inherit;white-space:normal;text-align:center}
+.tw-modes .tab span{max-width:100%;overflow:hidden;text-overflow:ellipsis;display:block}
+.tw-modes .tab svg{width:17px;height:17px;opacity:.75;flex:none}
 .tw-modes .tab:hover{color:var(--foreground);background:var(--accent)}
 .tw-modes .tab.active{color:var(--foreground);background:var(--muted);font-weight:600}
 .tw-modes .tab.active svg{opacity:1}
-/* 窄左列：模式行收成纯图标（label 靠 title 提示），不再挤压换行 */
-@container (max-width: 336px){
+/* 仅极窄（左列拖到 <232px）才收成纯图标，label 靠 title 提示；默认 302px 宽显示图标+文字 */
+@container (max-width: 232px){
   .tw-modes .tab span{display:none}
   .tw-modes .tab{height:42px}
 }
