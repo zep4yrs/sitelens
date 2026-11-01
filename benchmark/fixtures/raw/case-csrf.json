@@ -1,0 +1,19 @@
+{
+  "url": "http://127.0.0.1:8081/vulnerabilities/csrf/",
+  "host": "127.0.0.1",
+  "status": 200,
+  "scanned_at": "2026-11-01T00:00:01Z",
+  "duration": 0.31,
+  "error": "",
+  "vulnerabilities": [],
+  "verified": [
+    {
+      "check": "csrf-form",
+      "title": "表单缺少 CSRF token",
+      "severity": "medium",
+      "url": "http://127.0.0.1:8081/vulnerabilities/csrf/?password_new=1",
+      "evidence": "POST 表单 3 个字段均无 token",
+      "src": "check"
+    }
+  ]
+}

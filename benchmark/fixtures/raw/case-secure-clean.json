@@ -1,0 +1,10 @@
+{
+  "url": "http://127.0.0.1:8081/healthy/",
+  "host": "127.0.0.1",
+  "status": 200,
+  "scanned_at": "2026-11-01T00:00:04Z",
+  "duration": 0.19,
+  "error": "",
+  "vulnerabilities": [],
+  "verified": []
+}

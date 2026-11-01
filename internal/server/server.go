@@ -277,6 +277,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/captcha/capability", s.hCaptchaCapability)
 	mux.HandleFunc("POST /api/audit", s.hAudit)
 	mux.HandleFunc("GET /api/audit/demo", s.hAuditDemo)
+	// CP-08 UI triage：误报标记 + 白名单（internal/server/triage.go）
+	s.registerTriageRoutes(mux)
 
 	return s.guard(s.headers(mux))
 }
@@ -679,7 +681,12 @@ func (s *Server) runScanJob(jobID, urlStr string, opts engine.Options) {
 	}, func() bool { return s.jobs.CancelRequested(jobID) })
 
 	if s.jobs.CancelRequested(jobID) {
-		s.jobs.Update(jobID, func(j *store.Job) { j.Status = "cancelled"; j.Message = "已取消" })
+		// 零丢失（FE-12）：取消时把已采集结果落库为 partial，可在历史中查看/续扫。
+		lastPhase := ""
+		if j := s.jobs.Get(jobID); j != nil && j.Live != nil {
+			lastPhase = j.Live.Phase
+		}
+		s.SavePartialJob(jobID, res, PartialOptions(opts), lastPhase)
 		return
 	}
 	if res.Error != "" {
@@ -1199,6 +1206,7 @@ func (s *Server) hLoginBrute(w http.ResponseWriter, r *http.Request) {
 	jsonEndpoint, _ := body["json_endpoint"].(string)
 	jsonTemplate, _ := body["json_template"].(string)
 	successContains, _ := body["success_contains"].(string)
+	multiStep, _ := body["multistep"].(bool)
 	jobID := newID()
 	s.jobs.Create(jobID, "loginbrute", map[string]any{"url": urlStr, "login_mode": loginMode}, 100)
 	if _, _, _, verr := target.Validate(urlStr, s.cfg.Scan.Resolve); verr != nil {
@@ -1243,6 +1251,7 @@ func (s *Server) hLoginBrute(w http.ResponseWriter, r *http.Request) {
 				IntervalMS:      s.cfg.LoginBrute.IntervalMS,
 				SuccessContains: successContains,
 				CaptchaField:    captchaField, // 用户显式指定优先于自动识别
+				MultiStep:       multiStep,
 				AllowHosts:      s.cfg.Scan.AllowHosts,
 				Cancel:          func() bool { return s.jobs.CancelRequested(jobID) },
 			}, progress)
@@ -1255,6 +1264,7 @@ func (s *Server) hLoginBrute(w http.ResponseWriter, r *http.Request) {
 				IntervalMS:   s.cfg.LoginBrute.IntervalMS,
 				CaptchaType:  captchaType,
 				CaptchaField: captchaField, // 用户显式指定优先（空 = 自动识别）
+				MultiStep:    multiStep,
 				OCRURL:       s.cfg.LoginBrute.CaptchaOCRURL,
 				AllowHosts:   s.cfg.Scan.AllowHosts,
 				Cancel:       func() bool { return s.jobs.CancelRequested(jobID) },

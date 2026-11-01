@@ -1,0 +1,53 @@
+{
+  "_comment": "selftest fixture 的标准答案（与 fixtures/raw/*.json 一一对应）。expected 为空数组 = 安全用例（期望零检出）；出现目录内类型的检出即记误报用例。type 必须存在于 fixtures/catalog.json。",
+  "suite": "selftest-fixture",
+  "version": "fixture-1",
+  "catalog": "catalog.json",
+  "frozen": {
+    "product": "SiteLens",
+    "version": "5.2.x-selftest",
+    "mode": "standard",
+    "date": "2026-11-01",
+    "note": "仅用于 score.mjs --selftest 的固定夹具，不代表真实评测结果"
+  },
+  "targets": [
+    {
+      "id": "case-sqli-xss",
+      "url": "http://127.0.0.1:8081/vulnerabilities/sqli/?id=1",
+      "expected": [
+        { "type": "sql_injection", "note": "低难度 SQL 注入（时间盲注）" },
+        { "type": "xss", "note": "反射型 XSS" }
+      ]
+    },
+    {
+      "id": "case-csrf",
+      "url": "http://127.0.0.1:8081/vulnerabilities/csrf/",
+      "expected": [{ "type": "csrf", "note": "表单无 CSRF token" }]
+    },
+    {
+      "id": "case-traversal",
+      "url": "http://127.0.0.1:8081/vulnerabilities/fi/?page=1",
+      "expected": [
+        { "type": "path_traversal", "note": "文件包含" },
+        { "type": "weak_password", "note": "admin/admin 默认口令（本 fixture 未检出 → FN）" }
+      ]
+    },
+    {
+      "id": "case-secure-fp",
+      "url": "http://127.0.0.1:8081/login.php",
+      "expected": [],
+      "_comment": "安全用例：raw 里故意含 1 条 xss 误报（记 FP）与 1 条目录外 finding（应被忽略）"
+    },
+    {
+      "id": "case-missing",
+      "url": "http://127.0.0.1:8081/missing/",
+      "expected": [{ "type": "xss", "note": "无 raw 结果 → 记 FN + missing_raw" }]
+    },
+    {
+      "id": "case-secure-clean",
+      "url": "http://127.0.0.1:8081/healthy/",
+      "expected": [],
+      "_comment": "安全用例且零检出 → 计入安全用例统计（TN）"
+    }
+  ]
+}

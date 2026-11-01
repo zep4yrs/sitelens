@@ -1,0 +1,16 @@
+# CP-04 benchmark profile：standard（默认；对外基线口径）。
+# 用法：run.ps1 -Mode standard / run.sh --mode standard
+target:
+  allow_private: true
+scan:
+  deep: true
+  rate_mode: polite
+  rate_interval_ms: 150
+  timeout_sec: 15
+  max_hops: 5
+checks:
+  level: core
+crawler:
+  max_pages: 40
+netsec:
+  mail_check: false

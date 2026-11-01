@@ -1,0 +1,13 @@
+{
+  "_comment": "OWASP Benchmark 目标清单样例（结构说明用）。真实评测请按 README §4 从官方 expectedresults-*.csv 生成完整 2,740 用例清单；URL 路径取决于本地部署（Tomcat 上下文/端口）。",
+  "suite": "owasp-benchmark",
+  "version": "sample-v1.2",
+  "targets": [
+    { "id": "benchmark-00001", "url": "http://127.0.0.1:8080/benchmark/00001", "tags": ["sqli"] },
+    { "id": "benchmark-00002", "url": "http://127.0.0.1:8080/benchmark/00002", "tags": ["sqli"] },
+    { "id": "benchmark-00003", "url": "http://127.0.0.1:8080/benchmark/00003", "tags": ["xss"] },
+    { "id": "benchmark-00004", "url": "http://127.0.0.1:8080/benchmark/00004", "tags": ["xss"] },
+    { "id": "benchmark-00005", "url": "http://127.0.0.1:8080/benchmark/00005", "tags": ["pathtraver"] },
+    { "id": "benchmark-00006", "url": "http://127.0.0.1:8080/benchmark/00006", "tags": ["weakrand"] }
+  ]
+}

@@ -32,7 +32,7 @@
         - apt-get update -qq && apt-get install -y -qq nodejs >/dev/null
         - node --test web/js/esc.test.mjs web/js/scan-options.test.mjs web/js/tokens.test.mjs web/js/scan-live.test.mjs # 转义回归 + 三维选择器映射单测 + 设计令牌门禁 + 扫描前/中反馈纯函数
         - node --check web/js/common.js web/js/i18n.js && node scripts/frontend-check.mjs # 前端语法 + a11y/标签门禁（FE-06）
-        - node --test scripts/i18n.test.mjs scripts/frontend-check.test.mjs # i18n 与门禁自身回归
+        - node --test scripts/i18n.test.mjs scripts/frontend-check.test.mjs # i18n 与门禁自身回归`n        - node benchmark/score.mjs --selftest # 基准评测评分器自检（CP-04，纯离线） # i18n 与门禁自身回归
         - node --test tools/ci_pipeline_guard.test.mjs # CI 配置门禁：wine 调用必须套 xvfb-run（tag 构建曾在此红）
     - name: Wails 壳回归
       script:

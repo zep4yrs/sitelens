@@ -206,6 +206,7 @@
 </head>
 <body>
 <script src="/js/common.js"></script>
+<script src="/js/motion.js"></script>
 <script src="/js/scan-options.js"></script>
 <script src="/js/scan-live.js"></script>
 
@@ -282,6 +283,7 @@
     <section class="tabpanel tw-panel" id="tab-netsec">
       <p class="tw-note" style="margin:0 0 12px">TLS 证书 + DNS 邮件安全，只读检测。</p>
       <input class="url-input tw-url" id="ns-host" placeholder="example.com" autocomplete="off" aria-label="网络层检测目标域名">
+      <label class="tw-toggle" style="margin:8px 0"><input type="checkbox" id="ns-ports" class="tw-switch"> 端口探测（额外 TCP connect，仅授权目标）</label>
       <button class="btn tw-run" id="ns-go" onclick="runNetsec()"><span class="arr" aria-hidden="true">▷</span> <span data-i18n="btn_netsec_start">开始检测</span></button>
     </section>
 
@@ -292,6 +294,7 @@
              placeholder="https://target.com/login" autocomplete="off" aria-label="登录页 URL">
       <div class="toolbar" style="margin:0 0 12px">
         <button class="btn ghost small" id="lb-pv-btn" onclick="togglePreview()">显示登录页预览</button>
+        <label class="tw-toggle" style="margin:0"><input type="checkbox" id="lb-multistep" class="tw-switch"> 多步登录（先用户名后密码）</label>
       </div>
       <div class="auth-row">
         <input type="checkbox" id="lb-authed">
@@ -402,6 +405,15 @@
         <div id="batch-resume-wrap" style="display:none;margin-top:8px">
           <span class="hint" id="batch-resume-hint"></span>
           <button class="btn ghost small" onclick="resumeBatch()">继续未完成批量</button>
+        </div>
+        <div class="tbl-wrap" style="margin-top:14px">
+          <div class="toolbar" style="margin-bottom:8px">
+            <b style="font-size:13px">定时批量</b>
+            <input class="tb" id="batch-sched-every" type="number" min="1" value="60" style="width:80px" aria-label="定时间隔分钟">
+            <span class="hint">分钟</span>
+            <button class="btn ghost small" onclick="saveSchedule()">保存当前列表为定时任务</button>
+          </div>
+          <div id="batch-sched-list" class="hint">暂无定时任务</div>
         </div>
         <div class="tbl-wrap" id="batch-queue" style="display:none;margin-top:14px">
           <table class="list">

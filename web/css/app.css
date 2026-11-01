@@ -353,6 +353,64 @@ html.sl-modal-open { overflow: hidden; }
 .sl-keys-btn { flex: none; }
 
 /* ==========================================================================
+   FE-05 动效与骨架屏（5.2.x）：统一 --t-*/--ease；减少动效时直接呈现终态
+   —— 骨架屏结构由 web/js/motion.js（window.slMotion）生成，本文件只管外观。
+   ========================================================================== */
+
+/* 骨架块：底色 --muted，微光用前景色 8% 叠加（浅/深主题自动适配） */
+.skel-group { display: flex; flex-direction: column; gap: var(--space-3); }
+.skel-block { display: flex; flex-direction: column; gap: var(--space-2); }
+.skel {
+  position: relative;
+  overflow: hidden;
+  border-radius: var(--radius-sm);
+  background: var(--muted);
+}
+.skel::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  transform: translateX(-100%);
+  background: linear-gradient(90deg,
+    transparent 0%,
+    color-mix(in srgb, var(--foreground) 8%, transparent) 50%,
+    transparent 100%);
+  animation: sl-shimmer calc(var(--t-slow) * 3.5) var(--ease) infinite;
+}
+@keyframes sl-shimmer {
+  from { transform: translateX(-100%); }
+  to { transform: translateX(100%); }
+}
+.skel-line { display: block; height: 12px; width: 100%; }
+.skel-line.w40 { width: 40%; }
+.skel-line.w50 { width: 50%; }
+.skel-line.w70 { width: 70%; }
+.skel-line.w90 { width: 90%; }
+.skel-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-4);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--card);
+}
+.skel-row { display: flex; align-items: center; gap: var(--space-3); padding: var(--space-2) 0; }
+.skel-cell { flex: 1; height: 12px; }
+.skel-cell.w1 { flex: 0 0 20%; }
+.skel-dot { flex: none; width: 10px; height: 10px; border-radius: var(--radius-pill); }
+
+/* 渐入 / 列表级联（motion.js 用 inline animation-delay 控制节奏；时长仍来自 token） */
+.sl-fade-in { animation: sl-fadeIn var(--t-med) var(--ease) both; }
+.sl-stagger-item { animation: sl-rowIn var(--t-med) var(--ease) both; }
+
+/* 减少动效：骨架微光、渐入、级联全部关闭，直接呈现终态 */
+@media (prefers-reduced-motion: reduce) {
+  .skel::after { animation: none; content: none; }
+  .sl-fade-in, .sl-stagger-item { animation: none; opacity: 1; transform: none; }
+}
+
+/* ==========================================================================
    FE-11 响应式（≤900px）：左栏折叠为顶部抽屉，画布占满剩余高度
    ========================================================================== */
 @media (max-width: 900px) {
@@ -394,7 +452,7 @@ html.sl-modal-open { overflow: hidden; }
   /* 外壳不打印：侧栏 / 分割条 / 工具条 / 进度条 / 抽屉开关 / 弹层 / toast */
   .tw-left, .tw-split, .tw-toolbar, .tw-progress-row, .tw-modes, .tw-topslot,
   .sl-skip, .sl-side-toggle, .sl-keys-btn, .sl-dialog-backdrop,
-  .toast, #idle-wrap, #sl-engine-down { display: none !important; }
+  .toast, #idle-wrap, #sl-engine-down, .skel-group, .skel { display: none !important; }
   .tw-app {
     position: static !important;
     inset: auto !important;

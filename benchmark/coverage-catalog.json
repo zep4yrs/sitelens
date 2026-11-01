@@ -1,0 +1,216 @@
+{
+  "_comment": "CP-04 覆盖率口径目录（G02）：漏洞类型 → OWASP Top10 2021 / CNVD 映射 + 归一口径别名。别名用于把扫描器 finding 文本映射到类型；匹配前会做「小写 + 去除非字母数字」归一化，因此中英文、空格/连字符差异不影响匹配。新增类型只能追加，id 一旦启用作废需在 docs/基准评测-5.2.md 记录变更。",
+  "version": "2026-Q4",
+  "types": [
+    {
+      "id": "sql_injection",
+      "label": "SQL 注入",
+      "owasp": "A03:2021-Injection",
+      "cnvd": "SQL 注入",
+      "aliases": ["sql injection", "sqli", "blind sql", "sql 注入", "sql注入", "盲注", "时间盲注", "报错注入"]
+    },
+    {
+      "id": "nosql_injection",
+      "label": "NoSQL 注入",
+      "owasp": "A03:2021-Injection",
+      "cnvd": "NoSQL 注入",
+      "aliases": ["nosql injection", "nosql 注入", "mongodb injection", "mongo injection"]
+    },
+    {
+      "id": "command_injection",
+      "label": "命令注入",
+      "owasp": "A03:2021-Injection",
+      "cnvd": "命令执行",
+      "aliases": ["command injection", "os command injection", "命令注入", "命令执行", "rce", "remote code execution", "代码执行"]
+    },
+    {
+      "id": "template_injection",
+      "label": "模板注入",
+      "owasp": "A03:2021-Injection",
+      "cnvd": "SSTI",
+      "aliases": ["ssti", "server side template injection", "模板注入", "template injection"]
+    },
+    {
+      "id": "ldap_injection",
+      "label": "LDAP 注入",
+      "owasp": "A03:2021-Injection",
+      "cnvd": "LDAP 注入",
+      "aliases": ["ldap injection", "ldap 注入"]
+    },
+    {
+      "id": "xpath_injection",
+      "label": "XPath 注入",
+      "owasp": "A03:2021-Injection",
+      "cnvd": "XPath 注入",
+      "aliases": ["xpath injection", "xpath 注入"]
+    },
+    {
+      "id": "xss",
+      "label": "跨站脚本",
+      "owasp": "A03:2021-Injection",
+      "cnvd": "XSS",
+      "aliases": ["xss", "cross site scripting", "cross-site scripting", "跨站脚本", "反射型xss", "存储型xss", "dom xss"]
+    },
+    {
+      "id": "csrf",
+      "label": "跨站请求伪造",
+      "owasp": "A01:2021-Broken Access Control",
+      "cnvd": "CSRF",
+      "aliases": ["csrf", "xsrf", "cross site request forgery", "跨站请求伪造"]
+    },
+    {
+      "id": "ssrf",
+      "label": "服务端请求伪造",
+      "owasp": "A10:2021-SSRF",
+      "cnvd": "SSRF",
+      "aliases": ["ssrf", "server side request forgery", "服务端请求伪造", "内网探测"]
+    },
+    {
+      "id": "path_traversal",
+      "label": "路径穿越 / 任意文件读取",
+      "owasp": "A01:2021-Broken Access Control",
+      "cnvd": "任意文件读取",
+      "aliases": ["path traversal", "directory traversal", "local file inclusion", "lfi", "路径穿越", "目录遍历", "任意文件读取", "文件包含"]
+    },
+    {
+      "id": "file_upload",
+      "label": "任意文件上传",
+      "owasp": "A04:2021-Insecure Design",
+      "cnvd": "文件上传",
+      "aliases": ["file upload", "unrestricted upload", "arbitrary file upload", "任意文件上传", "上传绕过", "webshell"]
+    },
+    {
+      "id": "xxe",
+      "label": "XML 外部实体注入",
+      "owasp": "A05:2021-Security Misconfiguration",
+      "cnvd": "XXE",
+      "aliases": ["xxe", "xml external entity", "xml 外部实体"]
+    },
+    {
+      "id": "deserialization",
+      "label": "不安全的反序列化",
+      "owasp": "A08:2021-Software and Data Integrity Failures",
+      "cnvd": "反序列化",
+      "aliases": ["deserialization", "insecure deserialization", "反序列化", "java deserialization"]
+    },
+    {
+      "id": "idor",
+      "label": "越权 / IDOR",
+      "owasp": "A01:2021-Broken Access Control",
+      "cnvd": "越权访问",
+      "aliases": ["idor", "insecure direct object reference", "越权", "水平越权", "垂直越权", "authz bypass"]
+    },
+    {
+      "id": "open_redirect",
+      "label": "开放重定向",
+      "owasp": "A01:2021-Broken Access Control",
+      "cnvd": "URL 跳转",
+      "aliases": ["open redirect", "url redirect", "开放重定向", "url 跳转"]
+    },
+    {
+      "id": "weak_password",
+      "label": "弱口令 / 默认凭据",
+      "owasp": "A07:2021-Identification and Authentication Failures",
+      "cnvd": "弱口令",
+      "aliases": ["weak password", "default credential", "default password", "weak credential", "弱口令", "默认口令", "默认密码"]
+    },
+    {
+      "id": "auth_bypass",
+      "label": "认证绕过",
+      "owasp": "A07:2021-Identification and Authentication Failures",
+      "cnvd": "认证绕过",
+      "aliases": ["auth bypass", "authentication bypass", "login bypass", "认证绕过", "登录绕过"]
+    },
+    {
+      "id": "security_misconfiguration",
+      "label": "安全配置错误",
+      "owasp": "A05:2021-Security Misconfiguration",
+      "cnvd": "配置错误",
+      "aliases": ["misconfiguration", "security misconfiguration", "配置错误", "安全配置", "默认页面", "directory listing", "目录遍历"]
+    },
+    {
+      "id": "info_disclosure",
+      "label": "敏感信息泄露",
+      "owasp": "A05:2021-Security Misconfiguration",
+      "cnvd": "信息泄露",
+      "aliases": ["information disclosure", "info leak", "sensitive information", "信息泄露", "敏感信息", "源码泄露", "备份文件"]
+    },
+    {
+      "id": "sensitive_file",
+      "label": "敏感文件 / 备份暴露",
+      "owasp": "A05:2021-Security Misconfiguration",
+      "cnvd": "敏感文件",
+      "aliases": ["sensitive file", "backup file", "exposed backup", "备份文件", "敏感文件", "git 泄露", "env 泄露"]
+    },
+    {
+      "id": "cve_exposure",
+      "label": "组件已知漏洞（n-day）",
+      "owasp": "A06:2021-Vulnerable and Outdated Components",
+      "cnvd": "组件漏洞",
+      "aliases": ["cve", "n-day", "known vulnerability", "组件漏洞", "已知漏洞", "outdated component"]
+    },
+    {
+      "id": "hsts_missing",
+      "label": "HSTS 缺失/过短",
+      "owasp": "A02:2021-Cryptographic Failures",
+      "cnvd": "传输安全配置",
+      "aliases": ["hsts", "strict transport security", "hsts missing", "hsts 缺失"]
+    },
+    {
+      "id": "tls_weak",
+      "label": "TLS 弱配置",
+      "owasp": "A02:2021-Cryptographic Failures",
+      "cnvd": "传输安全配置",
+      "aliases": ["weak cipher", "tls weak", "weak signature", "弱加密套件", "弱签名", "证书链不完整", "tls 弱配置"]
+    },
+    {
+      "id": "cookie_flags",
+      "label": "Cookie 安全属性缺失",
+      "owasp": "A05:2021-Security Misconfiguration",
+      "cnvd": "会话安全",
+      "aliases": ["weak cookie", "cookie missing", "samesite", "httponly", "secure flag", "弱会话", "cookie 安全"]
+    },
+    {
+      "id": "csp_missing",
+      "label": "CSP 缺失/可绕过",
+      "owasp": "A05:2021-Security Misconfiguration",
+      "cnvd": "安全响应头",
+      "aliases": ["csp", "content security policy", "csp weak", "csp missing", "内容安全策略"]
+    },
+    {
+      "id": "cache_hygiene",
+      "label": "敏感页面缓存卫生",
+      "owasp": "A04:2021-Insecure Design",
+      "cnvd": "会话安全",
+      "aliases": ["cacheable sensitive", "cache hygiene", "no-store", "缓存卫生", "敏感页缓存"]
+    },
+    {
+      "id": "weak_crypto",
+      "label": "弱加密算法/CBC 模式",
+      "owasp": "A02:2021-Cryptographic Failures",
+      "cnvd": "弱加密",
+      "aliases": ["weak crypto", "weak cipher", "cbc", "cwe-327", "弱加密", "弱加密套件", "ecb"]
+    },
+    {
+      "id": "weak_hash",
+      "label": "弱哈希算法",
+      "owasp": "A02:2021-Cryptographic Failures",
+      "cnvd": "弱哈希",
+      "aliases": ["weak hash", "md5", "sha1", "cwe-328", "弱哈希", "弱签名"]
+    },
+    {
+      "id": "weak_random",
+      "label": "不安全随机数",
+      "owasp": "A02:2021-Cryptographic Failures",
+      "cnvd": "随机数缺陷",
+      "aliases": ["insecure randomness", "weak random", "insecure random", "cwe-330", "随机数", "弱随机"]
+    },
+    {
+      "id": "trust_boundary",
+      "label": "信任边界违例",
+      "owasp": "A04:2021-Insecure Design",
+      "cnvd": "信任边界",
+      "aliases": ["trust boundary", "cwe-501", "信任边界"]
+    }
+  ]
+}

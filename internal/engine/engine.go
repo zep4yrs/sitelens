@@ -387,6 +387,7 @@ func (e *Engine) Scan(rawURL string, opts Options, onProgress progress, cancel f
 			noteBudget("爬取页数减半（" + fmt.Sprint(cc.MaxPages) + "）")
 		}
 		c := crawler.New(client, cc, baseURL)
+		c.MaxDepth = e.cfg.Crawler.MaxDepth
 		if e.cfg.Crawler.Headless {
 			c.SetRenderer(chromeRenderer{headless.NewChrome(time.Duration(e.cfg.Crawler.HeadlessTimeoutSec)*time.Second, e.cfg.Crawler.HeadlessExecPath)})
 		}

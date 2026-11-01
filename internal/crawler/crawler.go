@@ -50,6 +50,10 @@ type Form struct {
 	Fields      int
 }
 
+// DefaultMaxDepth 默认最大爬取深度（首页深度 0；首页直达链接为 1）。
+// Crawler.MaxDepth 为 0 时使用该值（additive：保持既有默认覆盖范围）。
+const DefaultMaxDepth = 2
+
 // Result 爬取汇总。
 type Result struct {
 	Pages         []Page
@@ -60,19 +64,31 @@ type Result struct {
 	// RobotsAll 为 true 表示 robots.txt 封禁整站（Disallow: /），
 	// 爬取已按策略塌缩到入口页——用于告警而非静默。
 	RobotsAll bool
+
+	// DepthHistogram 各深度实际抓取到的页面数（additive；key = 深度，首页为 0）。
+	DepthHistogram map[int]int
+	// Skipped 因过滤规则被丢弃的候选链接数（additive）：非 http(s) 协议 /
+	// mailto·javascript·tel / 二进制或静态资源后缀 / 深度超限 / JS 路由超上限。
+	// 外域链接与重复链接不计入（它们是预期内噪音，不是被过滤的攻击面）。
+	Skipped int
 }
 
 // Crawler 爬取器。
 type Crawler struct {
 	client       *httpx.Client
 	opts         config.CrawlerConfig
-	homeHost     string
+	homeHost     string       // 同域判定键（hostname:有效端口，见 hostKey）
 	robots       *robotsGroup // 命中的 robots 规则组（nil = 无限制）
 	robotsAll    bool         // robots 是否封禁整站（Disallow: /）
 	start        time.Time
 	renderer     Renderer // 可选：无头渲染器（SPA 支持）
 	sitemapDecls []string // robots.txt 声明的 Sitemap 地址
 	pageHook     func(*httpx.Response)
+
+	// MaxDepth 最大爬取深度（additive）：首页深度 0，首页直达链接为 1；
+	// 超过该深度的候选不再跟进（仍记录在 AllLinks/ParamLinks，供 DAST/目录探测）。
+	// 0 = DefaultMaxDepth（2）。
+	MaxDepth int
 }
 
 // New 创建爬取器；homeURL 用于确定同域边界。
@@ -85,7 +101,7 @@ func New(client *httpx.Client, opts config.CrawlerConfig, homeURL string) *Crawl
 	}
 	host := ""
 	if u, err := url.Parse(homeURL); err == nil {
-		host = strings.ToLower(u.Host)
+		host = hostKey(u)
 	}
 	return &Crawler{client: client, opts: opts, homeHost: host, start: time.Now()}
 }
@@ -116,7 +132,7 @@ func (c *Crawler) SetPageHook(fn func(*httpx.Response)) { c.pageHook = fn }
 // extraSeeds 为外部提供的候选入口（jsmap API 端点 / sitemap / SPA 路由），
 // 仅接受同域 http(s) 地址，且同样受 MaxPages 与 robots 约束。
 func (c *Crawler) Crawl(home *httpx.Response, extraSeeds []string) *Result {
-	res := &Result{}
+	res := &Result{DepthHistogram: map[int]int{}}
 	if home == nil {
 		return res
 	}
@@ -125,10 +141,17 @@ func (c *Crawler) Crawl(home *httpx.Response, extraSeeds []string) *Result {
 		c.loadRobots(home.FinalURL)
 		res.RobotsAll = c.robotsAll
 	}
+	maxDepth := c.MaxDepth
+	if maxDepth <= 0 {
+		maxDepth = DefaultMaxDepth
+	}
 
 	visited := map[string]bool{}
-	queue := []*httpx.Response{home}
+	queue := []crawlItem{{resp: home, depth: 0}}
 	queued := map[string]bool{normalize(home.FinalURL): true}
+	// JS 路由候选上限与脚本拉取预算在整次爬取内共享。
+	jsRouteBudget := MaxJSRoutes
+	jsScriptBudget := maxJSScriptFetches
 
 	// 种子独立预算：API 端点/sitemap 种子不挤占普通页面预算
 	//（额外允许 16 个种子页；仍受 robots/同域/总时长约束）
@@ -157,7 +180,7 @@ func (c *Crawler) Crawl(home *httpx.Response, extraSeeds []string) *Result {
 			break
 		}
 		if next, err := c.client.GetFollow(abs); err == nil && next != nil {
-			queue = append(queue, next)
+			queue = append(queue, crawlItem{resp: next, depth: 1})
 		}
 	}
 
@@ -177,13 +200,14 @@ func (c *Crawler) Crawl(home *httpx.Response, extraSeeds []string) *Result {
 			break
 		}
 		if next, err := c.client.GetFollow(abs); err == nil && next != nil {
-			queue = append(queue, next)
+			queue = append(queue, crawlItem{resp: next, depth: 1})
 		}
 	}
 
 	for len(queue) > 0 && len(res.Pages) < pageCap {
-		resp := queue[0]
+		item := queue[0]
 		queue = queue[1:]
+		resp, depth := item.resp, item.depth
 
 		key := normalize(resp.FinalURL)
 		if visited[key] {
@@ -199,15 +223,20 @@ func (c *Crawler) Crawl(home *httpx.Response, extraSeeds []string) *Result {
 		// SPA 无头渲染：默认仅首页一次；crawler.headless_all_pages 开启后
 		// 扩展到全部已爬页（JS 路由的二级页也能贡献链接/路由，代价是
 		// 每页一次浏览器渲染，页面多时显著变慢）
+		var renderedHTML string
 		if c.renderer != nil && (resp == home || c.opts.HeadlessAllPages) {
 			if rendered, ok := c.renderer.Render(resp.FinalURL); ok {
+				renderedHTML = rendered
 				rd := htmlx.Parse(rendered)
 				doc.Links = append(doc.Links, rd.Links...)
 				doc.NextRoutes = append(doc.NextRoutes, rd.NextRoutes...)
+				// 渲染后 DOM 的外链脚本/内联脚本同样参与路由提取（SPA 路由
+				// 常由 JS 动态挂载，静态 HTML 里看不到）。
+				doc.ScriptSrcs = append(doc.ScriptSrcs, rd.ScriptSrcs...)
 			}
 		}
 
-		crawlLog("page +%s (pages=%d queue=%d links=%d forms=%d status=%d)", resp.FinalURL, len(res.Pages), len(queue), len(doc.Links), len(doc.Forms), resp.Status)
+		crawlLog("page +%s (pages=%d queue=%d links=%d forms=%d status=%d depth=%d)", resp.FinalURL, len(res.Pages), len(queue), len(doc.Links), len(doc.Forms), resp.Status, depth)
 		res.Pages = append(res.Pages, Page{
 			URL:        resp.FinalURL,
 			FinalURL:   resp.FinalURL,
@@ -217,6 +246,7 @@ func (c *Crawler) Crawl(home *httpx.Response, extraSeeds []string) *Result {
 			Body:       resp.Body,
 			Title:      doc.Title,
 		})
+		res.DepthHistogram[depth]++
 		// 每页通知（additive，默认 nil 无行为变化）。放在 append 之后，
 		// 回调看到的页面集合与 Result.Pages 前缀一致。
 		if c.pageHook != nil {
@@ -273,15 +303,43 @@ func (c *Crawler) Crawl(home *httpx.Response, extraSeeds []string) *Result {
 			})
 		}
 
-		// SPA 路由：数据岛提取的路径作为候选页入队（不受链接预算限制，受页数上限约束）
-		for _, route := range doc.NextRoutes {
-			abs := c.resolve(base, route)
-			if abs == "" {
+		// SPA/JS 路由发现（CP-01）：内联脚本 + 同域外链脚本中的路由字符串
+		// → 同域候选 URL。与数据岛路由一样进入候选队列，受 MaxDepth / MaxPages
+		// 约束；候选总量 ≤ MaxJSRoutes（超上限计入 Skipped）。
+		jsRoutes := extractJSRoutes(strings.Join(extractInlineScripts(resp.Body), "\n"))
+		if renderedHTML != "" {
+			jsRoutes = append(jsRoutes, extractJSRoutes(strings.Join(extractInlineScripts(renderedHTML), "\n"))...)
+		}
+		srcs := append([]string{}, doc.ScriptSrcs...)
+		srcs = append(srcs, extractScriptSrcs(resp.Body)...)
+		if renderedHTML != "" {
+			srcs = append(srcs, extractScriptSrcs(renderedHTML)...)
+		}
+		jsRoutes = append(jsRoutes, c.fetchScriptRoutes(srcs, base, &jsScriptBudget)...)
+		for _, route := range jsRoutes {
+			if jsRouteBudget <= 0 {
+				res.Skipped++
 				continue
 			}
+			abs, filtered := c.resolve(base, route)
+			if abs == "" {
+				if filtered {
+					res.Skipped++
+				}
+				continue
+			}
+			jsRouteBudget--
 			res.AllLinks = append(res.AllLinks, abs)
+			if strings.Contains(abs, "?") {
+				res.ParamLinks = append(res.ParamLinks, abs)
+			}
 			k := normalize(abs)
 			if queued[k] || visited[k] || !c.allowed(abs) {
+				continue
+			}
+			childDepth := depth + 1
+			if childDepth > maxDepth {
+				res.Skipped++
 				continue
 			}
 			if len(res.Pages)+len(queue) >= c.opts.MaxPages {
@@ -292,18 +350,53 @@ func (c *Crawler) Crawl(home *httpx.Response, extraSeeds []string) *Result {
 				continue
 			}
 			if next, err := c.client.GetFollow(abs); err == nil && next != nil {
-				queue = append(queue, next)
+				queue = append(queue, crawlItem{resp: next, depth: childDepth})
+			}
+		}
+
+		// SPA 数据岛路由：作为候选页入队（不受链接预算限制，受页数上限约束）
+		for _, route := range doc.NextRoutes {
+			abs, filtered := c.resolve(base, route)
+			if abs == "" {
+				if filtered {
+					res.Skipped++
+				}
+				continue
+			}
+			res.AllLinks = append(res.AllLinks, abs)
+			k := normalize(abs)
+			if queued[k] || visited[k] || !c.allowed(abs) {
+				continue
+			}
+			childDepth := depth + 1
+			if childDepth > maxDepth {
+				res.Skipped++
+				continue
+			}
+			if len(res.Pages)+len(queue) >= c.opts.MaxPages {
+				continue
+			}
+			queued[k] = true
+			if c.timedOut() {
+				continue
+			}
+			if next, err := c.client.GetFollow(abs); err == nil && next != nil {
+				queue = append(queue, crawlItem{resp: next, depth: childDepth})
 			}
 		}
 
 		// 链接解析：同域 + http(s) 才入队
 		budget := c.opts.MaxLinksPerPage
+		childDepth := depth + 1
 		for _, href := range doc.Links {
 			if budget <= 0 {
 				break
 			}
-			abs := c.resolve(base, href)
+			abs, filtered := c.resolve(base, href)
 			if abs == "" {
+				if filtered {
+					res.Skipped++
+				}
 				continue
 			}
 			res.AllLinks = append(res.AllLinks, abs)
@@ -314,6 +407,10 @@ func (c *Crawler) Crawl(home *httpx.Response, extraSeeds []string) *Result {
 			k := normalize(abs)
 			if queued[k] || visited[k] || !c.allowed(abs) {
 				crawlLog("link skip %s (queued=%v visited=%v allowed=%v)", abs, queued[k], visited[k], c.allowed(abs))
+				continue
+			}
+			if childDepth > maxDepth {
+				res.Skipped++
 				continue
 			}
 			if len(res.Pages)+len(queue) >= c.opts.MaxPages {
@@ -328,7 +425,7 @@ func (c *Crawler) Crawl(home *httpx.Response, extraSeeds []string) *Result {
 			if err != nil || next == nil {
 				continue
 			}
-			queue = append(queue, next)
+			queue = append(queue, crawlItem{resp: next, depth: childDepth})
 		}
 	}
 	return res
@@ -339,45 +436,50 @@ func (c *Crawler) timedOut() bool {
 	return c.opts.TimeoutSec > 0 && time.Since(c.start) > time.Duration(c.opts.TimeoutSec)*time.Second
 }
 
-// resolve 以 base 解析相对链接，仅保留同域 http(s) 绝对地址。
-func (c *Crawler) resolve(base *url.URL, href string) string {
-	href = strings.TrimSpace(href)
-	if href == "" || strings.HasPrefix(href, "#") ||
-		strings.HasPrefix(href, "javascript:") ||
-		strings.HasPrefix(href, "mailto:") ||
-		strings.HasPrefix(href, "tel:") {
-		return ""
-	}
-	ref, err := url.Parse(href)
-	if err != nil {
-		return ""
-	}
-	if base == nil {
-		return ""
-	}
-	abs := base.ResolveReference(ref)
-	if abs.Host == "" || strings.ToLower(abs.Host) != c.homeHost {
-		return ""
-	}
-	if abs.Scheme != "http" && abs.Scheme != "https" {
-		return ""
-	}
-	abs.Fragment = ""
-	return abs.String()
+// crawlItem 候选页 + 其深度（首页 0；链接/路由每层 +1）。
+type crawlItem struct {
+	resp  *httpx.Response
+	depth int
 }
 
-// normalize 去掉 fragment 与末尾斜杠差异，作为去重键。
-func normalize(raw string) string {
-	u, err := url.Parse(raw)
+// resolve 以 base 解析相对链接，返回同域 http(s) 绝对地址（已规范化）。
+//
+// filtered 表示该 href 是「被规则过滤」的候选（非 http(s) 协议、mailto/
+// javascript/tel、二进制/静态资源后缀、含控制字符等），供调用方计入
+// Result.Skipped；外域链接与纯锚点返回 filtered=false（预期噪音，不计）。
+func (c *Crawler) resolve(base *url.URL, href string) (abs string, filtered bool) {
+	if base == nil {
+		return "", false
+	}
+	raw := strings.TrimSpace(href)
+	if raw == "" || strings.HasPrefix(raw, "#") {
+		return "", false // 空 href / 同页锚点
+	}
+	if strings.ContainsAny(raw, "\x00\r\n\t") {
+		return "", true
+	}
+	ref, err := url.Parse(raw)
 	if err != nil {
-		return raw
+		return "", true
 	}
-	u.Fragment = ""
-	s := u.String()
-	if strings.HasSuffix(s, "/") && u.RequestURI() == "/" {
-		return s
+	// 无 scheme/host/path/query、只有 fragment 的相对锚点：不算被过滤。
+	if ref.Scheme == "" && ref.Host == "" && ref.Path == "" && ref.RawQuery == "" {
+		return "", false
 	}
-	return strings.TrimSuffix(s, "/")
+	resolved := base.ResolveReference(ref)
+	scheme := strings.ToLower(resolved.Scheme)
+	if scheme != "http" && scheme != "https" {
+		return "", true // javascript:/mailto:/tel:/data: 等非页面协议
+	}
+	if resolved.Host == "" || hostKey(resolved) != c.homeHost {
+		return "", false // 外域：与 Python 版一致，直接忽略且不告警
+	}
+	resolved.Scheme = scheme
+	canonicalizeURL(resolved)
+	if isStaticAssetPath(resolved.Path) {
+		return "", true
+	}
+	return resolved.String(), false
 }
 
 // allowed robots.txt 放行判定：按命中的 UA 组做 Allow/Disallow
@@ -498,14 +600,17 @@ func (c *Crawler) resolveRoot(p, root string) string {
 		return ""
 	}
 	abs := base.ResolveReference(ref)
-	if strings.ToLower(abs.Host) != c.homeHost {
+	scheme := strings.ToLower(abs.Scheme)
+	if scheme != "http" && scheme != "https" || strings.ToLower(abs.Host) == "" || hostKey(abs) != c.homeHost {
 		return ""
 	}
-	if abs.Scheme != "http" && abs.Scheme != "https" {
-		return ""
-	}
+	abs.Scheme = scheme
 	abs.Fragment = ""
 	abs.RawQuery = "" // sitemap 条目通常无查询串；去掉以防重复种子
+	if isStaticAssetPath(abs.Path) {
+		return "" // sitemap 里的图片/静态资源不是页面
+	}
+	canonicalizeURL(abs)
 	return abs.String()
 }
 
@@ -520,12 +625,14 @@ func (c *Crawler) resolveURL(homeURL, seed string) string {
 		return ""
 	}
 	abs := base.ResolveReference(ref)
-	if strings.ToLower(abs.Host) != c.homeHost {
+	scheme := strings.ToLower(abs.Scheme)
+	if scheme != "http" && scheme != "https" || abs.Host == "" || hostKey(abs) != c.homeHost {
 		return ""
 	}
-	if abs.Scheme != "http" && abs.Scheme != "https" {
+	abs.Scheme = scheme
+	canonicalizeURL(abs)
+	if isStaticAssetPath(abs.Path) {
 		return ""
 	}
-	abs.Fragment = ""
 	return abs.String()
 }

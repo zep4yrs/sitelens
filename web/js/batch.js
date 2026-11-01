@@ -124,6 +124,9 @@
         var label = st === "done" ? "完成" : st === "failed" ? "失败" : st === "skipped" ? "跳过" : "扫描中";
         var elapsed = rw.elapsed_ms ? (rw.elapsed_ms / 1000).toFixed(1) + "s" : "—";
         var findings = st === "done" ? (rw.findings != null ? rw.findings : "—") : "—";
+        if (st === "done" && (rw.new_findings != null || rw.fixed != null)) {
+          findings += ' <span class="hint" style="font-size:11.5px">(+' + (rw.new_findings || 0) + " / -" + (rw.fixed || 0) + ")</span>";
+        }
         var level = rw.level ? (LEVEL_LABEL[rw.level] || rw.level) : "默认";
         var attempts = rw.attempts > 1 ? "（重试 " + (rw.attempts - 1) + "）" : "";
         return "<tr><td><span class=\"badge " + (st === "done" ? "ok" : st === "failed" ? "danger" : "warn") + "\">" + label + "</span></td>" +
@@ -210,5 +213,47 @@
       .catch(function (e) { window.slReportError(e); });
   };
 
+  /* ---------------- 定时批量（BT-03） ---------------- */
+  function renderSchedules(list) {
+    var box = document.getElementById("batch-sched-list");
+    if (!box) return;
+    if (!list || !list.length) { box.textContent = "暂无定时任务"; return; }
+    box.innerHTML = list.map(function (sc) {
+      var next = sc.next_run_at ? new Date(sc.next_run_at).toLocaleString() : "—";
+      return '<div style="display:flex;gap:8px;align-items:center;margin:4px 0;font-size:12.5px">' +
+        '<span class="mono">' + esc(sc.id) + "</span>" +
+        "<span>每 " + (sc.every_minutes || "?") + " 分钟</span>" +
+        "<span>目标 " + ((sc.entries || []).length) + "</span>" +
+        '<span class="hint">下次 ' + esc(next) + "</span>" +
+        '<button class="btn ghost small" onclick="runSchedule(\'' + esc(sc.id) + "')\">立即跑</button>" +
+        '<button class="btn ghost small" onclick="deleteSchedule(\'' + esc(sc.id) + "')\">删除</button>" +
+        "</div>";
+    }).join("");
+  }
+  function loadSchedules() {
+    api.get("/api/batch/schedules").then(function (r) { renderSchedules((r && r.schedules) || []); })
+      .catch(function () {});
+  }
+  window.loadSchedules = loadSchedules;
+  window.saveSchedule = function () {
+    var entries = parseEntries();
+    if (!entries.length) { toast("先填 URL 列表", "err"); return; }
+    var every = parseInt((document.getElementById("batch-sched-every") || {}).value, 10) || 60;
+    api.post("/api/batch/schedules", { every_minutes: every, entries: entries, enabled: true })
+      .then(function () { toast("定时任务已保存（每 " + every + " 分钟）", "ok"); loadSchedules(); })
+      .catch(function (e) { toast("保存失败：" + e.message, "err"); });
+  };
+  window.runSchedule = function (id) {
+    api.post("/api/batch/schedules/" + id + "/run", {}).then(function (r) {
+      startWatch(r.job_id, r.total || 1, "定时任务");
+      loadSchedules();
+    }).catch(function (e) { toast("执行失败：" + e.message, "err"); });
+  };
+  window.deleteSchedule = function (id) {
+    api.del("/api/batch/schedules/" + id).then(function () { loadSchedules(); })
+      .catch(function (e) { toast("删除失败：" + e.message, "err"); });
+  };
+
   loadResumable();
+  loadSchedules();
 })();

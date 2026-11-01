@@ -971,15 +971,27 @@ window.exportAs = function (fmt) {
 function runNetsec() {
   var host = document.getElementById("ns-host").value.trim();
   if (!host) return;
+  var portsEl = document.getElementById("ns-ports");
+  var wantPorts = !!(portsEl && portsEl.checked);
   document.getElementById("ns-go").disabled = true;
   document.getElementById("ns-out").innerHTML =
-    '<div class="skeleton" style="height:60px"></div><p class="hint">检测中…（TLS 握手 + DNS 查询）</p>';
-  api.post("/api/netsec", { host: host }).then(function (r) {
+    '<div class="skeleton" style="height:60px"></div><p class="hint">检测中…（TLS 握手 + DNS 查询' + (wantPorts ? " + 端口探测" : "") + "）</p>";
+  api.post("/api/netsec" + (wantPorts ? "?ports=1" : ""), { host: host }).then(function (r) {
     document.getElementById("ns-go").disabled = false;
-    var hits = r.findings || [];
+    var hits = (r.findings || []).concat(r.ports || []);
+    var head = "";
+    if (r.assets) {
+      var a = r.assets;
+      head = '<div class="ns-card" style="border-top:3px solid var(--info)">' +
+        '<div class="ns-head"><span class="ns-light" style="background:var(--info)"></span><b>证书资产</b></div>' +
+        '<div class="mono ns-ev">颁发者：' + esc(a.issuer || "-") + "</div>" +
+        (a.sans && a.sans.length ? '<div class="mono ns-ev">SAN：' + esc(a.sans.join(", ")) + "</div>" : "") +
+        (a.not_after ? '<div class="mono ns-ev">到期：' + esc(a.not_after) + "（剩余 " + esc(String(a.days_left)) + " 天）</div>" : "") +
+        "</div>";
+    }
     if (!hits.length) {
-      document.getElementById("ns-out").innerHTML =
-        '<div class="ns-grid"><div class="ns-card" style="border-top:3px solid var(--ok)"><div class="ns-head"><span class="ns-light" style="background:var(--ok)"></span><b>' + esc(r.host) + "</b></div><div class='ns-title'>未发现网络层安全问题</div></div></div>";
+      document.getElementById("ns-out").innerHTML = head ||
+        ('<div class="ns-grid"><div class="ns-card" style="border-top:3px solid var(--ok)"><div class="ns-head"><span class="ns-light" style="background:var(--ok)"></span><b>' + esc(r.host) + "</b></div><div class='ns-title'>未发现网络层安全问题</div></div></div>");
       return;
     }
     var cards = hits.map(function (h) {
@@ -993,7 +1005,7 @@ function runNetsec() {
         (h.advice ? '<div class="hint">' + esc(h.advice) + "</div>" : "") +
         "</div>";
     });
-    document.getElementById("ns-out").innerHTML = '<div class="ns-grid">' + cards.join("") + "</div>";
+    document.getElementById("ns-out").innerHTML = head + '<div class="ns-grid">' + cards.join("") + "</div>";
   }).catch(function (e) {
     document.getElementById("ns-go").disabled = false;
     document.getElementById("ns-out").innerHTML =
@@ -1041,7 +1053,8 @@ function runBrute() {
     captcha_type: capDD.value,
     // 无验证码档位必须发空串：后端把非空 captcha_field 当「显式指定」，
     // 会导致每次尝试都去找验证码图片而全部跳过
-    captcha_field: capDD.value !== "none" ? (document.getElementById("lb-cap-field").value.trim() || "captcha") : ""
+    captcha_field: capDD.value !== "none" ? (document.getElementById("lb-cap-field").value.trim() || "captcha") : "",
+    multistep: !!(document.getElementById("lb-multistep") && document.getElementById("lb-multistep").checked)
   }).then(function (r) {
     jobId = r.job_id;
     return pollJob(jobId, function (p, msg, job) {
