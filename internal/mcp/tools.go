@@ -153,11 +153,23 @@ func (t *toolbox) scanTool() Tool {
 			if err != nil {
 				return nil, err
 			}
-			return map[string]any{
+			res := map[string]any{
 				"job_id": out["job_id"],
 				"status": "submitted",
 				"hint":   "轮询 scan_status；status=done 后调 scan_result（用返回的 scan_id 或 job_id）",
-			}, nil
+			}
+			// 输入 URL 自动修正（后端只改格式不改目标）：把修正回传给智能体，
+			// 让它在结论里如实记录“实际扫的是哪个地址”。
+			if v, ok := out["input_url"]; ok {
+				res["input_url"] = v
+			}
+			if v, ok := out["normalized_url"]; ok {
+				res["normalized_url"] = v
+			}
+			if v, ok := out["url_corrections"]; ok {
+				res["url_corrections"] = v
+			}
+			return res, nil
 		},
 	}
 }

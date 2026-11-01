@@ -14,6 +14,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -27,12 +28,16 @@ const (
 
 // batchSchedulerInterval 后台调度检查间隔（任务口径：每 30s）。
 // 包级 var 而非 const：测试可缩短它，避免每轮真实等 30s。
-var batchSchedulerInterval = 30 * time.Second
+var batchSchedulerInterval atomic.Int64 // 纳秒；0=默认 30s（测试可缩短，atomic 防并发读写竞争）
 
 // batchJobStarter 定时调度启动批量任务的钩子（生产固定走 startBatchJob；
 // 测试可替换它以避免真的拉起扫描）。
-var batchJobStarter = func(s *Server, entries []batchItem) (string, int) {
-	return s.startBatchJob(entries)
+var batchJobStarter atomic.Value // func(*Server, []batchItem) (string, int)
+
+func init() {
+	batchJobStarter.Store(func(s *Server, entries []batchItem) (string, int) {
+		return s.startBatchJob(entries)
+	})
 }
 
 // batchSchedulesMu 串行化 schedules.json 的「读-改-写」。
@@ -365,7 +370,8 @@ func (s *Server) runDueSchedules(now time.Time) int {
 		if !scheduleDue(*sc, now) {
 			continue
 		}
-		jobID, _ := batchJobStarter(s, scheduleEntries(*sc))
+		starter := batchJobStarter.Load().(func(*Server, []batchItem) (string, int))
+		jobID, _ := starter(s, scheduleEntries(*sc))
 		if jobID != "" {
 			sc.LastRunAt = now.Format(time.RFC3339)
 			triggered++
@@ -386,7 +392,7 @@ func (s *Server) runDueSchedules(now time.Time) int {
 // ctx 取消即退出；Lead 在服务启动时 `go s.RunScheduler(ctx)`，ctx 与服务器
 // 生命周期同源（关闭时自动停）。
 func (s *Server) RunScheduler(ctx context.Context) {
-	interval := batchSchedulerInterval
+	interval := time.Duration(batchSchedulerInterval.Load())
 	if interval <= 0 {
 		interval = 30 * time.Second
 	}

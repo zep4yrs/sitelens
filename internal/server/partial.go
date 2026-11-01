@@ -91,7 +91,7 @@ func PartialOptions(opts engine.Options) map[string]any {
 
 // SavePartial 把部分结果落库（无 job 上下文；等价于 SavePartialAt 空中断阶段）。
 // 返回 scan ID 与可读记录；res/st 为空时返回 (0, nil)，绝不 panic。
-func SavePartial(st *store.Store, res *engine.Result, options map[string]any) (int64, *PartialRecord) {
+func SavePartial(st scanStore, res *engine.Result, options map[string]any) (int64, *PartialRecord) {
 	return SavePartialAt(st, res, options, "")
 }
 
@@ -102,7 +102,7 @@ func SavePartial(st *store.Store, res *engine.Result, options map[string]any) (i
 //   - Options 副本写入 status=partial / partial=true / interrupted_phase；
 //   - store.Save 原样保存页面/技术/发现/证据（Map 图走既有逻辑）；
 //   - 返回的 PartialRecord 已带 ResumePlan（ResumeTargets/RemainingPhases）。
-func SavePartialAt(st *store.Store, res *engine.Result, options map[string]any, interruptedPhase string) (int64, *PartialRecord) {
+func SavePartialAt(st scanStore, res *engine.Result, options map[string]any, interruptedPhase string) (int64, *PartialRecord) {
 	if st == nil || res == nil {
 		return 0, nil
 	}
@@ -127,7 +127,7 @@ func (s *Server) SavePartialJob(jobID string, res *engine.Result, options map[st
 	if s == nil || s.st == nil {
 		return 0, nil
 	}
-	scanID, rec := SavePartialAt(s.st.Store, res, options, interruptedPhase)
+	scanID, rec := SavePartialAt(s.st, res, options, interruptedPhase)
 	if rec != nil {
 		rec.JobID = jobID
 	}
@@ -168,7 +168,7 @@ func (s *Server) SavePartialJob(jobID string, res *engine.Result, options map[st
 
 // LoadPartialRecord 从历史读回部分结果记录（历史可读）。
 // 非部分记录（正常完成）返回 (nil,false)。
-func LoadPartialRecord(st *store.Store, scanID int64) (*PartialRecord, bool) {
+func LoadPartialRecord(st scanStore, scanID int64) (*PartialRecord, bool) {
 	if st == nil {
 		return nil, false
 	}
@@ -190,7 +190,7 @@ func LoadPartialRecord(st *store.Store, scanID int64) (*PartialRecord, bool) {
 
 // ListPartials 历史列表中的部分结果摘要（新→旧，最多 limit 条）。
 // 走 store.List 的摘要顺序，再按需回读完整记录判定是否 partial。
-func ListPartials(st *store.Store, limit int) []PartialSummary {
+func ListPartials(st scanStore, limit int) []PartialSummary {
 	if st == nil || limit <= 0 {
 		return nil
 	}

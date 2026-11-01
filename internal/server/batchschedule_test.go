@@ -267,16 +267,16 @@ func TestDueSchedulesFilters(t *testing.T) {
 }
 
 func TestRunDueSchedules(t *testing.T) {
-	oldStarter := batchJobStarter
+	oldStarter := batchJobStarter.Load()
 	var mu sync.Mutex
 	var calls [][]batchItem
-	batchJobStarter = func(_ *Server, entries []batchItem) (string, int) {
+	batchJobStarter.Store(func(_ *Server, entries []batchItem) (string, int) {
 		mu.Lock()
 		calls = append(calls, entries)
 		mu.Unlock()
 		return "job-triggered", len(entries)
-	}
-	t.Cleanup(func() { batchJobStarter = oldStarter })
+	})
+	t.Cleanup(func() { batchJobStarter.Store(oldStarter) })
 
 	s := testServerWithDataDir(t)
 	now := time.Date(2026, 4, 5, 6, 7, 8, 0, time.UTC)
@@ -336,17 +336,17 @@ func TestRunDueSchedules(t *testing.T) {
 }
 
 func TestRunSchedulerLoop(t *testing.T) {
-	oldInterval := batchSchedulerInterval
-	oldStarter := batchJobStarter
-	batchSchedulerInterval = 10 * time.Millisecond
+	oldInterval := batchSchedulerInterval.Load()
+	oldStarter := batchJobStarter.Load()
+	batchSchedulerInterval.Store(int64(10 * time.Millisecond))
 	var n atomic.Int32
-	batchJobStarter = func(*Server, []batchItem) (string, int) {
+	batchJobStarter.Store(func(*Server, []batchItem) (string, int) {
 		n.Add(1)
 		return "job-loop", 1
-	}
+	})
 	t.Cleanup(func() {
-		batchSchedulerInterval = oldInterval
-		batchJobStarter = oldStarter
+		batchSchedulerInterval.Store(oldInterval)
+		batchJobStarter.Store(oldStarter)
 	})
 
 	s := testServerWithDataDir(t)

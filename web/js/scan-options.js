@@ -20,11 +20,36 @@
 
   var SCOPE_KEYS = ["web", "sub", "srv", "np", "js", "weak"];
   var VERIFY_ACTIVE = ["afp", "dir", "ws", "dast", "by", "ex", "settle"];
+  /* G09/G10 高级 Web 检测子开关：作为 options.dast 对象（五键布尔）下发。
+     全关 = 不产生任何额外请求；开启后由引擎按模块执行（默认 dry-run）。 */
+  var ADV_KEYS = ["idor", "logic", "upload", "deser", "proto"];
+  var ADV_LABELS = {
+    idor: "越权矩阵", logic: "业务逻辑", upload: "上传绕过",
+    deser: "反序列化", proto: "WS/HTTP2"
+  };
+  function advancedOn(adv) {
+    adv = adv || {};
+    return ADV_KEYS.some(function (k) { return !!adv[k]; });
+  }
+  function advancedObject(adv) {
+    adv = adv || {};
+    var o = {};
+    ADV_KEYS.forEach(function (k) { o[k] = !!adv[k]; });
+    return o;
+  }
+  function advancedLabels(options) {
+    var d = options && options.dast;
+    if (!d || typeof d !== "object") return [];
+    return ADV_KEYS.filter(function (k) { return !!d[k]; }).map(function (k) {
+      return ADV_LABELS[k] || k;
+    });
+  }
 
   function build(input) {
     input = input || {};
     var scope = input.scope || {};
     var verify = input.verify || {};
+    var advanced = input.advanced || {};
     var strength = TIERS[input.strength] ? input.strength : "std";
     var warnings = [];
 
@@ -40,6 +65,9 @@
     if (verify.passive) {
       if (VERIFY_ACTIVE.some(function (k) { return !!verify[k]; })) {
         warnings.push("被动模式不发送任何主动请求，其余验证项已忽略。");
+      }
+      if (advancedOn(advanced)) {
+        warnings.push("被动模式不发送任何主动请求，高级 Web 检测已忽略。");
       }
       warnings.push("被动模式不消费强度档位。");
       if (scope.sub) { o.subdomain = true; o.takeover = true; }
@@ -67,6 +95,12 @@
     if (verify.dir) o.dir_scan = true;
     if (verify.ws) o.webshell = true;
     if (verify.dast) o.dast = true;
+    /* G09/G10：高级 Web 检测按对象形态下发（{idor,logic,upload,deser,proto}）。
+       对象存在即表示启用高级通道；五项全关时保持旧布尔语义（不发额外请求）。 */
+    if (advancedOn(advanced)) {
+      o.dast = advancedObject(advanced);
+      warnings.push("高级 Web 检测默认 dry-run / 零额外请求；仅模块显式执行时才发探测请求。");
+    }
     if (verify.by) {
       if (verify.dir) o.dir_bypass = true;
       else warnings.push("403 绕过需与「目录探测」同开，该项已忽略。");
@@ -111,6 +145,7 @@
     if (options.dir_bypass) t += 25;
     if (options.exploit) t += 60;
     if (options.graph) t += 3; // 结构化事实收集：随扫描顺带，开销小
+    if (options.dast && typeof options.dast === "object") t += 8; // 高级检测计划生成（默认 dry-run）
     if (options.checks === "core") t += 40 + Math.round((options.nuclei_cap || 300) * 0.1);
     if (options.checks === "all") t += 300 + Math.round((options.nuclei_cap || 300) * 0.35);
     return t;
@@ -121,7 +156,10 @@
     estimateSeconds: estimateSeconds,
     TIERS: TIERS,
     SCOPE_KEYS: SCOPE_KEYS,
-    VERIFY_ACTIVE: VERIFY_ACTIVE
+    VERIFY_ACTIVE: VERIFY_ACTIVE,
+    ADV_KEYS: ADV_KEYS,
+    ADV_LABELS: ADV_LABELS,
+    advancedLabels: advancedLabels
   };
   if (typeof module !== "undefined" && module.exports) module.exports = API;
   else window.scanOpts = API;

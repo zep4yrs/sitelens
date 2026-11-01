@@ -108,6 +108,11 @@ type StoreConfig struct {
 	// <data_dir>/archive/<year>.json（服务端历史 List/Get 跨档透明读取）；
 	// 0/负值 = 默认 2000。
 	ArchiveKeep int `yaml:"archive_keep"`
+	// Driver 历史存储后端：json（默认，文件式）| sqlite | postgres。
+	// 非 json 时需 DSN；driver 未注册/连接失败时回退 json 并打日志。
+	Driver string `yaml:"driver"`
+	// DSN 数据库连接串（driver != json 时必填）。
+	DSN string `yaml:"dsn"`
 }
 
 // ActiveConfig 主动探测模块阈值（默认关；目标合规责任在使用者）。
@@ -152,7 +157,8 @@ type ScanConfig struct {
 // 测试等操作者自担合规责任的场景使用；gov.cn 硬保护与云 metadata 端点
 // 永久阻断不受本开关影响。
 type TargetConfig struct {
-	AllowPrivate bool `yaml:"allow_private"`
+	AllowPrivate  bool `yaml:"allow_private"`
+	AutoNormalize bool `yaml:"auto_normalize"` // URL 输入自动修正（补协议/去标点/hxxp 还原/默认端口；只改格式不改目标）
 }
 
 // ChecksConfig 验证型 check 引擎。
@@ -200,6 +206,14 @@ type DASTConfig struct {
 	APIAudit          bool  `yaml:"api_audit"`            // 开放 API 通道（未授权读取 / IDOR）
 	CryptoProbe       bool  `yaml:"crypto_probe"`         // 加密实现弱点（确定性加密 / 弱算法）
 	UploadBypass      bool  `yaml:"upload_bypass"`        // 上传绕过验证（危险扩展名/类型/双扩展名）
+
+	// G09/G10 进阶面（additive，默认全关；关 = 零请求零行为变化）。
+	Proto       bool `yaml:"proto"`        // 协议面探测：ws/wss 明文/匿名/Origin、h2c/ALPN
+	Deser       bool `yaml:"deser"`        // 反序列化入口标记识别（Java/PHP/.NET/Python，零额外请求）
+	Logic       bool `yaml:"logic"`        // 业务逻辑探测（默认 dry-run：只生成计划，不发请求）
+	Upload      bool `yaml:"upload"`       // 上传绕过探测（默认 dry-run：只生成计划，不发请求）
+	IDOR        bool `yaml:"idor"`         // 多会话越权检测（需调用方提供引擎 Options.Sessions）
+	MaxRequests int  `yaml:"max_requests"` // 进阶面单次请求硬上限（默认 20）
 }
 
 // IntelConfig 漏洞情报知识库。
@@ -262,6 +276,9 @@ type BatchConfig struct {
 	Workers int `yaml:"workers"`  // 并发扫描 worker 数
 	// WebhookURL 批量完成/取消后推送 JSON（空 = 不推送）。
 	WebhookURL string `yaml:"webhook_url"`
+	// UseWorkerPool 批量扫描改用分布式 worker 池分派（默认 false = 旧并发路径，
+	// 行为零变化）；Workers 同时作为池并发数（上限 16）。
+	UseWorkerPool bool `yaml:"use_worker_pool"`
 }
 
 // WebConfig 内置 Web 服务。
@@ -271,6 +288,11 @@ type WebConfig struct {
 	HistoryLimit int    `yaml:"history_limit"` // /api/history 默认返回条数
 	HistoryCap   int    `yaml:"history_cap"`   // limit 参数硬上限
 	ShutdownSec  int    `yaml:"shutdown_sec"`  // 优雅关闭等待秒数
+	// AuthMode 认证模式：none（默认，沿用 api_token/X-Token 行为）| token
+	// （RBAC：Authorization: Bearer <authz 令牌>，按角色/租户鉴权）。
+	AuthMode string `yaml:"auth_mode"`
+	// AuthSecret token 模式的 HMAC 密钥（authz 令牌签发/验证共用；空 = 启动报错）。
+	AuthSecret string `yaml:"auth_secret"`
 }
 
 // ModulesConfig 可选模块默认开关（每次扫描请求仍可单独指定）。
@@ -289,6 +311,9 @@ type ModulesConfig struct {
 // Default 返回默认配置（= 最佳实践值）。
 func Default() *Config {
 	return &Config{
+		Target: TargetConfig{
+			AutoNormalize: true, // URL 输入自动修正默认开；要严格旧行为可置 false
+		},
 		Scan: ScanConfig{
 			RateIntervalMS: 400,
 			RateMode:       "balanced",
@@ -338,6 +363,8 @@ func Default() *Config {
 			APIAudit:          true,
 			CryptoProbe:       true,
 			UploadBypass:      true,
+			// G09/G10 进阶面默认全关（零请求零行为变化）；max_requests 仅在开关开启时生效。
+			MaxRequests: 20,
 		},
 		Exploit: ExploitConfig{
 			Enabled:          false, // 总闸默认关：设置页「利用级验证」可开
@@ -365,10 +392,10 @@ func Default() *Config {
 		Batch: BatchConfig{MaxURLs: 50, Workers: 3},
 		Web: WebConfig{
 			Listen: "127.0.0.1:5000", HistoryLimit: 50,
-			HistoryCap: 200, ShutdownSec: 5,
+			HistoryCap: 200, ShutdownSec: 5, AuthMode: "none",
 		},
 		Modules: ModulesConfig{},
-		Store:   StoreConfig{DataDir: "data/state", MaxRecords: 500, ArchiveKeep: 2000},
+		Store:   StoreConfig{DataDir: "data/state", MaxRecords: 500, ArchiveKeep: 2000, Driver: "json"},
 		Active: ActiveConfig{
 			DirMaxPaths: 300, SubMaxWords: 2000, SubWorkers: 20,
 			ShellMaxPaths: 200, FPMaxRequests: 30, TakeoverMax: 50,
@@ -494,6 +521,7 @@ func (c *Config) fillDefaults() {
 	fillInt(&c.DAST.SleepSeconds, d.DAST.SleepSeconds)
 	fillInt(&c.DAST.MaxURLLen, d.DAST.MaxURLLen)
 	fillInt(&c.DAST.MaxProbesPerClass, d.DAST.MaxProbesPerClass)
+	fillInt(&c.DAST.MaxRequests, d.DAST.MaxRequests)
 
 	if c.Intel.DumpPath == "" {
 		c.Intel.DumpPath = d.Intel.DumpPath
@@ -544,6 +572,12 @@ func (c *Config) fillDefaults() {
 	}
 	fillInt(&c.Store.MaxRecords, d.Store.MaxRecords)
 	fillInt(&c.Store.ArchiveKeep, d.Store.ArchiveKeep)
+	if c.Store.Driver == "" {
+		c.Store.Driver = d.Store.Driver
+	}
+	if c.Web.AuthMode == "" {
+		c.Web.AuthMode = d.Web.AuthMode
+	}
 
 	// overrides_path 归一到数据目录：它**运行期会被写**（设置页保存 / update-osv），
 	// 默认值 "data/intel_overrides.json" 是相对路径——安装到 Program Files 后
