@@ -128,10 +128,13 @@ batch:
   max_urls: 50
   workers: 3
   webhook_url: ""            # 批量完成/取消后 POST JSON 通知（空 = 不推送）
+  use_worker_pool: false     # 企业化：true = 批量走 MemoryQueue + WorkerPool（同 host 串行/重试/取消）
 
 web:
   listen: 127.0.0.1:5000     # 旧 Python 服务占用 5000 时可改端口
   api_token: ""              # 非空则 /api/* 需 X-Token（也可用环境变量 SLENS_API_TOKEN）
+  auth_mode: "none"          # none（默认，沿用 X-Token）| token（企业 RBAC：HMAC 令牌 + 租户）
+  auth_secret: ""            # token 模式必填：HMAC-SHA256 密钥（为空启动报错）
   history_limit: 50
   history_cap: 200
   shutdown_sec: 5
@@ -139,6 +142,9 @@ web:
 store:
   data_dir: data/state       # history.json / kev_extra.json / nuclei 索引缓存
   max_records: 500
+  driver: "json"             # json（默认，文件式）| sqlite | postgres（企业化，自动迁移）
+                             # 默认构建已编入 sqlite（modernc，纯 Go）与 postgres（pgx stdlib）驱动
+  dsn: ""                    # driver != json 时必填，如 file:data/state/sitelens.db?_pragma=busy_timeout(5000)
 
 active:                      # 主动模块阈值（模块本身默认关，扫描请求内指定）
   dir_max_paths: 300

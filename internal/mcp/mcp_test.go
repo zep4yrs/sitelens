@@ -44,7 +44,12 @@ func newFakeAPI(t *testing.T) *fakeAPI {
 		f.mu.Lock()
 		f.scanBody = body
 		f.mu.Unlock()
-		writeJSON(w, map[string]any{"job_id": "job-1"})
+		writeJSON(w, map[string]any{
+			"job_id":          "job-1",
+			"input_url":       "hxxp://example[.]com。",
+			"normalized_url":  "https://example.com/",
+			"url_corrections": []string{"还原失陷指标写法（[.] 等）", "还原 hxxp 为 http(s)", "去除末尾标点"},
+		})
 	})
 	mux.HandleFunc("/api/job/job-1", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, map[string]any{
@@ -289,6 +294,36 @@ func TestScanCallsAPI(t *testing.T) {
 	}
 	if f.scanBody["level"] != "quick" || f.scanBody["dast"] != true {
 		t.Fatalf("level/options 未透传: %v", f.scanBody)
+	}
+}
+
+// TestScanReturnsURLCorrections 验证 scan 工具把后端 URL 自动修正字段回传给智能体
+// （input_url / normalized_url / url_corrections），避免 Agent 误以为扫的是原始输入。
+func TestScanReturnsURLCorrections(t *testing.T) {
+	f := newFakeAPI(t)
+	s := newTestServer(t, f.srv.URL, true, 0)
+	text, isErr := toolResult(t, runRPC(t, s, toolCallReq(1, "scan", map[string]any{
+		"url": "hxxp://example[.]com。",
+	}))[0])
+	if isErr {
+		t.Fatalf("scan 失败: %s", text)
+	}
+	var got map[string]any
+	if err := json.Unmarshal([]byte(text), &got); err != nil {
+		t.Fatalf("scan 结果不是 JSON: %v", err)
+	}
+	if got["input_url"] != "hxxp://example[.]com。" {
+		t.Fatalf("input_url = %v", got["input_url"])
+	}
+	if got["normalized_url"] != "https://example.com/" {
+		t.Fatalf("normalized_url = %v", got["normalized_url"])
+	}
+	corr, ok := got["url_corrections"].([]any)
+	if !ok || len(corr) == 0 {
+		t.Fatalf("url_corrections 缺失或为空: %v", got["url_corrections"])
+	}
+	if len(corr) != 3 {
+		t.Fatalf("url_corrections 条数 = %d, want 3: %v", len(corr), corr)
 	}
 }
 

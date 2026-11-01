@@ -209,23 +209,26 @@ func (s *Server) openScanStore(cfg *config.Config) (scanStore, error) {
 // 任一失败返回明确错误（调用方决定是否回退 JSON）。
 func openSQLScanStore(driver, dsn string) (scanStore, error) {
 	var dialect store.Dialect
+	sqlDriver := driver
 	switch driver {
 	case "sqlite", "sqlite3":
 		dialect = store.DialectSQLite
+		sqlDriver = "sqlite" // modernc.org/sqlite
 	case "postgres", "postgresql":
 		dialect = store.DialectPostgres
+		sqlDriver = "pgx" // jackc/pgx/v5 stdlib
 	default:
 		return nil, fmt.Errorf("不支持的存储驱动 %q（可选 json/sqlite/postgres）", driver)
 	}
-	db, err := sql.Open(driver, dsn)
+	db, err := sql.Open(sqlDriver, dsn)
 	if err != nil {
-		return nil, fmt.Errorf("sql.Open(%s)：%w", driver, err)
+		return nil, fmt.Errorf("sql.Open(%s)：%w", sqlDriver, err)
 	}
 	if err := db.Ping(); err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("数据库连接失败：%w", err)
 	}
-	if err := store.ApplyMigrations(db); err != nil {
+	if err := store.ApplyMigrationsDialect(db, dialect); err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("数据库迁移失败：%w", err)
 	}
