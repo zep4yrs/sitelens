@@ -1,71 +1,100 @@
 # 更新日志
 
-## v5.2.x 第二批（**未发布**；预留章节，待 Lead 按实际交付回填）
+## v5.2.x 第二批 / 第三批（**未发布**；预留章节）
 
-> ⛔ **占位，未发版。** 条目、数字与验证结论一律由 Lead 在合入后回填；回填前不得对外发布。
-> 进度口径：[`docs/新功能路线图-5.2.md`](docs/新功能路线图-5.2.md) §9 进度表；
-> 发行说明骨架：[`docs/release-5.2.0/release-body-5.2.0.md`](docs/release-5.2.0/release-body-5.2.0.md)
-> 文末「附：5.2.x 第二批（预留）」；设计契约见
-> [`docs/设计系统与组件契约-5.2.md`](docs/设计系统与组件契约-5.2.md)、
-> [`docs/i18n-5.2.md`](docs/i18n-5.2.md)。
+> 已实现，随下一次 5.2.x 发版整理；对应 main 分支 `13b688b`（第二批）+ `41a5514`（第三批）。
+> 详细说明与数字复测见 [`docs/release-5.2.0/release-body-5.2.0.md`](docs/release-5.2.0/release-body-5.2.0.md)
+> 文末「附：5.2.x 第二批 / 第三批（预留章节）」；进度见
+> [`docs/新功能路线图-5.2.md`](docs/新功能路线图-5.2.md) §9。
 
-### 源码审计（AU-02 / AU-03）【待回填】
+### 源码审计（AU-02 / AU-03）
 
-- 【待回填】基线/忽略 + 与上次报告 diff（只报新增）；规则扩展 Java/Go/TS + OWASP Top 10:2021
-  映射；密钥扫描增强（熵检测 + 云厂商 key 前缀）；依赖清单 SCA（go.mod / package-lock.json /
-  requirements.txt → OSV）。
-- 【待回填】兼容性：既有 JSON 报告逐字节不变（additive 字段）；SARIF 增 `properties.owasp`。
-- 【待回填】实测数字 / 验收命令 / 回退方式。
+- 基线/忽略（只报新增）+ 与上次审计报告 diff（new/fixed）。
+- 规则扩展：Java/Go/TS（含 JSX/TSX）+ OWASP Top 10:2021 映射；密钥扫描增强（云厂商 key 前缀 +
+  高熵检测，报告不落密钥值）。
+- SCA：解析 go.mod / package-lock.json / requirements*.txt。**边界**：无本地 OSV 库时只列依赖，
+  漏洞状态标 `unknown`，不联网、不臆造漏洞。
+- 兼容：不带新开关时 audit JSON 逐字节不变；新字段/新开关均为 additive。
 
-### 网络层（NS-02）【待回填】
+### 网络层（NS-02）
 
-- 【待回填】证书 SAN/颁发者/到期（资产线索与到期提醒）、cipher 套件分级、ALPN/HTTP2 观测、
-  端口/服务探测并入、批量网络层入口。
-- 【待回填】只读语义与请求量；既有 TLS/DNS 发现语义是否变化；是否需要重扫。
+- 证书资产线索（SAN/颁发者/到期 + 剩余天数）、cipher 套件分级、ALPN/HTTP2 观测。
+- 端口/服务探测（TCP connect + 被动 banner ≤256B，`scan.port_scan` 默认关）、单主机组合与
+  多主机批量入口；只读语义不变。
 
-### 登录爆破（LB-02）与授权护栏（XC-03）【待回填】
+### 登录爆破（LB-02）与授权护栏（XC-03）
 
-- 【待回填】多步登录 / 验证码 OCR 可选 / 失败原因分类 / 代理与限速 / 批量目标。
-- 【待回填】授权白名单 `scan.allow_hosts`（空=不限制；精确域名或 `*.example.com`；不在
-  白名单的扫描与网络层检测直接拒绝；SSRF/gov.cn 硬闸门不受影响；清空即回退旧行为）。
+- 多步登录（先用户名后密码，JSON 端点与多步 action 同样受限）。
+- 失败原因分类（凭据/锁号/限流/验证码/网络），不改变命中判定。
+- 批量目标（串行、每目标独立护栏、跨目标总尝试上限 `MaxTotalTries`）。
+- 授权白名单 `scan.allow_hosts`（空=不限制；精确域名或 `*.example.com`；不在白名单零请求
+  拒绝）；SSRF/内网/gov.cn 硬闸门不受影响，白名单是授权护栏而非 SSRF 防护。
 
-### 批量与定时（BT-03 / CP-09）【待回填】
+### 批量与定时（BT-03）
 
-- 【待回填】cron 定时任务、与上次结果 diff（新增/已修复）、标签分组、完成后 webhook 通知。
-- 【待回填】调度持久化/重启恢复/并发上限；webhook 安全边界（仅结果摘要、SSRF 校验、重试策略）。
+- cron 定时任务（持久化 + 到点调度 + 重启恢复）、与上次结果 diff（new/fixed）、`tag` 分组。
+- 完成后 webhook POST JSON 摘要（`webhook_url`，空=不推送；只发摘要，不含证据链与凭据）。
 
-### 任务中心 / 报告导出 / 安全护栏（XC-01 / XC-02 / XC-03）【待回填】
+### 报告与护栏（XC-02 / XC-03、CP-07）
 
-- 【待回填】统一任务中心（进度/取消/历史/重跑）；统一报告导出（新增扫描结果 **SARIF** 导出）；
-  授权确认/目标白名单/每 host 限速/WAF 拦截提示。
-- 【待回填】兼容性：既有 JSON/CSV/HTML/MD 导出不变；SARIF 为新增格式（GitHub code scanning 可解析）。
+- 扫描结果 **SARIF 2.1.0** 导出（结果页「SARIF」按钮 + `/api/export?format=sarif`），既有
+  JSON/CSV/宽表/HTML/MD 导出不变。
+- 合规评估报告（CP-07）：对标等保 2.0 三级与 OWASP ASVS 4.0.3，输出 Markdown/HTML
+  （可打印 PDF）；显式声明「提示性映射，未命中≠合规」，不作为合规证书。
+- 护栏：授权白名单、每 host 限速、WAF/限流拦截提示保持既有口径。
 
-### 前端（FE-04 / 05 / 06 / 07 / 08 / 09 / 10 / 11 / 12）【待回填】
+### 前端（FE-04 / 05 / 06 / 07 / 09 / 11 / 12）
 
-- 【待回填】无障碍全量（aria/role/焦点管理/键盘/对比度/IME 守卫）、动效全量、质量门禁
-  （ESLint/Prettier + axe/pa11y + Playwright smoke 进 CI）、i18n 中英全量、桌面托盘/快捷键/
-  多窗口、Monaco 轻量化、设计系统文档与组件预览、响应式/打印、扫描状态机与零丢失。
-- 【待回填】已知问题：浅色主题语义色小字对比度未达 AA（`.badge.ok/warn` 实测 2.89/2.81:1）；
-  语言切换后 `<html lang>` 未更新。二者随 FE-04/FE-07 修复。
-- 【待回填】验收：axe 0 critical、375px 无横向滚动、键盘闭环、i18n 切换 smoke。
+- 无障碍：跳过导航、地标/页签/进度/分割条语义与键盘、弹层焦点陷阱与焦点归还、主题按钮
+  `aria-pressed`、全局快捷键（Ctrl/⌘+Enter 扫描、Esc 取消/关弹层、Ctrl/⌘+E 导出）+
+  中文输入法组合输入守卫。
+- 动效：`web/js/motion.js` 骨架屏/列表渐入，只用设计令牌并尊重 `prefers-reduced-motion`。
+- 质量门禁：`frontend-check.mjs`（语法 + a11y/标签）、`a11y-smoke.mjs`、i18n 测试接入 CI。
+- i18n：中英字典（`web/js/i18n.js`，zh/en 各 113 键、对称）+ `t()/apply()` 接线壳/模式行/
+  主要按钮/表单标签，支持 `data-i18n*` 标注与 `data-i18n-vars` 插值，切换同步 `<html lang>`。
+  **边界**：页面静态文案分批标注（`app.html` 16 处，其余待接）；toast/服务端报告仍以中文为主。
+- Monaco 懒加载瘦身（FE-09）：进入审计页/打开编辑器才加载（约 12MB），骨架 + 12s 超时降级为
+  只读 textarea，不白屏。
+- 响应式与打印（FE-11）：≤900px 窄屏布局 + `@media print`（结果/报告可打印或另存 PDF）。
+- 状态机与零丢失（FE-12）：作业状态机（running/paused/blocked/partial）+ 取消/中断时部分
+  结果落库（`partial` 标记，页面/技术/发现/证据保留）+ ResumePlan 续扫规划，不再「取消即丢弃」。
 
-### API 扫描（CP-03）【待回填】
+### 桌面（FE-08）
 
-- 【待回填】OpenAPI / Swagger / GraphQL / HAR 导入 + schema fuzz；离线解析（不抓外部 `$ref`、
-  GraphQL 只读 introspection、不发 mutation）；端点如何进入扫描计划与请求量控制。
+- 托盘：快速扫描剪贴板 URL、打开对比窗口、左键唤起工作台；快捷键 `Ctrl+Shift+S`（唤起并聚焦
+  URL）/`Ctrl+Shift+Q`（快速扫描剪贴板 URL）。
+- 快速扫描走既有 API（引擎零改动）：剪贴板 → `POST /api/scan {"level":"quick"}` → 轮询 →
+  结果入历史 → 壳内通知窗（右下角、Acrylic、6s 自动关闭）。
+- 窗口材质：Win11 Mica（旧系统 blur-behind）、深色标题栏跟随系统，`SITLENS_WIN_MATERIAL=off`
+  回退纯色。**边界：未做 Windows 真机验收，对外发布前需实机复测。**
 
-### 对标补课其余项（CP-01 / CP-02 / CP-04 ~ CP-11）与品牌（FE-13）【待回填】
+### 对标补课（CP-01/02/04/05/06/08/10/11）
 
-- 【待回填】按实际交付裁剪：爬虫深度、认证矩阵、基准评测与覆盖率口径、性能规模、持久化、
-  报告合规、UI triage、资产台账、模板治理、指纹准确率。
-- 【待回填】品牌：中文名「晦明 SiteLens」切换范围；安装目录/数据目录/二进制名 `sitelens`
-  不改（见路线图 §8.5）。
-- 【待回填】未交付项：移出本节并标注顺延批次。
+- CP-01 爬虫深度：`crawler.max_depth`（默认 2）、JS/SPA 路由发现、链接归一化、跳过计数。
+- CP-02 认证矩阵：Header/Bearer/Basic/Cookie 只读注入 + 凭据脱敏/防头注入 + 多会话原语
+  （能力层，未接入扫描主流程）。
+- CP-04 基准评测：`benchmark/` 体系（P/R/F1、`catalogCoverage` ≥80% 口径、季度复评、
+  `score.mjs` 自检），流程见 `docs/基准评测-5.2.md`。
+- CP-05 性能分片：SplitShards / checkpoint 恢复 / 并发上限 ≤4 / 失败重试 1（能力层）。
+- CP-06 持久化：文件分层 + 归档（`history.archive.jsonl`，JSON Lines、0600、可回灌），
+  **未引入 SQLite/PG 后端**。
+- CP-08 UI triage：复核结论（误报/覆盖）与白名单持久化，`/api/triage/{scanID}`、
+  `/api/whitelist` + 前端 triage 入口。
+- CP-10 模板治理：按来源统计 runs/pass/fail/hits，通过率（模板可用性）与命中率（有效产出）
+  分开统计。
+- CP-11 指纹置信度：证据计数 + 通道加权 + 同页冲突降权 + 版本交叉校验 → confidence(0-1) +
+  reasons，供 Tech.Confidence(0-100) 与「为什么判定为该技术」展示。
 
-### 已知限制与回退（本批）【待回填】
+### 已知限制与顺延（本批）
 
-- 【待回填】各新功能的开关/回退方式、升级影响（是否需重扫、历史兼容、体积变化）、
-  本批门禁与实测数字。
+- SCA 漏洞状态 unknown（无本地 OSV 库时只列依赖）。
+- 桌面未 Windows 真机验收。
+- 品牌更名「晦明 SiteLens」暂缓（FE-13）。
+- CP-06 为归档分层，非 SQLite/PG。
+- CP-02/05/07/10/11 为能力层，扫描器/UI 接线随后续批次。
+- CP-09 资产台账、FE-10 组件预览页未随本批交付，顺延。
+- 升级影响：既有导出/报告格式不变；SARIF 与合规报告为新增格式/入口；无需重扫历史数据。
+  回退：`scan.allow_hosts` 清空、`webhook_url` 留空、`port_scan`/`max_depth` 关闭即回旧行为。
 
 ## v5.2.0（2026-10-29，全代码库体检修复集 + 交付体验）
 

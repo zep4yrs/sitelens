@@ -491,3 +491,38 @@ html.sl-modal-open { overflow: hidden; }
     page-break-inside: avoid;
   }
 }
+
+/* ==========================================================================
+   5.2.x 收尾：CP-08 人工复核 / FE-12 部分结果 / 浅色徽章对比度
+   ========================================================================== */
+
+/* ---- CP-08：结果页人工复核列（误报/确认/忽略） + 白名单灰显 ---- */
+.triage-cell { white-space: nowrap; min-width: 148px; }
+.triage-btns { display: inline-flex; gap: 4px; flex-wrap: wrap; }
+.triage-btn { min-height: 28px; padding: 2px 8px; font-size: 12px; }
+.triage-btn.on { background: var(--primary); color: var(--primary-fg); border-color: var(--primary); }
+.triage-btn.on:hover { background: var(--primary); }
+.triage-sum { display: flex; flex-wrap: wrap; align-items: center; gap: 10px;
+  margin: 0 0 12px; padding: 8px 12px; border: 1px solid var(--border);
+  border-radius: 10px; background: var(--card); font-size: 12.5px; color: var(--muted-fg); }
+.triage-sum > b { color: var(--foreground); font-family: var(--font-mono); }
+.triage-sum > span b { color: var(--foreground); font-family: var(--font-mono); }
+.triage-muted { opacity: .55; }
+.triage-muted:hover { opacity: .8; }
+
+/* ---- FE-12：部分结果提示条（已中断 + 继续扫描） ---- */
+.partial-banner { display: flex; flex-wrap: wrap; align-items: center; gap: 10px;
+  margin: 0 0 14px; padding: 10px 14px; border: 1px solid color-mix(in srgb, var(--warn) 45%, transparent);
+  border-left: 4px solid var(--warn); border-radius: 10px;
+  background: color-mix(in srgb, var(--warn) 8%, var(--card)); }
+.partial-banner b { color: var(--foreground); }
+.partial-banner .hint { margin: 0; }
+.partial-banner .btn { margin-left: auto; }
+
+/* ---- 浅色主题徽章文字对比度 ≥4.5:1（WCAG AA；深色主题与打印黑白样式不动） ----
+   原值（8% 语义色底）：ok 3.02 / warn 2.92 / danger 4.28 / info 4.65:1；
+   调深后：ok 6.54 / warn 6.51 / danger 5.73 / info 6.80:1。 */
+html:not(.dark) .badge.ok { color: #166534; }
+html:not(.dark) .badge.warn { color: #92400e; }
+html:not(.dark) .badge.danger { color: #b91c1c; }
+html:not(.dark) .badge.info { color: #075985; }

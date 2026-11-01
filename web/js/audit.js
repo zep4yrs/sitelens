@@ -1,7 +1,13 @@
-/* 源码静态审计（25A 升级版）：上传 → /api/audit → 文件树 + Monaco 预览 + 标注跳转。
-   工作台模式与独立 /audit 页共用；ID 统一 audit- 前缀。
-   Monaco 懒加载（/monaco/vs 本地路径，零 CDN）；models 按 URI 常驻——
-   Turbo 切走再切回，文件内容与标注不丢。只读预览：审计线索需人工复查。 */
+/* 源码静态审计（25A 升级版，FE-09 懒加载瘦身）：上传 → /api/audit →
+   文件树 + Monaco 预览 + 标注跳转。工作台模式与独立 /audit 页共用；ID 统一
+   audit- 前缀。
+   Monaco 懒加载（/monaco/vs 本地路径，零 CDN）：
+   - 初始页面不加载；首次进入审计页（window.slAuditActivate，common.js 模式
+     切换时调用）或首次打开编辑器时才注入 loader.js + editor.main；
+   - 加载中显示骨架占位；失败降级为只读 textarea + 提示（功能受限但不白屏）；
+   - 单例状态挂 window.__slAuditMonaco，Turbo 换页/重复进入幂等复用；
+   - models 按 URI 常驻——切走再切回，文件内容与标注不丢。只读预览：审计线索
+     需人工复查。 */
 (function () {
   "use strict";
   var input = document.getElementById("audit-files");
@@ -193,22 +199,121 @@
       : "";
   }
 
-  /* ---------------- Monaco 懒加载 / 单例 / models ---------------- */
-  var monacoLoading = null;
+  /* ---------------- Monaco 懒加载 / 单例 / 降级（FE-09） ----------------
+     状态挂 window.__slAuditMonaco 跨 Turbo 换页复用：
+       idle → loading → ready | failed
+     只有「进入审计页」或「打开编辑器」才真正下载 /monaco/vs（约 12MB）；
+     失败时降级为只读 textarea（app.html 内 #audit-fallback），不白屏。 */
+  var MONACO_STATE = window.__slAuditMonaco || (window.__slAuditMonaco = {
+    status: "idle", promise: null, error: null
+  });
+  // 就绪后要执行的一次性任务（跨渲染存活，避免 Turbo 换页丢队列）
+  var READY_QUEUE = window.__slAuditReadyQueue || (window.__slAuditReadyQueue = []);
+  var MONACO_TIMEOUT_MS = 12000; // 弱网/资源缺失兜底：超时按失败降级
+
+  function monacoReady() {
+    return !!(window.monaco && window.monaco.editor);
+  }
+  function monacoFailed() {
+    return MONACO_STATE.status === "failed";
+  }
+  function queueMonacoReady(fn) {
+    if (monacoReady()) { try { fn(); } catch (e) {} return; }
+    if (monacoFailed()) return; // 已降级：不执行依赖 Monaco 的逻辑
+    READY_QUEUE.push(fn);
+  }
+  function flushReadyQueue() {
+    var q = READY_QUEUE.splice(0, READY_QUEUE.length);
+    q.forEach(function (fn) { try { fn(); } catch (e) {} });
+  }
+
+  function showEditorLoading(on) {
+    var el = document.getElementById("audit-ed-loading");
+    if (el) el.hidden = !on;
+  }
+  function enableFallback(err) {
+    var hint = document.getElementById("audit-ed-fallback-hint");
+    if (hint) hint.hidden = false;
+    showEditorLoading(false);
+    toast("编辑器组件加载失败，已降级为纯文本预览", "err");
+    if (window.console && console.warn) console.warn("[audit] Monaco 降级:", err && err.message);
+  }
+  function isFallback() {
+    var ta = document.getElementById("audit-fallback");
+    return !!(ta && !ta.hidden);
+  }
 
   function ensureMonaco(cb) {
-    if (window.monaco && window.monaco.editor) { cb(); return; }
-    if (monacoLoading) { monacoLoading.then(cb); return; }
-    monacoLoading = new Promise(function (resolve) {
+    if (monacoReady()) {
+      // 超时判失败后 loader 迟到的成功：自愈回 ready，撤掉降级提示
+      if (MONACO_STATE.status === "failed") {
+        MONACO_STATE.status = "ready";
+        MONACO_STATE.error = null;
+        var hint = document.getElementById("audit-ed-fallback-hint");
+        if (hint) hint.hidden = true;
+        var ta = document.getElementById("audit-fallback");
+        if (ta) { ta.hidden = true; ta.value = ""; }
+        var empty = document.getElementById("audit-ed-empty");
+        if (empty) empty.style.display = "";
+      }
+      if (cb) cb();
+      return;
+    }
+    if (monacoFailed()) { if (cb) cb(); return; }
+    if (MONACO_STATE.promise) {
+      MONACO_STATE.promise.then(function () { if (cb) cb(); });
+      return;
+    }
+    MONACO_STATE.status = "loading";
+    showEditorLoading(true);
+    MONACO_STATE.promise = new Promise(function (resolve) {
+      var settled = false;
+      var finish = function (ok, err) {
+        if (settled) return;
+        settled = true;
+        MONACO_STATE.promise = null;
+        if (ok && monacoReady()) {
+          MONACO_STATE.status = "ready";
+          showEditorLoading(false);
+          flushReadyQueue();
+        } else {
+          MONACO_STATE.status = "failed";
+          MONACO_STATE.error = err || new Error("Monaco 加载失败");
+          enableFallback(MONACO_STATE.error);
+          READY_QUEUE.length = 0; // 降级后丢弃 Monaco 依赖任务
+        }
+        resolve(MONACO_STATE.status);
+      };
+      var boot = function () {
+        try {
+          window.require.config({ paths: { vs: "/monaco/vs" } });
+          window.require(["vs/editor/editor.main"],
+            function () { finish(true); },
+            function (e) { finish(false, e || new Error("editor.main 加载失败")); });
+        } catch (e) {
+          finish(false, e);
+        }
+      };
+      // 重复进入/换页后 loader 可能已在 head：直接 require，不重复插脚本
+      if (window.require && typeof window.require.config === "function" && window.__slMonacoLoader) {
+        boot();
+        return;
+      }
       var s = document.createElement("script");
       s.src = "/monaco/vs/loader.js";
+      s.async = true;
+      s.setAttribute("data-sl-monaco", "loader");
       s.onload = function () {
-        require.config({ paths: { vs: "/monaco/vs" } });
-        require(["vs/editor/editor.main"], function () { resolve(); });
+        window.__slMonacoLoader = true;
+        boot();
       };
+      s.onerror = function () { finish(false, new Error("loader.js 加载失败")); };
       document.head.appendChild(s);
+      setTimeout(function () {
+        if (!settled && !monacoReady()) finish(false, new Error("Monaco 加载超时"));
+      }, MONACO_TIMEOUT_MS);
     });
-    monacoLoading.then(cb);
+    MONACO_STATE.promise.then(function () { if (cb) cb(); });
   }
 
   function models() { return window.__slAuditModels || (window.__slAuditModels = {}); }
@@ -301,6 +406,7 @@
     }
     if (content === undefined) { toast("该文件无预览内容", "err"); return; }
     ensureMonaco(function () {
+      if (!monacoReady()) { openFileFallback(path, content); return; }
       var ed = ensureEditor();
       var model = getOrCreateModel(path, content);
       ed.setModel(model);
@@ -322,6 +428,49 @@
     });
   }
   function cssEsc(s) { return (window.CSS && CSS.escape) ? CSS.escape(s) : s.replace(/"/g, '\\"'); }
+
+  /* FE-09 降级路径：Monaco 不可用时用只读 textarea 展示源码（功能受限但不白屏） */
+  function openFileFallback(path, content) {
+    var ta = document.getElementById("audit-fallback");
+    var hint = document.getElementById("audit-ed-fallback-hint");
+    if (!ta) { toast("编辑器不可用，无法预览该文件", "err"); return; }
+    ta.hidden = false;
+    ta.value = content == null ? "" : String(content);
+    if (hint) hint.hidden = false;
+    var empty = document.getElementById("audit-ed-empty");
+    if (empty) empty.style.display = "none";
+    showEditorLoading(false);
+    // 树选中态与 Monaco 路径保持一致
+    document.querySelectorAll("#audit-tree .tw-node.on").forEach(function (n) { n.classList.remove("on"); });
+    var node = document.querySelector('#audit-tree .tw-node[data-file="' + cssEsc(path) + '"]');
+    if (node) node.classList.add("on");
+  }
+
+  /* 预热：为已加载内容建 models + 标注，并打开首文件（仅 Monaco 就绪后调用）。
+     Turbo 换页后旧闭包里的 editorEl 已脱离文档，直接跳过，等新渲染的激活再跑。 */
+  function warmModels() {
+    if (!monacoReady()) return;
+    if (!editorEl || !document.body.contains(editorEl)) return;
+    ensureEditor();
+    var contents = window.__slAuditContents || {};
+    Object.keys(contents).forEach(function (path) {
+      var model = getOrCreateModel(path, contents[path]);
+      var marks = (window.__slAuditFindings || []).filter(function (f) { return f.file === path; })
+        .map(function (f) {
+          return {
+            startLineNumber: f.line, endLineNumber: f.line, startColumn: 1, endColumn: 1000,
+            severity: SEV_MARK[f.severity] || 2,
+            message: "[" + f.severity + "] " + f.rule + " " + f.title + "\n" + (f.advice || ""),
+            source: "SiteLens audit"
+          };
+        });
+      monaco.editor.setModelMarkers(model, "audit", marks);
+    });
+    var sources = window.__slAuditSources || [];
+    var first = sources.length ? sources[0] : null;
+    if (first && contents[first] !== undefined) openFile(first);
+  }
+  window.__slAuditWarm = warmModels;
 
   /* ---------------- 审计执行与渲染 ---------------- */
   window.runAudit = function () {
@@ -405,6 +554,7 @@
           openFile(row.getAttribute("data-file"));
           var line = parseInt(row.getAttribute("data-line"), 10);
           ensureMonaco(function () {
+            if (!monacoReady()) return; // 降级：openFile 已展示纯文本，跳行不可用
             var ed = ensureEditor();
             if (line) {
               ed.revealLineInCenter(line);
@@ -419,30 +569,68 @@
       });
     }
 
-    // 预加载 Monaco 与文件模型（含标注），首文件自动打开
-    ensureMonaco(function () {
-      var ed = ensureEditor();
-      Object.keys(window.__slAuditContents).forEach(function (path) {
-        var model = getOrCreateModel(path, window.__slAuditContents[path]);
-        var marks = window.__slAuditFindings.filter(function (f) { return f.file === path; })
-          .map(function (f) {
-            return {
-              startLineNumber: f.line, endLineNumber: f.line, startColumn: 1, endColumn: 1000,
-              severity: SEV_MARK[f.severity] || 2,
-              message: "[" + f.severity + "] " + f.rule + " " + f.title + "\n" + (f.advice || ""),
-              source: "SiteLens audit"
-            };
-          });
-        monaco.editor.setModelMarkers(model, "audit", marks);
-      });
-      var first = sources && sources.length ? sources[0] : null;
-      if (first && window.__slAuditContents[first] !== undefined) openFile(first);
-    });
+    // FE-09：不在此处强制加载 Monaco（仅跑完审计不该下载 ~12MB 编辑器）。
+    // 进入审计页（activateMonaco）或首次打开编辑器时才加载；就绪后预热模型+标注。
+    window.__slAuditSources = sources;
+    if (monacoReady()) {
+      warmModels();
+    } else if (monacoFailed()) {
+      // 已降级：直接以纯文本展示首文件（不再等 Monaco）
+      var firstPath = sources && sources.length ? sources[0] : null;
+      if (firstPath && window.__slAuditContents[firstPath] !== undefined) {
+        openFileFallback(firstPath, window.__slAuditContents[firstPath]);
+      }
+    } else {
+      queueMonacoReady(warmModels);
+      // 程序化入口（__slAuditRender / CDP）兜底：审计页可见时启动懒加载
+      if (auditPaneActive()) activateMonaco();
+    }
   }
 
   function cell(k, v) {
     return '<div class="cell"><span>' + esc(k) + '</span><b class="mono">' + esc(v) + "</b></div>";
   }
+
+  /* ---------------- FE-09：懒加载触发（进入审计页 / 打开编辑器） ----------------
+     触发点：
+       1) common.js 模式切换点击 audit（window.slAuditActivate）；
+       2) hash 路由 /audit 或 #audit（首屏直达与前进后退）；
+       3) 打开文件/点击发现（openFile → ensureMonaco，已有路径）。
+     幂等：ensureMonaco 单例 promise；重复进入只复用不重复下载。 */
+  function auditPaneActive() {
+    var h = (location.hash || "").slice(1);
+    if (h === "audit") return true;
+    if ((location.pathname || "").indexOf("/audit") === 0) return true;
+    var pane = document.querySelector('.tw-canvaspane[data-pane="audit"]');
+    return !!(pane && pane.classList.contains("active"));
+  }
+  function activateMonaco() {
+    if (isFallback()) return; // 已降级：不反复重试
+    ensureMonaco(function () {
+      // 就绪后：若已有审计结果，预热模型与标注并恢复首文件
+      if (monacoReady() && window.__slAuditContents &&
+          Object.keys(window.__slAuditContents).length) {
+        warmModels();
+      }
+    });
+  }
+  window.slAuditActivate = activateMonaco;
+  window.__slAuditMonacoState = function () { return MONACO_STATE; }; // 验收/测试钩子
+
+  // 首屏直达 / 前进后退触发（Turbo 换页重放脚本时先卸旧监听，防叠加）
+  function maybeActivateFromRoute() {
+    if (auditPaneActive()) activateMonaco();
+  }
+  if (window.__slAuditHashHandler) window.removeEventListener("hashchange", window.__slAuditHashHandler);
+  window.__slAuditHashHandler = maybeActivateFromRoute;
+  window.addEventListener("hashchange", window.__slAuditHashHandler);
+  if (window.__slAuditClickHandler) document.removeEventListener("click", window.__slAuditClickHandler);
+  window.__slAuditClickHandler = function (e) {
+    var t = e.target && e.target.closest ? e.target.closest('.tab[data-tab="audit"]') : null;
+    if (t) activateMonaco();
+  };
+  document.addEventListener("click", window.__slAuditClickHandler);
+  maybeActivateFromRoute(); // 初始 hash 已是 #audit / 独立 /audit 页
 
   // 测试/验收钩子：CDP 直接以数据驱动渲染（不必真传文件）
   window.__slAuditRender = render;

@@ -28,6 +28,9 @@ if (["scan", "netsec", "loginbrute", "audit", "batch"].indexOf(initialTab) >= 0)
 /* ================= 综合扫描 ================= */
 var currentScanId = null;
 var currentJobId = null;
+/* FE-12 零丢失：最近一次提交 /api/scan 的完整参数（url + 三维选项），
+   「继续扫描」按原参数重提，不要求用户重选一遍。 */
+var lastScanPayload = null;
 /* 预设等级（quick/standard/deep/full）已由「范围 × 验证 × 强度」三维选择器
    合成取代；引擎 API 仍接受 level 参数与任意布尔组合（兼容脚本调用）。
    耗时预估与映射合成统一走 web/js/scan-options.js（含字典/端口旋钮）。 */
@@ -491,15 +494,22 @@ function startScan() {
   if (ck) options.auth_cookie = ck;
   if (document.getElementById("opt-ua").checked) options.browser_ua = true;
 
-  document.getElementById("idle-wrap").style.display = "none";
-  document.getElementById("pw").style.display = "block";
-  document.getElementById("go").disabled = true;
-  renderLivePanel(options);
-  setProgress(3, "提交任务…");
-
   /* 后端 /api/scan 从 body 顶层读取各选项（data.get("deep") 等），必须平铺不能嵌套 */
   var payload = Object.assign({ url: url }, options);
   if (preflightId && preflightFor === url) payload.preflight_id = preflightId;
+  lastScanPayload = payload;
+  runScanPayload(payload, options);
+}
+
+/* runScanPayload 提交扫描并轮询；与表单解耦，供「继续扫描」按原参数重提复用。 */
+function runScanPayload(payload, options) {
+  clearPartialBanner();
+  document.getElementById("idle-wrap").style.display = "none";
+  document.getElementById("pw").style.display = "block";
+  document.getElementById("go").disabled = true;
+  renderLivePanel(options || payload);
+  setProgress(3, "提交任务…");
+
   api.post("/api/scan", payload)
     .then(function (r) {
       currentJobId = r.job_id;
@@ -508,11 +518,21 @@ function startScan() {
     .then(function (job) {
       document.getElementById("go").disabled = false;
       if (liveTimer) clearInterval(liveTimer);
-      if (job.cancelled) {
+      /* FE-12：被中断的扫描不再「结果全丢」——引擎已把部分结果落库 */
+      if (job && job.partial) {
+        document.getElementById("st-state").textContent = "partial";
+        document.getElementById("st-msg").textContent = "已中断（部分结果已保存）";
+        toast("扫描已中断，部分结果已保存", "ok");
+        showPartialBanner(job);
+        loadPartialPreview(job);
+        return null;
+      }
+      if (job && job.cancelled) {
         document.getElementById("st-state").textContent = "cancelled";
         document.getElementById("st-msg").textContent = "已取消";
         document.getElementById("result").innerHTML =
-          '<div class="empty"><span class="big">⊘</span>扫描已取消（局部结果未入库）</div>';
+          '<div class="empty"><span class="big">⊘</span>扫描已取消<br>' +
+          '<span class="hint">已完成阶段的结果可能已保存到历史（见历史页）</span></div>';
         return null;
       }
       document.getElementById("st-state").textContent = "done";
@@ -532,12 +552,77 @@ function startScan() {
     });
 }
 
+/* ---------------- FE-12 部分结果：提示条 + 续扫 ---------------- */
+function clearPartialBanner() {
+  var old = document.getElementById("partial-banner");
+  if (old && old.parentNode) old.parentNode.removeChild(old);
+}
+
+function showPartialBanner(job) {
+  clearPartialBanner();
+  var anchor = document.getElementById("result");
+  if (!anchor || !anchor.parentNode) return;
+  var msg = (job && job.message) || "扫描被中断，已完成阶段的结果已保存到历史";
+  var box = document.createElement("div");
+  box.id = "partial-banner";
+  box.className = "partial-banner";
+  box.setAttribute("role", "status");
+  box.innerHTML = "<b>已中断（部分结果已保存）</b>" +
+    '<span class="hint">' + esc(msg) + "</span>" +
+    '<button type="button" class="btn small" onclick="resumePartialScan()">继续扫描</button>';
+  anchor.parentNode.insertBefore(box, anchor);
+}
+
+/* 部分结果预览：引擎落库后取同 URL 最新一条历史渲染（失败则只留提示条）。 */
+function loadPartialPreview(job) {
+  if (job && job.scan_id) {
+    api.get("/api/history/" + job.scan_id).then(function (row) {
+      if (row && row.result) { currentScanId = row.id; renderResult(row.result, row.id); }
+    }).catch(function () { /* 预览失败不影响提示条与续扫按钮 */ });
+    return;
+  }
+  var want = (lastScanPayload && lastScanPayload.url) || "";
+  if (!want) return;
+  api.get("/api/history?limit=5").then(function (list) {
+    var rows = (list && list.scans) || [];
+    var hit = null;
+    for (var i = 0; i < rows.length; i++) {
+      if (rows[i] && rows[i].url === want) { hit = rows[i]; break; }
+    }
+    if (!hit) return;
+    return api.get("/api/history/" + hit.id).then(function (row) {
+      if (!row || !row.result) return;
+      currentScanId = row.id;
+      renderResult(row.result, row.id);
+    });
+  }).catch(function () { /* 预览失败不影响提示条与续扫按钮 */ });
+}
+
+/* 继续扫描：复用上次提交的 url/level（三维选项）原样重提；无记录则回落到表单。 */
+window.resumePartialScan = function () {
+  var url = (lastScanPayload && lastScanPayload.url) ||
+    (document.getElementById("url").value || "").trim();
+  if (!url) return;
+  document.getElementById("url").value = url;
+  if (lastScanPayload && lastScanPayload.url === url) {
+    toast("按上次参数重新扫描…", "ok");
+    runScanPayload(JSON.parse(JSON.stringify(lastScanPayload)), lastScanPayload);
+    return;
+  }
+  startScan();
+};
+
 function pollJob(jobId, onProgress) {
   return new Promise(function (resolve, reject) {
     // slPoll 句柄必须 handle.stop()（clearInterval 对句柄无效，会漏成每秒永续轮询）
     var handle = slPoll(function () {
       api.get("/api/job/" + jobId).then(function (job) {
         if (job.status === "done") { handle.stop(); resolve(job); }
+        else if (job.status === "partial") {
+          /* FE-12：引擎迁移到 partial（取消/中断后部分结果已落库） */
+          handle.stop();
+          resolve({ partial: true, status: "partial", message: job.message, scan_id: job.scan_id });
+        }
         else if (job.status === "cancelled") {
           handle.stop(); resolve({ cancelled: true, message: job.message });
         }
@@ -780,8 +865,8 @@ function renderResult(r, scanId) {
   html += '<div class="sec-title">已验证漏洞 <span class="count">' + ver.length +
     " 条（探测请求实际命中）</span></div>";
   if (ver.length) {
-    html += '<div class="tbl-wrap"><table class="vulns"><tr><th>严重度</th><th>检测项</th><th>命中地址</th><th>修复建议</th></tr>';
-    ver.forEach(function (v) {
+    html += '<div class="tbl-wrap"><table class="vulns"><tr><th>严重度</th><th>检测项</th><th>命中地址</th><th>修复建议</th><th>复核</th></tr>';
+    ver.forEach(function (v, i) {
       var pane = evdPane(v);
       var block = pane ? '<details style="margin-top:4px"><summary style="cursor:pointer;font-size:12px">证据链</summary>' + pane + "</details>" : "";
       var imp = "";
@@ -792,7 +877,8 @@ function renderResult(r, scanId) {
       html += "<tr><td>" + sevBadge(v.severity) + "</td>" +
         '<td class="mono"><span class="badge">证据 ' + evN + "/5</span> " + esc(v.check) + " " + esc(v.title) + imp + "</td>" +
         '<td class="mono" style="font-size:12px;word-break:break-all">' + esc(v.url) +
-        "（" + esc(v.evidence) + "）" + impEv + block + "</td><td>" + esc(v.advice) + "</td></tr>";
+        "（" + esc(v.evidence) + "）" + impEv + block + "</td><td>" + esc(v.advice) + "</td>" +
+        '<td class="triage-cell" data-triage="verified:' + i + '"></td></tr>';
     });
     html += "</table></div>";
   } else {
@@ -820,8 +906,8 @@ function renderResult(r, scanId) {
   html += '<div class="sec-title">漏洞情报关联 <span class="count">' + vulns.length +
     " 条（按组件关联的历史漏洞，非漏洞验证）</span></div>";
   if (vulns.length) {
-    html += '<div class="tbl-wrap"><table class="vulns"><tr><th>严重度</th><th>判定</th><th>涉及技术</th><th>漏洞</th><th>类型</th><th>来源</th></tr>';
-    vulns.slice(0, 40).forEach(function (v) {
+    html += '<div class="tbl-wrap"><table class="vulns"><tr><th>严重度</th><th>判定</th><th>涉及技术</th><th>漏洞</th><th>类型</th><th>来源</th><th>复核</th></tr>';
+    vulns.slice(0, 40).forEach(function (v, i) {
       var name = esc(v.name || v.title || v.cve || "");
       if (v.ref) name = safeLink(v.ref, v.name || v.title || v.cve || "");
       var lv = "";
@@ -834,7 +920,8 @@ function renderResult(r, scanId) {
         (v.templates && v.templates.length ? '<div style="font-size:12px;color:var(--muted-fg)">可跑模板：' +
           esc(v.templates.slice(0, 3).join(" · ")) + (v.templates.length > 3 ? " 等 " + v.templates.length + " 条" : "") + "</div>" : "") +
         "</td>" +
-        "<td>" + esc(v.type || "-") + '</td><td class="mono">' + esc(v.src) + "</td></tr>";
+        "<td>" + esc(v.type || "-") + '</td><td class="mono">' + esc(v.src) + "</td>" +
+        '<td class="triage-cell" data-triage="vuln:' + i + '"></td></tr>';
     });
     html += "</table></div>";
     if (vulns.length > 40)
@@ -938,6 +1025,15 @@ function renderResult(r, scanId) {
 
   document.getElementById("result").innerHTML = html;
   if (scanId) document.getElementById("st-time").textContent = "记录 #" + scanId;
+  /* CP-08：人工复核（误报/确认/忽略）+ 白名单灰显。异步加载，接口未接/旧引擎
+     时 triage 内部静默降级，不影响结果页任何既有内容。 */
+  if (window.SLTriage && window.SLTriage.enhance) {
+    try {
+      window.SLTriage.enhance(document.getElementById("result"), r, scanId);
+    } catch (e) {
+      if (window.slReportError) window.slReportError(e, { quiet: true });
+    }
+  }
 }
 
 function cell(label, value) {
