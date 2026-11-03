@@ -152,8 +152,8 @@
   明细见 [`benchmark-selfhosted-2026-11-01.md`](benchmark-selfhosted-2026-11-01.md)、
   [`benchmark-wsl-standard-2026-11-01.md`](benchmark-wsl-standard-2026-11-01.md)；
 - 待补：完整标准矩阵、SARIF GitHub code scanning 解析；
-  安装包体积 / SHA256：135,589,522 字节（约 129.3 MiB）/
-  `241BF310FA106EF193C74725B5C98BC8166CE4AC0B1DD3D1EBF7B2B90B052233`。
+  安装包体积 / SHA256：__SIZE__ 字节/
+  `__SHA256__`。
 
 ## 已知限制
 
@@ -172,10 +172,10 @@
 ## 下载
 
 - 桌面安装器（推荐，全能力）：`SiteLens-Setup-5.2.3.exe`
-  135,589,522 字节（约 129.3 MiB），SHA256
-  `241BF310FA106EF193C74725B5C98BC8166CE4AC0B1DD3D1EBF7B2B90B052233`
+  __SIZE__ 字节，SHA256
+  `__SHA256__`
   —— **只含引擎与界面，不含命令行工具**；已自签名（证书见上）
-- Linux 桌面：`SiteLens_5.2.3_amd64.deb`（134,650,064 字节，SHA256 `ac0b990b54f2dcc46b98a65bb56f5f6862981ffe2866bf9e9340c0f42d127538`）
+- Linux 桌面：`SiteLens_5.2.3_amd64.deb`（__DEB_SIZE__ 字节，SHA256 `__DEB_SHA256__`）
 - 命令行工具（CLI，独立分发）：`npm install -g @fengqiao666/sitelens-cli`
 - 升级：桌面端自动覆盖升级；离线环境下载安装器覆盖安装。
 

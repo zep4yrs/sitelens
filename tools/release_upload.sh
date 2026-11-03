@@ -19,7 +19,32 @@ ACC="Accept: application/json"
 GITURL="https://cnb:$CNB_TOKEN@cnb.cool/$REPO.git"
 
 BODY_OK=0
-if [ -n "${SITLENS_BODY_FILE:-}" ] && [ -f "$SITLENS_BODY_FILE" ]; then BODY_OK=1; fi
+BODY_SRC=""
+if [ -n "${SITLENS_BODY_FILE:-}" ] && [ -f "$SITLENS_BODY_FILE" ]; then BODY_OK=1; BODY_SRC="$SITLENS_BODY_FILE"; fi
+
+# 发行说明里的体积/SHA256 占位符用**本次实际上传的文件**回填（构建两次哈希必不同，
+# 写死数值必然漂移）。占位符：__SIZE__ / __SHA256__（第一个附件=安装包）、
+# __DEB_SIZE__ / __DEB_SHA256__（附件里的 .deb）。
+if [ "$BODY_OK" = "1" ]; then
+  BODY_TMP=/tmp/release-body-filled.md
+  cp "$BODY_SRC" "$BODY_TMP"
+  FIRST="${1:-}"
+  if [ -n "$FIRST" ] && [ -f "$FIRST" ]; then
+    FSIZE=$(stat -c%s "$FIRST")
+    FSHA=$(sha256sum "$FIRST" | cut -d" " -f1 | tr "a-f" "A-F")
+    sed -i "s/__SIZE__/$FSIZE/g; s/__SHA256__/$FSHA/g" "$BODY_TMP"
+  fi
+  for f in "$@"; do
+    case "$f" in
+      *.deb)
+        DSIZE=$(stat -c%s "$f")
+        DSHA=$(sha256sum "$f" | cut -d" " -f1)
+        sed -i "s/__DEB_SIZE__/$DSIZE/g; s/__DEB_SHA256__/$DSHA/g" "$BODY_TMP"
+        ;;
+    esac
+  done
+  SITLENS_BODY_FILE="$BODY_TMP"
+fi
 
 RID=$(curl -sf -H "$AUTH" -H "$ACC" "$API/-/releases/tags/$TAG" | jq -r '.id // empty')
 if [ -n "$RID" ] && [ "$BODY_OK" = "1" ]; then
