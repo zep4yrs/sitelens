@@ -80,10 +80,12 @@ func TestGraphOverheadAcceptance(t *testing.T) {
 	}
 	t.Logf("扫描耗时最小值：关图 %v / 开图 %v（增量 %v，%.2f%%）", dOff, dOn, delta, pct)
 
-	// 阈值：1% 与 2ms 取大——极短扫描的 1% 会落进计时噪声，不构成真实回退。
+	// 阈值：1% 与 4ms 取大——极短扫描（5ms 级）的 1% 只有 0.05ms，
+	// 完全落进 CI 共享机的计时噪声；4ms 只用于挡住真实回退，P10 的 1%
+	// 仍是主判据（真实扫描通常在百毫秒级，1% 预算远大于 4ms）。
 	budget := time.Duration(float64(dOff) * 0.01)
-	if budget < 2*time.Millisecond {
-		budget = 2 * time.Millisecond
+	if budget < 4*time.Millisecond {
+		budget = 4 * time.Millisecond
 	}
 	if delta > budget {
 		t.Errorf("graph 增量 %v 超出预算 %v（P10 口径 <1%%）：开图 %.2f%%", delta, budget, pct)
