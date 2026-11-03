@@ -654,7 +654,6 @@ function startScan() {
 function runScanPayload(payload, options) {
   clearPartialBanner();
   hideHero(); // 扫描开始：收起空态 hero
-  document.getElementById("idle-wrap").style.display = "none";
   document.getElementById("pw").style.display = "block";
   document.getElementById("go").disabled = true;
   renderLivePanel(options || payload);
@@ -1521,16 +1520,6 @@ function initHero() {
   var el = document.getElementById("wb-hero");
   if (!el) return;
   el.addEventListener("click", function (e) {
-    var ex = e.target.closest ? e.target.closest("[data-hero-url]") : null;
-    if (ex) {
-      var url = document.getElementById("url");
-      if (url) {
-        url.value = ex.getAttribute("data-hero-url");
-        url.dispatchEvent(new Event("input", { bubbles: true }));
-        url.focus();
-      }
-      return;
-    }
     var goTo = e.target.closest ? e.target.closest("[data-hero-goto]") : null;
     if (goTo && typeof switchTab === "function") switchTab(goTo.getAttribute("data-hero-goto"));
   });
