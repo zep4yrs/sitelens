@@ -200,7 +200,7 @@
 ## 6. 一句话结论
 
 **发布物已就绪（内部验收口径）**：版本号 5.2.3、CHANGELOG/发行说明、安装包
-`SiteLens-Setup-5.2.3.exe`（**135,590,048 字节 / SHA256 `8081E3E9…AD0C436`**，已自签名）、
+`SiteLens-Setup-5.2.3.exe`（**135,605,744 字节 / SHA256 `32ACC911…C5104`**，已自签名）、
 `latest.yml` 均已生成；`check.ps1 -Strict -RequireSigned` = **PASS=12 / WARN=0 / FAIL=0 / SKIP=1**。
 代码层面 `build/test/vet/race/govulncheck` 全绿，SQLite 后端 E2E 通过；
 真机安装/升级/启动/卸载/重装通过；自建合成靶场 P/R/F1=1.0；WSL 标准子集 P/R/F1=0.8333

@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"cnb.cool/feng-qiao/sitelens/internal/config"
+	"cnb.cool/feng-qiao/sitelens/internal/ml"
 )
 
 // Asset 数据资产就位情况。
@@ -108,7 +109,17 @@ func Assets(cfg *config.Config) []Asset {
 			out = append(out, a)
 			continue
 		}
-		st, err := os.Stat(it.path)
+		// ML 资产与引擎 mlFor 同源解析：配置值只是候选之一。只 stat 配置值
+		// 会把「资产在安装目录、但进程 cwd 不在安装目录」误报成缺失（实测：
+		// 仓库根启动 CLI serve 时诊断报 ml_assets 缺失，但同一进程的 ML
+		// 先验/严重度预测实际正常）。
+		probePath := it.path
+		if it.name == "ML 模型资产" {
+			if dir := ml.LocateAssetsDir(ml.AssetCandidates(cfg.ML.AssetsDir)...); dir != "" {
+				probePath = dir
+			}
+		}
+		st, err := os.Stat(probePath)
 		if err != nil {
 			out = append(out, a)
 			continue
@@ -116,6 +127,7 @@ func Assets(cfg *config.Config) []Asset {
 		if it.dir {
 			if st.IsDir() {
 				a.Present = true
+				a.Note = "" // 就位时不显示「缺失影响」文案
 			}
 			out = append(out, a)
 			continue

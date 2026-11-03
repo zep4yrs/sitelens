@@ -12,6 +12,44 @@ var assetFiles = []string{
 	"cwe-type.meta.json", "cwe-type.vocab.txt", "cwe-type.idf.f32", "cwe-type.coef.f32",
 }
 
+// AssetCandidates 返回模型资产候选目录（顺序即优先级）：
+//  1. 配置值（相对路径相对进程 cwd，保持旧语义）；
+//  2. 运行时常规路径 data/go/ml_assets；
+//  3. 仓库内建 ml/models/go/ml_assets；
+//  4. 可执行文件所在目录及其上级的 data/go/ml_assets 与 ml/models/go/ml_assets。
+//
+// 第 4 组用于兜底「进程 cwd 不是引擎/安装目录」的场景：CLI 在任意目录
+// 启动、或壳/服务从不同 workdir 拉起引擎时，配置里的相对路径找不到资产，
+// 但资产实际随可执行文件分发。此前 mlFor 只走 1–3、诊断只检查 1，于是出现
+// 「资产明明在安装目录、诊断却报缺失/预测静默跳过」的假故障。
+func AssetCandidates(cfgDir string) []string {
+	out := []string{
+		cfgDir,
+		filepath.Join("data", "go", "ml_assets"),
+		filepath.Join("ml", "models", "go", "ml_assets"),
+	}
+	if exe, err := os.Executable(); err == nil {
+		exeDir := filepath.Dir(exe)
+		out = append(out,
+			filepath.Join(exeDir, "data", "go", "ml_assets"),
+			filepath.Join(exeDir, "..", "data", "go", "ml_assets"),
+			filepath.Join(exeDir, "..", "..", "data", "go", "ml_assets"),
+			filepath.Join(exeDir, "ml", "models", "go", "ml_assets"),
+			filepath.Join(exeDir, "..", "ml", "models", "go", "ml_assets"),
+		)
+	}
+	seen := make(map[string]bool, len(out))
+	uniq := out[:0]
+	for _, d := range out {
+		if d == "" || seen[d] {
+			continue
+		}
+		seen[d] = true
+		uniq = append(uniq, d)
+	}
+	return uniq
+}
+
 // LocateAssetsDir 在候选目录中挑出第一个含全套模型资产的目录，找不到返回 ""。
 //
 // 历史背景：资产最初由 export_go_assets.py 导到 data/go/ml_assets/，后随

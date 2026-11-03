@@ -37,12 +37,22 @@
 
 - `sitelens mcp`：MCP stdio server（13 工具：capabilities/scan/scan_status/scan_result/scan_cancel/
   history/history_get/graph/export/triage/apispec/graphql_introspect/assets），辰极 Lodestar 可直接接入；
+- **HAR 导出**（`GET /api/export/<id>?fmt=har`）：把命中时**实际发出**的请求重建为 HAR 1.2，
+  可直接导入浏览器 DevTools 或兼容 HAR 的工具复核「扫描器到底发了什么」。响应侧只含
+  状态/大小/正文摘要（该版本未保存完整响应头，条目 `comment` 如实标注），不是网络层抓包、
+  不需要管理员权限或抓包驱动；敏感请求头默认脱敏，`&raw=1` 保留原值（仅限本机审计）。
+  历史页每行与报告页均新增 HAR 按钮；
 - URL 输入自动修正：补协议/去标点/hxxp 还原/全角转半角/默认端口，**只改格式不改目标**，
   修正说明在响应/extras/前端留痕；`target.auto_normalize: false` 可关闭。
 
 ### 修复
 
 - 目录探测不再把 WAF/兜底 200 页当成真实文件（xgzwk 类站点误报修复）；
+- ML 模型资产诊断/解析假缺失：诊断此前只 stat `ml.assets_dir` 配置值，
+  引擎也不找可执行文件相对目录，导致 CLI 从仓库根/任意 cwd 启动 `serve` 时
+  诊断报「ML 模型资产缺失」、但同一进程 ML 先验实际正常；现统一
+  `ml.AssetCandidates`（配置 → cwd → data/go → ml/models → 可执行文件相对）
+  并让诊断与 `mlFor` 同源，就位时不再显示「缺失影响」文案；
 - `csrf-form` 收窄 GET 表单判定：只认密码/更新/删除/转账等强状态字段，排除
   `submit/button/reset/image` 控件，修复标准靶场（DVWA SQLi/XSS 搜索表单）误报；
   跨源表单（文章内嵌 jsfiddle/codepen 示例）不再按本站 CSRF 上报

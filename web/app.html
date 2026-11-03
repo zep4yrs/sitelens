@@ -320,7 +320,6 @@
 
     <!-- 网络层检测：控制 -->
     <section class="tabpanel tw-panel" id="tab-netsec">
-      <p class="tw-note" style="margin:0 0 12px">TLS 证书 + DNS 邮件安全，只读检测。</p>
       <input class="url-input tw-url" id="ns-host" placeholder="example.com" autocomplete="off" aria-label="网络层检测目标域名">
       <label class="tw-toggle" style="margin:8px 0"><input type="checkbox" id="ns-ports" class="tw-switch"> 端口探测（额外 TCP connect，仅授权目标）</label>
       <button class="btn tw-run" id="ns-go" onclick="runNetsec()"><span class="arr" aria-hidden="true">▷</span> <span data-i18n="btn_netsec_start">开始检测</span></button>
@@ -385,7 +384,6 @@
 
     <!-- 批量扫描：控制 -->
     <section class="tabpanel tw-panel" id="tab-batch">
-      <p class="tw-note" style="margin:0 0 12px">扫描完成后可在历史页导出 CSV。</p>
       <button class="btn tw-run" id="batch-go" onclick="startBatch()"><span class="arr" aria-hidden="true">▷</span> <span data-i18n="btn_batch_start">开始批量扫描</span></button>
       <button class="btn tw-run ghost-lite" id="batch-cancel" onclick="cancelBatch()" style="margin-top:8px;display:none">取消</button>
       <p class="hint" id="batch-hint" style="text-align:center"></p>
@@ -419,7 +417,6 @@
         <div class="empty" id="wb-hero">
           <span class="big" aria-hidden="true">▷</span>
           <span class="empty-title">输入网址开始</span>
-          <span class="empty-desc">结果自动保存到历史，可随时导出。</span>
           <div class="wb-hero-actions">
             <button type="button" class="btn ghost small" data-hero-goto="batch">批量扫描</button>
             <button type="button" class="btn ghost small" data-hero-goto="audit">源码审计</button>

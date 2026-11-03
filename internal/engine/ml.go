@@ -36,10 +36,10 @@ func (e *Engine) mlFor() *ml.Assets {
 	if e.mlAssets != nil {
 		return e.mlAssets
 	}
-	// 资产目录候选：配置优先 → 运行时常规路径 → 仓库内建 ml/models/（克隆
-	// 即用，免配置零拷贝）。候选表收敛在 ml.LocateAssetsDir，对拍测试同源
-	// 引用——曾因两处各自维护、测试漏跟迁移而恒读不到资产。
-	dir := ml.LocateAssetsDir(e.cfg.ML.AssetsDir, "data/go/ml_assets", "ml/models/go/ml_assets")
+	// 资产目录候选：配置优先 → cwd 常规路径 → 仓库内建 ml/models/ →
+	// 可执行文件相对路径（CLI/壳从任意 cwd 启动时兜底）。候选表收敛在
+	// ml.AssetCandidates，诊断（internal/diag）引用同一份，避免两处漂移。
+	dir := ml.LocateAssetsDir(ml.AssetCandidates(e.cfg.ML.AssetsDir)...)
 	if dir == "" {
 		return nil
 	}
@@ -65,9 +65,7 @@ func (e *Engine) sevAssetsDir() string {
 	if e.cfg == nil {
 		return ""
 	}
-	if dir := ml.LocateAssetsDir(e.cfg.ML.AssetsDir,
-		filepath.Join("data", "go", "ml_assets"),
-		filepath.Join("ml", "models", "go", "ml_assets")); dir != "" {
+	if dir := ml.LocateAssetsDir(ml.AssetCandidates(e.cfg.ML.AssetsDir)...); dir != "" {
 		return dir
 	}
 	return e.cfg.ML.AssetsDir
