@@ -177,3 +177,16 @@
   —— **只含引擎与界面，不含命令行工具**；已自签名（证书见上）
 - 命令行工具（CLI，独立分发）：`npm install -g @fengqiao666/sitelens-cli`
 - 升级：桌面端自动覆盖升级；离线环境下载安装器覆盖安装。
+
+## 桌面端平台支持（5.2.3 起）
+
+| 平台 | 产物 | 状态 |
+|---|---|---|
+| Windows x64 | `SiteLens-Setup-5.2.3.exe`（NSIS） | ✅ 正式（本页附件） |
+| Linux x64 | `SiteLens_5.2.3_amd64.deb` / `dist/wails/linux-amd64/SiteLens/` | ✅ 可构建（CI 原生 GTK3/WebKitGTK 构建 + deb 打包门禁已验证） |
+| macOS arm64/x64 | `SiteLens.app` / `.dmg` | 🚧 代码已移植（平台能力拆分完成），待 macOS 实机验证；未签名/未公证 |
+
+- 构建命令：Windows 用 `tools/wails_build.sh`；Linux/macOS 用 `tools/wails_build_unix.sh`；
+- 壳的 Windows 专属能力已拆到 `platform_windows.go`，POSIX 平台走 `platform_unix.go` 降级实现；
+- 自动更新仍只支持 Windows NSIS 安装器；Linux/macOS 需手动下载新包；
+- Linux/macOS 包当前未签名（Linux 待 GPG，macOS 待 Developer ID + 公证）。
