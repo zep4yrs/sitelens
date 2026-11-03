@@ -453,7 +453,7 @@ html.sl-modal-open { overflow: hidden; }
   /* 外壳不打印：侧栏 / 分割条 / 工具条 / 进度条 / 抽屉开关 / 弹层 / toast */
   .tw-left, .tw-split, .tw-toolbar, .tw-progress-row, .tw-modes, .tw-topslot,
   .sl-skip, .sl-side-toggle, .sl-keys-btn, .sl-dialog-backdrop,
-  .toast, #idle-wrap, #sl-engine-down, .skel-group, .skel { display: none !important; }
+  .toast, #sl-engine-down, .skel-group, .skel { display: none !important; }
   .tw-app {
     position: static !important;
     inset: auto !important;
@@ -582,13 +582,7 @@ html:not(.dark) .badge.info { color: #075985; }
 .wb-hero[hidden] { display: none !important; }
 .wb-hero-title { margin: 0 0 6px; font-family: var(--font-mono); font-size: 22px; font-weight: 700; }
 .wb-hero-sub { margin: 0 0 16px; font-size: 13px; color: var(--muted-fg); }
-.wb-hero-steps { list-style: none; margin: 0 0 18px; padding: 0; display: grid; gap: 8px; }
-.wb-hero-steps li { display: flex; align-items: center; gap: 10px; font-size: 13px; }
-.wb-hero-steps b { width: 22px; height: 22px; flex: none; display: grid; place-items: center;
-  border-radius: 50%; background: var(--secondary); color: var(--foreground);
-  font-family: var(--font-mono); font-size: 12px; }
-.wb-hero-steps kbd { padding: 1px 5px; font-family: var(--font-mono); font-size: 11px;
-  background: var(--muted); border: 1px solid var(--border); border-bottom-width: 2px; border-radius: 4px; }
+
 .wb-hero-block { margin-top: 14px; }
 .wb-hero-label { display: block; margin-bottom: 6px; font-size: 11.5px;
   color: var(--muted-fg); font-family: var(--font-mono); }
