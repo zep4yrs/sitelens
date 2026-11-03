@@ -198,8 +198,7 @@ main:
               dpkg --add-architecture i386
               apt-get update -qq
               apt-get install -y -qq --no-install-recommends zip jq curl xvfb xauth nodejs npm nsis >/dev/null
-              apt-get install -y -qq --no-install-recommends \
-                wine wine32 wine64 libwine libwine:i386 fonts-wine >/dev/null
+              apt-get install -y -qq --no-install-recommends wine wine32 wine64 libwine libwine:i386 fonts-wine >/dev/null
               # mingw：引擎 CGO 构建（白盒 AST），build-engine.js 会优先走
               # Linux + x86_64-w64-mingw32-gcc 交叉编译路径
               apt-get install -y -qq --no-install-recommends gcc-mingw-w64-x86-64 >/dev/null
@@ -208,7 +207,6 @@ main:
               # 1) Windows 安装包（壳 + 引擎 + NSIS）→ 上传 Release（带发行说明）
               bash tools/release_local.sh --publish
               # 2) Linux deb（GTK3/WebKitGTK4.1 原生构建）→ 追加为同版本附件
-              apt-get install -y -qq --no-install-recommends \
-                gcc pkg-config libgtk-3-dev libwebkit2gtk-4.1-dev libx11-dev >/dev/null
+              apt-get install -y -qq --no-install-recommends gcc pkg-config libgtk-3-dev libwebkit2gtk-4.1-dev libx11-dev >/dev/null
               bash tools/wails_build_unix.sh
               bash tools/release_upload.sh dist/wails/SiteLens_*_amd64.deb
