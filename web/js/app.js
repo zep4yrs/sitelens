@@ -193,8 +193,7 @@ function updateAdvNote() {
   if (!on.length) { hideAdvNote(); return; }
   el.hidden = false;
   el.textContent = "高级 Web 检测已启用：" +
-    on.map(function (k) { return scanOpts.ADV_LABELS[k]; }).join(" / ") +
-    " · 默认 dry-run / 零额外请求（仅模块显式执行时才发探测）";
+    on.map(function (k) { return scanOpts.ADV_LABELS[k]; }).join(" / ");
 }
 
 function hideAdvNote() {
@@ -209,8 +208,7 @@ function setAdvNoteFromOptions(options) {
   if (!el) return;
   if (!labels.length) { hideAdvNote(); return; }
   el.hidden = false;
-  el.textContent = "高级 Web 检测已启用：" + labels.join(" / ") +
-    " · 默认 dry-run / 零额外请求（仅模块显式执行时才发探测）";
+  el.textContent = "高级 Web 检测已启用：" + labels.join(" / ");
 }
 
 var ADV_MODULE_LABELS = {
@@ -292,8 +290,7 @@ function advancedCard(r) {
   });
 
   var html = '<div class="adv-card card"><div class="adv-head"><b>高级 Web 检测</b>' +
-    '<span class="badge ok">默认 dry-run</span>' +
-    '<span class="hint" style="margin:0">零额外请求；仅模块显式执行时才发探测</span></div>';
+    '<span class="badge ok">默认 dry-run</span></div>';
   if (modHTML) {
     html += '<div class="adv-mods">' + modHTML + "</div>";
   } else if (plan.length) {
@@ -833,7 +830,7 @@ function coverageCard(r) {
     ["限速档", rateTxt]
   ];
   var h = '<div class="cov-card"><div class="cov-head"><b>扫描覆盖度</b>' +
-    '<span class="hint">按实际发出的请求统计；被拦响应不参与任何判定</span></div>' +
+    '</div>' +
     '<div class="cov-grid">' + cells.map(function (c) {
       var cls = (c[0].indexOf("拦截") >= 0 && blocked > 0) ? "danger" : "";
       return '<div class="cov-cell"><span>' + esc(c[0]) + '</span><b class="' + cls + '">' + esc(c[1]) + "</b></div>";
@@ -931,7 +928,7 @@ function renderResult(r, scanId) {
   var top = ranked.slice(0, 3);
   if (top.length) {
     html += '<div class="sec-title">最值得关注 <span class="count">' + top.length + "</span>" +
-      '<span class="hint" style="margin-left:8px">按严重度与证据强度排序 · 完整明细见下方与导出</span></div>';
+      '</div>';
     top.forEach(function (v) {
       var evN = 1 + (v.request ? 1 : 0) + (v.response ? 1 : 0) + ((v.signals || []).length ? 1 : 0) + (v.confirmed ? 1 : 0);
       html += '<div class="card" style="margin-bottom:10px">' +
@@ -976,21 +973,6 @@ function renderResult(r, scanId) {
     cell("耗时", (r.duration || 0) + " s") +
     '<div class="cell"><span>安全响应头</span><b><span class="badge ' + gradeCls + '">' +
     esc(grade) + " " + (sec.score || 0) + "分</span></b></div>" + priorCell + "</div>";
-  /* ml_sev 严重度来源摘要（5.2 阶段 1）：按来源分条计数——NVD 查表（权威）、
-     线性模型（兜底）、可选 ONNX（高级包）、无先验。全为 NVD 查表时不占版面；
-     有模型/缺先验时给一行可解释说明。 */
-  var mlSev = ex.ml_sev;
-  if (mlSev) {
-    var sevParts = [];
-    if (mlSev.nvd > 0) sevParts.push("NVD 查表 " + mlSev.nvd + " 条");
-    if (mlSev.linear > 0) sevParts.push("线性模型 " + mlSev.linear + " 条");
-    if (mlSev.onnx > 0) sevParts.push("ONNX " + mlSev.onnx + " 条");
-    if (mlSev.none > 0) sevParts.push("无先验 " + mlSev.none + " 条");
-    var sevNote = mlSev.reason ? "（" + mlSev.reason + "）" : "";
-    // 全为 NVD 查表（权威数据）时不占版面；有模型兜底/无先验时才提示。
-    if (sevParts.length && (mlSev.linear > 0 || mlSev.onnx > 0 || mlSev.none > 0))
-      html += '<p class="hint">AI 预测说明：严重度来源 ' + sevParts.join(" · ") + sevNote + "。</p>";
-  }
 
   /* 扫描覆盖度（diagnostics）：放在摘要之后、明细之前——先讲清"扫了多少/有没有被拦" */
   html += coverageCard(r);
