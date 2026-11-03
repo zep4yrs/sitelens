@@ -197,7 +197,7 @@ main:
               # wine（打 NSIS）+ xvfb（无 display driver 时 32 位引导程序必秒退）
               dpkg --add-architecture i386
               apt-get update -qq
-              apt-get install -y -qq --no-install-recommends zip jq curl xvfb xauth nodejs npm >/dev/null
+              apt-get install -y -qq --no-install-recommends zip jq curl xvfb xauth nodejs npm nsis >/dev/null
               apt-get install -y -qq --no-install-recommends \
                 wine wine32 wine64 libwine libwine:i386 fonts-wine >/dev/null
               # mingw：引擎 CGO 构建（白盒 AST），build-engine.js 会优先走
