@@ -50,16 +50,31 @@ desktop-wails/
 | 结果通知（FE-08） | 壳内轻量通知窗：右下角、无边框置顶、不占任务栏、Acrylic、6s 自动关闭；不引入系统 Toast 依赖 |
 | 退出回收 | `taskkill /T /F` 树杀引擎（含 chromedp 拉起的 Chrome 孙进程） |
 | 生命周期留痕 | `%APPDATA%\SiteLens-Wails\shell.log`（GUI 子系统无控制台，退出原因必须留痕） |
+| API Token 注入（A-01/D-02） | 启动读/生成 `web.api_token`（64-hex，0600，**日志绝不打印 token**）→ 主窗 URL `#token=` fragment → 前端 bootstrap 存 localStorage 并抹掉 fragment → 此后所有请求带 `X-Token` |
+| 端口 nonce（D-07） | 32B hex → 引擎 `SITLENS_SHELL_NONCE` → `/api/version` 回显 → `waitReady` 逐字节比对，缺失/不等立即树杀引擎并报错（防端口 TOCTOU 抢占） |
+| 数据目录（C-17） | 引擎 `SITLENS_DATA_DIR=%APPDATA%\SiteLens-Wails\state`（与 yaml `store.data_dir` 同源）；安装目录只读、不再写 `data/` |
+| 桌面壳桥（D-06） | `window.sitelens`：`GetInfo/GetAutoStart/SetAutoStart/GetCloseAction/SetCloseAction/CheckUpdate/InstallUpdate/OpenDataDir`（`chrome.webview.postMessage` + `RawMessageHandler` + `ExecJS` 回包；浏览器形态 `available=false` 全降级） |
+
+### 安全接线要点（改壳前必读）
+
+> ⚠ **`waitReady` 必须带 `X-Token`**：引擎的令牌守卫覆盖**所有** `/api/*`（含
+> `/api/version`，见 `internal/server/authz_guard_test.go`）。配置了 `web.api_token`
+> 后，健康检查若不带 token 会一直 401 → 壳误判「引擎未就绪」→ 树杀 + 退出。
+> 对应回归：`hardening_test.go` 的 `TestWaitReadySendsAPIToken`。
+>
+> ⚠ **nonce 不匹配不要重试**：真引擎不会在稍后变出正确 nonce；继续轮询只会把
+> 「端口被其它进程抢占」拖成 30s 超时，掩盖真实原因。
 
 ### 数据布局
 
 | 位置 | 内容 | 生命周期 |
 |---|---|---|
 | 安装目录（`$PROGRAMFILES64\SiteLens`） | 壳 `sitelens.exe` + `engine/`（引擎 exe + 只读资产） | 随 app 更新整体替换 |
-| `%APPDATA%\SiteLens-Wails\config.yml` | 引擎配置（壳写入的受管键 + 用户键） | 永久 |
-| `%APPDATA%\SiteLens-Wails\state` | 扫描历史（store.data_dir） | 永久 |
+| `%APPDATA%\SiteLens-Wails\config.yml` | 引擎配置（壳写入的受管键 + 用户键，含壳注入的 `web.api_token`） | 永久 |
+| `%APPDATA%\SiteLens-Wails\state` | 引擎状态目录 = `store.data_dir` = `SITLENS_DATA_DIR`（扫描历史/图谱 `history.json`） | 永久 |
 | `%APPDATA%\SiteLens-Wails\desktop-prefs.json` | 壳偏好（协商端口） | 永久 |
-| `%APPDATA%\SiteLens-Wails\data` | 随包种子（按版本交付：NVD/情报/指纹） | 随版本覆盖 |
+| `%APPDATA%\SiteLens-Wails\shell-prefs.json` | 壳偏好（关闭行为 `exit`\|`tray`，0600） | 永久 |
+| `%APPDATA%\SiteLens-Wails\data` | 随包种子（按版本交付：NVD/情报/指纹）+ 可变情报 `intel_overrides.json` | 随版本覆盖 |
 | `%APPDATA%\SiteLens-Wails\updates` | 自动更新下载的安装包 | 可清理 |
 
 > 注意：Wails 线的用户数据区是 `%APPDATA%\SiteLens-Wails`，
@@ -69,6 +84,13 @@ desktop-wails/
 ## 构建与发版
 
 前置：Go 1.26+、makensis（Linux 上打 NSIS 还需 wine + xvfb-run）。
+
+> ⚠ **首次构建需联网（模块无 vendor）**：`desktop-wails` 是**独立 Go module 且未 vendor**
+> （主模块的 `vendor/` 对它无效），首次构建必须能访问 Go module proxy 解析
+> `github.com/wailsapp/wails/v3 v3.0.0-beta.22` 及其传递依赖；之后命中本机 module cache 才能离线。
+> 离线/内网构建机请先在有网环境执行一次 `(cd desktop-wails && go mod download)`，
+> 再把 `GOMODCACHE`（`go env GOMODCACHE`）一并带到构建机；或自行 `go mod vendor` 后加 `-mod=vendor`。
+> 另注意：主模块的 `go build ./...` **不会**构建本壳——壳必须在 `desktop-wails/` 内单独构建。
 
 ```bash
 # 只构建壳 + 引擎载荷（产物落 dist/wails/SiteLens/）
@@ -140,6 +162,8 @@ go build ./... && go vet ./... && go test ./...     # 纯逻辑单测，不启�
   - **已知限制（如实）**：安装器是机器级（`RequestExecutionLevel admin`），
     非提权进程拉起的自动更新**会弹一次 UAC**——语义上是就地覆盖、无向导页，
     但不是零交互；要做到零 UAC 需改用户级安装，另行评估。
+- **壳模块未 vendor，离线不能"首次"构建**：`desktop-wails/go.mod` 的依赖只在 module cache 里，
+  无网机器首次构建会失败。详见「构建与发版」的 ⚠ 提示（预热 `go mod download` 或自行 vendor）。
 - **崩溃自愈未接线**：Electron 壳有引擎崩溃自动重启（5 分钟窗口 ≤3 次
   指数退避）；Wails 壳当前引擎异常退出即随壳退出，未做重启。
 - **单实例未接线**：Electron 壳用 `requestSingleInstanceLock` 保证单开；
