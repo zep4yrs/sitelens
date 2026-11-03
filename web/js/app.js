@@ -1129,16 +1129,30 @@ function renderResult(r, scanId) {
       html += '<p class="hint">… 其余 ' + (preds.length - 40) + " 条见 JSON 导出</p>";
   }
 
-  var titles = { active_fp: "主动路径指纹", dir_scan: "目录探测", subdomain: "子域名",
+  // extras 里混着三类东西：① 真结果（子域名/端口/探测命中）→ 成节展示；
+  // ② 元数据（输入规范化、鉴权矩阵、分片、NVD 图加载状态）→ 不在正文出现；
+  // ③ 模型先验（ml_prior/ml_sev）→ 摘要区与降级说明已有，不进通用列表。
+  var EXTRAS_SKIP = { ml_prior: 1, ml_sev: 1, url_input: 1, url_normalized: 1,
+                      url_corrections: 1, auth_matrix: 1, pages_omitted: 1,
+                      note: 1, graph_nvd: 1, shards: 1 };
+  var titles = { active_fp: "主动路径指纹", dir_scan: "目录探测", dir_full_words: "目录全量词表",
+                 dir: "目录探测", subdomain: "子域名", takeover: "子域接管",
                  service: "端口服务", netsec: "TLS / DNS 安全", weak_audit: "登录爆破结果",
-                 webshell: "WebShell 路径探测", jsmap: "JS 攻击面", dast: "DAST 检测",
-                 passive: "被动安全检测", bypass: "403 绕过探测", dir: "目录探测",
+                 webshell: "WebShell 路径探测", jsmap: "JS 攻击面", js: "JS 端点",
+                 dast: "DAST 检测", passive: "被动安全检测", bypass: "403 绕过探测",
                  netproto: "协议模板检测（tcp/dns/ssl）", exploit: "利用级无害验证",
-                 nuclei: "Nuclei 模板调度" };
+                 nuclei: "Nuclei 模板调度", hygiene: "配置卫生", web_advanced: "高级 Web 检测",
+                 budget: "预算降级", panic: "扫描内异常" };
   Object.keys(ex).forEach(function (key) {
-    // ml_prior / ml_sev 已在摘要区与降级说明呈现，不进通用 extras 列表
-    if (key === "ml_prior" || key === "ml_sev") return;
+    if (EXTRAS_SKIP[key]) return;
     var items = ex[key] || [];
+    // 空结果不占版面：数组为空（或对象无字段）时整节跳过——不再打印「子域名 0 / 未发现。」
+    // 这类空节只会让报告变长、让用户以为漏了什么。模块真跑了没命中，摘要里已有覆盖度说明。
+    if (Array.isArray(items)) {
+      if (items.length === 0) return;
+    } else if (!items || typeof items !== "object" || Object.keys(items).length === 0) {
+      return;
+    }
     var cnt = Array.isArray(items) ? items.length : null;
     html += '<div class="sec-title">' + esc(titles[key] || key) +
       (cnt !== null ? ' <span class="count">' + cnt + "</span>" : "") + "</div>";
@@ -1163,7 +1177,7 @@ function renderResult(r, scanId) {
         " · 来源 " + esc(srcs) + "</div>";
       return;
     }
-    if (!items.length) { html += '<p class="muted" style="font-size:13px">未发现。</p>'; return; }
+    // 空数组已在循环开头跳过，这里必为非空列表（对象型在上面分支已 return）。
     html += '<div class="extras-box mono">';
     items.forEach(function (it) { html += extrasLine(key, it) + "<br>"; });
     html += "</div>";

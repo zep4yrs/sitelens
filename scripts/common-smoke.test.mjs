@@ -34,3 +34,25 @@ test("app.html 脚本顺序：common.js 先于 app.js/batch.js", () => {
   assert.ok(iCommon >= 0 && iApp > iCommon, "common.js 必须在 app.js 之前");
   assert.ok(iBatch > iCommon, "common.js 必须在 batch.js 之前");
 });
+// 桌面形态判定回归：Wails 运行时（window._wails）可能晚于 bridge.js 执行，
+// 若在脚本加载瞬间把 available 固化成 !!post，桌面版会被误判成「浏览器模式」
+// （关于与更新页显示浏览器模式、桌面端页签隐藏、检查更新跳发布页）。
+// 5.2.3 实机事故：bridge.js 加载时 _wails 尚未注入 → available=false。
+const bridge = readFileSync(new URL("../web/js/bridge.js", import.meta.url), "utf8");
+const settingsHtml = readFileSync(new URL("../web/settings.html", import.meta.url), "utf8");
+
+test("bridge.js 桌面形态判定必须动态（不能固化加载瞬间的 window._wails）", () => {
+  assert.ok(bridge.includes("function shellReady()"), "bridge.js 缺少 shellReady()");
+  assert.ok(!bridge.includes("var available = !!post;"), "available 不得在加载瞬间固化为 !!post");
+  assert.match(bridge, /available:\s*shellReady\(\)/, "api.available 必须走 shellReady()");
+  assert.match(bridge, /if \(!shellReady\(\)\)/, "写动作应实时判断 shellReady()");
+  // si 注入（壳静态信息）本身即桌面壳证据：加载时 _wails 未注入也要判桌面
+  assert.match(bridge, /function shellReady\(\) \{ return !!\(info \|\| postFn\(\)\); \}/,
+    "shellReady 应以 si 注入或桥可用为准");
+});
+
+test("设置页「关于与更新」用 available 判定桌面/浏览器", () => {
+  assert.match(settingsHtml, /window\.sitelens && window\.sitelens\.available/,
+    "设置页必须用 window.sitelens.available 判定桌面形态");
+  assert.match(settingsHtml, /"桌面版" : "浏览器模式"/, "缺少桌面版/浏览器模式文案分支");
+});

@@ -164,21 +164,24 @@ function renderRows(scans) {
     var time = String(s.scanned_at).replace("T", " ").slice(0, 16);
     var grade = s.security_grade || "-";
     var gcls = (grade === "F" || grade === "D") ? "danger" : (grade === "C" ? "warn" : "ok");
+    /* D-15：内联处理器里的参数一律走 escJs（JS 字符串上下文），不裸拼数字/字符串 */
+    var sid = escJs(s.id);
     return "<tr>" +
-      '<td><input type="checkbox" class="diffpick" value="' + s.id + '"></td>' +
+      '<td><input type="checkbox" class="diffpick" value="' + esc(s.id) + '"></td>' +
       '<td class="mono muted" style="font-size:12px;white-space:nowrap">' + esc(time) + "</td>" +
-      '<td class="host-cell"><span class="host" onclick="openDetail(' + s.id + ')">' + esc(s.host) + "</span></td>" +
+      '<td class="host-cell"><span class="host" onclick="openDetail(' + sid + ')">' + esc(s.host) + "</span></td>" +
       "<td>" + esc(String(s.title || "-").slice(0, 36)) + "</td>" +
-      '<td class="mono">' + s.tech_count + "</td>" +
-      "<td>" + (s.vuln_count ? '<span class="badge danger">' + s.vuln_count + "</span>" : "0") + "</td>" +
+      '<td class="mono">' + esc(s.tech_count) + "</td>" +
+      "<td>" + (s.vuln_count ? '<span class="badge danger">' + esc(s.vuln_count) + "</span>" : "0") + "</td>" +
       '<td><span class="badge ' + gcls + '">' + esc(grade) + "</span></td>" +
       '<td style="white-space:nowrap">' +
-      '<button class="btn ghost small" onclick="openDetail(' + s.id + ')">详情</button> ' +
-      '<button class="btn ghost small" onclick="regression(' + s.id + ', this)">回归</button> ' +
-      '<button class="btn ghost small" onclick="exportAs(' + s.id + ',\'wide\')">宽表</button> ' +
-      '<button class="btn ghost small" onclick="exportAs(' + s.id + ',\'csv\')">CSV</button> ' +
-      '<button class="btn ghost small" onclick="exportAs(' + s.id + ',\'md\')">MD</button> ' +
-      '<button class="btn ghost small" onclick="delScan(' + s.id + ')">删</button></td>' +
+      '<button class="btn ghost small" onclick="openDetail(' + sid + ')">详情</button> ' +
+      '<button class="btn ghost small" onclick="regression(' + sid + ', this)">回归</button> ' +
+      '<button class="btn ghost small" onclick="exportAs(' + sid + ",'wide')\">宽表</button> " +
+      '<button class="btn ghost small" onclick="exportAs(' + sid + ",'csv')\">CSV</button> " +
+      '<button class="btn ghost small" onclick="exportAs(' + sid + ",'md')\">MD</button> " +
+      '<button class="btn ghost small" onclick="exportAs(' + sid + ",'har')\" title=\"把命中时实际发出的请求重建为 HAR，可在浏览器 DevTools 里复核\">HAR</button> " +
+      '<button class="btn ghost small" onclick="delScan(' + sid + ')">删</button></td>' +
       "</tr>";
   }).join("");
 }
@@ -187,9 +190,14 @@ function renderRows(scans) {
 function regression(id, btn) {
   var old = btn ? btn.textContent : "";
   if (btn) { btn.disabled = true; btn.textContent = "重放中…"; }
-  api.get("/api/replay/" + id).then(function (r) {
+  /* V-06：/api/replay 已从 GET 改为 POST —— 重放会真实发请求，不能是
+     "无副作用语义"的 GET（<img>/预取即可触发）。响应新增 blocked_targets：
+     历史记录里的 URL 可能来自被扫站点的可控内容，重放前会重新做
+     SSRF/allow_hosts 校验，被拦下的条目不会发出请求。 */
+  api.post("/api/replay/" + encodeURIComponent(id), {}).then(function (r) {
     if (btn) { btn.disabled = false; btn.textContent = old; }
     var st = r.stats || {};
+    var blocked = Number(r.blocked_targets || 0);
     var lines = (r.details || []).map(function (x) {
       return "#" + x.idx + " " + esc(x.check) + " — " +
         '<span class="badge ' + (x.status === "present" ? "danger" : (x.status === "gone" ? "ok" : "warn")) + '">' +
@@ -197,14 +205,23 @@ function regression(id, btn) {
     });
     document.getElementById("detail").style.display = "block";
     document.getElementById("detail").innerHTML =
-      '<div class="sec-title">回归验证 · 扫描 #' + id +
+      '<div class="sec-title">回归验证 · 扫描 #' + esc(String(id)) +
       ' <span class="count">可重放 ' + (st.total || 0) + "：仍在 " + (st.present || 0) +
       " / 已修复 " + (st.gone || 0) + " / 不可复现 " + (st.unsupported || 0) + "</span></div>" +
+      (blocked > 0
+        ? '<p class="hint" style="color:var(--warn)">已拦截 ' + blocked +
+          " 条内网/未授权 URL：历史目标可能来自被扫站点，重放前已重新校验，这些条目未发出请求</p>"
+        : "") +
       (lines.length ? lines.join("<br>") : '<p class="muted">无可重放的发现。</p>');
     document.getElementById("detail").scrollIntoView();
   }).catch(function (e) {
     if (btn) { btn.disabled = false; btn.textContent = old; }
-    toast("回归验证失败：" + e, "warn");
+    var msg = (e && e.message) ? e.message : String(e);
+    /* 400（id 非法）/ 403（目标被 SSRF 闸或授权闸拦截）/ 404（记录不存在）
+       都给可读提示，而不是一句 "HTTP 4xx" */
+    if (/403|拦截|未授权/.test(msg)) msg = "重放被拒绝（目标未通过内网/授权校验）：" + msg;
+    else if (/404/.test(msg)) msg = "记录不存在或已被删除：" + msg;
+    toast("回归验证失败：" + msg, "warn");
   });
 }
 
@@ -235,6 +252,7 @@ function renderDetail(r, scanId, url) {
     '<button class="btn ghost small" onclick="exportAs(' + scanId + ',\'wide\')">宽表 CSV</button>' +
     '<button class="btn ghost small" onclick="exportAs(' + scanId + ',\'html\')">HTML 报告</button>' +
     '<button class="btn ghost small" onclick="exportAs(' + scanId + ',\'md\')">MD 报告</button>' +
+    '<button class="btn ghost small" onclick="exportAs(' + scanId + ',\'har\')" title="命中请求的 HAR 证据包（响应仅含状态/大小/摘要）">HAR</button>' +
     "</span></div>";
 
   /* 采集失败 / 被 WAF 拦截的说明（引擎 error 字段） */
@@ -306,12 +324,28 @@ function renderDetail(r, scanId, url) {
   }
 
   var ex = r.extras || {};
-  var titles = { active_fp: "主动路径指纹", dir_scan: "目录探测", dir_full_words: "目录全量词表", subdomain: "子域名",
+  // 与 app.js 同口径：元数据类键不进正文，真结果才成节；空数组/空对象整节跳过。
+  var EXTRAS_SKIP = { ml_prior: 1, ml_sev: 1, url_input: 1, url_normalized: 1,
+                      url_corrections: 1, auth_matrix: 1, pages_omitted: 1,
+                      note: 1, graph_nvd: 1, shards: 1 };
+  var titles = { active_fp: "主动路径指纹", dir_scan: "目录探测", dir_full_words: "目录全量词表",
+                 dir: "目录探测", subdomain: "子域名", takeover: "子域接管",
                  service: "端口服务", netsec: "TLS / DNS 安全", weak_audit: "登录爆破结果",
-                 webshell: "WebShell 路径探测", jsmap: "JS 攻击面", dast: "DAST 检测",
-                 exploit: "利用级无害验证", nuclei: "Nuclei 模板调度" };
+                 webshell: "WebShell 路径探测", jsmap: "JS 攻击面", js: "JS 端点",
+                 dast: "DAST 检测", passive: "被动安全检测", bypass: "403 绕过探测",
+                 netproto: "协议模板检测（tcp/dns/ssl）", exploit: "利用级无害验证",
+                 nuclei: "Nuclei 模板调度", hygiene: "配置卫生", web_advanced: "高级 Web 检测",
+                 budget: "预算降级", panic: "扫描内异常" };
   Object.keys(ex).forEach(function (key) {
+    if (EXTRAS_SKIP[key]) return;
     var items = ex[key] || [];
+    // 空结果不占版面：空数组/空对象整节跳过（与 app.js 同口径），
+    // 不再留一个只有标题的「子域名」空节。
+    if (Array.isArray(items)) {
+      if (items.length === 0) return;
+    } else if (!items || typeof items !== "object" || Object.keys(items).length === 0) {
+      return;
+    }
     if (key === "nuclei") {
       // 汇总对象（非数组）：与 app.js 同口径——调度预算被 CVE 通道 / tag / LRU 各吃掉多少
       var srcs = items.sources && typeof items.sources === "object"

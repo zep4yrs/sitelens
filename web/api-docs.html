@@ -145,8 +145,12 @@
   </div>
 
   <div class="sec">
-    <div class="sec-title"><span class="method get">GET</span>/api/export/&lt;scan_id&gt;?fmt=json|csv|wide|html|md</div>
-    <p>导出。csv 为明细、wide 为 Wappalyzer 风格宽表（每类别一列）、html 为单文件离线报告。</p>
+    <div class="sec-title"><span class="method get">GET</span>/api/export/&lt;scan_id&gt;?fmt=json|csv|wide|sarif|html|md|har</div>
+    <p>导出。csv 为明细、wide 为 Wappalyzer 风格宽表（每类别一列）、html 为单文件离线报告、
+    sarif 为 CI 消费格式。<code>fmt=har</code> 输出 HAR 1.2：把命中时<b>实际发出</b>的请求
+    重建为 HTTP Archive，可直接导入浏览器 DevTools 或兼容 HAR 的工具复核。
+    响应侧只含状态/大小/正文摘要（该版本未保存完整响应头），条目 <code>comment</code> 会如实标注；
+    敏感请求头（Cookie/Authorization/X-Token 等）默认脱敏，<code>&amp;raw=1</code> 保留原值（仅限本机审计）。</p>
   </div>
 
   <div class="sec">

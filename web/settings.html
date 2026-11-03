@@ -83,6 +83,8 @@
 </head>
 <body>
 <script src="/js/common.js"></script>
+<!-- D-06：桌面壳桥（浏览器形态 available=false，整组桌面 UI 自动隐藏） -->
+<script src="/js/bridge.js"></script>
 
 <div class="tw-app">
   <aside class="tw-left">
@@ -180,7 +182,7 @@
       <div class="sec-title">数据存放在哪里</div>
       <p class="note">
         全部数据保存在本机：桌面版于
-        <span class="mono">%APPDATA%\SiteLens</span>（扫描历史 state、模板池 pools、可变情报 data）；
+        <span class="mono">%APPDATA%\SiteLens-Wails</span>（扫描历史与图谱在 <span class="mono">state</span>，模板池 pools、插件 plugins、可变情报 data）；
         浏览器模式于引擎工作目录的 <span class="mono">data\state</span>。
         引擎与页面均不联网上报任何扫描数据。</p>
     </div>
@@ -374,7 +376,7 @@
         <li><b>首次使用没有模板？</b>模板池不随安装包：执行 update-nuclei 在线拉取（约 700MB）。</li>
         <li><b>目标 robots 全站禁爬？</b>引擎配置页关闭「遵循 robots.txt」。</li>
         <li><b>桌面版怎么手动检查更新？</b>托盘图标右键 → 检查更新。</li>
-        <li><b>换电脑迁移？</b>导出偏好；扫描历史整目录拷贝 %APPDATA%\SiteLens\state。</li>
+        <li><b>换电脑迁移？</b>导出偏好；扫描历史整目录拷贝 %APPDATA%\SiteLens-Wails\state。</li>
       </ul>
       <p class="note">反馈请附引擎版本、环境特征与脱敏摘要；勿附未授权目标数据。</p>
     </div>
@@ -459,7 +461,7 @@
           <p>本软件无账号体系、无埋点、无遥测、无崩溃上报、无广告组件。开发者的服务器不接收您的任何扫描数据、目标信息、机器信息、网络拓扑、使用行为或崩溃信息。开发者因此在技术上<b>不具备</b>收集或回溯您任何使用行为的能力，也无法为您监控或干预具体扫描。</p>
           <h4>二、本软件产生的数据与存放位置</h4>
           <ul>
-            <li><b>桌面版</b>：全部数据保存在 <span class="kbd">%APPDATA%\SiteLens</span>——扫描历史（state）、模板池（pools）、插件（plugins）、可变情报（data）；安装目录仅含只读资产。</li>
+            <li><b>桌面版</b>：全部数据保存在 <span class="kbd">%APPDATA%\SiteLens-Wails</span>——扫描历史与图谱（<span class="kbd">state</span>）、模板池（pools）、插件（plugins）、可变情报（data）；安装目录仅含只读资产。</li>
             <li><b>浏览器模式</b>：数据保存在引擎工作目录的 <span class="kbd">data\state</span>；外观偏好与 API Token 保存在浏览器 localStorage（存储键以 <span class="kbd">sitelens-</span> 为前缀）。</li>
             <li>扫描历史与报告可能包含目标的敏感信息（技术栈、漏洞、请求响应摘要），<b>您</b>是该数据的控制者，对它的保存、访问、传输与删除承担数据保护义务。</li>
           </ul>
@@ -476,7 +478,7 @@
           <h4>五、数据的删除</h4>
           <ul>
             <li>扫描历史：设置 · 数据管理 → 「清空全部扫描历史」（设计为彻底删除，不经归档留底）；单条删除在「历史」页进行。</li>
-            <li>整体清除：卸载桌面版时按卸载向导提示删除用户数据目录，或手动删除 <span class="kbd">%APPDATA%\SiteLens</span>。</li>
+            <li>整体清除：卸载桌面版时按卸载向导提示删除用户数据目录，或手动删除 <span class="kbd">%APPDATA%\SiteLens-Wails</span>。</li>
             <li>浏览器侧偏好：清除浏览器本站 localStorage 即彻底删除。</li>
           </ul>
           <h4>六、未成年人</h4>
@@ -591,6 +593,7 @@
       <div class="sec-title">安装信息</div>
       <div class="summary">
         <div class="cell"><span>桌面版版本</span><b id="dkVersion">-</b></div>
+        <div class="cell"><span>引擎版本</span><b id="dkEngineVersion">-</b></div>
         <div class="cell"><span>更新通道</span><b>desktop-stable</b></div>
       </div>
       <div class="row">
@@ -658,8 +661,9 @@
     ["look", "外观与个性化"], ["data", "数据管理"], ["engine", "引擎配置"],
     ["about", "关于与更新"], ["legal", "协议与声明"]
   ];
-  // 桌面端专属页签：仅在壳内（window.sitelens 存在）时出现
-  var isDesktopShell = !!window.sitelens;
+  // 桌面端专属页签：仅在**壳桥可用**时出现（bridge.js 在浏览器形态也定义
+  // window.sitelens，但 available=false → 整组桌面 UI 必须隐藏）。
+  var isDesktopShell = !!(window.sitelens && window.sitelens.available);
   if (isDesktopShell) {
     TABS.push(["desktop", "桌面端"]);
     var dp = document.querySelector('.tabpanel[data-tab="desktop"]');
@@ -1022,7 +1026,11 @@
   });
 
   /* ---- 关于与更新 ---- */
-  var isDesktop = /Electron/i.test(navigator.userAgent);
+  // 桌面形态判定（5.2.3 修复）：以「壳桥是否可用」为准（D-06 的 window.sitelens.available）。
+  // 旧实现只测 Electron UA，而 Wails 壳的 WebView2 UA 不含 "Electron"，导致桌面版也显示
+  // 「浏览器模式」。Electron UA 判断保留为兼容旧壳的兜底（desktop-electron 归档线）。
+  var isDesktop = !!((window.sitelens && window.sitelens.available) ||
+    /Electron/i.test(navigator.userAgent));
   $("verKind").textContent = isDesktop ? "桌面版" : "浏览器模式";
   $("updNote").style.display = "";
   window.api.get("/api/version").then(function (v) {
@@ -1036,9 +1044,9 @@
     $("stNvd").textContent = s.nvd != null ? s.nvd : "-";
   }).catch(function (e) { window.slReportError(e, { quiet: true }); });
 
-  /* ---- 检查更新：桌面版经 preload 桥直连主进程更新器（真实检查），
+  /* ---- 检查更新：桌面版经壳桥直连主进程更新器（真实检查），
           浏览器模式跳发布页 ---- */
-  var bridge = window.sitelens || null;
+  var bridge = (window.sitelens && window.sitelens.available) ? window.sitelens : null;
   var RELEASES = "https://cnb.cool/feng-qiao/sitelens/releases";
 
   $("checkUpd").addEventListener("click", function () {
@@ -1062,6 +1070,12 @@
           r.feed + "），完成后可在此重启升级。";
       } else if (r.state === "dev") {
         m.textContent = "开发模式下不检查更新。";
+      } else if (r.state === "sent") {
+        // Wails 壳：回包通道不可用（见 bridge.js 顶部注释），检查结果写 shell.log /
+        // 托盘通知；页面只确认"已发起"，不误报失败。
+        m.textContent = "已发起检查（更新源轮询：CNB → Gitee → GitHub）。" +
+          "如发现新版本，壳会后台下载并在完成后提示；日志见 " +
+          "%APPDATA%\\SiteLens-Wails\\shell.log。";
       } else {
         m.textContent = "检查失败：所有更新源均不可达（CNB / Gitee / GitHub）。";
       }
@@ -1105,8 +1119,11 @@
   /* ---- 桌面端页签（壳内才有） ---- */
   if (isDesktopShell) {
     bridge.desktopGetInfo().then(function (info) {
+      if (!info) return;
       $("dkVersion").textContent = "v" + info.version;
-      $("dkInstallDir").textContent = info.installDir;
+      var ev = $("dkEngineVersion");
+      if (ev) ev.textContent = info.engineVersion ? "v" + info.engineVersion : "-";
+      $("dkInstallDir").textContent = info.installDir || "-";
       $("dkDataDir").textContent = info.dataDir;
       $("dkAutoStart").checked = !!info.autoStart;
       $("segClose").querySelectorAll("button").forEach(function (b) {

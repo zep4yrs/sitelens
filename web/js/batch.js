@@ -173,12 +173,22 @@
     });
   }
 
+  /* D-09：提交期间禁止重复触发。旧实现直到 startWatch() 才 disable 按钮，
+     网络/引擎慢时双击会发出两次 POST /api/batch（两个批量任务并发跑同一批目标）。 */
+  var batchStarting = false;
   window.startBatch = function () {
     var entries = parseEntries();
     if (!entries.length) return;
+    if (batchStarting) return;
+    batchStarting = true;
+    var goBtn = document.getElementById("batch-go");
+    if (goBtn) goBtn.disabled = true;
     api.post("/api/batch", { entries: entries }).then(function (r) {
+      batchStarting = false;
       startWatch(r.job_id, r.total || entries.length, "");
     }).catch(function (e) {
+      batchStarting = false;
+      if (goBtn) goBtn.disabled = false;
       toast("批量提交失败：" + e.message, "err");
     });
   };
@@ -214,6 +224,28 @@
   };
 
   /* ---------------- 定时批量（BT-03） ---------------- */
+
+  /* D-03（DOM XSS）：schedule.id 来自服务端存储、而 POST /api/batch/schedules 的
+     id 由客户端可写，因此 id 是不可信输入。旧实现把它拼进内联 onclick 的 JS
+     字符串（onclick="runSchedule('ID')"）——esc() 只保证 HTML 属性不被闭合，
+     浏览器会先做实体解码再把属性值交给 JS 解析，形如 x&#39;);alert(1)// 仍能逃逸。
+     现在：id 只经 data-* 属性传递（HTML 属性上下文，esc 足够），点击行为由容器
+     上的一次性事件委托处理，任何 id 都不会进入可执行上下文。 */
+  function bindScheduleActions() {
+    var box = document.getElementById("batch-sched-list");
+    if (!box || box.__slSchedBound) return;
+    box.__slSchedBound = true;
+    box.addEventListener("click", function (ev) {
+      var btn = ev.target && ev.target.closest ? ev.target.closest("button[data-sched-act]") : null;
+      if (!btn || !box.contains(btn)) return;
+      var id = btn.getAttribute("data-sched-id") || "";
+      if (!id) return;
+      var act = btn.getAttribute("data-sched-act");
+      if (act === "run") window.runSchedule(id);
+      else if (act === "del") window.deleteSchedule(id);
+    });
+  }
+
   function renderSchedules(list) {
     var box = document.getElementById("batch-sched-list");
     if (!box) return;
@@ -225,10 +257,13 @@
         "<span>每 " + (sc.every_minutes || "?") + " 分钟</span>" +
         "<span>目标 " + ((sc.entries || []).length) + "</span>" +
         '<span class="hint">下次 ' + esc(next) + "</span>" +
-        '<button class="btn ghost small" onclick="runSchedule(\'' + esc(sc.id) + "')\">立即跑</button>" +
-        '<button class="btn ghost small" onclick="deleteSchedule(\'' + esc(sc.id) + "')\">删除</button>" +
+        '<button class="btn ghost small" type="button" data-sched-act="run" data-sched-id="' +
+        esc(sc.id) + '">立即跑</button>' +
+        '<button class="btn ghost small" type="button" data-sched-act="del" data-sched-id="' +
+        esc(sc.id) + '">删除</button>' +
         "</div>";
     }).join("");
+    bindScheduleActions();
   }
   function loadSchedules() {
     api.get("/api/batch/schedules").then(function (r) { renderSchedules((r && r.schedules) || []); })
@@ -244,13 +279,15 @@
       .catch(function (e) { toast("保存失败：" + e.message, "err"); });
   };
   window.runSchedule = function (id) {
-    api.post("/api/batch/schedules/" + id + "/run", {}).then(function (r) {
+    // id 是不可信输入（见上方 D-03 注释）：拼进 URL 路径前必须编码，
+    // 否则带 "/" "?" "#" 的 id 能改变请求路径。
+    api.post("/api/batch/schedules/" + encodeURIComponent(id) + "/run", {}).then(function (r) {
       startWatch(r.job_id, r.total || 1, "定时任务");
       loadSchedules();
     }).catch(function (e) { toast("执行失败：" + e.message, "err"); });
   };
   window.deleteSchedule = function (id) {
-    api.del("/api/batch/schedules/" + id).then(function () { loadSchedules(); })
+    api.del("/api/batch/schedules/" + encodeURIComponent(id)).then(function () { loadSchedules(); })
       .catch(function (e) { toast("删除失败：" + e.message, "err"); });
   };
 
