@@ -20,14 +20,15 @@
 
 | 产物 | 位置/命名 | 平台 | 状态 | 签名 | 校验点 |
 |---|---|---|---|---|---|
-| 桌面安装包 | `dist/release/SiteLens-Setup-<ver>.exe` | Windows x64 | ✅ 正式 | ⏳ Authenticode 占位（未接） | 命名含版本、PE 头 `MZ`、版本=壳版本、体积>1MB |
-| 安装 workspace | `dist/wails/SiteLens/sitelens.exe` + `engine/sitelens-engine.exe` + `engine/data/` | Windows x64 | ✅ 正式 | — | 两个 exe 均为 PE；版本串一致；`engine/data` 存在 |
+| 桌面安装包 | `dist/release/SiteLens-Setup-<ver>.exe` | Windows x64 | ✅ 正式 | ✅ 自签名（内部验收；CN=SiteLens Internal Self-Signed） | 命名含版本、PE 头 `MZ`、版本=壳版本、体积>1MB |
+| 安装 workspace | `dist/wails/SiteLens/sitelens.exe` + `engine/sitelens-engine.exe` + `engine/data/` | Windows x64 | ✅ 正式 | ✅ 自签名（同上） | 两个 exe 均为 PE；版本串一致；`engine/data` 存在 |
 | 更新清单 | `latest.yml` | Windows x64 | ✅（GitHub feed） | — | `version`=壳版本；`path`=`SiteLens-Setup-<ver>.exe`；`sha512` 非占位 |
 | 差分包 | `SiteLens-Setup-<ver>.exe.blockmap` | Windows x64 | ✅（GitHub feed，可选） | — | 与 exe 同名同版本 |
 | 发行说明 | `docs/release-<ver>/release-body-<ver>.md` | — | ✅ | — | 存在；发布前 `【待发布】` 占位必须全部回填 |
 | CNB 版本页 | 安装包 + 发行说明 | Windows x64 | ✅ | — | **不上传 latest.yml/blockmap**（防双源漂移） |
 | npm CLI/TUI | `@fengqiao666/sitelens-cli` | win/linux/mac，x64/arm64 | ✅ 正式 | npm 完整性 | `bin`/`files`/版本；引擎平台包名与产物命名 |
-| macOS/Linux 桌面 | `.dmg` / AppImage / `.deb` | macOS/Linux | ⏳ 规划 | 计划 Developer ID+公证 / GPG | 未交付，不做发布校验 |
+| Linux 桌面 | `dist/wails/SiteLens_<ver>_<arch>.deb`、`dist/wails/linux-<arch>/SiteLens/` | Linux x64/arm64 | 🚧 可构建（CI 已验证 amd64 构建+deb） | 未签名（GPG 待） | ELF 魔数、壳/引擎版本一致、engine/data 存在 |
+| macOS 桌面 | `dist/wails/SiteLens_<ver>_<arch>.dmg`、`SiteLens.app` | macOS arm64/x64 | 🚧 代码已移植，待 macOS 实机验证 | 计划 Developer ID + 公证 | Mach-O 魔数、壳/引擎版本一致 |
 
 ## 3. 检查项（`check.ps1` 实现）
 
@@ -40,7 +41,7 @@
 | R5 | 安装包/壳/引擎 PE 头为 `MZ` | FAIL | 复现 v3.0.0「Linux ELF 装进 Windows 包」事故防线 |
 | R6 | 暂存目录结构完整（exe+engine exe+data） | WARN/FAIL | 未构建时 WARN；`-Strict` 时 FAIL |
 | R7 | `latest.yml` 字段自洽（version/path/sha512） | WARN/FAIL | 存在才校验；`sha512` 为空或占位 → WARN |
-| R8 | 签名状态（Authenticode） | WARN/FAIL | 非 Windows 或未接入时 WARN；`-RequireSigned` 时 FAIL |
+| R8 | 签名状态（Authenticode） | WARN/FAIL | 非 Windows 或未接入时 WARN；`-RequireSigned` 时 FAIL；当前已自签名（内部验收） |
 | R9 | 发行说明存在且无 `【待发布】` 占位 | WARN | 发版前必须回填；`-Strict` 时 FAIL |
 | R10 | `CHANGELOG.md` 存在 `## v<ver>` 段 | WARN | 提示补更新日志 |
 | R11 | npm CLI 包版本可解析、`bin` 指向存在 | WARN | 独立版本线；存在 `tui/package.json` 时校验 |

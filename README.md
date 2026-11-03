@@ -69,7 +69,9 @@ web                 内嵌前端（HTML/CSS/JS，零构建）
 
 | 形态 | 入口 | 说明 |
 |---|---|---|
-| 桌面版 | 安装包 `SiteLens-Setup-*.exe` | **Wails 壳**（Go + 系统 WebView2）+ 引擎，安装即用（唯一正式交付形态） |
+| 桌面版 | 安装包 `SiteLens-Setup-*.exe` | **Wails 壳**（Go + 系统 WebView2）+ 引擎，安装即用（Windows 正式交付形态） |
+| 桌面版（Linux） | `.deb` / `dist/wails/linux-*/` | 同一 Wails 壳 + 引擎，`tools/wails_build_unix.sh` 构建（CI 已验证 amd64 构建与 deb 打包） |
+| 桌面版（macOS） | `.app` / `.dmg` | 代码已移植（平台能力拆分完成），待 macOS 实机验证与签名公证 |
 | CLI | `sitelens scan <url>` | 全流水线扫描，stdout 出 JSON，可直接管道消费；经 npm 包 `@fengqiao666/sitelens-cli`（`tui/`）分发 |
 | Web 控制台 | `sitelens serve` | 内嵌 SPA + REST API，默认 `http://127.0.0.1:5000` |
 | 白盒审计 | `sitelens audit <dir>` | 源码污点分析，输出 JSON 报告 |
@@ -182,7 +184,7 @@ go build -o sitelens.exe ./cmd/sitelens
 - **目录 / 子域 / 接管**：软 404 基线 + 回显剔除；**端点扩展**（爬取到的同域链接并入候选集，词表猜不到的自定义端点也能核到，命中带来源回链）+ **目录列表识别**（IIS/Apache/Nginx 索引页标记，可直读目录/备份/配置的独立发现）；子域 DNS 枚举 + 接管指纹
 - **登录爆破审计**：字典爆破 + 验证码识别 sidecar
 - **白盒源码审计**：TAINT 污点分析引擎 + 规则库，`sitelens audit <dir>`
-- **批量与历史**：批量扫描、历史记录、双扫描 diff、漏洞检索、JSON/CSV/HTML/MD 四格式导出
+- **批量与历史**：批量扫描、历史记录、双扫描 diff、漏洞检索、JSON/CSV/宽表/HTML/MD/SARIF/**HAR** 多格式导出（HAR 可导入浏览器 DevTools 复核扫描器实际发出的请求）
 
 </details>
 
@@ -234,6 +236,8 @@ go build -o sitelens.exe ./cmd/sitelens
 ## 合规
 
 使用本工具产生的合规责任由使用者承担，请遵守所在司法辖区的法律法规。主动能力默认关闭且有硬上限；`*.gov.cn` 政府站点在代码层面被强制拒绝扫描，该保护无法通过配置关闭。
+
+**多租户数据面隔离已按 `tenant` 字段接线（BL-5 / A-04 已修复）**：`web.auth_mode=token` 的 HMAC 令牌 / RBAC / `X-Tenant-ID` 负责"谁是谁"；存储层（JSON/Tiered 与 SQL 后端）记录带 `tenant` 字段，`/api/history`、`/api/export`、`/api/graph`、`/api/diff`、`/api/replay`、`/api/triage`、job 等按 `{id}` 读取/删除的接口均做跨租户归属校验，不匹配一律 **404**（不泄露存在性），列表/统计只返回本租户数据。**边界如实说明**：多租户目前是「认证基座 + 单机/单库数据隔离」——SQL 后端请自行评估跨实例共享库的隔离与运维（无分布式租户配额/审计）；`web.auth_mode=none`（默认单机部署）下记录 `tenant` 为空、全局可见（既有行为不变）。细节见 [`docs/企业版-6.x.md`](docs/企业版-6.x.md)。
 
 ## 开源协议
 

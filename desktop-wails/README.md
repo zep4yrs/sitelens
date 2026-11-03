@@ -103,6 +103,32 @@ bash tools/release_local.sh --publish    # 再上传 CNB Release（需 CNB_TOKEN
 
 产物：`dist/release/SiteLens-Setup-<版本>.exe`。
 
+### Linux / macOS 构建（5.2.x 起）
+
+壳的 Windows 专属能力（CREATE_NO_WINDOW、taskkill、user32 MessageBoxW、Mica）
+已拆到 `platform_windows.go`，POSIX 平台走 `platform_unix.go` 的降级实现
+（无控制台窗口概念 → no-op；进程回收 → Kill；自动更新 → 显式拒绝，
+只支持 Windows NSIS 安装器）。窗口材质在非 Windows 平台降级为不透明纯色窗。
+
+```bash
+# Linux：需 gcc / pkg-config / libgtk-3-dev / libwebkit2gtk-4.1-dev / libx11-dev
+# macOS：需 Xcode Command Line Tools
+bash tools/wails_build_unix.sh              # 构建 + 打包
+bash tools/wails_build_unix.sh --no-package # 只构建
+```
+
+产物：
+
+| 平台 | 产物 | 状态 |
+|---|---|---|
+| Linux amd64/arm64 | `dist/wails/SiteLens_<ver>_<arch>.deb`、`dist/wails/linux-<arch>/SiteLens/` | ✅ CI 原生构建 + deb 打包已验证（CI 门禁） |
+| macOS arm64/x64 | `dist/wails/SiteLens_<ver>_<arch>.dmg`、`SiteLens.app` | 🚧 代码已移植，待 macOS 机器/CI 实机构建验证 |
+
+`tools/wails_build_unix.sh` 同样内置硬闸：平台魔数校验（Linux ELF / macOS
+Mach-O）、壳/引擎版本一致性；引擎文件名按平台取后缀（`sitelens-engine[.exe]`）。
+macOS 的 `.app` 用 `Info.plist`（bundle id `top.feng-qiao.sitelens`）包壳与
+`engine/`，未签名/未公证（需要 Apple Developer ID 后再补）。
+
 `tools/wails_build.sh` 内置两道硬闸，打包前拦下：
 
 1. **PE 魔数校验**（壳 + 引擎）——错平台二进制进包是 v3.0.0 真实事故的根因；
@@ -187,3 +213,7 @@ go build ./... && go vet ./... && go test ./...     # 纯逻辑单测，不启�
 - **FE-08 材质依赖系统能力**：Mica/Acrylic 在 Windows 11 22H2+ 才有；更老系统为
   blur-behind 观感（不崩溃）。引擎页面 body 自带不透明底色，材质主要作用于
   标题栏与页面空帧期。
+- **Linux/macOS 桌面（5.2.x 起）**：壳已可原生构建（Linux 走 GTK3 + WebKitGTK 4.1，
+  macOS 走 Cocoa/WebKit），但自动更新只支持 Windows NSIS 安装器（其他平台
+  `downloadAndInstall` 显式拒绝）；Linux/macOS 包当前**未签名**（Linux 待 GPG，macOS 待
+  Developer ID + 公证）。macOS 尚未在实机跑过完整扫描回归。
