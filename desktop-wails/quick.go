@@ -24,6 +24,7 @@ import (
 	"net/url"
 	"os"
 	"regexp"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -43,6 +44,25 @@ type shellCtx struct {
 	notifier *toastNotifier
 
 	scanMu sync.Mutex // 同时只允许一个快捷扫描（重复触发直接忽略，不排队）
+
+	// 引擎版本（waitReady 拿到 /api/version 后写入；D-06 桥的 GetInfo 读取）。
+	// 跨 goroutine（启动 goroutine 写 / 桥调用读）→ mutex 保护。
+	engineVerMu sync.Mutex
+	engineVer   string
+}
+
+// setEngineVersion 记录引擎版本（waitReady 成功后调用）。
+func (s *shellCtx) setEngineVersion(v string) {
+	s.engineVerMu.Lock()
+	s.engineVer = v
+	s.engineVerMu.Unlock()
+}
+
+// EngineVersion 返回引擎版本（未就绪时为空串）。
+func (s *shellCtx) EngineVersion() string {
+	s.engineVerMu.Lock()
+	defer s.engineVerMu.Unlock()
+	return s.engineVer
 }
 
 // ---- 快捷键 / 窗口唤起 ----
@@ -174,16 +194,18 @@ const diffHintJS = `(function () {
 
 // windowMaterial 选择窗口材质（FE-08「Mica/Acrylic 或深色标题栏跟随主题」）。
 //
-//   - 默认：BackgroundTypeTranslucent + Windows.BackdropType=Mica。Windows 11
-//     22621+ 显示 Mica；更老系统 Wails 自动降级为 blur-behind（不会崩、不会黑屏，
-//     见 wails 的 setBackdropType：SupportsBackdropTypes() 为假时用 ACCENT_ENABLE_BLURBEHIND）。
-//   - Theme 恒为 SystemDefault：标题栏深/浅色跟随系统主题，且 Wails 订阅
-//     SystemThemeChanged 会在系统切换时自动更新，壳不需要自己监听。
-//   - 逃生阀：SITLENS_WIN_MATERIAL=off 退回纯色窗（不透明、无材质），
-//     用于线上观感异常时不改代码回滚。
+//   - Windows：BackgroundTypeTranslucent + Windows.BackdropType=Mica（Win11 22621+
+//     显示 Mica；更老系统 Wails 自动降级为 blur-behind，不会崩、不会黑屏）。
+//   - Linux/macOS：Wails 没有 Mica，用不透明纯色窗（原生标题栏/系统主题接管），
+//     避免 Translucent 在无合成器环境下黑底/透明穿透。
+//   - Theme 恒为 SystemDefault：标题栏深/浅色跟随系统主题。
+//   - 逃生阀：SITLENS_WIN_MATERIAL=off 退回纯色窗（不透明、无材质）。
 func windowMaterial() (application.BackgroundType, application.WindowsWindow) {
 	w := application.WindowsWindow{Theme: application.SystemDefault}
 	if strings.EqualFold(strings.TrimSpace(os.Getenv("SITLENS_WIN_MATERIAL")), "off") {
+		return application.BackgroundTypeSolid, w
+	}
+	if runtime.GOOS != "windows" {
 		return application.BackgroundTypeSolid, w
 	}
 	w.BackdropType = application.Mica

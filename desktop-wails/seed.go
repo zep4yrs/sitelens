@@ -1,14 +1,23 @@
 package main
 
 import (
+	"context"
 	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"syscall"
+	"time"
 
 	"sitelens-wails/internal/usercfg"
 )
+
+// seedDeliverTimeout 种子交付的硬上限。
+//
+// D-08：deliverSeeds 在创建任何窗口之前同步执行（main.go），旧实现用
+// CombinedOutput 无超时等待子进程——引擎一旦卡住（AV 拦截 / 磁盘锁 /
+// 大种子拷贝）壳会在开窗之前无限阻塞，用户看到的是「双击没反应」。
+// 这里给硬超时，超时即降级启动（引擎照常读用户区那份旧种子）。
+const seedDeliverTimeout = 20 * time.Second
 
 // userDataDir 桌面壳的用户数据区（%APPDATA%\SiteLens-Wails）。
 // 与 Electron 壳的 %APPDATA%\SiteLens 不同——两条壳并存时不互相污染。
@@ -45,17 +54,22 @@ func deliverSeeds(engineExe, seedDir, userData string) {
 		log.Printf("种子目录缺失，跳过交付：%s", seedDir)
 		return
 	}
-	cmd := exec.Command(engineExe,
+	// D-08：带超时的 CommandContext——超时即杀掉子进程并降级启动，
+	// 不允许「引擎卡住 → 壳在开窗之前无限阻塞」。
+	ctx, cancel := context.WithTimeout(context.Background(), seedDeliverTimeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, engineExe,
 		"update-seed", "--seed-dir", seedDir, "--user-dir", userData)
 	cmd.Dir = filepath.Dir(engineExe) // 与引擎 serve 同 cwd，相对路径语义一致
 	// 同 BUG-032：引擎是控制台子系统程序，不加这行会在启动时闪一个黑窗。
 	// 输出仍走 CombinedOutput 的管道，不受影响（子进程不创建控制台，
 	// 但 stdout/stderr 句柄照常经管道传给父进程）。
-	cmd.SysProcAttr = &syscall.SysProcAttr{
-		HideWindow:    true,
-		CreationFlags: createNoWindow,
-	}
+	hideChildWindow(cmd)
 	out, err := cmd.CombinedOutput()
+	if ctx.Err() == context.DeadlineExceeded {
+		log.Printf("种子交付超时（%s），跳过本次交付，引擎照常启动", seedDeliverTimeout)
+		return
+	}
 	if err != nil {
 		log.Printf("种子交付未完成（%v）：%s", err, string(out))
 		return
