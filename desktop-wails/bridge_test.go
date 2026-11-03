@@ -158,6 +158,7 @@ func TestBridgeDispatchRejectsUnknownAndBadArgs(t *testing.T) {
 	}
 	_ = application.Window(nil) // 保持 application 导入（bridge 依赖该接口）
 }
+
 // 更新源地址回归：GitHub 账号曾写错（zep4rs vs zep4yrs），导致 latest.yml 404、
 // 自动更新永久失效且日志只报「更新清单不可达」。地址必须是实际仓库账号 + https。
 func TestUpdateBaseURLPointsToRealRepo(t *testing.T) {
