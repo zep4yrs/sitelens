@@ -171,3 +171,44 @@ main:
 #               # CNB 不做自动更新源（desktop-stable 已按用户要求删除，自动更新
 #               # 唯一来源是 GitHub desktop-stable release）。此处不要往 CNB 传
 #               # latest.yml / blockmap，防止更新源在下次发版时复活。
+
+# ============================================================================
+# 发版构建（tag 推送触发，Wails 线，2026-11 起）
+#
+# 为什么 CI 也要发版：本地 `cnb` CLI 的登录 token 只有仓库读写 scope，没有
+# `repo-release:rw`（创建 Release / 上传附件会被 403 拒绝）；而流水线内置
+# CNB_TOKEN 带发布权限。故 tag 流水线负责「构建 + 上传」，本地发版仍是
+# Windows 上的首选验证路径（产物即 PE，可即时校验）。
+#
+# 产物：Windows 安装包（NSIS，经 wine+xvfb 在 Linux 上打包）+ Linux deb。
+# macOS 需要 macOS runner，暂不在 CNB 流水线内。
+# ============================================================================
+"v*":
+  tag_push:
+    - name: 发版构建与上传（Wails 线：Windows 安装包 + Linux deb）
+      docker:
+        image: golang:1.26.8
+      stages:
+        - name: release
+          script:
+            - |
+              set -euo pipefail
+              export GOTOOLCHAIN=auto
+              # wine（打 NSIS）+ xvfb（无 display driver 时 32 位引导程序必秒退）
+              dpkg --add-architecture i386
+              apt-get update -qq
+              apt-get install -y -qq --no-install-recommends zip jq curl xvfb xauth nodejs npm >/dev/null
+              apt-get install -y -qq --no-install-recommends \
+                wine wine32 wine64 libwine libwine:i386 fonts-wine >/dev/null
+              # mingw：引擎 CGO 构建（白盒 AST），build-engine.js 会优先走
+              # Linux + x86_64-w64-mingw32-gcc 交叉编译路径
+              apt-get install -y -qq --no-install-recommends gcc-mingw-w64-x86-64 >/dev/null
+              export USE_SYSTEM_WINE=true WINEARCH=win64 WINEDEBUG=-all
+              xvfb-run -a wineboot --init >/dev/null 2>&1 || true
+              # 1) Windows 安装包（壳 + 引擎 + NSIS）→ 上传 Release（带发行说明）
+              bash tools/release_local.sh --publish
+              # 2) Linux deb（GTK3/WebKitGTK4.1 原生构建）→ 追加为同版本附件
+              apt-get install -y -qq --no-install-recommends \
+                gcc pkg-config libgtk-3-dev libwebkit2gtk-4.1-dev libx11-dev >/dev/null
+              bash tools/wails_build_unix.sh
+              bash tools/release_upload.sh dist/wails/SiteLens_*_amd64.deb
