@@ -281,7 +281,6 @@
               <span class="chip on" data-verify="dast" title="参数级无害注入：XSS / SQLi / 盲注双确认 / 重定向 / 遍历 + 深度面（SSTI / 命令注入 / CRLF / NoSQL / XPath / LDAP / 表达式 / JNDI / XXE / 上传受理面 / Cookie-头注入）">参数注入</span>
               <span class="chip" data-verify="by" title="403 绕过变体表（路径变异 / 信任头 / 只读方法），需与目录探测同开">403 绕过</span>
               <span class="chip" data-verify="ex" title="利用级无害验证：对已确认发现做影响证明。需 .sitelens.yml exploit.enabled，未授权目标零请求">利用级</span>
-              <span class="chip" data-verify="settle" title="结构化事实图：随扫描收集入口/发现/证据/CWE 关联/攻击链，供「攻击链」页查看与导出">事实图</span>
             </div>
               </div>
             </div>
@@ -317,6 +316,8 @@
       <button class="btn tw-run" id="go" onclick="startScan()" aria-keyshortcuts="Control+Enter" title="Ctrl+Enter 开始扫描"><span class="arr" aria-hidden="true">▷</span> <span data-i18n="btn_start_scan">开始扫描</span></button>
       <p class="hint" id="hint" style="text-align:center"></p>
     </section>
+
+    <div class="tw-footlinks"><a href="/feedback">反馈</a><a href="/chain">攻击链</a></div>
 
     <!-- 网络层检测：控制 -->
     <section class="tabpanel tw-panel" id="tab-netsec">

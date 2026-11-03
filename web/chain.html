@@ -107,10 +107,17 @@ function loadList(){
       return '<button type="button" class="cdd-opt'+(x.id===CUR?' active':'')+'" data-v="'+x.id+'">'+
         '<b>#'+x.id+'</b><span>'+esc(x.url)+'</span></button>';
     }).join("");
-    // 默认选第一条
-    CUR = rows[0].id;
-    root.setAttribute("data-value", rows[0].id);
-    setDDLabel(root, rows[0]);
+    // 默认选第一条；带 ?id=N 深链时优先选该条（结果页「查看证据链」入口）
+    var want = parseInt(new URLSearchParams(location.search).get("id") || "", 10) || 0;
+    var pick = rows[0];
+    if (want) {
+      for (var i = 0; i < rows.length; i++) {
+        if (rows[i].id === want) { pick = rows[i]; break; }
+      }
+    }
+    CUR = pick.id;
+    root.setAttribute("data-value", pick.id);
+    setDDLabel(root, pick);
     scanDD = initCDD("scan", function(){ loadChain(); });
     loadChain();
   }).catch(function(){ document.getElementById("body").innerHTML =
@@ -160,7 +167,21 @@ function render(g){
     "权限变化 <b>"+(c.priv_change||0)+"</b>";
   var dl = document.getElementById("dl");
   dl.style.display = "inline-block";
-  dl.href = "/api/graph/"+g.scan_id+"/jsonl";
+  /* D-14：JSONL 下载必须带 X-Token。旧实现直接赋值 dl.href，导航请求无法携带
+     自定义头 —— token 模式下 /api/* 必 401（还会把错误页当文件存盘）。
+     统一走 common.js 的 slDownload（fetch → 校验 → Blob 下载，自动带 token）。 */
+  dl.onclick = function (ev) {
+    if (ev) ev.preventDefault();
+    var url = "/api/graph/" + encodeURIComponent(g.scan_id) + "/jsonl";
+    if (window.slDownload) {
+      window.slDownload(url, "sitelens-graph-" + g.scan_id + ".jsonl")
+        .catch(function (e) { toast("下载失败：" + (e && e.message ? e.message : e), "err"); });
+      return;
+    }
+    // 兜底（common.js 未加载时）：保持旧行为，但至少提示可能 401
+    location.href = url;
+  };
+  dl.setAttribute("href", "#");
   var cp = document.getElementById("copy-json");
   cp.style.display = "inline-block";
   cp.onclick = function () {
