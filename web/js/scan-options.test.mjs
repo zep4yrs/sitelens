@@ -115,7 +115,11 @@ test("耗时预估：同范围下 fast < std < full", () => {
   assert.ok(f < s && s < fu, `预估应递增: ${f} < ${s} < ${fu}`);
 });
 
-test("结构化事实图：勾选 settle 下发 graph，未选不下发", () => {
+test("结构化事实图：主动扫描恒下发 graph（证据链/攻击链需要，UI 已无开关）", () => {
+  // 契约变更（5.2.3）：graph 收集是毫秒级开销，但「攻击链/证据链」视图依赖它；
+  // 原实现只在 verify.settle 勾选时下发，而该勾选框已从 UI 移除（web/ 内无 settle
+  // 控件）——继续按 settle 判断等于 UI 扫描永不下发 graph，攻击链页恒为空。
+  // 现改为主动路径恒下发；本用例锁定该契约（含显式传 settle 的旧调用方不报错）。
   const on = scanOpts.build({
     scope: { web: true }, verify: { settle: true }, strength: "std"
   });
@@ -124,7 +128,7 @@ test("结构化事实图：勾选 settle 下发 graph，未选不下发", () => 
   const off = scanOpts.build({
     scope: { web: true }, verify: {}, strength: "std"
   });
-  assert.strictEqual(off.options.graph, undefined, "未勾选不应下发 graph");
+  assert.strictEqual(off.options.graph, true, "主动扫描应恒下发 graph");
 });
 
 test("结构化事实图：被动模式下不消费（随扫描顺带，但被动不爬取）", () => {
