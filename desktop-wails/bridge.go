@@ -73,7 +73,8 @@ type UpdateInfo struct {
 //
 // userData = %APPDATA%\SiteLens-Wails（配置/偏好/更新包根）
 // dataDir  = %APPDATA%\SiteLens-Wails\state（引擎 store.data_dir / SITLENS_DATA_DIR，
-//            扫描历史与图谱落这里；口径见 main.go 的 C-17 注释）
+//
+//	扫描历史与图谱落这里；口径见 main.go 的 C-17 注释）
 type ShellBridge struct {
 	app      *application.App
 	shell    *shellCtx

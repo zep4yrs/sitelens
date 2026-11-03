@@ -151,15 +151,15 @@ func TestNewAPIToken(t *testing.T) {
 func TestValidAPIToken(t *testing.T) {
 	good := strings.Repeat("ab12", 16) // 64 hex
 	cases := map[string]bool{
-		good:                       true,
-		"  " + good + "  ":         true, // 允许首尾空白（配置手滑）
-		"":                         false,
-		"short":                    false,
-		strings.Repeat("a", 63):    false,
-		strings.Repeat("a", 65):    false,
-		strings.Repeat("z", 64):    false, // 非 hex
-		strings.Repeat("g", 64):    false,
-		good + " ":                 true,
+		good:                    true,
+		"  " + good + "  ":      true, // 允许首尾空白（配置手滑）
+		"":                      false,
+		"short":                 false,
+		strings.Repeat("a", 63): false,
+		strings.Repeat("a", 65): false,
+		strings.Repeat("z", 64): false, // 非 hex
+		strings.Repeat("g", 64): false,
+		good + " ":              true,
 	}
 	for in, want := range cases {
 		if got := ValidAPIToken(in); got != want {

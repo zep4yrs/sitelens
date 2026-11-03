@@ -77,7 +77,6 @@ func APITokenOf(cfg map[string]any) string {
 	return strings.TrimSpace(s)
 }
 
-
 // Resolve 由「用户数据区 userData」与「安装目录引擎目录 engineDir」算出受管路径。
 func Resolve(userData, engineDir string) Managed {
 	seedDir := filepath.Join(engineDir, "data")

@@ -50,11 +50,11 @@ func TestVerifySHA512FailClosed(t *testing.T) {
 	}
 
 	bad := map[string]string{
-		"缺摘要":       "",
-		"仅空白":       "   ",
-		"非 base64":   "abc==",
-		"长度不对":      base64.StdEncoding.EncodeToString([]byte("short")),
-		"摘要不匹配":     base64.StdEncoding.EncodeToString(make([]byte, sha512.Size)),
+		"缺摘要":      "",
+		"仅空白":      "   ",
+		"非 base64": "abc==",
+		"长度不对":     base64.StdEncoding.EncodeToString([]byte("short")),
+		"摘要不匹配":    base64.StdEncoding.EncodeToString(make([]byte, sha512.Size)),
 	}
 	for name, want := range bad {
 		if err := verifySHA512(p, want); err == nil {
