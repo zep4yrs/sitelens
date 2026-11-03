@@ -231,6 +231,28 @@ func (s *Server) Handler() http.Handler {
 			s.serveAsset(w, "design.html")
 		})
 	}
+	// 产品介绍页：由引擎提供，内嵌真实工作台 /demo/app。
+	// 页面里的 token 占位符只在本地引擎响应时替换；该路由不应对公网暴露。
+	mux.HandleFunc("/welcome", func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/welcome" {
+			http.NotFound(w, r)
+			return
+		}
+		data, err := web.FS.ReadFile("welcome.html")
+		if err != nil {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.Header().Set("Cache-Control", "no-cache")
+		_, _ = w.Write([]byte(strings.ReplaceAll(string(data), "__SITELENS_TOKEN__", s.token())))
+	})
+	// 仅给 /welcome 内嵌用的 app 副本：放行同源 iframe，其余安全头不变。
+	mux.HandleFunc("GET /demo/app", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-Frame-Options", "SAMEORIGIN")
+		w.Header().Set("Content-Security-Policy", "frame-ancestors 'self'; base-uri 'self'; form-action 'self'")
+		s.serveAsset(w, "app.html")
+	})
 	mux.HandleFunc("/", s.hRoot)
 	// 兼容旧路由：独立页已并入工作台标签
 	mux.HandleFunc("/netsec", redirect("/app#netsec"))
