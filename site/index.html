@@ -1,0 +1,829 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SiteLens 站点透视 — 把安全扫描，做成可复核的结论</title>
+<meta name="description" content="SiteLens 是面向安全与研发团队的 Web 安全扫描器：先预检、再验证，给出带请求证据与复现命令的结论。本地部署，无遥测，Windows 一键安装。">
+<meta name="theme-color" content="#fafafa">
+<meta property="og:type" content="website">
+<meta property="og:title" content="SiteLens 站点透视 — 把安全扫描，做成可复核的结论">
+<meta property="og:description" content="先预检，再验证。给安全能解释的结论，给研发能复现的证据。">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23111113'/%3E%3Cg fill='none' stroke='%23fff' stroke-width='2'%3E%3Crect x='7' y='8' width='18' height='16' rx='3'/%3E%3Cpath d='M7 12h18'/%3E%3Ccircle cx='16' cy='18' r='4'/%3E%3Cpath d='m19 21 2.6 2.6'/%3E%3C/g%3E%3C/svg%3E">
+<script>
+try{
+  var t = localStorage.getItem("sl-site-theme");
+  if (t !== "light" && t !== "dark") t = matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+  document.documentElement.dataset.theme = t;
+}catch(e){}
+</script>
+<style>
+:root{
+  color-scheme:light;
+  --bg:#fafafa; --fg:#141415; --card:#ffffff; --muted:#f4f4f5;
+  --muted-fg:#6b6b70; --border:#e5e5e6; --border-strong:#d4d4d6;
+  --primary:#141415; --primary-fg:#ffffff;
+  --ok:#0f7b3f; --ok-bg:#eef7f1; --warn:#a15c00; --danger:#b42318;
+  --info:#1d4ed8; --ring:#141415;
+  --sans:"Noto Sans SC","PingFang SC","Microsoft YaHei",-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+  --mono:ui-monospace,SFMono-Regular,"SF Mono","Cascadia Code",Consolas,"Liberation Mono",Menlo,monospace;
+  --shadow:0 1px 2px rgba(16,16,18,.05),0 12px 32px -12px rgba(16,16,18,.18);
+  --ease:cubic-bezier(.2,0,0,1);
+  --max:1240px;
+}
+[data-theme="dark"]{
+  color-scheme:dark;
+  --bg:#0d0d0f; --fg:#ededf0; --card:#141416; --muted:#1b1b1e;
+  --muted-fg:#95959d; --border:#27272b; --border-strong:#333338;
+  --primary:#ededf0; --primary-fg:#111113;
+  --ok:#4ade80; --ok-bg:#102319; --warn:#fbbf24; --danger:#f87171;
+  --info:#93c5fd; --ring:#ededf0;
+  --shadow:0 1px 2px rgba(0,0,0,.4),0 24px 60px -20px rgba(0,0,0,.7);
+}
+*,*::before,*::after{box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{margin:0;background:var(--bg);color:var(--fg);font-family:var(--sans);font-size:16px;line-height:1.7;-webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility;overflow-x:hidden}
+a{color:inherit;text-decoration:none}
+button{font:inherit;color:inherit}
+::selection{background:var(--fg);color:var(--bg)}
+:focus-visible{outline:2px solid var(--ring);outline-offset:3px}
+.skip{position:absolute;left:-9999px;top:0;background:var(--fg);color:var(--bg);padding:10px 14px;z-index:100}
+.skip:focus{left:12px;top:12px}
+.container{width:100%;max-width:var(--max);margin:0 auto;padding:0 28px}
+.mono{font-family:var(--mono)}
+.eyebrow{display:flex;align-items:center;gap:10px;font-family:var(--mono);font-size:11px;line-height:1.4;letter-spacing:.14em;text-transform:uppercase;color:var(--muted-fg)}
+.eyebrow .dot{width:5px;height:5px;border-radius:50%;background:var(--ok);flex:none}
+h1,h2,h3{font-weight:600;letter-spacing:-.03em;line-height:1.12;margin:0}
+p{margin:0}
+ul{margin:0;padding:0;list-style:none}
+dl{margin:0}
+dt,dd{margin:0}
+
+/* nav */
+.nav{position:sticky;top:0;z-index:50;background:color-mix(in srgb,var(--bg) 92%,transparent);border-bottom:1px solid var(--border);backdrop-filter:blur(12px)}
+.nav-in{height:62px;display:flex;align-items:center;gap:40px}
+.brand{display:flex;align-items:center;gap:10px;font-family:var(--mono);font-size:15px;font-weight:700;letter-spacing:-.01em;white-space:nowrap}
+.brand svg{width:23px;height:23px;flex:none}
+.brand span{color:var(--muted-fg);font-weight:400;font-size:12px;letter-spacing:0;margin-left:2px}
+.nav-links{display:flex;align-items:center;gap:30px;margin-left:auto}
+.nav-links a{font-size:13px;color:var(--muted-fg);transition:color .15s var(--ease)}
+.nav-links a:hover{color:var(--fg)}
+.nav-actions{display:flex;align-items:center;gap:8px;margin-left:8px}
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;height:40px;padding:0 16px;border:1px solid transparent;border-radius:4px;background:var(--primary);color:var(--primary-fg);font-size:13px;font-weight:500;cursor:pointer;white-space:nowrap;transition:transform .15s var(--ease),box-shadow .15s var(--ease),background .15s var(--ease)}
+.btn:hover{box-shadow:0 8px 20px -8px rgba(0,0,0,.35)}
+.btn:active{transform:translateY(1px)}
+.btn svg{width:14px;height:14px}
+.btn.ghost{background:transparent;color:var(--fg);border-color:var(--border-strong)}
+.btn.ghost:hover{background:var(--muted)}
+.icon-btn{width:34px;height:34px;display:grid;place-items:center;border:1px solid var(--border);border-radius:4px;background:var(--card);cursor:pointer;transition:background .15s var(--ease)}
+.icon-btn:hover{background:var(--muted)}
+.icon-btn svg{width:15px;height:15px}
+.nav-toggle{display:none}
+.nav-mobile{display:none}
+
+/* hero */
+.hero{padding:84px 0 0}
+.hero-top{display:grid;grid-template-columns:minmax(0,1fr) 300px;gap:64px;align-items:end}
+.hero-top>*{min-width:0}
+.hero h1{font-size:clamp(46px,6.6vw,88px);line-height:1.04;letter-spacing:-.05em;margin:22px 0 0;font-weight:600}
+.hero h1 .accent{color:var(--muted-fg)}
+.hero .lead{max-width:34em;margin-top:26px;font-size:17px;line-height:1.8;color:var(--muted-fg)}
+.hero .lead b{color:var(--fg);font-weight:500}
+.cta{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:30px}
+.cta .btn{height:46px;padding:0 20px;font-size:13.5px}
+.meta{margin-top:16px;display:flex;gap:14px;flex-wrap:wrap;font-family:var(--mono);font-size:10.5px;color:var(--muted-fg);letter-spacing:.02em}
+.meta span{display:inline-flex;align-items:center;gap:6px}
+.meta span::before{content:"";width:3px;height:3px;border-radius:50%;background:var(--border-strong)}
+.hero-aside{padding-bottom:6px;border-top:1px solid var(--border);padding-top:16px}
+.hero-aside .label{font-family:var(--mono);font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--muted-fg)}
+.hero-aside p{margin-top:12px;font-size:13px;line-height:1.8;color:var(--muted-fg)}
+.hero-aside strong{display:block;font-size:15px;font-weight:500;color:var(--fg);line-height:1.65;margin-bottom:8px}
+.hero-aside dl{margin-top:16px;border-top:1px solid var(--border)}
+.hero-aside dl div{display:flex;justify-content:space-between;gap:12px;padding:6px 0;border-bottom:1px solid var(--border);font-size:11px}
+.hero-aside dt{color:var(--muted-fg)}
+.hero-aside dd{font-family:var(--mono);font-size:10.5px}
+
+/* product frame */
+.product{margin:54px 0 0;position:relative}
+.product-frame{position:relative;background:#0f0f11;border:1px solid #2a2a2e;border-radius:10px;box-shadow:var(--shadow);overflow:hidden;color:#e9e9ee}
+.app-bar{height:38px;display:flex;align-items:center;gap:8px;padding:0 12px;border-bottom:1px solid #26262a;background:#151517}
+.dots{display:flex;gap:5px}
+.dots i{width:7px;height:7px;border-radius:50%;background:#3a3a40}
+.dots i:nth-child(1){background:#5b3a3a}.dots i:nth-child(2){background:#5b5030}.dots i:nth-child(3){background:#2f4d3a}
+.app-url{font-family:var(--mono);font-size:10px;color:#8d8d96;background:#0f0f11;border:1px solid #2a2a2e;border-radius:3px;padding:2px 8px;margin-left:4px}
+.app-state{margin-left:auto;font-family:var(--mono);font-size:9px;color:#4ade80;border:1px solid rgba(74,222,128,.28);background:rgba(74,222,128,.07);padding:2px 7px;border-radius:3px}
+.app-body{display:grid;grid-template-columns:168px minmax(0,1fr) 300px;min-height:440px}
+.app-nav{border-right:1px solid #26262a;padding:14px 10px;background:#111113}
+.app-nav .n-brand{font-family:var(--mono);font-size:10px;color:#6f6f78;letter-spacing:.08em;padding:0 8px 12px}
+.app-nav a{display:flex;align-items:center;gap:8px;padding:7px 8px;border-radius:4px;color:#8d8d96;font-size:11.5px;margin-bottom:2px}
+.app-nav a.on{background:#1f1f23;color:#e9e9ee}
+.app-nav a svg{width:12px;height:12px;opacity:.8}
+.app-nav .n-foot{margin-top:36px;padding:10px 8px 0;border-top:1px solid #26262a;font-family:var(--mono);font-size:9px;color:#5f5f68}
+.app-main{padding:18px 20px;border-right:1px solid #26262a;min-width:0}
+.app-head{display:flex;align-items:flex-start;justify-content:space-between;gap:12px}
+.app-head .crumb{font-family:var(--mono);font-size:9px;color:#6f6f78;letter-spacing:.04em}
+.app-head h3{font-size:17px;color:#e9e9ee;margin-top:4px;letter-spacing:-.01em}
+.app-tag{font-family:var(--mono);font-size:8px;color:#4ade80;border:1px solid rgba(74,222,128,.25);background:rgba(74,222,128,.06);border-radius:3px;padding:2px 6px;white-space:nowrap}
+.app-stats{display:grid;grid-template-columns:repeat(4,1fr);border:1px solid #26262a;border-radius:5px;margin-top:16px;overflow:hidden}
+.app-stats div{padding:8px 10px;border-right:1px solid #26262a}
+.app-stats div:last-child{border-right:0}
+.app-stats span{display:block;font-family:var(--mono);font-size:8.5px;color:#6f6f78}
+.app-stats b{display:block;font-family:var(--mono);font-size:15px;color:#e9e9ee;font-weight:500;margin-top:2px}
+.app-list{margin-top:12px;border:1px solid #26262a;border-radius:5px;overflow:hidden}
+.app-list .lh{display:grid;grid-template-columns:54px minmax(0,1fr) 72px;gap:10px;padding:6px 10px;background:#151517;border-bottom:1px solid #26262a;font-family:var(--mono);font-size:8px;color:#6f6f78;letter-spacing:.05em}
+.app-row{display:grid;grid-template-columns:54px minmax(0,1fr) 72px;gap:10px;align-items:center;padding:9px 10px;border-bottom:1px solid #222226}
+.app-row:last-child{border-bottom:0}
+.app-row .sev{font-family:var(--mono);font-size:8px;border:1px solid;border-radius:2px;padding:1px 4px;text-align:center}
+.sev.h{color:#f87171;border-color:rgba(248,113,113,.3);background:rgba(248,113,113,.07)}
+.sev.m{color:#fbbf24;border-color:rgba(251,191,36,.3);background:rgba(251,191,36,.06)}
+.sev.i{color:#8d8d96;border-color:#333338;background:#1b1b1e}
+.app-row .t{font-size:11.5px;color:#d9d9df;line-height:1.45;min-width:0}
+.app-row .t small{display:block;font-family:var(--mono);font-size:9px;color:#6f6f78;margin-top:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.app-row .st{font-family:var(--mono);font-size:8px;text-align:right;color:#4ade80;white-space:nowrap}
+.app-row .st.mut{color:#6f6f78}
+.app-detail{padding:18px 16px;background:#111113}
+.detail-top{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+.detail-top .sev{font-size:8px}
+.detail-top .v{font-family:var(--mono);font-size:8px;color:#4ade80;border:1px solid rgba(74,222,128,.28);background:rgba(74,222,128,.07);padding:1px 5px;border-radius:2px}
+.detail-top .id{font-family:var(--mono);font-size:8px;color:#6f6f78;margin-left:auto}
+.detail-title{font-size:15px;color:#e9e9ee;margin-top:9px;line-height:1.4}
+.detail-dl{margin-top:12px;border-top:1px solid #26262a}
+.detail-dl div{display:flex;justify-content:space-between;gap:10px;padding:5px 0;border-bottom:1px solid #222226;font-size:9.5px}
+.detail-dl dt{color:#6f6f78}
+.detail-dl dd{font-family:var(--mono);color:#d9d9df;font-size:8.5px;text-align:right}
+.detail-code{margin-top:12px;background:#0b0b0d;border:1px solid #26262a;border-radius:4px;padding:9px 10px;font-family:var(--mono);font-size:8.5px;line-height:1.8;color:#b9b9c2;overflow:hidden}
+.detail-code .k{color:#8d8d96}.detail-code .s{color:#86efac}.detail-code .n{color:#93c5fd}
+.detail-foot{display:flex;align-items:center;gap:6px;margin-top:10px;font-family:var(--mono);font-size:8px;color:#6f6f78}
+.detail-foot b{color:#4ade80;font-weight:400}
+.app-foot{display:flex;gap:22px;flex-wrap:wrap;padding:8px 14px;border-top:1px solid #26262a;background:#0f0f11;font-family:var(--mono);font-size:8px;color:#6f6f78;letter-spacing:.03em}
+.app-foot b{color:#d9d9df;font-weight:500}
+.product-caption{display:flex;justify-content:space-between;gap:16px;flex-wrap:wrap;margin-top:10px;font-family:var(--mono);font-size:9.5px;color:var(--muted-fg);letter-spacing:.02em}
+.product-caption .note{color:var(--muted-fg)}
+
+
+
+
+
+
+/* trust strip */
+.trust{border-top:1px solid var(--border);border-bottom:1px solid var(--border);margin-top:44px;background:var(--card)}
+.trust-in{display:flex;align-items:center;gap:26px;flex-wrap:wrap;padding:14px 0;font-family:var(--mono);font-size:10px;color:var(--muted-fg);letter-spacing:.03em}
+.trust-in span{display:inline-flex;align-items:center;gap:7px}
+.trust-in span::before{content:"";width:4px;height:4px;border-radius:50%;background:var(--border-strong)}
+.trust-in span:first-child::before{background:var(--ok)}
+
+/* sections */
+.section{padding:104px 0;border-top:1px solid var(--border)}
+.section:first-of-type{border-top:0}
+.section-grid{display:grid;grid-template-columns:74px minmax(0,1fr);gap:28px}
+.section-no{font-family:var(--mono);font-size:10px;color:var(--muted-fg);letter-spacing:.08em;padding-top:9px}
+.section-head{max-width:760px}
+.section-head h2{font-size:clamp(30px,3.8vw,46px);line-height:1.15;margin-top:14px;letter-spacing:-.04em}
+.section-head .desc{max-width:38em;margin-top:18px;font-size:15px;line-height:1.85;color:var(--muted-fg)}
+.section-head .desc b{color:var(--fg);font-weight:500}
+
+/* problem */
+.pain-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:0;margin-top:44px;border-top:1px solid var(--border)}
+.pain{padding:22px 26px 0 0;border-right:1px solid var(--border);margin-right:26px}
+.pain:last-child{border-right:0;margin-right:0;padding-right:0}
+.pain .n{font-family:var(--mono);font-size:9px;color:var(--muted-fg);letter-spacing:.08em}
+.pain h3{font-size:16px;margin-top:12px;letter-spacing:-.01em}
+.pain p{font-size:13px;line-height:1.8;color:var(--muted-fg);margin-top:8px}
+.pain .quote{margin-top:18px;font-family:var(--mono);font-size:9.5px;color:var(--muted-fg);border-left:1px solid var(--border-strong);padding-left:9px;line-height:1.8}
+
+/* how */
+.steps{display:grid;grid-template-columns:repeat(3,1fr);gap:0;margin-top:46px;border-top:1px solid var(--border)}
+.step{padding:24px 28px 0 0;border-right:1px solid var(--border);margin-right:28px;position:relative}
+.step:last-child{border-right:0;margin-right:0;padding-right:0}
+.step .big{font-family:var(--mono);font-size:11px;color:var(--muted-fg);letter-spacing:.08em}
+.step h3{font-size:17px;margin-top:18px}
+.step p{font-size:13px;line-height:1.8;color:var(--muted-fg);margin-top:9px;max-width:24em}
+.step .mini{margin-top:18px;font-family:var(--mono);font-size:9px;color:var(--muted-fg);line-height:1.9;border-top:1px solid var(--border);padding-top:10px}
+.step .mini b{color:var(--ok);font-weight:400}
+
+/* capability rows */
+.cap{margin-top:54px;border-top:1px solid var(--border)}
+.cap-row{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.05fr);gap:64px;align-items:center;padding:52px 0;border-bottom:1px solid var(--border)}
+.cap-row.flip .cap-copy{order:2}
+.cap-row.flip .cap-visual{order:1}
+.cap-kicker{font-family:var(--mono);font-size:9px;letter-spacing:.1em;color:var(--muted-fg);text-transform:uppercase}
+.cap-copy h3{font-size:24px;margin-top:10px;letter-spacing:-.03em}
+.cap-copy p{font-size:14px;line-height:1.85;color:var(--muted-fg);margin-top:10px;max-width:31em}
+.cap-copy ul{margin-top:16px;display:grid;gap:6px}
+.cap-copy li{display:flex;gap:9px;font-size:12.5px;color:var(--muted-fg);line-height:1.7}
+.cap-copy li::before{content:"";width:4px;height:4px;border-radius:50%;background:var(--border-strong);margin-top:8px;flex:none}
+.cap-copy li b{color:var(--fg);font-weight:500}
+.cap-visual{min-width:0}
+.panel{border:1px solid var(--border);border-radius:7px;background:var(--card);overflow:hidden;box-shadow:var(--shadow)}
+.panel-head{display:flex;align-items:center;gap:8px;padding:9px 12px;border-bottom:1px solid var(--border);background:var(--muted);font-family:var(--mono);font-size:9px;color:var(--muted-fg)}
+.panel-head .led{width:5px;height:5px;border-radius:50%;background:var(--ok)}
+.panel-head .right{margin-left:auto;color:var(--ok)}
+.panel-body{padding:14px}
+.v-row{display:flex;align-items:flex-start;gap:9px;padding:8px 0;border-bottom:1px solid var(--border);font-size:11px}
+.v-row:last-child{border-bottom:0}
+.v-row .mark{font-family:var(--mono);font-size:9px;color:var(--ok);width:12px;flex:none;margin-top:1px}
+.v-row.mut .mark{color:var(--muted-fg)}
+.v-row .t{color:var(--fg);line-height:1.55}
+.v-row .t small{display:block;font-family:var(--mono);font-size:8.5px;color:var(--muted-fg);margin-top:2px}
+.badge{display:inline-flex;align-items:center;gap:5px;font-family:var(--mono);font-size:8.5px;border:1px solid var(--border-strong);border-radius:2px;padding:1px 5px;color:var(--muted-fg);white-space:nowrap}
+.badge.ok{color:var(--ok);border-color:color-mix(in srgb,var(--ok) 30%,var(--border));background:var(--ok-bg)}
+.badge.warn{color:var(--warn);border-color:color-mix(in srgb,var(--warn) 30%,var(--border));background:color-mix(in srgb,var(--warn) 7%,transparent)}
+.code-dark{background:#101012;border:1px solid #27272b;border-radius:7px;overflow:hidden;box-shadow:var(--shadow)}
+.code-dark .ch{display:flex;align-items:center;gap:8px;padding:9px 12px;border-bottom:1px solid #27272b;font-family:var(--mono);font-size:9px;color:#8d8d96}
+.code-dark .ch .right{margin-left:auto;color:#4ade80}
+.code-dark pre{margin:0;padding:14px;overflow:auto;font-family:var(--mono);font-size:10.5px;line-height:1.9;color:#d4d4d8}
+.code-dark .k{color:#9b9ba4}.code-dark .s{color:#86efac}.code-dark .n{color:#93c5fd}.code-dark .c{color:#6b7280}
+.cap-pair{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+.cap-pair .panel-body{min-height:170px}
+.mcp-line{display:flex;align-items:center;gap:8px;padding:7px 0;border-bottom:1px solid var(--border);font-family:var(--mono);font-size:9.5px;color:var(--muted-fg)}
+.mcp-line:last-child{border-bottom:0}
+.mcp-line b{color:var(--fg);font-weight:500}
+.mcp-line .run{margin-left:auto;color:var(--ok)}
+
+/* proof */
+.proof-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:0;margin-top:44px;border-top:1px solid var(--border);border-bottom:1px solid var(--border)}
+.proof{padding:24px 26px 22px 0;border-right:1px solid var(--border);margin-right:26px}
+.proof:last-child{border-right:0;margin-right:0;padding-right:0}
+.proof .v{font-family:var(--mono);font-size:clamp(30px,3.2vw,42px);letter-spacing:-.04em;line-height:1.1}
+.proof .v small{font-size:12px;letter-spacing:0;color:var(--muted-fg);margin-left:4px}
+.proof .l{font-size:12px;color:var(--muted-fg);margin-top:10px;line-height:1.7}
+.proof .l b{color:var(--fg);font-weight:500}
+.proof-note{display:flex;gap:10px;align-items:flex-start;margin-top:18px;font-size:12px;line-height:1.8;color:var(--muted-fg)}
+.proof-note svg{width:14px;height:14px;flex:none;margin-top:4px;color:var(--warn)}
+.proof-note b{color:var(--fg);font-weight:500}
+
+/* fit */
+.fit-grid{display:grid;grid-template-columns:1fr 1fr;gap:0;margin-top:42px;border-top:1px solid var(--border)}
+.fit-col{padding:24px 56px 0 0;border-right:1px solid var(--border);margin-right:56px}
+.fit-col:last-child{border-right:0;margin-right:0;padding-right:0}
+.fit-col h3{font-family:var(--mono);font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted-fg);display:flex;align-items:center;gap:8px}
+.fit-col h3 i{width:5px;height:5px;border-radius:50%;display:inline-block}
+.fit-col.yes h3 i{background:var(--ok)}
+.fit-col.no h3 i{background:var(--danger)}
+.fit-col li{display:flex;gap:10px;padding:10px 0;border-bottom:1px solid var(--border);font-size:13px;color:var(--muted-fg);line-height:1.7}
+.fit-col li b{color:var(--fg);font-weight:500}
+.fit-col li .m{font-family:var(--mono);font-size:10px;flex:none;margin-top:4px}
+.fit-col.yes .m{color:var(--ok)}
+.fit-col.no .m{color:var(--danger)}
+
+/* final cta */
+.final{background:#101012;color:#ededf0;padding:74px 0;margin-top:104px}
+.final-in{display:flex;align-items:flex-end;justify-content:space-between;gap:40px;flex-wrap:wrap}
+.final .eyebrow{color:#8d8d96}
+.final .eyebrow .dot{background:#4ade80}
+.final h2{font-size:clamp(30px,4vw,48px);line-height:1.16;letter-spacing:-.04em;margin-top:16px;max-width:15em}
+.final p{color:#9b9ba4;font-size:13px;line-height:1.8;margin-top:14px;max-width:32em}
+.final .btn{background:#ededf0;color:#111113;height:46px;padding:0 20px;font-size:13.5px}
+.final .btn:hover{background:#fff}
+.dl-meta{margin-top:16px;font-family:var(--mono);font-size:9.5px;color:#6f6f78;line-height:1.9}
+.dl-meta code{color:#b9b9c2;word-break:break-all}
+
+/* footer */
+.footer{border-top:1px solid var(--border);padding:34px 0 46px}
+.footer-in{display:flex;justify-content:space-between;gap:30px;flex-wrap:wrap;align-items:flex-start}
+.footer .brand{font-size:13px}.footer .brand svg{width:19px;height:19px}
+.footer p{margin-top:9px;font-size:11.5px;color:var(--muted-fg);line-height:1.8;max-width:42em}
+.footer-links{display:flex;gap:22px;flex-wrap:wrap}
+.footer-links a{font-size:11.5px;color:var(--muted-fg)}
+.footer-links a:hover{color:var(--fg)}
+.footer-base{display:flex;justify-content:space-between;gap:16px;flex-wrap:wrap;margin-top:26px;padding-top:16px;border-top:1px solid var(--border);font-family:var(--mono);font-size:9.5px;color:var(--muted-fg)}
+
+/* responsive */
+@media (max-width:1080px){
+  .hero-top{grid-template-columns:1fr;gap:32px}
+  .hero-aside{max-width:560px}
+  .app-body{grid-template-columns:150px minmax(0,1fr) 270px}
+
+}
+@media (max-width:920px){
+  .nav-links{display:none}
+  .nav-toggle{display:grid}
+  .nav-mobile.open{display:block;position:absolute;left:0;right:0;top:62px;background:var(--bg);border-bottom:1px solid var(--border);padding:8px 28px 16px}
+  .nav-mobile a{display:block;padding:11px 0;border-bottom:1px solid var(--border);font-size:13px;color:var(--muted-fg)}
+  .nav-mobile a:last-child{border-bottom:0}
+  .section-grid{grid-template-columns:1fr;gap:12px}
+  .section-no{padding-top:0}
+  .pain-grid,.steps,.proof-grid{grid-template-columns:1fr;gap:0}
+  .pain,.step,.proof{border-right:0;margin-right:0;padding:22px 0;border-bottom:1px solid var(--border)}
+  .pain:last-child,.step:last-child,.proof:last-child{border-bottom:0;padding-bottom:0}
+  .cap-row{grid-template-columns:1fr;gap:26px}
+  .cap-row.flip .cap-copy,.cap-row.flip .cap-visual{order:0}
+  .fit-grid{grid-template-columns:1fr;gap:0}
+  .fit-col{border-right:0;margin-right:0;padding:24px 0;border-bottom:1px solid var(--border)}
+  .fit-col:last-child{border-bottom:0}
+  .product-frame .app-body{grid-template-columns:140px minmax(0,1fr)}
+  .app-detail{display:none}
+
+}
+@media (max-width:720px){
+  .container{padding:0 20px}
+  .nav-in{gap:10px}
+  .brand span{display:none}
+  .nav-actions{gap:6px}
+  .nav-actions>.btn{display:none}
+  .hero{padding-top:52px}
+  .hero h1{font-size:clamp(34px,9vw,42px);letter-spacing:-.05em}
+  .hero .lead{font-size:15px;margin-top:20px}
+  .cta .btn{height:44px}
+  .product{margin-top:38px;max-width:100%}
+  .product-frame{border-radius:7px}
+  .product-frame .app-body{grid-template-columns:1fr;min-height:0}
+  .app-nav{display:none}
+  .app-main{border-right:0;padding:14px}
+  .app-stats{grid-template-columns:repeat(2,1fr)}
+  .app-stats div:nth-child(2){border-right:0}
+  .app-stats div:nth-child(1),.app-stats div:nth-child(2){border-bottom:1px solid #26262a}
+  .app-list .lh,.app-row{grid-template-columns:46px minmax(0,1fr);gap:8px;width:100%}
+  .app-list .lh span:last-child,.app-row .st{display:none}
+  .app-row .t{min-width:0}
+  .app-row .t small{white-space:normal;overflow:visible}
+  .app-row .st{display:none}
+  .app-list .lh span:last-child{display:none}
+  .product-caption{font-size:8.5px}
+  .section{padding:62px 0}
+  .section-head h2{font-size:clamp(27px,7.3vw,34px)}
+  .pain-grid,.steps{margin-top:30px}
+  .cap-row{padding:36px 0}
+  .cap-copy h3{font-size:21px}
+  .cap-pair{grid-template-columns:1fr}
+  .proof-grid{margin-top:28px}
+  .final{margin-top:62px;padding:56px 0}
+  .final-in{display:block}
+  .final h2{font-size:clamp(28px,8vw,36px)}
+  .footer-base{display:block}
+  .footer-base span{display:block;margin-top:6px}
+}
+</style>
+</head>
+<body>
+<a class="skip" href="#main">跳到主要内容</a>
+
+<header class="nav">
+  <div class="container nav-in">
+    <a class="brand" href="#" aria-label="SiteLens 首页">
+      <svg viewBox="0 0 32 32" fill="none" aria-hidden="true"><rect x="4.5" y="5.5" width="23" height="21" rx="4" stroke="currentColor" stroke-width="2"/><path d="M4.5 11h23" stroke="currentColor" stroke-width="2"/><circle cx="16" cy="18" r="5.2" stroke="currentColor" stroke-width="2"/><path d="m20 22 3.4 3.4" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+      SiteLens <span>站点透视</span>
+    </a>
+    <nav class="nav-links" aria-label="主导航">
+      <a href="#problem">为什么</a>
+      <a href="#how">工作原理</a>
+      <a href="#capabilities">能力</a>
+      <a href="#proof">验证</a>
+    </nav>
+    <div class="nav-actions">
+      <button class="icon-btn" id="themeBtn" type="button" aria-label="切换深色/浅色主题">
+        <svg id="themeIcon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>
+      </button>
+      <a class="btn" href="#download">下载</a>
+      <button class="icon-btn nav-toggle" id="navToggle" type="button" aria-label="打开导航" aria-expanded="false">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"/></svg>
+      </button>
+    </div>
+  </div>
+  <nav class="nav-mobile" id="navMobile" aria-label="移动导航">
+    <a href="#problem">为什么</a><a href="#how">工作原理</a><a href="#capabilities">能力</a><a href="#proof">验证</a><a href="#download">下载</a>
+  </nav>
+</header>
+
+<main id="main">
+  <section class="hero">
+    <div class="container">
+      <div class="hero-top">
+        <div class="hero-copy">
+          <p class="eyebrow"><span class="dot"></span> Web 应用安全扫描器</p>
+          <h1><span class="accent">把安全扫描，</span><br>做成可复核的结论。</h1>
+          <p class="lead">SiteLens 面向安全团队与研发团队：<b>先预检，再验证</b>，最后给出带请求证据和复现命令的结论。不是再给你一页需要人工二次确认的告警。</p>
+          <div class="cta">
+            <a class="btn" href="#download">下载 Windows 版
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12M7 10l5 5 5-5M5 21h14"/></svg>
+            </a>
+            <a class="btn ghost" href="#how">看它如何工作</a>
+          </div>
+          <p class="meta"><span>本地部署</span><span>无遥测</span><span>Windows 10/11</span></p>
+        </div>
+        <aside class="hero-aside" aria-label="产品要点">
+          <p class="label">FOR SECURITY &amp; ENGINEERING</p>
+          <strong>给安全能解释的结论，<br>给研发能复现的证据。</strong>
+          <p>不是把扫描器接进流程，而是让扫描结果真正进入修复流程。</p>
+          <dl>
+            <div><dt>确认方式</dt><dd>3 次差分</dd></div>
+            <div><dt>证据形态</dt><dd>请求 / 复现命令</dd></div>
+            <div><dt>部署形态</dt><dd>本地桌面</dd></div>
+          </dl>
+        </aside>
+      </div>
+
+      <figure class="product" aria-label="SiteLens 扫描结果界面示意">
+        <div class="product-frame">
+          <div class="app-bar">
+            <div class="dots"><i></i><i></i><i></i></div>
+            <span class="app-url">https://app.example.com</span>
+            <span class="app-state">扫描完成</span>
+          </div>
+          <div class="app-body">
+            <aside class="app-nav">
+              <div class="n-brand">SITELENS / WORKBENCH</div>
+              <a class="on" href="#"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="11" cy="11" r="6"/><path d="m16 16 4 4"/></svg>扫描</a>
+              <a href="#"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 6h16M4 12h16M4 18h16"/></svg>历史</a>
+              <a href="#"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 3 3 8l9 5 9-5-9-5Z"/><path d="M3 13l9 5 9-5"/></svg>情报</a>
+              <a href="#"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M5 4h14v16H5z"/><path d="M8 8h8M8 12h8M8 16h5"/></svg>审计</a>
+              <div class="n-foot">v5.2.3 · local</div>
+            </aside>
+            <section class="app-main">
+              <div class="app-head">
+                <div><div class="crumb">SCAN / app.example.com</div><h3>安全评估</h3></div>
+                <span class="app-tag">已完成</span>
+              </div>
+              <div class="app-stats">
+                <div><span>已验证</span><b>12</b></div>
+                <div><span>已排除</span><b>3</b></div>
+                <div><span>覆盖类型</span><b>4</b></div>
+                <div><span>用时</span><b>5m44s</b></div>
+              </div>
+              <div class="app-list">
+                <div class="lh"><span>级别</span><span>发现</span><span>状态</span></div>
+                <div class="app-row">
+                  <span class="sev h">HIGH</span>
+                  <div class="t">SQL 注入 · 报错型<small>id 参数 · 3 次确认 · 2xx → 5xx</small></div>
+                  <span class="st">已验证</span>
+                </div>
+                <div class="app-row">
+                  <span class="sev m">MED</span>
+                  <div class="t">缺失安全响应头 · CSP<small>响应头 · 被动检查 · 0 额外请求</small></div>
+                  <span class="st">建议</span>
+                </div>
+                <div class="app-row">
+                  <span class="sev i">INFO</span>
+                  <div class="t">软 404 基线已排除<small>WAF 兜底页 · 不参与判定</small></div>
+                  <span class="st mut">已排除</span>
+                </div>
+                <div class="app-row">
+                  <span class="sev m">MED</span>
+                  <div class="t">开放重定向 · next 参数<small>200 → 302 · 跨域 Location</small></div>
+                  <span class="st">已验证</span>
+                </div>
+              </div>
+            </section>
+            <aside class="app-detail">
+              <div class="detail-top">
+                <span class="sev h">HIGH</span><span class="v">已验证</span><span class="id">WEB-001</span>
+              </div>
+              <div class="detail-title">SQL 注入 · 报错型</div>
+              <dl class="detail-dl">
+                <div><dt>参数</dt><dd>id</dd></div>
+                <div><dt>确认次数</dt><dd>3 / 3</dd></div>
+                <div><dt>响应差异</dt><dd>200 → 500</dd></div>
+              </dl>
+              <div class="detail-code"><span class="k">GET</span> /item?id=<span class="s">1' AND 1=1--</span><br><span class="k">→</span> 500 · <span class="n">SQL syntax error</span><br><span class="k">diff</span>: body +1,284 chars</div>
+              <div class="detail-foot"><b>✓</b> 复现命令已生成 · 证据 3 条</div>
+            </aside>
+          </div>
+          <div class="app-foot"><span>REQUESTS <b>760</b></span><span>BLOCKED <b>12</b></span><span>PAGES <b>48</b></span><span>ELAPSED <b>5m44s</b></span><span style="margin-left:auto">LOCAL ENGINE · NO TELEMETRY</span></div>
+        </div>
+        <figcaption class="product-caption">
+          <span>界面示意 · 真实结果保留请求证据与复现命令</span>
+          <span class="note">WAF 拦截 / 超时 / 编码异常样本不参与判定</span>
+        </figcaption>
+      </figure>
+    </div>
+  </section>
+
+  <div class="trust">
+    <div class="container trust-in">
+      <span>WINDOWS 10/11</span><span>本地数据</span><span>无遥测</span><span>SARIF 2.1.0</span><span>MCP 13 TOOLS</span><span>SQLITE / POSTGRESQL</span>
+    </div>
+  </div>
+
+  <section class="section" id="problem">
+    <div class="container section-grid">
+      <div class="section-no">01 / PROBLEM</div>
+      <div>
+        <div class="section-head">
+          <p class="eyebrow"><span class="dot"></span> 为什么需要它</p>
+          <h2>告警不是结论。</h2>
+          <p class="desc">大多数扫描器把发现交给你，把判断留给你：<b>这是误报吗？能复现吗？和代码里的哪一行有关？</b> 安全团队在排除，研发团队在猜。</p>
+        </div>
+        <div class="pain-grid">
+          <article class="pain">
+            <span class="n">01 / NOISE</span>
+            <h3>扫到 200 条，复现 0 条</h3>
+            <p>没有请求上下文、没有响应差异，只有一段 payload。研发无法判断真假，安全无法解释结论。</p>
+            <p class="quote">“先帮我看看这条是不是误报。”</p>
+          </article>
+          <article class="pain">
+            <span class="n">02 / ENVIRONMENT</span>
+            <h3>WAF 一拦，全变“疑似”</h3>
+            <p>拦截页、软 404、超时和编码异常混进结果。扫描器把环境噪声当成漏洞，团队把时间花在排除上。</p>
+            <p class="quote">“这个 502 到底算不算？”</p>
+          </article>
+          <article class="pain">
+            <span class="n">03 / SILOS</span>
+            <h3>黑盒与白盒，各说各话</h3>
+            <p>黑盒发现和代码审计结果对不上：一个说入口有洞，一个说 sink 有过滤，中间没有证据链。</p>
+            <p class="quote">“这两个报告说的是同一个问题吗？”</p>
+          </article>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="section" id="how">
+    <div class="container section-grid">
+      <div class="section-no">02 / METHOD</div>
+      <div>
+        <div class="section-head">
+          <p class="eyebrow"><span class="dot"></span> 工作原理</p>
+          <h2>三次确认，才写进结果。</h2>
+          <p class="desc">SiteLens 不把“请求成功”当成“漏洞存在”。每一次判定，都要先建立基线、再做差分、最后留下证据。</p>
+        </div>
+        <div class="steps">
+          <article class="step">
+            <span class="big">STEP 01</span>
+            <h3>预检与基线</h3>
+            <p>输入 URL 后先发一次只读 GET，建立状态、响应体、时延基线；软 404、WAF 兜底页在这一步被识别。</p>
+            <div class="mini">1 次只读请求<br>基线：200 / 18.4 KB</div>
+          </article>
+          <article class="step">
+            <span class="big">STEP 02</span>
+            <h3>差分与确认</h3>
+            <p>同参数 benign / 攻击样本对比；状态码、响应体、回显位置多维差分，至少两次一致才进入验证。</p>
+            <div class="mini"><b>2 / 3</b> 一致<br>拦截 / 超时 / 编码异常剔除</div>
+          </article>
+          <article class="step">
+            <span class="big">STEP 03</span>
+            <h3>证据与复现</h3>
+            <p>生成可复制执行的请求证据与 curl 命令；黑盒发现可关联到白盒 AST 的 source / sink。</p>
+            <div class="mini"><b>✓</b> 复现命令<br>证据链：source → sink</div>
+          </article>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="section" id="capabilities">
+    <div class="container section-grid">
+      <div class="section-no">03 / CAPABILITIES</div>
+      <div>
+        <div class="section-head">
+          <p class="eyebrow"><span class="dot"></span> 产品能力</p>
+          <h2>从发现，到修复。</h2>
+          <p class="desc">不是一堆检测器的集合，而是一条从发现、确认、证据到修复的闭环。高级能力默认关，边界写进配置。</p>
+        </div>
+        <div class="cap">
+          <div class="cap-row">
+            <div class="cap-copy">
+              <div class="cap-kicker">01 / VERIFICATION ENGINE</div>
+              <h3>先证明，再上报。</h3>
+              <p>42 条内置无害验证；回显剔除、二次确认、软 404 基线。WAF 拦截响应不参与判定，宁可少报，不制造假阳性。</p>
+              <ul>
+                <li><b>无害验证</b> · 不写文件、不落地 webshell</li>
+                <li><b>环境感知</b> · WAF / 超时 / 编码异常单独处理</li>
+                <li><b>结果分级</b> · 已验证 / 建议 / 已排除</li>
+              </ul>
+            </div>
+            <div class="cap-visual">
+              <div class="panel">
+                <div class="panel-head"><span class="led"></span> verification.log <span class="right">3 / 3 PASS</span></div>
+                <div class="panel-body">
+                  <div class="v-row"><span class="mark">✓</span><span class="t">基线请求<small>200 · 18.4 KB · 142 ms</small></span></div>
+                  <div class="v-row"><span class="mark">✓</span><span class="t">差分请求 1<small>200 · 18.9 KB · 回显位置一致</small></span></div>
+                  <div class="v-row"><span class="mark">✓</span><span class="t">差分请求 2<small>500 · SQL syntax error · 确认</small></span></div>
+                  <div class="v-row mut"><span class="mark">–</span><span class="t">WAF 拦截样本<small>403 · 不参与判定</small></span></div>
+                  <div class="v-row mut"><span class="mark">–</span><span class="t">软 404 兜底页<small>200 · 相似度 0.98 · 排除</small></span></div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="cap-row flip">
+            <div class="cap-copy">
+              <div class="cap-kicker">02 / EVIDENCE CHAIN</div>
+              <h3>每条发现，都能被复现。</h3>
+              <p>请求、响应差异、复现命令一并保留；黑盒发现与白盒 AST 污点通过 <span class="mono">evidence_link</span> 关联，形成证据驱动的攻击链。</p>
+              <ul>
+                <li><b>请求证据</b> · 方法 / 路径 / 参数 / 状态码</li>
+                <li><b>复现命令</b> · 可直接交给研发执行</li>
+                <li><b>黑白盒关联</b> · source → sink 可追溯</li>
+              </ul>
+            </div>
+            <div class="cap-visual">
+              <div class="code-dark">
+                <div class="ch"><span>evidence.json</span><span class="right">verified</span></div>
+                <pre><code>{
+  <span class="k">"check"</span>: <span class="s">"sqli-error"</span>,
+  <span class="k">"confirmed"</span>: <span class="n">true</span>,
+  <span class="k">"requests"</span>: <span class="n">3</span>,
+  <span class="k">"baseline"</span>: <span class="s">"200 / 18.4 KB"</span>,
+  <span class="k">"diff"</span>: <span class="s">"2xx → 5xx"</span>,
+  <span class="k">"reproduce"</span>: <span class="s">"curl -s 'https://app.example.com/item?id=1%27'"</span>,
+  <span class="k">"evidence_link"</span>: [
+    <span class="s">"sink: UserMapper.java:42"</span>,
+    <span class="s">"source: request.getParameter(\"id\")"</span>
+  ]
+}</code></pre>
+              </div>
+            </div>
+          </div>
+
+          <div class="cap-row">
+            <div class="cap-copy">
+              <div class="cap-kicker">03 / ADVANCED WEB</div>
+              <h3>更深，但不乱打。</h3>
+              <p>越权矩阵、业务逻辑、上传绕过、反序列化入口、WebSocket / h2c 协议面。默认关，逻辑与上传默认 dry-run，IDOR 需要多角色会话——显式授权才发探测。</p>
+              <ul>
+                <li><span class="badge warn">默认关</span>&nbsp; IDOR / 逻辑 / 上传 / 反序列化</li>
+                <li><b>dry-run 优先</b> · 先看请求计划，再决定是否执行</li>
+                <li><b>会话材料</b> · 多角色矩阵需要显式配置</li>
+              </ul>
+            </div>
+            <div class="cap-visual">
+              <div class="panel">
+                <div class="panel-head"><span class="led"></span> advanced.web <span class="right">DRY-RUN</span></div>
+                <div class="panel-body">
+                  <div class="v-row"><span class="mark">·</span><span class="t">IDOR 矩阵 <span class="badge warn">需会话</span><small>3 角色 × 12 资源 · 未执行</small></span></div>
+                  <div class="v-row"><span class="mark">·</span><span class="t">业务逻辑 <span class="badge warn">dry-run</span><small>状态机 / 并发 · 仅生成请求计划</small></span></div>
+                  <div class="v-row"><span class="mark">·</span><span class="t">上传绕过 <span class="badge warn">dry-run</span><small>扩展名 / MIME / 内容校验</small></span></div>
+                  <div class="v-row"><span class="mark">·</span><span class="t">反序列化入口 <span class="badge">只读探测</span><small>参数特征 / 协议头</small></span></div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="cap-row flip">
+            <div class="cap-copy">
+              <div class="cap-kicker">04 / TEAM &amp; AGENT</div>
+              <h3>给团队用，也给 Agent 用。</h3>
+              <p>SQLite / PostgreSQL、RBAC / 租户、worker 池；<span class="mono">sitelens mcp</span> 提供 13 个工具，把扫描、状态、结果、事实图接进 Agent 工作流。</p>
+              <ul>
+                <li><b>企业基座</b> · 本地历史 / 多用户 / 审计</li>
+                <li><b>Agent 接口</b> · MCP 13 tools · 辰极 Lodestar</li>
+                <li><b>报告</b> · SARIF 2.1.0 · 等保 / ASVS 提示性映射</li>
+              </ul>
+            </div>
+            <div class="cap-visual">
+              <div class="cap-pair">
+                <div class="panel">
+                  <div class="panel-head"><span class="led"></span> mcp / tools</div>
+                  <div class="panel-body">
+                    <div class="mcp-line"><b>scan</b><span class="run">ready</span></div>
+                    <div class="mcp-line"><b>status</b><span class="run">ready</span></div>
+                    <div class="mcp-line"><b>result</b><span class="run">ready</span></div>
+                    <div class="mcp-line"><b>graph</b><span class="run">ready</span></div>
+                    <div class="mcp-line"><b>export</b><span class="run">ready</span></div>
+                  </div>
+                </div>
+                <div class="panel">
+                  <div class="panel-head"><span class="led"></span> store</div>
+                  <div class="panel-body">
+                    <div class="v-row"><span class="mark">✓</span><span class="t">SQLite<small>已实测：落库 / 历史 / 重启恢复</small></span></div>
+                    <div class="v-row"><span class="mark">·</span><span class="t">PostgreSQL<small>驱动 / DDL 就绪，真机待验</small></span></div>
+                    <div class="v-row"><span class="mark">·</span><span class="t">多租户<small>单租户生产边界</small></span></div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="section" id="proof">
+    <div class="container section-grid">
+      <div class="section-no">04 / EVIDENCE</div>
+      <div>
+        <div class="section-head">
+          <p class="eyebrow"><span class="dot"></span> 验证口径</p>
+          <h2>数字不大，但能复跑。</h2>
+          <p class="desc">我们不放“客户 Logo 墙”，也不把子集说成全量。下面是当前能拿出的证据，以及还没跑完的部分。</p>
+        </div>
+        <div class="proof-grid">
+          <article class="proof">
+            <div class="v">0<small>条</small></div>
+            <p class="l"><b>29 万条 CVSS 向量对拍</b><br>与 NVD 官方向量逐条比对，不符率 41.42% → 0。</p>
+          </article>
+          <article class="proof">
+            <div class="v">1.0000</div>
+            <p class="l"><b>自建合成靶场 F1</b><br>10 目标 / TP=8 / FP=0 / FN=0；SQLi、XSS、CSRF、路径穿越。</p>
+          </article>
+          <article class="proof">
+            <div class="v">0.8333</div>
+            <p class="l"><b>WSL 标准子集 F1</b><br>7 目标：DVWA / xsslabs / upload-labs；upload-labs 主动上传默认 dry-run。</p>
+          </article>
+        </div>
+        <p class="proof-note">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 9v4M12 17h.01"/><path d="M10.3 3.9 2.7 17a2 2 0 0 0 1.7 3h15.2a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"/></svg>
+          <span><b>还没跑完：</b>完整 DVWA / pikachu / Juice Shop / WebGoat 矩阵、20 个授权样本、PostgreSQL 真机。当前是子集基线，不是完整矩阵；我们不把“还没测”写成“已通过”。</span>
+        </p>
+      </div>
+    </div>
+  </section>
+
+  <section class="section" id="fit">
+    <div class="container section-grid">
+      <div class="section-no">05 / FIT</div>
+      <div>
+        <div class="section-head">
+          <p class="eyebrow"><span class="dot"></span> 适用边界</p>
+          <h2>它不是所有团队的解药。</h2>
+          <p class="desc">如果一个工具声称什么都能做，通常意味着什么都做不好。下面是我们擅长和不擅长的。</p>
+        </div>
+        <div class="fit-grid">
+          <div class="fit-col yes">
+            <h3><i></i>适合</h3>
+            <ul>
+              <li><span class="m">✓</span><span><b>需要给研发可复现证据</b>的安全团队</span></li>
+              <li><span class="m">✓</span><span><b>本地部署 / 数据可控</b>，不接受 SaaS 托管</span></li>
+              <li><span class="m">✓</span><span>想把扫描接进 <b>Agent / CI / 报告流程</b></span></li>
+              <li><span class="m">✓</span><span>接受“少而准”，愿意按验证口径复核</span></li>
+            </ul>
+          </div>
+          <div class="fit-col no">
+            <h3><i></i>不适合</h3>
+            <ul>
+              <li><span class="m">×</span><span>追求“一次扫出所有漏洞”的堆量场景</span></li>
+              <li><span class="m">×</span><span>需要 SaaS 多租户托管 / 开箱即用集群</span></li>
+              <li><span class="m">×</span><span>无人值守的自动攻击 / 写 shell</span></li>
+              <li><span class="m">×</span><span>把扫描器当人工渗透的替代品</span></li>
+            </ul>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="final" id="download">
+    <div class="container final-in">
+      <div>
+        <p class="eyebrow"><span class="dot"></span> DOWNLOAD</p>
+        <h2>把下一份扫描报告，<br>变成可复核的结论。</h2>
+        <p>Windows 10/11 x64 · 本地部署 · 约 129 MiB。安装前请核对 SHA256；当前为内部签名版本。</p>
+        <div class="cta" style="margin-top:26px">
+          <a class="btn" href="SiteLens-Setup-5.2.3.exe" download>下载安装包
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 17 17 7M8 7h9v9"/></svg>
+          </a>
+        </div>
+        <p class="dl-meta">SiteLens 5.2.3 · SiteLens-Setup-5.2.3.exe · 135,605,744 bytes<br>SHA256 <code>32ACC9113B722E6B3992C34CE6336060C8F00C50BD3BE3674947D5F4053C5104</code></p>
+      </div>
+      <div></div>
+    </div>
+  </section>
+</main>
+
+<footer class="footer">
+  <div class="container">
+    <div class="footer-in">
+      <div>
+        <a class="brand" href="#" aria-label="SiteLens 首页">
+          <svg viewBox="0 0 32 32" fill="none" aria-hidden="true"><rect x="4.5" y="5.5" width="23" height="21" rx="4" stroke="currentColor" stroke-width="2"/><path d="M4.5 11h23" stroke="currentColor" stroke-width="2"/><circle cx="16" cy="18" r="5.2" stroke="currentColor" stroke-width="2"/><path d="m20 22 3.4 3.4" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+          SiteLens <span>站点透视</span>
+        </a>
+        <p>验证优先的 Web 安全扫描器。给安全能解释的结论，给研发能复现的证据。</p>
+      </div>
+      <div class="footer-links">
+        <a href="#problem">为什么</a><a href="#how">工作原理</a><a href="#capabilities">能力</a><a href="#proof">验证</a>
+        <a href="https://cnb.cool/feng-qiao/sitelens" target="_blank" rel="noopener">项目主页</a>
+      </div>
+    </div>
+    <div class="footer-base">
+      <span>© <span id="year">2026</span> SiteLens · 站点透视</span>
+      <span>5.2.3 · WINDOWS · LOCAL-FIRST</span>
+    </div>
+  </div>
+</footer>
+
+<script>
+(function(){
+  var root = document.documentElement;
+  var btn = document.getElementById("themeBtn");
+  var icon = document.getElementById("themeIcon");
+  function paint(){
+    var dark = root.dataset.theme === "dark";
+    if (icon) icon.innerHTML = dark
+      ? '<path d="M20.5 14.5A8.5 8.5 0 0 1 9.5 3.5 7 7 0 1 0 20.5 14.5Z"/>'
+      : '<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/>';
+  }
+  paint();
+  if (btn) btn.addEventListener("click", function(){
+    var next = root.dataset.theme === "dark" ? "light" : "dark";
+    root.dataset.theme = next;
+    try{ localStorage.setItem("sl-site-theme", next); }catch(e){}
+    paint();
+  });
+
+  var nav = document.getElementById("navToggle");
+  var menu = document.getElementById("navMobile");
+  if (nav && menu) nav.addEventListener("click", function(){
+    var open = menu.classList.toggle("open");
+    nav.setAttribute("aria-expanded", open ? "true" : "false");
+  });
+  if (menu) menu.addEventListener("click", function(e){
+    if (e.target.tagName === "A") { menu.classList.remove("open"); if(nav) nav.setAttribute("aria-expanded","false"); }
+  });
+
+  var y = document.getElementById("year");
+  if (y) y.textContent = String(new Date().getFullYear());
+})();
+</script>
+</body>
+</html>
