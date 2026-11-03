@@ -2,18 +2,83 @@
 //
 // 为什么自建而不是引第三方 updater：Wails v3 没有官方签名式自动更新
 // （desktop/README 的已知边界写过「updater 方案尚未实现」）。本壳的更新
-// 语义很简单——**下载整包 → 静默就地覆盖安装 → 重开**，正好是 NSIS 安装器
-// 已经支持的能力（`/S` 静默 + 注册表 InstallDir 就地覆盖），不需要增量差分。
+// 语义很简单——**用户确认后下载整包 → 校验 SHA512 → 静默就地覆盖安装 → 重开**，
+// 正好是 NSIS 安装器已经支持的能力（`/S` 静默 + 注册表 InstallDir 就地覆盖），
+// 不需要增量差分。
 //
-// 本包只放**可测的纯逻辑**：清单解析、版本比较、升级判定。网络下载与
+// 安全边界（D-01/D-05）：源必须 https、清单必须带合法 sha512、清单版本必须
+// 严格高于当前版本、摘要不匹配绝不执行、执行前必须用户显式确认。
+//
+// 本包只放**可测的纯逻辑**：清单解析/校验、版本比较、升级判定。网络下载与
 // 进程拉起留在壳里（需要 Windows 环境）。
 package updater
 
 import (
+	"encoding/base64"
 	"fmt"
+	"net/url"
+	"path"
 	"strconv"
 	"strings"
 )
+
+// FeedScheme 更新源唯一允许的协议。
+//
+// 为什么强制 https（D-01/D-05）：清单与安装包同源，sha512 摘要也来自清单。
+// 明文信道下两者可被一起替换，完整性校验没有任何独立可信度——所以「只支持
+// https」不是体验取舍，而是校验成立的前提。
+const FeedScheme = "https"
+
+// sha512DigestLen SHA512 摘要字节长度（清单里的 sha512 是它的 base64）。
+const sha512DigestLen = 64
+
+// ValidateFeedURL 校验更新源目录地址：必须 https 且带主机名。
+func ValidateFeedURL(raw string) error {
+	u, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil {
+		return fmt.Errorf("更新源地址非法：%w", err)
+	}
+	if u.Scheme != FeedScheme {
+		return fmt.Errorf("更新源必须使用 https（当前 %q）", u.Scheme)
+	}
+	if u.Host == "" {
+		return fmt.Errorf("更新源缺少主机名：%q", raw)
+	}
+	return nil
+}
+
+// ValidateManifest 校验清单必填项与格式：version / path / sha512。
+//
+// fail-closed（D-01）：旧实现在清单缺 sha512 时「跳过校验继续装」，等于把
+// 完整性校验变成可选字段；现在缺摘要或摘要格式非法一律拒绝，绝不进入下载
+// 与执行阶段。
+//
+// path 必须是纯文件名：清单来自网络，不允许通过 ".." 或子目录影响落盘路径
+// （落盘另有 filepath.Base 兜底，这里是第二道闸）。
+func ValidateManifest(m Manifest) error {
+	if strings.TrimSpace(m.Version) == "" {
+		return fmt.Errorf("更新清单缺 version 字段")
+	}
+	if strings.TrimSpace(m.Path) == "" {
+		return fmt.Errorf("更新清单缺 path 字段（无法定位安装包）")
+	}
+	p := strings.TrimSpace(m.Path)
+	if p != path.Base(p) || strings.ContainsAny(p, `/\`) || p == "." || p == ".." {
+		return fmt.Errorf("更新清单 path 非法（必须是纯文件名）：%q", m.Path)
+	}
+	if strings.TrimSpace(m.SHA512) == "" {
+		return fmt.Errorf("更新清单缺 sha512（拒绝更新：无法校验安装包完整性）")
+	}
+	digest, err := base64.StdEncoding.DecodeString(strings.TrimSpace(m.SHA512))
+	if err != nil {
+		return fmt.Errorf("更新清单 sha512 不是合法 base64：%w", err)
+	}
+	if len(digest) != sha512DigestLen {
+		return fmt.Errorf("更新清单 sha512 长度非法（期望 %d 字节，实际 %d 字节）",
+			sha512DigestLen, len(digest))
+	}
+	return nil
+}
 
 // Manifest 更新清单（与 electron-builder 的 latest.yml 兼容子集）。
 //
@@ -130,21 +195,25 @@ type Decision struct {
 // baseURL 是 update 源的目录地址（形如
 // https://github.com/<owner>/<repo>/releases/download/desktop-stable/），
 // 清单里的 path 相对它拼出绝对下载地址。
+//
+// 全部校验 fail-closed（D-01/D-05）：源不是 https、清单缺 version/path/sha512、
+// 摘要格式非法 → 一律 state=error，调用方据此拒绝更新（绝不进入下载与执行）。
+// 「禁降级」由 Compare 保证：清单版本必须**严格高于**当前版本，否则 state=latest。
 func Resolve(baseURL string, m Manifest, currentVersion string) Decision {
 	d := Decision{Current: currentVersion}
-	if strings.TrimSpace(m.Version) == "" {
+	if err := ValidateFeedURL(baseURL); err != nil {
 		d.State = "error"
-		d.Err = fmt.Errorf("更新清单缺 version 字段")
+		d.Err = err
+		return d
+	}
+	if err := ValidateManifest(m); err != nil {
+		d.State = "error"
+		d.Err = err
 		return d
 	}
 	d.Latest = m.Version
 	if Compare(m.Version, currentVersion) <= 0 {
 		d.State = "latest"
-		return d
-	}
-	if strings.TrimSpace(m.Path) == "" {
-		d.State = "error"
-		d.Err = fmt.Errorf("更新清单缺 path 字段（无法定位安装包）")
 		return d
 	}
 	d.State = "available"

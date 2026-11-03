@@ -128,3 +128,77 @@ func TestApplyManagedWritesEngineKeyNames(t *testing.T) {
 		t.Error("ApplyManaged 抹掉了用户的 scan 键")
 	}
 }
+
+// ---- A-01/D-02：壳注入 API token 的纯逻辑（生成/校验/读取） ----
+
+func TestNewAPIToken(t *testing.T) {
+	a, err := NewAPIToken()
+	if err != nil {
+		t.Fatalf("NewAPIToken 失败：%v", err)
+	}
+	if !ValidAPIToken(a) {
+		t.Fatalf("生成的 token 不合法：%q", a)
+	}
+	b, err := NewAPIToken()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a == b {
+		t.Error("两次生成的 token 不应相同")
+	}
+}
+
+func TestValidAPIToken(t *testing.T) {
+	good := strings.Repeat("ab12", 16) // 64 hex
+	cases := map[string]bool{
+		good:                    true,
+		"  " + good + "  ":      true, // 允许首尾空白（配置手滑）
+		"":                      false,
+		"short":                 false,
+		strings.Repeat("a", 63): false,
+		strings.Repeat("a", 65): false,
+		strings.Repeat("z", 64): false, // 非 hex
+		strings.Repeat("g", 64): false,
+		good + " ":              true,
+	}
+	for in, want := range cases {
+		if got := ValidAPIToken(in); got != want {
+			t.Errorf("ValidAPIToken(%q)=%v，期望 %v", in, got, want)
+		}
+	}
+}
+
+func TestAPITokenOf(t *testing.T) {
+	if got := APITokenOf(nil); got != "" {
+		t.Errorf("nil 配置应返回空串，实际 %q", got)
+	}
+	if got := APITokenOf(map[string]any{"web": "not-a-map"}); got != "" {
+		t.Errorf("web 不是 map 应返回空串，实际 %q", got)
+	}
+	if got := APITokenOf(map[string]any{"web": map[string]any{"listen": "x"}}); got != "" {
+		t.Errorf("无 api_token 应返回空串，实际 %q", got)
+	}
+	tok := strings.Repeat("a", 64)
+	if got := APITokenOf(map[string]any{"web": map[string]any{"api_token": " " + tok + " "}}); got != tok {
+		t.Errorf("应去掉首尾空白：%q", got)
+	}
+}
+
+func TestApplyManagedWritesToken(t *testing.T) {
+	cfg := map[string]any{}
+	m := Resolve("/u", "/e")
+	m.APIToken = strings.Repeat("a", 64)
+	ApplyManaged(cfg, "127.0.0.1:5087", m)
+	web, _ := cfg["web"].(map[string]any)
+	if web["api_token"] != m.APIToken {
+		t.Errorf("web.api_token 未写入：%v", web["api_token"])
+	}
+	// 空 token = 不写该键（保持引擎"不鉴权"语义，不写入空串覆盖）
+	cfg2 := map[string]any{}
+	m2 := Resolve("/u", "/e")
+	ApplyManaged(cfg2, "127.0.0.1:5087", m2)
+	web2, _ := cfg2["web"].(map[string]any)
+	if _, exists := web2["api_token"]; exists {
+		t.Errorf("空 token 不应写入键：%v", web2["api_token"])
+	}
+}

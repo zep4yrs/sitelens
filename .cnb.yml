@@ -49,11 +49,15 @@
         # （自己的 go.mod），主模块 `go test ./internal/...` 扫不到，必须单独测。
         # 说明：CNB 把 script 列表项用 && 串成一条，所以每项都要自包含——
         # 用子 shell `(cd ... && ...)`，不要在项之间依赖 cwd 延续。
-        # 纯逻辑包（端口决策）跨平台真跑测试；壳本体（package main）含 Windows
-        # 后端不能被 Linux 执行，故只做 GOOS=windows 的构建 + vet 门禁。
+        # 纯逻辑包（端口决策）跨平台真跑测试；壳本体（package main）含平台后端，
+        # Linux 上做 Windows 交叉构建 + Linux 原生 CGO 构建双门禁：
+        #   - Windows 交叉构建保持交付线不变；
+        #   - Linux 原生构建需要 GTK/WebKitGTK/X11 开发包，验证 desktop 已可移植。
         - (cd desktop-wails && go test ./internal/...)
         - (cd desktop-wails && GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go vet ./...)
         - (cd desktop-wails && GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -o /tmp/sitelens-wails.exe .)
+        # Linux 桌面端：装 GTK3/WebKitGTK4.1/X11 头文件后原生构建 + 打 deb 包
+        - apt-get update -qq && apt-get install -y -qq gcc pkg-config libgtk-3-dev libwebkit2gtk-4.1-dev libx11-dev >/dev/null && bash tools/wails_build_unix.sh
         - test -z "$(cd desktop-wails && gofmt -l .)" || { echo "× desktop-wails 未过 gofmt"; exit 1; }
 
 main:

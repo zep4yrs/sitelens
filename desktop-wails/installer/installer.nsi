@@ -1,4 +1,4 @@
-; SiteLens 站点透视 — Windows 安装器 (NSIS)
+﻿; SiteLens 站点透视 — Windows 安装器 (NSIS)
 ; CI 构建: makensis -V2 -DVERSION=1.0.0 -DSTAGEDIR=SiteLens -DOUTFILE=dist/SiteLens-1.0.0-setup.exe installer/installer.nsi
 ; 注意: 本文件必须保存为 UTF-8 with BOM（makensis 中文脚本要求）
 
@@ -74,7 +74,9 @@ VIAddVersionKey /LANG=2052 "LegalCopyright" "fengqiao"
 
 Section "SiteLens 站点透视" SEC_MAIN
   SetOutPath "$INSTDIR"
-  File /r "${SRCDIR}/${STAGEDIR}/*.*"
+  ; Windows 版 makensis 的 File 不认正斜杠路径段（实测 `C:\stage/SiteLens/*.*`
+  ; 会退化成 `File: Returning to: "C:"` + “no files found”），必须反斜杠。
+  File /r "${SRCDIR}\${STAGEDIR}\*.*"
 
   ; 静默覆盖更新（/S，桌面壳自动更新拉起时）没有完成页——MUI_FINISHPAGE_RUN
   ; 只作用于交互向导的完成页，静默路径下不显式处理就「装完没窗口」，用户以为

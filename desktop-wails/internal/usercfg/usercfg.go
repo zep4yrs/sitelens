@@ -11,7 +11,12 @@
 // 写入即失败（Electron 壳 v3.0.0 踩过同一个坑：首启写配置 EPERM 起不来）。
 package usercfg
 
-import "path/filepath"
+import (
+	"crypto/rand"
+	"encoding/hex"
+	"path/filepath"
+	"strings"
+)
 
 // Managed 受管键的键值对（点分键 → 值）。值一律用绝对路径：
 // 安装目录的只读资产经 cwd 解析，可写数据经绝对路径归到用户区。
@@ -27,6 +32,49 @@ type Managed struct {
 	TechnologiesPath string
 	MLAssetsDir      string
 	OnnxRuntimeDLL   string
+
+	// APIToken 引擎的 web.api_token（A-01/D-02：壳自动注入的本地进程防护令牌）。
+	// 空 = 不写该键（保持引擎"不鉴权"语义）。
+	APIToken string
+}
+
+// APITokenLen 壳注入的 API token 长度（32 字节随机 → 64 个 hex 字符）。
+const APITokenLen = 64
+
+// ValidAPIToken 判定是否为本壳注入格式的 token（恰好 64 个 hex 字符）。
+// 用户手填的其它格式 token 视为"非本壳管理"，壳不改写它（见 main.writeUserConfig）。
+func ValidAPIToken(s string) bool {
+	s = strings.TrimSpace(s)
+	if len(s) != APITokenLen {
+		return false
+	}
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if (c < '0' || c > '9') && (c < 'a' || c > 'f') && (c < 'A' || c > 'F') {
+			return false
+		}
+	}
+	return true
+}
+
+// NewAPIToken 生成 32 字节随机数的 hex（64 字符）。
+// 日志/错误信息中绝不打印该值（调用方负责）。
+func NewAPIToken() (string, error) {
+	buf := make([]byte, 32)
+	if _, err := rand.Read(buf); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(buf), nil
+}
+
+// APITokenOf 从已解析的配置 map 里取 web.api_token（无则空串）。
+func APITokenOf(cfg map[string]any) string {
+	web, ok := cfg["web"].(map[string]any)
+	if !ok {
+		return ""
+	}
+	s, _ := web["api_token"].(string)
+	return strings.TrimSpace(s)
 }
 
 // Resolve 由「用户数据区 userData」与「安装目录引擎目录 engineDir」算出受管路径。
@@ -69,6 +117,10 @@ func (m Managed) WritableDirs() []string {
 func ApplyManaged(cfg map[string]any, listen string, m Managed) {
 	web := sub(cfg, "web")
 	web["listen"] = listen
+	// A-01/D-02：壳注入的本地进程防护令牌（非空才写，空 = 保持"不鉴权"语义）。
+	if strings.TrimSpace(m.APIToken) != "" {
+		web["api_token"] = strings.TrimSpace(m.APIToken)
+	}
 
 	sub(cfg, "store")["data_dir"] = m.DataDir
 	sub(cfg, "intel")["overrides_path"] = m.OverridesPath
