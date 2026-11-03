@@ -109,9 +109,7 @@
       o.exploit = true;
       warnings.push("利用级验证需在 设置 → 引擎配置 开启「利用级验证」总闸；探针只读无害，gov.cn 永久拒绝。");
     }
-    if (verify.settle) {
-      o.graph = true; // 4.0：收集结构化事实图（CWE 关联 / 攻击链视图）
-    }
+    o.graph = true; // 证据链/攻击链：每次扫描都收集结构化事实图（毫秒级开销）
     if (verify.dast && !scope.web) {
       warnings.push("参数注入依赖爬取到的页面与表单，未选 Web 站点时覆盖有限。");
     }

@@ -75,7 +75,7 @@ function setPassive(on) {
   // 互斥联动：被动开启时清空并禁用其余验证；关闭时恢复可选
   var row = document.getElementById("verify-row");
   if (on) {
-    ["afp", "dir", "ws", "dast", "by", "ex", "settle"].forEach(function (k) {
+    ["afp", "dir", "ws", "dast", "by", "ex"].forEach(function (k) {
       verifySet[k] = false;
       var c = document.querySelector('#verify-row [data-verify="' + k + '"]');
       if (c) c.classList.remove("on");
@@ -94,9 +94,6 @@ function setHint() {
   } else if (verifySet.ex) {
     h.textContent = "利用级验证会发送受控影响证明探针，需在 设置 → 引擎配置 开启「利用级验证」总闸；探针只读无害，gov.cn 永久拒绝。";
     h.className = "hint warn";
-  } else if (verifySet.settle) {
-    h.textContent = "事实图：随本次扫描收集入口 / 发现 / 证据 / CWE 关联 / 攻击链，可在「攻击链」页查看并导出 graph JSONL（供 5.0 读取）。";
-    h.className = "hint";
   } else if (verifySet.by) {
     h.textContent = "403 绕过会发送变体重试请求，仅限自有或已书面授权的目标。";
     h.className = "hint warn";
@@ -973,6 +970,12 @@ function renderResult(r, scanId) {
     cell("耗时", (r.duration || 0) + " s") +
     '<div class="cell"><span>安全响应头</span><b><span class="badge ' + gradeCls + '">' +
     esc(grade) + " " + (sec.score || 0) + "分</span></b></div>" + priorCell + "</div>";
+
+  /* 证据链/攻击链入口：本次扫描已收集事实图（默认开启），直接深链到攻击链页 */
+  if (scanId) {
+    html += '<p class="chain-link"><a class="btn ghost small" href="/chain?id=' +
+      encodeURIComponent(String(scanId)) + '">查看证据链 / 攻击链</a></p>';
+  }
 
   /* 扫描覆盖度（diagnostics）：放在摘要之后、明细之前——先讲清"扫了多少/有没有被拦" */
   html += coverageCard(r);
