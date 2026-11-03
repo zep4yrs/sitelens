@@ -1,6 +1,8 @@
 package diag
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -84,6 +86,40 @@ func TestAssetsReportsMissing(t *testing.T) {
 	if a := byName["模板池"]; a.Present {
 		t.Errorf("不存在的模板池应报缺失")
 	}
+}
+
+// TestAssetsMLUsesCandidateResolution 诊断必须与引擎 mlFor 同源解析 ML 资产：
+// 配置值是相对路径（ml_assets）且 cwd 下不存在时，应继续找 cwd 的
+// ml/models/go/ml_assets / data/go/ml_assets 等候选，而不是直接报缺失。
+// 旧实现只 stat cfg.ML.AssetsDir，会把「资产在别处、进程 cwd 不在安装目录」
+// 误报为「ML 模型资产缺失」。
+func TestAssetsMLUsesCandidateResolution(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir) // 模拟从仓库根/任意 cwd 启动
+	assets := filepath.Join(dir, "ml", "models", "go", "ml_assets")
+	if err := os.MkdirAll(assets, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{
+		"cve-tech.meta.json", "cve-tech.vocab.txt", "cve-tech.idf.f32", "cve-tech.coef.f32",
+		"cwe-type.meta.json", "cwe-type.vocab.txt", "cwe-type.idf.f32", "cwe-type.coef.f32",
+	} {
+		if err := os.WriteFile(filepath.Join(assets, name), []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	cfg := config.Default()
+	cfg.ML.AssetsDir = "ml_assets" // 故意指向不存在的相对路径
+
+	for _, a := range Assets(cfg) {
+		if a.Name == "ML 模型资产" {
+			if !a.Present {
+				t.Fatalf("cwd 存在 ml/models/go/ml_assets 时应判就位，得到：%+v", a)
+			}
+			return
+		}
+	}
+	t.Fatal("诊断结果缺少「ML 模型资产」条目")
 }
 
 // dump 把任意值转成字符串（用于扫描结构化摘要里的秘密值）。

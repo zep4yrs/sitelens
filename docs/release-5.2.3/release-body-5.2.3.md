@@ -114,6 +114,8 @@
 ## 修复
 
 - 目录探测不再把 WAF/兜底 200 页当成真实文件（xgzwk 类站点误报修复）；
+- ML 资产诊断假缺失：诊断与引擎统一按「配置 → cwd → 可执行文件相对」解析
+  ML 资产目录，CLI/壳从非安装目录启动不再误报缺失（实际预测未跳过）；
 - `csrf-form`：GET 搜索表单只认强状态字段，跨源表单（文章内嵌 jsfiddle/codepen）不再误报；
 - CLI `scan` 补齐 `[modules]` 配置接线（目录/子域/WebShell/指纹/端口/敏感信息，默认关）；
 - 安装器写入 `InstallLocation` 并兼容旧安装升级目录；
@@ -150,8 +152,8 @@
   明细见 [`benchmark-selfhosted-2026-11-01.md`](benchmark-selfhosted-2026-11-01.md)、
   [`benchmark-wsl-standard-2026-11-01.md`](benchmark-wsl-standard-2026-11-01.md)；
 - 待补：完整标准矩阵、SARIF GitHub code scanning 解析；
-  安装包体积 / SHA256：135,590,048 字节（约 129.3 MiB）/
-  `8081E3E9C67FDDBB44F7A6E36AFBC7F0C2EDCE054498AE162477DB645AD0C436`。
+  安装包体积 / SHA256：135,605,744 字节（约 129.3 MiB）/
+  `32ACC9113B722E6B3992C34CE6336060C8F00C50BD3BE3674947D5F4053C5104`。
 
 ## 已知限制
 
@@ -170,8 +172,8 @@
 ## 下载
 
 - 桌面安装器（推荐，全能力）：`SiteLens-Setup-5.2.3.exe`
-  135,590,048 字节（约 129.3 MiB），SHA256
-  `8081E3E9C67FDDBB44F7A6E36AFBC7F0C2EDCE054498AE162477DB645AD0C436`
+  135,605,744 字节（约 129.3 MiB），SHA256
+  `32ACC9113B722E6B3992C34CE6336060C8F00C50BD3BE3674947D5F4053C5104`
   —— **只含引擎与界面，不含命令行工具**；已自签名（证书见上）
 - 命令行工具（CLI，独立分发）：`npm install -g @fengqiao666/sitelens-cli`
 - 升级：桌面端自动覆盖升级；离线环境下载安装器覆盖安装。
