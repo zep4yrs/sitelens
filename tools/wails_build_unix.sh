@@ -42,7 +42,7 @@ mkdir -p "$ENGINE_DIR/data"
 # 1) 壳：POSIX 平台必须开 CGO（Wails 的 GTK/Cocoa 后端是 cgo）。
 ( cd "$ROOT/desktop-wails" && \
   CGO_ENABLED=1 GOOS="$OS" GOARCH="$ARCH" \
-  go build -trimpath -ldflags "-s -w" -o "$OUT/sitelens-wails" . )
+  go build -tags gtk3 -trimpath -ldflags "-s -w" -o "$OUT/sitelens-wails" . )
 
 # 2) 引擎：与壳同平台同架构（CGO 关掉，纯 Go 单文件）。
 ( cd "$ROOT" && \
