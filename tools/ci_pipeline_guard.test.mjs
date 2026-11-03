@@ -3,6 +3,9 @@
 // 32 位 PE 在没有 display driver 时秒退（err:winediag:nodrv_CreateWindow），
 // 而不是缺 32 位库。行为一致性靠测试守住，不靠注释。
 //
+// 另外守**生效中**的 main 回归流水线（E-01/E-09）：步骤不被注释吞掉、
+// benchmark 自检必须在「前端转义回归」里真跑、-race 覆盖范围与验收报告一致。
+//
 // node --test 运行（Node 22+ 无参自动发现；带目录参数会被当模块路径）。
 import { test } from "node:test";
 import assert from "node:assert";
@@ -11,11 +14,11 @@ import { readFileSync } from "node:fs";
 const cnb = readFileSync(new URL("../.cnb.yml", import.meta.url), "utf8");
 const nsisHelper = readFileSync(new URL("./ci_nsis_exe.sh", import.meta.url), "utf8");
 
-/** 取出 v* tag 触发的那一节（wine / NSIS 相关 job 都在这里） */
+/** 取出 v* tag 触发的那一节（只取**生效中**的顶层 `"v*":`，不取注释里的历史配置） */
 function tagSection() {
-  const i = cnb.indexOf('"v*":');
-  assert.ok(i > 0, "未找到 v* tag 流水线节");
-  return cnb.slice(i);
+  const m = cnb.match(/^"v\*":\s*$/m);
+  assert.ok(m, "未找到生效中的 v* tag 流水线节");
+  return cnb.slice(m.index);
 }
 
 /**
@@ -63,20 +66,20 @@ test("所有 wine 调用都套了 xvfb-run（无 display driver 时必须）", (
   );
 });
 
-test("electron-builder 调用（隐式经 wine）也必须在 xvfb-run 下", (t) => {
+test("Wails tag 流水线：NSIS 统一经 ci_nsis_exe.sh，不直接调 makensis/electron-builder", (t) => {
   if (skipIfRetired(t)) return;
   const section = tagSection();
-  const eb = section
+  const active = section
     .split("\n")
     .map((l) => l.trim())
-    .filter((l) => l && !l.startsWith("#"))
-    // 只认真正的调用：行首/管道后是 electron-builder 或 npx electron-builder
-    .filter((l) => /(^|[\s;|&(])(npx\s+)?electron-builder([\s;|&)]|$)/.test(l))
-    // 排除 ELECTRON_BUILDER_* 环境变量行
-    .filter((l) => !/^export\s+ELECTRON_/.test(l));
-  assert.ok(eb.length > 0, "未找到 electron-builder 调用");
-  for (const l of eb) {
-    assert.ok(l.includes("xvfb-run"), `electron-builder 调用缺少 xvfb-run: ${l}`);
+    .filter((l) => l && !l.startsWith("#"));
+  assert.ok(
+    active.some((l) => l.includes("tools/release_local.sh --publish")),
+    "tag 流水线应调用 tools/release_local.sh --publish（内部经 ci_nsis_exe.sh 套 xvfb-run）"
+  );
+  for (const l of active) {
+    assert.ok(!/electron-builder/.test(l), `Wails 线不应再调 electron-builder: ${l}`);
+    assert.ok(!/^makensis\b/.test(l), `不得裸调 makensis（应由 ci_nsis_exe.sh 包裹）: ${l}`);
   }
 });
 
@@ -86,35 +89,39 @@ test("tag 流水线安装了 xvfb（含 xauth，xvfb-run 依赖它）", (t) => {
   assert.match(tagSection(), /apt-get install[^\n]*\bxauth\b/, "未安装 xauth");
 });
 
-test("流水线不再产出引擎裸包（4.0 起桌面版是唯一交付形态）", (t) => {
+test("Wails tag 流水线：产物与上传路径（安装包 + Linux deb，不传 latest.yml）", (t) => {
   if (skipIfRetired(t)) return;
   const section = tagSection();
-  // lite / full / linux 打包 stage 已移除：构建/上传指令里不得再引入
-  assert.ok(!section.includes("ci_nsis_exe.sh"), "不应再有 makensis 裸包构建");
-  // 上传只有一条路：v3.0.0 版本页 exe（release_upload.sh，带重试）。
-  // CNB 不做自动更新源（desktop-stable 已删，更新源唯一在 GitHub）。
-  const uploads = section.split("\n").filter((l) => l.includes("release_upload.sh"));
-  const replaces = section.split("\n").filter((l) => l.includes("release_replace.sh"));
-  assert.strictEqual(uploads.length, 1, `版本页上传应为 1 条，实际 ${uploads.length}`);
+  const active = section
+    .split("\n")
+    .map((l) => l.trim())
+    .filter((l) => l && !l.startsWith("#"));
+  // 1) 构建：Windows 安装包走 release_local.sh；Linux deb 走 wails_build_unix.sh
+  assert.ok(
+    active.some((l) => l.includes("tools/release_local.sh --publish")),
+    "缺少 Windows 安装包构建+上传（tools/release_local.sh --publish）"
+  );
+  assert.ok(
+    active.some((l) => l.includes("tools/wails_build_unix.sh")),
+    "缺少 Linux deb 构建（tools/wails_build_unix.sh）"
+  );
+  // 2) 附件上传只有 Linux deb 一条显式 release_upload.sh（exe 在 release_local.sh 内上传）
+  const uploads = active.filter((l) => l.includes("release_upload.sh"));
+  const replaces = active.filter((l) => l.includes("release_replace.sh"));
+  assert.strictEqual(uploads.length, 1, `显式附件上传应为 1 条（Linux deb），实际 ${uploads.length}`);
   assert.strictEqual(replaces.length, 0, "CNB 不做更新源，不应有 desktop-stable 替换步骤");
-  for (const l of uploads) {
-    assert.ok(!/lite|setup-lite|setup-full|full-win64|linux-amd64/.test(l),
-      `上传指令不应涉及裸包: ${l.trim()}`);
-  }
-  // 版本页安装包与发行说明（SHA256 占位符）必须就位；CNB 不传 latest.yml/blockmap
-  assert.match(section, /SiteLens-Setup-3\.0\.0\.exe/);
-  assert.match(section, /__SHA256__/, "发行说明 SHA256 占位符替换步骤缺失");
-  assert.match(section, /SITLENS_BODY_FILE/, "发行说明未挂载");
-  assert.ok(!/release_upload\.sh[^\n]*latest\.yml/.test(section), "CNB 不应上传 latest.yml（更新源在 GitHub）");
+  assert.ok(
+    uploads[0].includes("SiteLens_*_amd64.deb"),
+    `显式上传应为 Linux deb，实际：${uploads[0]}`
+  );
+  // 3) 不传 latest.yml / blockmap（自动更新源唯一在 GitHub desktop-stable）
+  assert.ok(!/release_upload\.sh[^\n]*latest\.yml/.test(section), "CNB 不应上传 latest.yml");
+  assert.ok(!active.some((l) => /\.blockmap/.test(l)), "CNB 不应上传 blockmap");
 });
 
-test("环境变量前置导出：electron-builder 相关 export 必须在 npm ci 之前", (t) => {
+test("Wails tag 流水线：GOTOOLCHAIN=auto（desktop go.mod 要求 1.26.9）", (t) => {
   if (skipIfRetired(t)) return;
-  const section = tagSection();
-  const iExport = section.indexOf("export ELECTRON_MIRROR");
-  const iNpm = section.indexOf("npm ci");
-  assert.ok(iExport > 0, "未找到 ELECTRON_MIRROR 导出");
-  assert.ok(iNpm === -1 || iExport < iNpm, "ELECTRON_MIRROR 必须早于 npm ci");
+  assert.match(tagSection(), /export GOTOOLCHAIN=auto/, "缺少 GOTOOLCHAIN=auto 导出");
 });
 
 test("ci_nsis_exe.sh：makensis 带 UTF-8 locale，且不拿 wine 退出码当成败判据", () => {
@@ -130,4 +137,64 @@ test("tag 流水线如出现 tar 解包必须 --no-same-owner（跨平台属主�
   for (const t of tars) {
     assert.match(t, /--no-same-owner/, `tar 解包缺少 --no-same-owner: ${t.trim()}`);
   }
+});
+
+// ---------------------------------------------------------------------------
+// E-01：生效中回归流水线的「步骤完整性」门禁
+//
+// 背景：`.cnb.yml` 里 `node benchmark/score.mjs --selftest` 曾被写成
+// 「上一行末尾 + 字面量反引号 n」的形式，YAML 把 ` #` 之后全部当注释，
+// 于是该步骤**从未执行**且 CI 一直是绿的（门禁静默失效）。
+// 上面的 tagSection() 只守已停用的 v* 节，抓不到这个问题；此处专门守 main 节。
+// ---------------------------------------------------------------------------
+
+/** 取出**生效中**的回归流水线块（`.main: &regression` 之后、顶层 `main:` 之前）。 */
+function regressionBlock() {
+  const start = cnb.indexOf(".main: &regression");
+  assert.ok(start > 0, "未找到 .main: &regression 回归流水线定义");
+  const rest = cnb.slice(cnb.indexOf("\n", start) + 1);
+  const end = rest.match(/^main:\s*$/m);
+  assert.ok(end, "未找到 main: 触发节（回归流水线块边界）");
+  return rest.slice(0, end.index);
+}
+
+/** 取某个 stage 的 script 列表项（只认真实 list item，跳过 `script:` 键、空行与注释）。 */
+function stageScriptItems(block, stageName) {
+  const lines = block.split("\n");
+  const i = lines.findIndex((l) => l.trim() === `- name: ${stageName}`);
+  assert.ok(i >= 0, `未找到 stage「${stageName}」`);
+  const items = [];
+  for (let j = i + 1; j < lines.length; j++) {
+    const t = lines[j].trim();
+    if (t.startsWith("- name:")) break; // 进入下一个 stage
+    if (!t.startsWith("- ")) continue; // script: / 空行 / 注释
+    items.push(t.slice(2));
+  }
+  return items;
+}
+
+test("回归流水线不含被吞掉的换行（字面量反引号 n）", () => {
+  const block = regressionBlock();
+  assert.ok(
+    !block.includes("`n"),
+    "检测到字面量反引号 n：YAML 会把其后的步骤当注释吞掉，请改为真实换行"
+  );
+});
+
+test("「前端转义回归」stage 必须执行 benchmark 评分器自检（E-01 防退化）", () => {
+  const items = stageScriptItems(regressionBlock(), "前端转义回归");
+  assert.ok(items.length >= 5, `前端 stage 项数异常（${items.length}），疑似步骤被合并或注释掉`);
+  const hit = items.some((it) => /^node\s+benchmark\/score\.mjs\s+--selftest/.test(it));
+  assert.ok(
+    hit,
+    `「前端转义回归」缺少 benchmark/score.mjs --selftest；实际项：\n  ${items.join("\n  ")}`
+  );
+});
+
+test("回归流水线的 -race 门禁覆盖 ./cmd/...（与验收报告声明一致，E-09）", () => {
+  const items = stageScriptItems(regressionBlock(), "引擎回归");
+  const race = items.find((it) => /^go\s+test\s+-race\b/.test(it));
+  assert.ok(race, "未找到 -race 门禁");
+  assert.match(race, /\.\/internal\/\.\.\./, `-race 应覆盖 ./internal/...：${race}`);
+  assert.match(race, /\.\/cmd\/\.\.\./, `-race 应覆盖 ./cmd/...（与 docs/验收报告 声明一致）：${race}`);
 });

@@ -33,11 +33,12 @@ bash "$ROOT/tools/wails_build.sh"
 
 STAGE="$ROOT/dist/wails/SiteLens"
 [ -f "$STAGE/sitelens.exe" ] || { echo "× 壳产物缺失：$STAGE/sitelens.exe" >&2; exit 1; }
-[ -f "$STAGE/engine/sitelens.exe" ] || { echo "× 引擎产物缺失：$STAGE/engine/sitelens.exe" >&2; exit 1; }
+# 5.2 起引擎与 CLI 拆成两个二进制：引擎产物名是 sitelens-engine.exe
+[ -f "$STAGE/engine/sitelens-engine.exe" ] || { echo "× 引擎产物缺失：$STAGE/engine/sitelens-engine.exe" >&2; exit 1; }
 
 # 2) 平台复验（双保险：构建脚本已校验，这里再独立确认一次产物布局）。
 echo "== [2/4] 校验产物为 Windows PE =="
-for f in "$STAGE/sitelens.exe" "$STAGE/engine/sitelens.exe"; do
+for f in "$STAGE/sitelens.exe" "$STAGE/engine/sitelens-engine.exe"; do
   head2="$(head -c2 "$f")"
   [ "$head2" = "MZ" ] || { echo "× $f 非 Windows PE（文件头非 MZ）" >&2; exit 1; }
 done
@@ -62,7 +63,8 @@ if [ "$PUBLISH" = "1" ]; then
   echo "== [4/4] 上传 CNB Release =="
   : "${CNB_TOKEN:?需要 CNB_TOKEN 环境变量（CNB 访问令牌）}"
   export SITLENS_TAG="$TAG"
-  BODY="$ROOT/tools/release-body-$VER.md"
+  BODY="$ROOT/docs/release-$VER/release-body-$VER.md"
+[ -f "$BODY" ] || BODY="$ROOT/tools/release-body-$VER.md"
   [ -f "$BODY" ] && export SITLENS_BODY_FILE="$BODY"
   bash "$ROOT/tools/release_upload.sh" "$OUTFILE"
   echo "  ✓ 已上传（含发行说明：${SITLENS_BODY_FILE:-无}）"
