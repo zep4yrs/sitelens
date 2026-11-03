@@ -74,8 +74,12 @@ test("Wails tag 流水线：NSIS 统一经 ci_nsis_exe.sh，不直接调 makensi
     .map((l) => l.trim())
     .filter((l) => l && !l.startsWith("#"));
   assert.ok(
-    active.some((l) => l.includes("tools/release_local.sh --publish")),
-    "tag 流水线应调用 tools/release_local.sh --publish（内部经 ci_nsis_exe.sh 套 xvfb-run）"
+    active.some((l) => /tools\/release_local\.sh\b/.test(l) && !l.includes("--publish")),
+    "tag 流水线应先调用 tools/release_local.sh（只构建，上传统一走 release_upload.sh）"
+  );
+  assert.ok(
+    active.some((l) => l.includes("tools/release_upload.sh")),
+    "tag 流水线应调用 tools/release_upload.sh（内部经 ci_nsis_exe.sh 打 NSIS 后上传）"
   );
   for (const l of active) {
     assert.ok(!/electron-builder/.test(l), `Wails 线不应再调 electron-builder: ${l}`);
@@ -96,24 +100,25 @@ test("Wails tag 流水线：产物与上传路径（安装包 + Linux deb，不�
     .split("\n")
     .map((l) => l.trim())
     .filter((l) => l && !l.startsWith("#"));
-  // 1) 构建：Windows 安装包走 release_local.sh；Linux deb 走 wails_build_unix.sh
+  // 1) 构建：Windows 安装包走 release_local.sh（只构建）；Linux deb 走 wails_build_unix.sh
   assert.ok(
-    active.some((l) => l.includes("tools/release_local.sh --publish")),
-    "缺少 Windows 安装包构建+上传（tools/release_local.sh --publish）"
+    active.some((l) => /tools\/release_local\.sh\b/.test(l) && !l.includes("--publish")),
+    "缺少 Windows 安装包构建（tools/release_local.sh）"
   );
   assert.ok(
     active.some((l) => l.includes("tools/wails_build_unix.sh")),
     "缺少 Linux deb 构建（tools/wails_build_unix.sh）"
   );
-  // 2) 附件上传只有 Linux deb 一条显式 release_upload.sh（exe 在 release_local.sh 内上传）
+  // 2) 上传：一条 release_upload.sh 同时传 exe + deb（发行说明占位符一次回填）
   const uploads = active.filter((l) => l.includes("release_upload.sh"));
   const replaces = active.filter((l) => l.includes("release_replace.sh"));
-  assert.strictEqual(uploads.length, 1, `显式附件上传应为 1 条（Linux deb），实际 ${uploads.length}`);
+  assert.strictEqual(uploads.length, 1, `附件上传应为 1 条（exe+deb 合并），实际 ${uploads.length}`);
   assert.strictEqual(replaces.length, 0, "CNB 不做更新源，不应有 desktop-stable 替换步骤");
   assert.ok(
-    uploads[0].includes("SiteLens_*_amd64.deb"),
-    `显式上传应为 Linux deb，实际：${uploads[0]}`
+    uploads[0].includes("SiteLens-Setup-*.exe") && uploads[0].includes("SiteLens_*_amd64.deb"),
+    `上传应同时包含 Windows 安装包与 Linux deb，实际：${uploads[0]}`
   );
+  assert.match(section, /SITLENS_BODY_FILE/, "发行说明未挂载");
   // 3) 不传 latest.yml / blockmap（自动更新源唯一在 GitHub desktop-stable）
   assert.ok(!/release_upload\.sh[^\n]*latest\.yml/.test(section), "CNB 不应上传 latest.yml");
   assert.ok(!active.some((l) => /\.blockmap/.test(l)), "CNB 不应上传 blockmap");
