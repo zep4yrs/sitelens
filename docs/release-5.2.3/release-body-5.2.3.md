@@ -152,8 +152,8 @@
   明细见 [`benchmark-selfhosted-2026-11-01.md`](benchmark-selfhosted-2026-11-01.md)、
   [`benchmark-wsl-standard-2026-11-01.md`](benchmark-wsl-standard-2026-11-01.md)；
 - 待补：完整标准矩阵、SARIF GitHub code scanning 解析；
-  安装包体积 / SHA256：135,605,744 字节（约 129.3 MiB）/
-  `32ACC9113B722E6B3992C34CE6336060C8F00C50BD3BE3674947D5F4053C5104`。
+  安装包体积 / SHA256：135,589,522 字节（约 129.3 MiB）/
+  `241BF310FA106EF193C74725B5C98BC8166CE4AC0B1DD3D1EBF7B2B90B052233`。
 
 ## 已知限制
 
@@ -162,7 +162,7 @@
 - 召回只有本地子集基线（合成 + DVWA/xsslabs/upload-labs）；完整标准矩阵/授权站点未跑；
 - 无埋点/遥测；诊断包不含日志全文；更新通道无官方 checksum；
 - 白盒污点无 sanitizer；非 HTTP 协议通道 DNS 重绑定缺口未修；ML 排序模型未交付；
-- 正式交付仅 Windows；品牌更名暂缓；a11y 20 项允许例外计划 5.3 补；
+- 正式交付：Windows 安装包；Linux deb 可构建（未签名）；macOS 已移植待实机验证；品牌更名暂缓；a11y 20 项允许例外计划 5.3 补；
 - 安装包使用**自签名**证书（内部验收口径，CN=SiteLens Internal Self-Signed，
   RSA3072/SHA256 + DigiCert 时间戳；安装器/壳/引擎均已签）：公网用户会看到
   “未知发布者”，正式发布前需替换为受信任代码签名证书；
@@ -172,9 +172,10 @@
 ## 下载
 
 - 桌面安装器（推荐，全能力）：`SiteLens-Setup-5.2.3.exe`
-  135,605,744 字节（约 129.3 MiB），SHA256
-  `32ACC9113B722E6B3992C34CE6336060C8F00C50BD3BE3674947D5F4053C5104`
+  135,589,522 字节（约 129.3 MiB），SHA256
+  `241BF310FA106EF193C74725B5C98BC8166CE4AC0B1DD3D1EBF7B2B90B052233`
   —— **只含引擎与界面，不含命令行工具**；已自签名（证书见上）
+- Linux 桌面：`SiteLens_5.2.3_amd64.deb`（134,650,064 字节，SHA256 `ac0b990b54f2dcc46b98a65bb56f5f6862981ffe2866bf9e9340c0f42d127538`）
 - 命令行工具（CLI，独立分发）：`npm install -g @fengqiao666/sitelens-cli`
 - 升级：桌面端自动覆盖升级；离线环境下载安装器覆盖安装。
 
