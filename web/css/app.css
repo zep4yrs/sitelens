@@ -129,7 +129,12 @@ body{animation:sl-fadeIn var(--t-fast) var(--ease)}
 .tw-toolbar .top-nav{flex:none}
 .tw-toolbar .top-right{margin-left:6px}
 .tw-pagetitle{font-size:14px;font-weight:600;color:var(--foreground)}
-.tw-canvas{flex:1;overflow-y:auto}
+/* 右区必须是「列 flex + min-height:0」，.tw-canvas 的 flex:1/overflow-y:auto 才有约束。
+   此前 .tw-right 只在窄屏媒体查询里定义过——桌面宽度下它是 display:block，
+   画布高度 = 内容高度（无上限），内容一高（如历史详情 5.7 万 px）画布跟着长，
+   scrollHeight-clientHeight=0，整页滚不动。 */
+.tw-right{flex:1;min-width:0;display:flex;flex-direction:column;min-height:0}
+.tw-canvas{flex:1;min-height:0;overflow-y:auto}
 
 /* ============ 动效基准（25C Corporate 全站统一） ============
    签名缓动 cubic-bezier(0.2,0,0,1)；时长三档 快150/标准250/慢400；
@@ -584,9 +589,6 @@ html:not(.dark) .badge.info { color: #075985; }
 .wb-hero-recent-item:hover { background: var(--accent); color: var(--foreground); }
 .wb-hero-recent-item .hint { margin: 0 0 0 auto; white-space: nowrap; }
 .chain-link { margin: 10px 0 0; }
-.tw-footlinks { margin: 16px 16px 0; display: flex; gap: 14px; font-size: 11.5px; }
-.tw-footlinks a { color: var(--muted-fg); }
-.tw-footlinks a:hover { color: var(--foreground); }
 
 /* ==========================================================================
    6.x UI 体验：设置页左侧「设置分组」纵向导航（随 ≤900px 侧栏抽屉折叠）

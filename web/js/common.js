@@ -717,6 +717,49 @@
     }
     return h;
   };
+  /* ---------------- URL fragment token 引导（A-01/D-02） ----------------
+     桌面壳把引擎的 web.api_token 经 URL fragment 交给前端（fragment 不发给
+     服务端、不进访问日志）。这里识别 → 写入本机存储 → **立刻从地址栏抹掉**，
+     避免 token 留在可截图/可复制的 URL 里；非法格式（长度/字符集不符）同样
+     抹掉但不写入。纯函数 + 依赖注入，便于 node 单测（token.test.mjs）。
+     必须在任何 API 请求之前执行——本文件在页面所有业务脚本之前加载。 */
+  function bootstrapTokenFromFragment(loc, store, replace) {
+    loc = loc || {};
+    var hash = String(loc.hash || "");
+    if (hash.charAt(0) !== "#") return false;
+    var raw = hash.slice(1);
+    // 只接管壳注入的 fragment（token=/si= 开头）；页面自身 hash 路由（如 #about）不碰。
+    if (raw.indexOf("token=") !== 0 && raw.indexOf("si=") !== 0) return false;
+    var clean = String(loc.pathname || "/") + String(loc.search || "");
+    if (replace) replace(clean); // 壳注入的 fragment 一律抹掉（含非法内容，避免留在地址栏）
+    var tok = "", si = "";
+    var segs = raw.split("&");
+    for (var i = 0; i < segs.length; i++) {
+      var eq = segs[i].indexOf("=");
+      if (eq < 0) continue;
+      var k = segs[i].slice(0, eq), v = segs[i].slice(eq + 1);
+      if (k === "token") tok = v;
+      else if (k === "si") si = v;
+    }
+    // si= 是壳静态信息（GetInfo 的一次性注入，见 bridge.js）：原样交给 bridge.js 解码。
+    // 同时持久化到 localStorage——壳只在首屏 URL 里带 fragment，/settings 等页面是
+    // 新文档、fragment 不会跟过去，bridge.js 每页从 storage 读回。
+    if (si) {
+      try { window.__slShellInfoB64 = si; } catch (e) {}
+      try { localStorage.setItem("sl_shell_si", si); } catch (e) {}
+    }
+    if (/^[0-9a-fA-F]{64}$/.test(tok)) {
+      if (store) store(tok.toLowerCase());
+      return true;
+    }
+    return false; // 非法 token：只清理 fragment，不写 token
+  }
+  window.slBootstrapToken = bootstrapTokenFromFragment;
+  try {
+    bootstrapTokenFromFragment(location, window.slStoreToken, function (u) {
+      try { history.replaceState(null, "", u); } catch (e) {}
+    });
+  } catch (e) { /* 极旧环境无 history：忽略（token 仍已写入） */ }
   /* ---------------- API 与错误分级（BUG-034）----------------
      三类失败必须可区分，且必须带上下文：
        1) 网络失败（引擎未启动 / 已退出 / 端口不通）→ 浏览器原生 "Failed to fetch"
