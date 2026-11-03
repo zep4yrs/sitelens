@@ -149,16 +149,18 @@ function setHint() {
   });
 })();
 
-/* G09/G10 高级 Web 检测子开关（默认全关；提交为 options.dast 对象）。
-   UI 在左栏「高级 Web 检测」折叠组，五个 checkbox 与 ADV_KEYS 一一对应。 */
+/* G09/G10 高级 Web 检测：与「范围/验证」同款多选下拉（chips），默认全关。
+   提交为 options.dast 对象；chips 变更同时同步扫描中提示。 */
 var advSet = { idor: false, logic: false, upload: false, deser: false, proto: false };
-(function () {
-  scanOpts.ADV_KEYS.forEach(function (k) {
-    var el = document.getElementById("adv-" + k);
-    if (el) el.addEventListener("change", function () {
-      advSet[k] = !!el.checked;
-      updateAdvNote();
-    });
+(function wireAdv() {
+  var row = document.getElementById("adv-row");
+  if (!row) return;
+  row.addEventListener("click", function (e) {
+    var el = e.target.closest(".chip");
+    if (!el) return;
+    el.classList.toggle("on");
+    advSet[el.getAttribute("data-adv")] = el.classList.contains("on");
+    updateAdvNote();
   });
 })();
 
@@ -1555,6 +1557,7 @@ initHero();
   }
   bindMulti("dd-scope", "dd-scope-label", "扫描范围");
   bindMulti("dd-verify", "dd-verify-label", "验证方式");
+  bindMulti("dd-adv", "dd-adv-label", "高级检测（默认关）");
   document.addEventListener("click", function (e) {
     if (!e.target.closest || e.target.closest(".cdd")) return;
     document.querySelectorAll(".cdd.open").forEach(function (c) { c.classList.remove("open"); });
