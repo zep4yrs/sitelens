@@ -218,16 +218,7 @@
     padding:3px 8px;pointer-events:none}
   .audit-ed-fallback-hint[hidden]{display:none!important}
 
-  /* ===== G09/G10 高级 Web 检测：折叠组 + 扫描中提示 + 结果卡（工作台页内样式） ===== */
-  .tw-adv{margin:12px 0;border:1px solid var(--border);border-radius:8px;background:var(--card)}
-  .tw-adv>summary{cursor:pointer;padding:8px 10px;font-size:12.5px;color:var(--foreground);
-    display:flex;align-items:center;gap:6px;list-style:none}
-  .tw-adv>summary::-webkit-details-marker{display:none}
-  .tw-adv>summary::before{content:"▸";color:var(--muted-fg);transition:transform .15s}
-  .tw-adv[open]>summary::before{transform:rotate(90deg)}
-  .tw-adv>summary .hint{margin:0 0 0 auto;font-size:11px;opacity:.8}
-  .tw-adv-body{padding:6px 10px 2px;border-top:1px solid var(--border)}
-  .tw-adv-body .tw-toggle{margin:6px 0;font-size:12px}
+  /* ===== G09/G10 高级 Web 检测：同款多选下拉 + 扫描中提示 + 结果卡（工作台页内样式） ===== */
   .adv-note{margin:2px 0 0;padding:4px 12px;font-size:11.5px;color:var(--muted-fg);
     border-left:2px solid var(--info);background:color-mix(in srgb,var(--info) 6%,transparent)}
   .adv-note[hidden]{display:none!important}
@@ -252,7 +243,6 @@
   <!-- ============ 左：控制台 ============ -->
   <aside class="tw-left" id="tw-left">
     <div class="tw-modes tabs" id="tw-modeslot"></div>
-    <p class="tw-note">主动验证模块默认关闭，需要时在「验证」中勾选。</p>
 
     <!-- 综合扫描：控制 -->
     <section class="tabpanel active tw-panel" id="tab-scan">
@@ -304,27 +294,22 @@
               <span class="seg-opt" data-st="full" title="all 全量模板 + nuclei 上限 6000 + 全字典 + 全端口集">完整</span>
             </div>
           </div>
-          <!-- G09/G10 高级 Web 检测（默认全关；提交为 options.dast 对象，五键布尔） -->
-          <details class="tw-adv" id="adv-group">
-            <summary>高级 Web 检测<span class="hint">默认 dry-run / 零额外请求</span></summary>
-            <div class="tw-adv-body">
-              <label class="tw-toggle" title="多会话只读越权矩阵：水平/垂直/互读判定，请求预算内只读">
-                <input type="checkbox" id="adv-idor" class="tw-switch" aria-label="越权矩阵"> 越权矩阵
-              </label>
-              <label class="tw-toggle" title="业务逻辑探针（数量/价格/优惠券/幂等键），默认 dry-run 零请求">
-                <input type="checkbox" id="adv-logic" class="tw-switch" aria-label="业务逻辑"> 业务逻辑
-              </label>
-              <label class="tw-toggle" title="上传绕过计划（扩展名/Content-Type/魔术字节变体），默认 dry-run ≤8 次">
-                <input type="checkbox" id="adv-upload" class="tw-switch" aria-label="上传绕过"> 上传绕过
-              </label>
-              <label class="tw-toggle" title="反序列化入口标记识别 + 可选无害探测（默认只识别）">
-                <input type="checkbox" id="adv-deser" class="tw-switch" aria-label="反序列化"> 反序列化
-              </label>
-              <label class="tw-toggle" title="WebSocket/HTTP2：RFC6455 握手、明文 WS、Origin 不校验、h2 ALPN/h2c（每 URL ≤2 连接）">
-                <input type="checkbox" id="adv-proto" class="tw-switch" aria-label="WS HTTP2 检测"> WS/HTTP2
-              </label>
+          <!-- G09/G10 高级 Web 检测（默认全关；与「范围/验证」同款多选下拉，提交为 options.dast 对象） -->
+          <div class="opt-group">
+            <span class="g-label">高级</span>
+            <div class="cdd cdd-multi" id="dd-adv">
+              <button type="button" class="cdd-btn"><span class="cdd-label" id="dd-adv-label">高级检测（默认关）</span><svg class="cdd-chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg></button>
+              <div class="cdd-pop cdd-popfit">
+                <div class="chip-row" id="adv-row">
+                  <span class="chip" data-adv="idor" title="多会话只读越权矩阵：水平/垂直/互读判定，需提供多角色会话；默认关">越权矩阵</span>
+                  <span class="chip" data-adv="logic" title="业务逻辑探针（数量/价格/优惠券/幂等键），默认 dry-run 零请求">业务逻辑</span>
+                  <span class="chip" data-adv="upload" title="上传绕过计划（扩展名/Content-Type/魔术字节变体），默认 dry-run ≤8 次">上传绕过</span>
+                  <span class="chip" data-adv="deser" title="反序列化入口标记识别 + 可选无害探测（默认只识别）">反序列化</span>
+                  <span class="chip" data-adv="proto" title="WebSocket/HTTP2：RFC6455 握手、明文 WS、Origin 不校验、h2 ALPN/h2c（每 URL ≤2 连接）">WS/HTTP2</span>
+                </div>
+              </div>
             </div>
-          </details>          <div class="tw-fold-sep"></div>
+          </div>          <div class="tw-fold-sep"></div>
           <input class="tb" id="opt-cookie" style="margin-bottom:12px" placeholder="认证会话（可选）Cookie: session=…" autocomplete="off" aria-label="认证会话 Cookie">
           <label class="tw-toggle" style="margin:0"><input type="checkbox" id="opt-ua" class="tw-switch"> 浏览器 UA（应对按 UA 降级的站点）</label>
           <label class="tw-toggle" style="margin:0"><input type="checkbox" id="opt-preflight" class="tw-switch" checked> 输入后自动预检（1 次只读请求，可关）</label>
@@ -430,21 +415,18 @@
       <!-- 综合扫描：输出画布（空态展示 hero：引导/示例/快捷入口/最近历史） -->
       <section class="tw-canvaspane active" data-pane="scan">
         <div id="plan" class="plan-card" hidden></div>
-        <!-- 空态 hero：未扫描时替代右栏空白（扫描开始/有结果隐藏；取消/清空恢复） -->
-        <div class="wb-hero" id="wb-hero">
-          <h2 class="wb-hero-title">输入网址开始</h2>
-          <p class="wb-hero-sub">结果自动保存到历史，可随时导出。</p>
-          <div class="wb-hero-block">
-            <span class="wb-hero-label">快捷入口</span>
-            <div class="wb-hero-chips">
-              <button type="button" class="btn ghost small" data-hero-goto="batch">批量扫描</button>
-              <button type="button" class="btn ghost small" data-hero-goto="audit">源码审计</button>
-              <a class="btn ghost small" href="/history">历史记录</a>
-            </div>
+        <!-- 空态：与全站 .empty 同款（扫描开始/有结果隐藏；取消/清空恢复） -->
+        <div class="empty" id="wb-hero">
+          <span class="big" aria-hidden="true">▷</span>
+          <span class="empty-title">输入网址开始</span>
+          <span class="empty-desc">结果自动保存到历史，可随时导出。</span>
+          <div class="wb-hero-actions">
+            <button type="button" class="btn ghost small" data-hero-goto="batch">批量扫描</button>
+            <button type="button" class="btn ghost small" data-hero-goto="audit">源码审计</button>
+            <a class="btn ghost small" href="/history">历史记录</a>
           </div>
-          <div class="wb-hero-block" id="wb-hero-recent-wrap" hidden>
-            <span class="wb-hero-label">最近扫描</span>
-            <div class="wb-hero-recent" id="wb-hero-recent"></div>
+          <div class="wb-hero-recent" id="wb-hero-recent-wrap" hidden>
+            <div id="wb-hero-recent"></div>
           </div>
         </div>
         <div id="result" role="region" aria-label="扫描结果"></div>
