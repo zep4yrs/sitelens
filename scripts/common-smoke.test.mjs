@@ -64,3 +64,9 @@ test("关于与更新：只展示当前形态的更新说明（避免桌面版�
   assert.match(settingsHtml, /turbo:load", slEnsureShellMode/, "Turbo 导航后未重算形态");
   assert.match(settingsHtml, /s\.src = "\/js\/bridge\.js"/, "bridge.js 缺失时未补加载");
 });
+test("桌面端页签：桥晚就绪时也要补上（Turbo 导航外部脚本异步）", () => {
+  assert.match(settingsHtml, /function ensureDesktopTab\(\)/, "缺少 ensureDesktopTab");
+  assert.match(settingsHtml, /window\.slEnsureDesktopTab = ensureDesktopTab/, "未暴露补页签入口");
+  assert.match(settingsHtml, /setTimeout\(ensureDesktopTab, ms\)/, "缺少桥就绪后的重试");
+  assert.match(settingsHtml, /document\.addEventListener\("turbo:load", ensureDesktopTab\)/, "Turbo 导航后未重试补页签");
+});

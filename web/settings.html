@@ -663,16 +663,9 @@
     ["look", "外观与个性化"], ["data", "数据管理"], ["engine", "引擎配置"],
     ["about", "关于与更新"], ["legal", "协议与声明"]
   ];
-  // 桌面端专属页签：仅在**壳桥可用**时出现（bridge.js 在浏览器形态也定义
-  // window.sitelens，但 available=false → 整组桌面 UI 必须隐藏）。
-  var isDesktopShell = !!(window.sitelens && window.sitelens.available);
-  if (isDesktopShell) {
-    TABS.push(["desktop", "桌面端"]);
-    var dp = document.querySelector('.tabpanel[data-tab="desktop"]');
-    if (dp) dp.removeAttribute("hidden");
-  }
   var tabsEl = $("tabs");
   var settingsNav = $("settings-nav");
+
   /* 统一激活入口：页签行 + 左侧分组导航同步高亮（nav 由 TABS 自动生成） */
   function activateTab(key, writeHash) {
     tabsEl.querySelectorAll(".tab").forEach(function (x) {
@@ -694,29 +687,57 @@
     }
     if (writeHash !== false) location.hash = key;
   }
-  TABS.forEach(function (t) {
-    var b = document.createElement("button");
-    b.className = "tab";
-    b.textContent = t[1];
-    b.setAttribute("data-key", t[0]);
-    b.setAttribute("role", "tab");
-    b.addEventListener("click", function () { activateTab(t[0]); });
-    tabsEl.appendChild(b);
-    if (settingsNav) {
-      var s = document.createElement("button");
-      s.type = "button";
-      s.className = "sn-item";
-      s.textContent = t[1];
-      s.setAttribute("data-key", t[0]);
-      s.addEventListener("click", function () { activateTab(t[0]); });
-      settingsNav.appendChild(s);
-    }
-  });
-  (function openHash() {
+
+  function renderTabs() {
+    if (!tabsEl) return;
+    tabsEl.innerHTML = "";
+    if (settingsNav) settingsNav.innerHTML = "";
+    TABS.forEach(function (t) {
+      var b = document.createElement("button");
+      b.className = "tab";
+      b.textContent = t[1];
+      b.setAttribute("data-key", t[0]);
+      b.setAttribute("role", "tab");
+      b.addEventListener("click", function () { activateTab(t[0]); });
+      tabsEl.appendChild(b);
+      if (settingsNav) {
+        var s = document.createElement("button");
+        s.type = "button";
+        s.className = "sn-item";
+        s.textContent = t[1];
+        s.setAttribute("data-key", t[0]);
+        s.addEventListener("click", function () { activateTab(t[0]); });
+        settingsNav.appendChild(s);
+      }
+    });
     var h = (location.hash || "").replace("#", "");
     var hit = TABS.some(function (t) { return t[0] === h; });
     activateTab(hit ? h : TABS[0][0], false);
-  })();
+  }
+
+  // 桌面端专属页签：仅在**壳桥可用**时出现（bridge.js 在浏览器形态也定义
+  // window.sitelens，但 available=false → 整组桌面 UI 必须隐藏）。
+  // 注意：Turbo 导航下外部脚本（bridge.js）是异步插入执行的，本脚本可能先跑完，
+  // 所以不能只判定一次——桥一就绪就补页签，后续 turbo:load 也会重试。
+  function ensureDesktopTab() {
+    if (!(window.sitelens && window.sitelens.available)) return;
+    if (TABS.some(function (t) { return t[0] === "desktop"; })) return;
+    var i = -1;
+    for (var k = 0; k < TABS.length; k++) {
+      if (TABS[k][0] === "about") { i = k; break; }
+    }
+    if (i >= 0) TABS.splice(i, 0, ["desktop", "桌面端"]);
+    else TABS.push(["desktop", "桌面端"]);
+    var dp = document.querySelector('.tabpanel[data-tab="desktop"]');
+    if (dp) dp.removeAttribute("hidden");
+    renderTabs();
+  }
+  window.slEnsureDesktopTab = ensureDesktopTab;
+
+  renderTabs();
+  [0, 80, 300, 800, 1500].forEach(function (ms) { setTimeout(ensureDesktopTab, ms); });
+  document.addEventListener("turbo:load", ensureDesktopTab);
+  window.addEventListener("load", ensureDesktopTab);
 
   /* ---- 分段选择器 ---- */
   function seg(el, get, set) {
@@ -1048,6 +1069,7 @@
     var d = $("updNoteDesktop"), b = $("updNoteBrowser");
     if (d) d.style.display = isDesktop ? "" : "none";
     if (b) b.style.display = isDesktop ? "none" : "";
+    if (typeof window.slEnsureDesktopTab === "function") window.slEnsureDesktopTab();
     return isDesktop;
   }
   function slEnsureShellMode() {

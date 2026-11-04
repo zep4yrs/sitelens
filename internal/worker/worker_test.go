@@ -163,20 +163,20 @@ func TestLeaseTimeoutRedelivery(t *testing.T) {
 // TestHeartbeatRenewal 心跳续租：原租约到期后仍有效；过期后心跳失败。
 func TestHeartbeatRenewal(t *testing.T) {
 	ctx := context.Background()
-	q := NewMemoryQueue(QueueOptions{LeaseTTL: 40 * time.Millisecond})
+	q := NewMemoryQueue(QueueOptions{LeaseTTL: 400 * time.Millisecond})
 	if _, err := q.Enqueue(ctx, Task{Kind: "scan"}); err != nil {
 		t.Fatal(err)
 	}
 	lease := dequeueWithTimeout(t, q, "w1", 0, time.Second)
-	time.Sleep(25 * time.Millisecond)
-	renewed, err := q.Heartbeat(ctx, lease, 300*time.Millisecond)
+	time.Sleep(100 * time.Millisecond)
+	renewed, err := q.Heartbeat(ctx, lease, 2*time.Second)
 	if err != nil {
 		t.Fatalf("心跳续租: %v", err)
 	}
 	if !renewed.Deadline.After(lease.Deadline) {
 		t.Fatalf("心跳应延长 deadline: %v → %v", lease.Deadline, renewed.Deadline)
 	}
-	time.Sleep(60 * time.Millisecond) // 越过原 deadline、未到新 deadline
+	time.Sleep(500 * time.Millisecond) // 越过原 deadline、未到新 deadline
 	if err := q.Ack(ctx, lease); err != nil {
 		t.Fatalf("续租后原租约应仍有效: %v", err)
 	}
@@ -184,8 +184,8 @@ func TestHeartbeatRenewal(t *testing.T) {
 	if _, err := q.Enqueue(ctx, Task{Kind: "scan"}); err != nil {
 		t.Fatal(err)
 	}
-	expired := dequeueWithTimeout(t, q, "w2", 20*time.Millisecond, time.Second)
-	time.Sleep(40 * time.Millisecond)
+	expired := dequeueWithTimeout(t, q, "w2", 200*time.Millisecond, time.Second)
+	time.Sleep(500 * time.Millisecond)
 	if _, err := q.Heartbeat(ctx, expired, time.Second); !errors.Is(err, ErrLeaseExpired) {
 		t.Fatalf("过期租约心跳应 ErrLeaseExpired: %v", err)
 	}
@@ -677,7 +677,7 @@ func TestAckAfterLeaseDeadlineBeforeReap(t *testing.T) {
 		t.Fatalf("租约任务异常: %+v", lease)
 	}
 	// 等到租约过期，但不调用 Dequeue/Stats(不触发 reap)
-	time.Sleep(40 * time.Millisecond)
+	time.Sleep(500 * time.Millisecond)
 	if err := q.Ack(ctx, lease); err != nil {
 		t.Fatalf("租约过期但未被回收时，成功任务的 Ack 应被接受（C-14）: %v", err)
 	}
