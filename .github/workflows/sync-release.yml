@@ -1,0 +1,96 @@
+# 把 CNB Release 的桌面产物同步到 GitHub：版本 Release + desktop-stable 更新源。
+#
+# 为什么在 GitHub Actions 里做：开发机的网络到 uploads.github.com 不通（资产上传
+# 走该域名），但 GitHub runner 两端都通。CNB 仍是构建/发布的唯一真源，这里只做
+# 镜像与更新源三件套（exe / deb / latest.yml）。
+#
+# 手动触发：Actions → sync-release → Run workflow（version 默认 5.2.3）。
+name: sync-release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "版本号（不带 v）"
+        required: true
+        default: "5.2.3"
+
+permissions:
+  contents: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    env:
+      V: ${{ inputs.version }}
+      REPO: feng-qiao/sitelens
+      CNB_BASE: https://cnb.cool/feng-qiao/sitelens/-/releases/download
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 下载 CNB 产物（exe + deb）
+        run: |
+          set -euo pipefail
+          EXE="SiteLens-Setup-${V}.exe"
+          DEB="SiteLens_${V}_amd64.deb"
+          curl -fL --retry 3 -o "$EXE" "$CNB_BASE/v${V}/${EXE}"
+          curl -fL --retry 3 -o "$DEB" "$CNB_BASE/v${V}/${DEB}"
+          ls -l "$EXE" "$DEB"
+          echo "EXE=$EXE" >> "$GITHUB_ENV"
+          echo "DEB=$DEB" >> "$GITHUB_ENV"
+
+      - name: 回填发行说明占位符
+        run: |
+          set -euo pipefail
+          SRC="docs/release-${V}/release-body-${V}.md"
+          OUT="/tmp/release-notes.md"
+          EXE_SIZE=$(stat -c%s "$EXE")
+          EXE_SHA=$(sha256sum "$EXE" | cut -d' ' -f1 | tr 'a-f' 'A-F')
+          DEB_SIZE=$(stat -c%s "$DEB")
+          DEB_SHA=$(sha256sum "$DEB" | cut -d' ' -f1)
+          sed -e "s/__SIZE__/${EXE_SIZE}/g" -e "s/__SHA256__/${EXE_SHA}/g" \
+              -e "s/__DEB_SIZE__/${DEB_SIZE}/g" -e "s/__DEB_SHA256__/${DEB_SHA}/g" \
+              "$SRC" > "$OUT"
+          echo "NOTES=$OUT" >> "$GITHUB_ENV"
+
+      - name: 创建/更新版本 Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          TAG="v${V}"
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --notes-file "$NOTES"
+          else
+            gh release create "$TAG" --repo "$GITHUB_REPOSITORY" \
+              --title "SiteLens ${V}" --notes-file "$NOTES" --latest
+          fi
+          gh release upload "$TAG" --repo "$GITHUB_REPOSITORY" --clobber "$EXE" "$DEB"
+
+      - name: 更新 desktop-stable 更新源（exe + latest.yml）
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          SHA512=$(openssl dgst -sha512 -binary "$EXE" | base64 -w0)
+          SIZE=$(stat -c%s "$EXE")
+          DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          cat > latest.yml <<EOF
+          version: ${V}
+          files:
+            - url: ${EXE}
+              sha512: ${SHA512}
+              size: ${SIZE}
+          path: ${EXE}
+          sha512: ${SHA512}
+          releaseDate: '${DATE}'
+          EOF
+          # 旧同名附件先删后传（desktop-stable 是“当前版本指针”，不留历史包）
+          gh release view desktop-stable --repo "$GITHUB_REPOSITORY" --json assets \
+            --jq '.assets[].name' | while read -r name; do
+              gh release delete-asset desktop-stable "$name" --repo "$GITHUB_REPOSITORY" -y || true
+            done
+          gh release upload desktop-stable --repo "$GITHUB_REPOSITORY" --clobber "$EXE" latest.yml
+          gh release edit desktop-stable --repo "$GITHUB_REPOSITORY" \
+            --title "SiteLens 桌面版稳定更新源（当前 v${V}）"
+          cat latest.yml
