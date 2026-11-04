@@ -95,8 +95,13 @@ func (c *Client) do(ctx context.Context, method, path string, q url.Values, body
 	if err != nil {
 		return nil, 0, err
 	}
+	// V-17：同时发两种凭据头，兼容服务端两种鉴权模式——
+	//   - web.auth_mode=none（默认）：服务端只认 X-Token；
+	//   - web.auth_mode=token（企业 RBAC）：只认 Authorization: Bearer。
+	// 两个头都带不会互相干扰（各模式只读自己那个），也不需要额外开关。
 	if c.token != "" {
 		req.Header.Set("X-Token", c.token)
+		req.Header.Set("Authorization", "Bearer "+c.token)
 	}
 	req.Header.Set("Accept", "application/json, text/plain;q=0.9, */*;q=0.5")
 	if contentType != "" {

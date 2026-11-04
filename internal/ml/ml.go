@@ -107,7 +107,19 @@ func isCasedRune(r rune) bool {
 // 返回空切片（sklearn 中为零向量，得分仅剩 intercept）。
 //
 //	values[i] = (1 + ln(count_i)) * idf[id_i]，随后整行除以 L2 范数。
+//
+// 并发（C2-10）：读锁与 Model.Unload 互斥；卸载后返回空向量。
 func (m *Model) Vectorize(text string) (ids []int32, vals []float64) {
+	if m == nil {
+		return nil, nil
+	}
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.vectorizeLocked(text)
+}
+
+// vectorizeLocked 是 Vectorize 的实现体，调用方须持 m.mu 读锁。
+func (m *Model) vectorizeLocked(text string) (ids []int32, vals []float64) {
 	counts := make(map[int32]int, 32)
 	featCount := make(map[string]int, 32)
 	toks := Tokenize(text)
@@ -151,8 +163,19 @@ func (m *Model) Vectorize(text string) (ids []int32, vals []float64) {
 
 // DecisionFunction 计算 OvR 线性打分 score[c] = x·coef[c] + intercept[c]，
 // 返回长度 n_classes 的分数切片（分数与 sklearn decision_function 同序同义）。
+// 并发（C2-10）：读锁与 Model.Unload 互斥；卸载后返回空切片。
 func (m *Model) DecisionFunction(text string) []float64 {
-	ids, vals := m.Vectorize(text)
+	if m == nil {
+		return nil
+	}
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.decisionLocked(text)
+}
+
+// decisionLocked 是 DecisionFunction 的实现体，调用方须持 m.mu 读锁。
+func (m *Model) decisionLocked(text string) []float64 {
+	ids, vals := m.vectorizeLocked(text)
 	scores := make([]float64, m.nClasses)
 	copy(scores, m.intercept)
 	nF := m.nFeatures
@@ -175,11 +198,15 @@ type Pred struct {
 // TopK 返回按得分降序的前 k 个类别（同分时按类别表下标升序，保证确定性）。
 // k <= 0 返回空（本包导出 API，不能假设调用方传常量正数——负 k 曾直接
 // make 负长度切片 panic 打死整个进程）。
+// 并发（C2-10）：读锁内同时取分数与类别快照；卸载后返回空。
 func (m *Model) TopK(text string, k int) []Pred {
-	if k <= 0 {
+	if m == nil || k <= 0 {
 		return nil
 	}
-	scores := m.DecisionFunction(text)
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	scores := m.decisionLocked(text)
+	classes := m.classes
 	if k > len(scores) {
 		k = len(scores)
 	}
@@ -195,13 +222,28 @@ func (m *Model) TopK(text string, k int) []Pred {
 	})
 	out := make([]Pred, k)
 	for i := 0; i < k; i++ {
-		out[i] = Pred{Class: m.classes[idx[i]], Score: scores[idx[i]]}
+		out[i] = Pred{Class: classes[idx[i]], Score: scores[idx[i]]}
 	}
 	return out
 }
 
 // ArgMax 返回得分最高的类别名与得分（空文本等情况下仍有 intercept 支撑）。
+// 并发（C2-10）：卸载后返回 ("", 0)，不 panic。
 func (m *Model) ArgMax(text string) (string, float64) {
-	top := m.TopK(text, 1)
-	return top[0].Class, top[0].Score
+	if m == nil {
+		return "", 0
+	}
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	scores := m.decisionLocked(text)
+	if len(scores) == 0 || len(m.classes) == 0 {
+		return "", 0
+	}
+	best := 0
+	for i := 1; i < len(scores); i++ {
+		if scores[i] > scores[best] {
+			best = i
+		}
+	}
+	return m.classes[best], scores[best]
 }

@@ -66,8 +66,13 @@ type IDORMatrix struct {
 
 // IDORFinding 一条越权发现（证据链字段只含脱敏会话标识）。
 type IDORFinding struct {
-	Type       string `json:"type"` // idor-read / idor-horizontal / idor-vertical
-	Severity   string `json:"severity"`
+	Type     string `json:"type"` // idor-read / idor-horizontal / idor-vertical
+	Severity string `json:"severity"`
+	// Verdict 三值判定（B-10）：confirmed / possible。
+	// confirmed = 两角色对同一资源返回的**归一化正文一致**，判定 B 读到了同一对象；
+	// possible  = 两角色归一化正文不同，可能按角色渲染/公共资源，需人工确认归属。
+	// 三值中的 none（拒绝访问/不可读）不产出 Finding，因此不会出现在这里。
+	Verdict    string `json:"verdict,omitempty"`
 	Role       string `json:"role"`                  // 发起访问的角色（攻击者视角）
 	VictimRole string `json:"victim_role,omitempty"` // 资源归属角色（可读越权/垂直时）
 	URL        string `json:"url"`
@@ -96,6 +101,7 @@ type idorCell struct {
 	status   int
 	size     int
 	fp       string // 关键字段指纹（强指纹：排除请求 ID 回显）
+	bodyHash string // 归一化正文哈希（时间戳/UUID/随机令牌已剥离，跨角色可比）
 	readable bool
 }
 
@@ -377,7 +383,124 @@ func idorResolveURL(base *url.URL, tpl, id string) string {
 	return u.String()
 }
 
-// idorCellOf 响应 → 判定单元：2xx/3xx? 这里只把 2xx 且非拒绝页当「可读」。
+// ---- B-10 三值判定 ---------------------------------------------------------
+//
+// 旧口径把「角色 A 能读、角色 B 也能读」直接当越权，且不看两侧正文是否
+// 相同——公共资源（公开个人主页、共享配置、全站公告）两个角色都能读到
+// 同一份内容，也会被判成越权 high。新口径按「两侧内容是否一致」分流，
+// 只输出两档（none 不产出 Finding）：
+//
+//	confirmed —— B 对同一资源的**归一化正文**与 A 一致：B 读到的是同一个
+//	             对象（典型 IDOR：/profile/1 任何登录用户都返回 alice 的资料），
+//	             越权成立，high；
+//	possible  —— B 可读但归一化正文与 A 不同：可能是按角色渲染（各看各的）、
+//	             公共资源、或本来就是不同对象，无法仅凭响应断言越权，
+//	             降级为待人工确认，medium；
+//	none      —— B 被拒绝（401/403/404/登录页/拒绝特征）或正文为空：
+//	             访问控制生效，不产出 Finding。
+//
+// 「归一化」是必要的：同一资源两次请求的正文常带时间戳/UUID/request-id，
+// 不剥离这些噪声就会把「同一个对象」误判成 possible。
+//
+// known limitation：confirmed 无法区分「B 读到了 A 的私有对象」与
+// 「该资源本来就是公开的」——两者在响应上完全一致。因此 confirmed 只表示
+// 「两角色拿到同一份内容」，资源归属仍需人工复核（证据里已写明该提示）。
+
+// idorVerdict 越权三值判定结果。
+type idorVerdict int
+
+const (
+	idorVerdictNone      idorVerdict = iota // 不构成越权（拒绝访问 / 不可读）
+	idorVerdictPossible                     // 两角色内容不同：可能按角色渲染/公共资源
+	idorVerdictConfirmed                    // 两角色内容一致：读到了同一对象
+)
+
+// String 三值判定名（落 Finding.Verdict）。
+func (v idorVerdict) String() string {
+	switch v {
+	case idorVerdictConfirmed:
+		return "confirmed"
+	case idorVerdictPossible:
+		return "possible"
+	default:
+		return "none"
+	}
+}
+
+// Severity 三值判定 → 发现级别：confirmed=high，possible=medium。
+func (v idorVerdict) Severity() string {
+	if v == idorVerdictConfirmed {
+		return "high"
+	}
+	return "medium"
+}
+
+// idorVerdictOf 比较「资源归属方」与「攻击者」两个判定单元，得出三值结论。
+//
+// 参数顺序固定：ref 为归属方（A/管理角色/先出现的非管理角色）的响应，
+// other 为待判定的攻击者响应。
+//
+// 方向（B-10 定稿，安全直觉口径）：
+//   - 归一化正文一致 → confirmed：两侧拿到同一份内容，B 读到了 A 的对象；
+//   - 归一化正文不同 → possible：可能是按角色渲染/公共资源/不同对象，
+//     仅凭响应无法断言越权，交人工确认；
+//   - 任一侧不可读 → none。
+//
+// known limitation：confirmed 只证明「两角色拿到同一份内容」，不能证明该
+// 资源私有——公开个人主页/共享配置同样是两侧一致。资源归属须人工复核。
+func idorVerdictOf(ref, other idorCell) idorVerdict {
+	if !other.readable || !ref.readable {
+		return idorVerdictNone // 被拒绝/不可读：访问控制生效
+	}
+	if ref.bodyHash != "" && ref.bodyHash == other.bodyHash {
+		return idorVerdictConfirmed // 内容一致：读到同一对象（典型 IDOR）
+	}
+	return idorVerdictPossible // 内容不同：可能按角色渲染/公共资源，待确认
+}
+
+// idorVolatilePatterns 跨角色比对前需要剥离的易变内容（顺序敏感：
+// UUID 先于长十六进制，避免 UUID 被拆成片段后残留）。
+var idorVolatilePatterns = []struct {
+	re   *regexp.Regexp
+	repl string
+}{
+	// UUID（含全小写/全大写/混合）
+	{regexp.MustCompile(`\b[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\b`), "<uuid>"},
+	// ISO-8601 / RFC3339 日期时间（含可选小数秒与时区）
+	{regexp.MustCompile(`\b\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})?\b`), "<ts>"},
+	// 具名易变字段（时间戳 / request-id / trace-id / nonce / epoch）
+	{regexp.MustCompile(`(?i)"(?:timestamp|time|date|now|server_time|serverTime|request_id|requestId|trace_id|traceId|span_id|nonce|updated_at|updatedAt|created_at|createdAt|expires_at|expiresAt|epoch|ts)"\s*:\s*(?:"[^"]*"|-?\d+(?:\.\d+)?)`), `"<volatile>"`},
+	// 13 位毫秒时间戳（2001–2033），几乎不可能是资源 ID
+	{regexp.MustCompile(`\b1\d{12}\b`), "<ts>"},
+	// 长十六进制随机串（≥16 位）：随机令牌/哈希，非正文语义
+	{regexp.MustCompile(`\b[0-9a-fA-F]{16,}\b`), "<hex>"},
+}
+
+// idorStableBody 最小稳定化：剥离常见时间戳/UUID/随机令牌后返回可跨角色
+// 比对的正文字串。只做「明显易变」的替换，不做全文摘要——保留结构差异，
+// 让真正的内容差异（不同对象）仍能体现出来。
+func idorStableBody(body string) string {
+	if len(body) > idorBodyLimit {
+		body = body[:idorBodyLimit]
+	}
+	out := body
+	for _, p := range idorVolatilePatterns {
+		out = p.re.ReplaceAllString(out, p.repl)
+	}
+	return out
+}
+
+// idorBodyHash 归一化正文哈希（sha256 前 16 字节 hex）；空正文返回空串。
+func idorBodyHash(body string) string {
+	stable := strings.TrimSpace(idorStableBody(body))
+	if stable == "" {
+		return ""
+	}
+	sum := sha256.Sum256([]byte(stable))
+	return fmt.Sprintf("%x", sum[:16])
+}
+
+// idorCellOf 响应 → 判定单元：2xx 且非拒绝页才算「可读」。
 func idorCellOf(resp *Resp, requestedID string) idorCell {
 	if resp == nil {
 		return idorCell{}
@@ -391,6 +514,7 @@ func idorCellOf(resp *Resp, requestedID string) idorCell {
 	}
 	c.readable = true
 	c.fp = idorStrongFingerprint(resp.Body, requestedID)
+	c.bodyHash = idorBodyHash(resp.Body)
 	return c
 }
 
@@ -544,6 +668,7 @@ func idorNonAdminSet(roles []idorRole, adminRoles []string) map[string]bool {
 }
 
 // idorReadFindings RoleIDs 模式：A 的资源被 B 读到（B 非管理角色）。
+// 判定走 B-10 三值：内容不同 → confirmed，内容一致 → possible。
 func idorReadFindings(matrix map[string]map[string]idorCell, base *url.URL, templates, ids []string, roles []idorRole, roleIDs map[string][]string, nonAdmin map[string]bool) []IDORFinding {
 	var out []IDORFinding
 	roleOrder := make([]string, 0, len(roles))
@@ -568,7 +693,7 @@ func idorReadFindings(matrix map[string]map[string]idorCell, base *url.URL, temp
 				}
 				cells := matrix[tpl+"\x00"+id]
 				vc, ok := cells[victim]
-				if !ok || !vc.readable || vc.fp == "" {
+				if !ok {
 					continue
 				}
 				u := idorResolveURL(base, tpl, id)
@@ -580,16 +705,15 @@ func idorReadFindings(matrix map[string]map[string]idorCell, base *url.URL, temp
 						continue
 					}
 					ac, ok := cells[attacker]
-					if !ok || !ac.readable || ac.fp != vc.fp {
+					if !ok {
 						continue
 					}
-					out = append(out, IDORFinding{
-						Type: "idor-read", Severity: "high",
-						Role: attacker, VictimRole: victim, URL: u,
-						Evidence: idorEvidence("B 角色读到了 A 角色的资源",
-							tpl, id, victim, vc, attacker, ac),
-						Replay: idorReplayCurl(u, attacker),
-					})
+					v := idorVerdictOf(vc, ac)
+					if v == idorVerdictNone {
+						continue // B 被拒绝：访问控制生效
+					}
+					out = append(out, idorVerdictFinding("idor-read", v, attacker, victim, u,
+						tpl, id, vc, ac, "B 角色访问 A 角色的资源"))
 				}
 			}
 		}
@@ -597,8 +721,9 @@ func idorReadFindings(matrix map[string]map[string]idorCell, base *url.URL, temp
 	return out
 }
 
-// idorHorizontalFindings 矩阵重叠模式：同一资源被 ≥2 个非管理角色以一致
-// 关键字段指纹读到 → 水平越权。
+// idorHorizontalFindings 矩阵重叠模式：同一资源被 ≥2 个非管理角色读到。
+// 判定走 B-10 三值：两角色归一化正文不同 → confirmed，一致 → possible
+// （公共资源可能，降级待确认）。
 func idorHorizontalFindings(matrix map[string]map[string]idorCell, base *url.URL, templates, ids []string, roles []idorRole, nonAdmin map[string]bool) []IDORFinding {
 	var out []IDORFinding
 	for _, tpl := range templates {
@@ -610,50 +735,44 @@ func idorHorizontalFindings(matrix map[string]map[string]idorCell, base *url.URL
 			if !ok {
 				continue
 			}
-			groups := map[string][]string{} // fp → 角色（保持配置顺序）
+			// 按配置顺序收集可读的非管理角色（首个作为参照方）。
+			var readable []string
 			for _, r := range roles {
 				if !nonAdmin[r.name] {
 					continue
 				}
-				c := cells[r.name]
-				if !c.readable || c.fp == "" {
-					continue
+				if cells[r.name].readable {
+					readable = append(readable, r.name)
 				}
-				groups[c.fp] = append(groups[c.fp], r.name)
+			}
+			if len(readable) < 2 {
+				continue
 			}
 			u := idorResolveURL(base, tpl, id)
 			if u == "" {
 				continue
 			}
-			for fp, names := range groups {
-				if len(names) < 2 {
+			first := readable[0]
+			fc := cells[first]
+			for _, other := range readable[1:] {
+				if len(out) >= maxIDORFindings {
+					return out
+				}
+				oc := cells[other]
+				v := idorVerdictOf(fc, oc)
+				if v == idorVerdictNone {
 					continue
 				}
-				first := names[0]
-				fc := cells[first]
-				for _, other := range names[1:] {
-					if len(out) >= maxIDORFindings {
-						return out
-					}
-					oc := cells[other]
-					// 证据里只放指纹摘要（fp: 前缀段），不重复拼接完整指纹。
-					ev := fmt.Sprintf("资源 %s id=%q 被多个非管理角色读到：角色 %q（HTTP %d，%d 字节）"+
-						"与角色 %q（HTTP %d，%d 字节），关键字段指纹一致 %s。",
-						tpl, id, first, fc.status, fc.size, other, oc.status, oc.size, idorFPBrief(fp))
-					out = append(out, IDORFinding{
-						Type: "idor-horizontal", Severity: "high",
-						Role: other, VictimRole: first, URL: u,
-						Evidence: ev, Replay: idorReplayCurl(u, other),
-					})
-				}
+				out = append(out, idorVerdictFinding("idor-horizontal", v, other, first, u,
+					tpl, id, fc, oc, "同一资源被多个非管理角色读到"))
 			}
 		}
 	}
 	return out
 }
 
-// idorVerticalFindings 垂直越权：低权角色在管理路径上读到与管理角色一致
-// 的关键内容。要求「管理角色可读」作为管理路径成立的证据（宁少报）。
+// idorVerticalFindings 垂直越权：低权角色在管理路径上的可读性。
+// 要求「管理角色可读」作为管理路径成立的证据（宁少报）；判定走 B-10 三值。
 func idorVerticalFindings(matrix map[string]map[string]idorCell, base *url.URL, paths, ids []string, roles []idorRole, adminRoles []string) []IDORFinding {
 	admin := map[string]bool{}
 	for _, a := range adminRoles {
@@ -675,7 +794,7 @@ func idorVerticalFindings(matrix map[string]map[string]idorCell, base *url.URL, 
 				if !admin[r.name] {
 					continue
 				}
-				if c := cells[r.name]; c.readable && c.fp != "" {
+				if c := cells[r.name]; c.readable {
 					adminRole, adminCell = r.name, c
 					break
 				}
@@ -692,28 +811,67 @@ func idorVerticalFindings(matrix map[string]map[string]idorCell, base *url.URL, 
 					continue
 				}
 				lc := cells[r.name]
-				if !lc.readable || lc.fp != adminCell.fp {
+				v := idorVerdictOf(adminCell, lc)
+				if v == idorVerdictNone {
 					continue
 				}
-				out = append(out, IDORFinding{
-					Type: "idor-vertical", Severity: "high",
-					Role: r.name, VictimRole: adminRole, URL: u,
-					Evidence: idorEvidence("低权角色访问管理路径成功且内容与管理角色一致",
-						tpl, id, adminRole, adminCell, r.name, lc),
-					Replay: idorReplayCurl(u, r.name),
-				})
+				out = append(out, idorVerdictFinding("idor-vertical", v, r.name, adminRole, u,
+					tpl, id, adminCell, lc, "低权角色访问管理路径成功"))
 			}
 		}
 	}
 	return out
 }
 
-// idorEvidence 统一证据文案（只含角色名/状态/大小/指纹摘要；无凭据）。
-func idorEvidence(headline, tpl, id, victimRole string, victimCell idorCell, attackerRole string, attackerCell idorCell) string {
-	return fmt.Sprintf("%s：模板 %s id=%q；角色 %q 响应 HTTP %d（%d 字节），角色 %q 响应 HTTP %d（%d 字节），"+
-		"两侧关键字段指纹一致 %s。",
+// idorVerdictFinding 按三值判定组装一条 Finding（severity/verdict/evidence 一致）。
+func idorVerdictFinding(kind string, v idorVerdict, role, victimRole, rawURL, tpl, id string,
+	ref, other idorCell, headline string) IDORFinding {
+	return IDORFinding{
+		Type:       kind,
+		Severity:   v.Severity(),
+		Verdict:    v.String(),
+		Role:       role,
+		VictimRole: victimRole,
+		URL:        rawURL,
+		Evidence:   idorEvidence(headline, v, tpl, id, victimRole, ref, role, other),
+		Replay:     idorReplayCurl(rawURL, role),
+	}
+}
+
+// idorEvidence 统一证据文案（只含角色名/状态/大小/指纹与归一化哈希摘要；
+// 无凭据）。文案必须自解释：confirmed 与 possible 的结论依据不同，读报告
+// 的人不翻代码就能判断该不该人工复核。
+func idorEvidence(headline string, v idorVerdict, tpl, id, victimRole string,
+	victimCell idorCell, attackerRole string, attackerCell idorCell) string {
+	base := fmt.Sprintf("%s：模板 %s id=%q；角色 %q 响应 HTTP %d（%d 字节），角色 %q 响应 HTTP %d（%d 字节）；",
 		headline, tpl, id, victimRole, victimCell.status, victimCell.size,
-		attackerRole, attackerCell.status, attackerCell.size, idorFPBrief(victimCell.fp))
+		attackerRole, attackerCell.status, attackerCell.size)
+	switch v {
+	case idorVerdictConfirmed:
+		// 两侧归一化正文一致 = 读到同一份内容。但这**不能**证明资源私有
+		// （公开个人主页/共享配置同样一致），故证据里保留人工复核建议。
+		return base + fmt.Sprintf("两角色返回同一对象内容（归一化一致，哈希 %s，关键字段指纹 %s），"+
+			"判定 confirmed：B 读到了 A 可见的同一份对象内容。"+
+			"复核建议：核对该对象是否属于 %q、是否本应公开（公开资源也会出现两侧一致）。",
+			idorHashBrief(victimCell.bodyHash), idorFPBrief(victimCell.fp), victimRole)
+	case idorVerdictPossible:
+		return base + fmt.Sprintf("两角色内容不同（归一化哈希 %s vs %s），"+
+			"判定 possible：可能按角色渲染（各看各的）或公共资源，需人工确认归属。",
+			idorHashBrief(victimCell.bodyHash), idorHashBrief(attackerCell.bodyHash))
+	default:
+		return base + "判定 none：不构成越权。"
+	}
+}
+
+// idorHashBrief 归一化正文哈希摘要（前 8 字符）。
+func idorHashBrief(h string) string {
+	if h == "" {
+		return "(空)"
+	}
+	if len(h) > 8 {
+		return h[:8]
+	}
+	return h
 }
 
 // idorFPBrief 指纹摘要（fp:<16hex> 段；证据不放大段原文）。

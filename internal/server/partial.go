@@ -95,7 +95,8 @@ func SavePartial(st scanStore, res *engine.Result, options map[string]any) (int6
 	return SavePartialAt(st, res, options, "")
 }
 
-// SavePartialAt 落库部分结果并标记中断阶段。
+// SavePartialAt 落库部分结果并标记中断阶段（legacy 空租户；server 侧请用
+// SavePartialAtTenant 带上作业租户）。
 //
 // 行为：
 //   - engine.MarkPartial 置 Result.Partial=true、CompletedPhases（诊断账本）；
@@ -103,6 +104,11 @@ func SavePartial(st scanStore, res *engine.Result, options map[string]any) (int6
 //   - store.Save 原样保存页面/技术/发现/证据（Map 图走既有逻辑）；
 //   - 返回的 PartialRecord 已带 ResumePlan（ResumeTargets/RemainingPhases）。
 func SavePartialAt(st scanStore, res *engine.Result, options map[string]any, interruptedPhase string) (int64, *PartialRecord) {
+	return SavePartialAtTenant(st, res, options, interruptedPhase, "")
+}
+
+// SavePartialAtTenant 同 SavePartialAt，但把归属租户写入记录（BL-5）。
+func SavePartialAtTenant(st scanStore, res *engine.Result, options map[string]any, interruptedPhase, tenant string) (int64, *PartialRecord) {
 	if st == nil || res == nil {
 		return 0, nil
 	}
@@ -113,7 +119,7 @@ func SavePartialAt(st scanStore, res *engine.Result, options map[string]any, int
 	if interruptedPhase != "" {
 		opts["interrupted_phase"] = interruptedPhase
 	}
-	scanID := st.Save(res, opts)
+	scanID := st.SaveForTenant(res, opts, tenant)
 	rec := newPartialRecord(scanID, "", res, opts, interruptedPhase)
 	return scanID, rec
 }
@@ -127,7 +133,7 @@ func (s *Server) SavePartialJob(jobID string, res *engine.Result, options map[st
 	if s == nil || s.st == nil {
 		return 0, nil
 	}
-	scanID, rec := SavePartialAt(s.st, res, options, interruptedPhase)
+	scanID, rec := SavePartialAtTenant(s.st, res, options, interruptedPhase, s.jobTenant(jobID))
 	if rec != nil {
 		rec.JobID = jobID
 	}

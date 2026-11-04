@@ -30,6 +30,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"cnb.cool/feng-qiao/sitelens/internal/target"
 )
 
 // Finding 一条网络层安全发现。
@@ -712,12 +714,19 @@ func lookupTXT(domain string) []string {
 	return records
 }
 
-// CheckHTTP 一次只读 GET（5s 超时，跟随跳转并记录最终 scheme）检测：
-//   - HSTS 缺失/过短（最终响应为 HTTPS 时检查 Strict-Transport-Security）；
-//   - HTTP→HTTPS 未跳转（入参为 http 且最终仍是 http）。
+// checkHTTPMaxHops HSTS/跳转探测的最大跟随跳数（旧实现交给 net/http 自动
+// 跟随、上限 10 跳；这里收紧到 5 跳，正常 HTTPS 升级只需 1~2 跳）。
+const checkHTTPMaxHops = 5
+
+// CheckHTTP HSTS / HTTP→HTTPS 跳转检查。
 //
-// 只读、不发 payload；扫描器场景允许自签证书（与 CheckTLS 一致），只做
-// 1 次逻辑请求（重定向目标由 net/http 内部跟随，上限 10 跳）。
+// V-07 安全约束（此前是裸 http.Client 自动跟随：被扫站点一个 302 就能把请求
+// 打到内网/云元数据端点，绕过 target.Validate）：
+//   - 禁止自动重定向，逐跳手动发起；
+//   - 每一跳先过 target.Validate（协议白名单 / 主机黑名单 / metadata 字面 IP /
+//     gov.cn / 端口），不合规立即停止，绝不发出该跳请求；
+//   - 只跟随**同主机**跳转（允许 http→https、端口变化）。跨主机 302 是常见
+//     SSRF 跳板，而 HSTS/升级检查本身不需要跨站跟随。
 func CheckHTTP(rawURL string) []Finding {
 	u, err := url.Parse(strings.TrimSpace(rawURL))
 	if err != nil || u.Host == "" {
@@ -727,6 +736,7 @@ func CheckHTTP(rawURL string) []Finding {
 	if scheme != "http" && scheme != "https" {
 		return nil
 	}
+	originHost := strings.ToLower(u.Hostname())
 	client := &http.Client{
 		Timeout: 5 * time.Second,
 		Transport: &http.Transport{
@@ -734,9 +744,50 @@ func CheckHTTP(rawURL string) []Finding {
 			Proxy:               http.ProxyFromEnvironment,
 			TLSHandshakeTimeout: 5 * time.Second,
 		},
+		// 禁自动跟随：每一跳由本函数校验后再手动发起。
+		CheckRedirect: func(*http.Request, []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
 	}
-	resp, gerr := client.Get(u.String())
-	if gerr != nil {
+
+	curURL := u.String()
+	var resp *http.Response
+	for hop := 0; hop < checkHTTPMaxHops; hop++ {
+		// 逐跳静态 SSRF 校验；跨主机跳转不跟随。
+		_, host, _, verr := target.Validate(curURL, false)
+		if verr != nil || !strings.EqualFold(host, originHost) {
+			break
+		}
+		req, rerr := http.NewRequest(http.MethodGet, curURL, nil)
+		if rerr != nil {
+			break
+		}
+		next, derr := client.Do(req)
+		if derr != nil {
+			// 旧行为：连接失败 → 无发现；中间跳响应体先排空关闭再返回。
+			if resp != nil {
+				drainAndCloseHTTP(resp)
+			}
+			return nil
+		}
+		if resp != nil {
+			drainAndCloseHTTP(resp)
+		}
+		resp = next
+		if !isHTTPRedirect(next.StatusCode) {
+			break
+		}
+		loc := strings.TrimSpace(next.Header.Get("Location"))
+		if loc == "" {
+			break
+		}
+		resolved, perr := resolveHTTPRedirect(curURL, loc)
+		if perr != nil {
+			break
+		}
+		curURL = resolved
+	}
+	if resp == nil {
 		return nil
 	}
 	defer client.CloseIdleConnections() // 单次请求后释放连接，避免每次扫描残留空闲 socket
@@ -744,12 +795,13 @@ func CheckHTTP(rawURL string) []Finding {
 	// 丢弃响应体（上限 4KB，避免下载大页面）；只分析响应头/最终 URL。
 	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4<<10))
 
-	final := resp.Request.URL
+	// 手动跟随后的最终 URL 即 curURL（禁用了自动重定向，resp.Request.URL
+	// 只代表最后一跳请求，二者一致；直接用 curURL 更明确）。
 	finalScheme := ""
-	finalURL := u.String()
-	if final != nil {
-		finalScheme = strings.ToLower(final.Scheme)
-		finalURL = final.String()
+	finalURL := curURL
+	if fu, ferr := url.Parse(curURL); ferr == nil {
+		finalScheme = strings.ToLower(fu.Scheme)
+		finalURL = fu.String()
 	}
 	var hits []Finding
 
@@ -768,6 +820,39 @@ func CheckHTTP(rawURL string) []Finding {
 		hits = append(hits, checkHSTS(finalURL, resp.Header.Get("Strict-Transport-Security"))...)
 	}
 	return hits
+}
+
+// isHTTPRedirect 3xx 跳转状态码（与 net/http 语义一致）。
+func isHTTPRedirect(code int) bool {
+	switch code {
+	case http.StatusMovedPermanently, http.StatusFound, http.StatusSeeOther,
+		http.StatusTemporaryRedirect, http.StatusPermanentRedirect:
+		return true
+	}
+	return false
+}
+
+// resolveHTTPRedirect 相对 Location 解析为绝对 URL。
+func resolveHTTPRedirect(base, ref string) (string, error) {
+	b, err := url.Parse(base)
+	if err != nil {
+		return "", err
+	}
+	r, err := url.Parse(ref)
+	if err != nil {
+		return "", err
+	}
+	return b.ResolveReference(r).String(), nil
+}
+
+// drainAndCloseHTTP 排空并关闭中间跳响应体（让 keep-alive 连接可复用；
+// 只 Close 不读会让 transport 丢弃连接）。
+func drainAndCloseHTTP(resp *http.Response) {
+	if resp == nil || resp.Body == nil {
+		return
+	}
+	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4<<10))
+	_ = resp.Body.Close()
 }
 
 // hstsMinMaxAge HSTS 建议最小 max-age（6 个月；OWASP 建议 1 年）。

@@ -107,7 +107,12 @@ func writeJSONBody(w http.ResponseWriter, code int, body string) {
 	_, _ = io.WriteString(w, body)
 }
 
-// TestDetectIDORHorizontal 同资源不同角色均能读取（一致关键字段）→ 水平越权。
+// TestDetectIDORHorizontal 同资源不同角色均能读取，且**两角色正文一致**。
+//
+// B-10 定稿语义：两侧归一化正文一致 = B 读到了 A 可见的同一份对象内容
+// → confirmed（high）。用例覆盖点：同资源多角色可读、角色对、replay 脱敏、
+// 只读 GET、请求计数。possible 档由
+// TestDetectIDORSameLengthDifferentContentPossible 覆盖。
 func TestDetectIDORHorizontal(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/profile/", func(w http.ResponseWriter, r *http.Request) {
@@ -136,17 +141,20 @@ func TestDetectIDORHorizontal(t *testing.T) {
 		t.Fatalf("DetectIDOR: %v", err)
 	}
 	if len(res.Findings) != 2 {
-		t.Fatalf("应产出 2 条水平越权（id=1、id=2），实际 %d: %+v", len(res.Findings), res.Findings)
+		t.Fatalf("应产出 2 条水平发现（id=1、id=2），实际 %d: %+v", len(res.Findings), res.Findings)
 	}
 	for _, fnd := range res.Findings {
-		if fnd.Type != "idor-horizontal" || fnd.Severity != "high" {
-			t.Fatalf("发现类型/级别异常: %+v", fnd)
+		if fnd.Type != "idor-horizontal" || fnd.Severity != "high" || fnd.Verdict != "confirmed" {
+			t.Fatalf("发现类型/级别/verdict 异常: %+v", fnd)
 		}
 		if fnd.Role != "bob" || fnd.VictimRole != "alice" {
 			t.Fatalf("攻击者/归属角色异常: %+v", fnd)
 		}
-		if !strings.Contains(fnd.Evidence, "关键字段指纹一致") {
-			t.Fatalf("证据应说明指纹一致: %q", fnd.Evidence)
+		if !strings.Contains(fnd.Evidence, "两角色返回同一对象内容") {
+			t.Fatalf("confirmed 证据应说明返回同一对象内容: %q", fnd.Evidence)
+		}
+		if !strings.Contains(fnd.Evidence, "复核建议") {
+			t.Fatalf("confirmed 证据应带资源归属复核建议: %q", fnd.Evidence)
 		}
 		if !strings.Contains(fnd.Replay, "curl -sk") || !strings.Contains(fnd.Replay, "redacted") {
 			t.Fatalf("replay 应为脱敏 curl: %q", fnd.Replay)
@@ -192,8 +200,13 @@ func TestDetectIDOR403NoFinding(t *testing.T) {
 	}
 }
 
-// TestDetectIDORSameLengthDifferentContent 长度相同但关键内容不同：不得误报。
-func TestDetectIDORSameLengthDifferentContent(t *testing.T) {
+// TestDetectIDORSameLengthDifferentContentPossible 长度相同但内容不同 → possible。
+//
+// B-10 定稿语义：B 可读但归一化正文与 A 不同 → 可能是按角色渲染（各看各的）
+// /公共资源/不同对象，无法仅凭响应断言越权，故为 possible（medium）。
+// 夹具（同长度、不同内容）原样保留，覆盖点不变（长度相等时不得靠长度
+// 判定，必须比内容）；confirmed 档由 TestDetectIDORHorizontal 覆盖。
+func TestDetectIDORSameLengthDifferentContentPossible(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/doc/", func(w http.ResponseWriter, r *http.Request) {
 		role := roleOf(r)
@@ -214,12 +227,23 @@ func TestDetectIDORSameLengthDifferentContent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("DetectIDOR: %v", err)
 	}
-	if len(res.Findings) != 0 {
-		t.Fatalf("同长度不同内容不应判定越权: %+v", res.Findings)
+	if len(res.Findings) != 1 {
+		t.Fatalf("内容不同应产出 1 条 possible，实际 %d: %+v", len(res.Findings), res.Findings)
+	}
+	fnd := res.Findings[0]
+	if fnd.Type != "idor-horizontal" || fnd.Verdict != "possible" || fnd.Severity != "medium" {
+		t.Fatalf("类型/verdict/级别异常: %+v", fnd)
+	}
+	if !strings.Contains(fnd.Evidence, "两角色内容不同") {
+		t.Fatalf("证据应说明两角色内容不同: %q", fnd.Evidence)
+	}
+	if !strings.Contains(fnd.Evidence, "需人工确认归属") {
+		t.Fatalf("possible 证据应要求人工确认归属: %q", fnd.Evidence)
 	}
 }
 
 // TestDetectIDORRoleIDsRead RoleIDs 精确判定「B 角色读到 A 角色的资源」。
+// B-10：本用例两侧正文一致 → confirmed（high）；角色对/数量覆盖不变。
 func TestDetectIDORRoleIDsRead(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/user/", func(w http.ResponseWriter, r *http.Request) {
@@ -245,8 +269,8 @@ func TestDetectIDORRoleIDsRead(t *testing.T) {
 	}
 	pairs := map[string]bool{}
 	for _, fnd := range res.Findings {
-		if fnd.Type != "idor-read" || fnd.Severity != "high" {
-			t.Fatalf("类型/级别异常: %+v", fnd)
+		if fnd.Type != "idor-read" || fnd.Severity != "high" || fnd.Verdict != "confirmed" {
+			t.Fatalf("类型/级别/verdict 异常: %+v", fnd)
 		}
 		pairs[fnd.Role+"<-"+fnd.VictimRole] = true
 	}
@@ -294,7 +318,8 @@ func TestDetectIDORVertical(t *testing.T) {
 		t.Fatalf("访问控制生效时不应报垂直越权: %+v", res1.Findings)
 	}
 
-	// 脆弱：user 也读到相同管理内容 → 垂直越权。
+	// 脆弱：user 也读到与管理角色**一致**的管理内容 → confirmed（high）。
+	// 403 分支（none）仍要求 0 条，见上方不脆弱用例。
 	f2 := newIDORTestFetcher(t, mkMux(true))
 	m2 := base
 	m2.BaseURL = f2.srv.URL
@@ -303,11 +328,12 @@ func TestDetectIDORVertical(t *testing.T) {
 		t.Fatalf("DetectIDOR: %v", err)
 	}
 	if len(res2.Findings) != 1 {
-		t.Fatalf("应产出 1 条垂直越权，实际 %d: %+v", len(res2.Findings), res2.Findings)
+		t.Fatalf("应产出 1 条垂直发现，实际 %d: %+v", len(res2.Findings), res2.Findings)
 	}
 	fnd := res2.Findings[0]
-	if fnd.Type != "idor-vertical" || fnd.Severity != "high" || fnd.Role != "user" || fnd.VictimRole != "admin" {
-		t.Fatalf("垂直越权字段异常: %+v", fnd)
+	if fnd.Type != "idor-vertical" || fnd.Severity != "high" || fnd.Verdict != "confirmed" ||
+		fnd.Role != "user" || fnd.VictimRole != "admin" {
+		t.Fatalf("垂直发现字段异常: %+v", fnd)
 	}
 	if !strings.Contains(fnd.URL, "/admin/users/1") {
 		t.Fatalf("URL 异常: %q", fnd.URL)
@@ -465,5 +491,110 @@ func TestDetectIDORDefaultIDs(t *testing.T) {
 	}
 	if res.Requests != 4 { // 2 ID × 2 角色
 		t.Fatalf("默认 ID 1..MaxID 应产生 4 请求，实际 %d", res.Requests)
+	}
+}
+
+// ---- B-10 三值判定回归测试 -------------------------------------------------
+
+// TestIDORVerdictOfTriState 三值判定纯函数：none / possible / confirmed。
+func TestIDORVerdictOfTriState(t *testing.T) {
+	ref := idorCell{status: 200, size: 52, bodyHash: "aaaa1111", readable: true}
+	same := idorCell{status: 200, size: 52, bodyHash: "aaaa1111", readable: true}
+	diff := idorCell{status: 200, size: 28, bodyHash: "bbbb2222", readable: true}
+	denied403 := idorCell{status: 403, size: 9}
+	denied404 := idorCell{status: 404, size: 9}
+	empty := idorCell{status: 200, size: 0}
+
+	cases := []struct {
+		name  string
+		other idorCell
+		want  idorVerdict
+	}{
+		{"内容一致", same, idorVerdictConfirmed},
+		{"内容不同", diff, idorVerdictPossible},
+		{"403 拒绝", denied403, idorVerdictNone},
+		{"404 拒绝", denied404, idorVerdictNone},
+		{"空正文", empty, idorVerdictNone},
+	}
+	for _, tc := range cases {
+		if got := idorVerdictOf(ref, tc.other); got != tc.want {
+			t.Fatalf("%s: verdict=%v, 期望 %v", tc.name, got, tc.want)
+		}
+	}
+	// 参照方不可读时一律 none（无法比较）。
+	if got := idorVerdictOf(denied403, same); got != idorVerdictNone {
+		t.Fatalf("参照方不可读应为 none, 实际 %v", got)
+	}
+	// 字符串与级别映射。
+	if idorVerdictConfirmed.String() != "confirmed" || idorVerdictConfirmed.Severity() != "high" {
+		t.Fatal("confirmed 应映射 confirmed/high")
+	}
+	if idorVerdictPossible.String() != "possible" || idorVerdictPossible.Severity() != "medium" {
+		t.Fatal("possible 应映射 possible/medium")
+	}
+	if idorVerdictNone.String() != "none" {
+		t.Fatal("none 应映射 none")
+	}
+}
+
+// TestIDORStableBodyVolatileOnly 稳定化：差异仅来自 UUID / ISO 时间戳 /
+// 命名时间字段 / 毫秒时间戳时，归一化哈希必须一致；真实内容差异仍要能区分。
+func TestIDORStableBodyVolatileOnly(t *testing.T) {
+	a := `{"id":1,"owner":"alice","request_id":"550e8400-e29b-41d4-a716-446655440000",` +
+		`"server_time":"2026-11-03T16:09:09Z","nonce":1730000000123}`
+	b := `{"id":1,"owner":"alice","request_id":"6ba7b810-9dad-11d1-80b4-00c04fd430c8",` +
+		`"server_time":"2026-11-03T17:22:41.123Z","nonce":1730000009999}`
+	if idorBodyHash(a) != idorBodyHash(b) {
+		t.Fatalf("仅易变字段不同应归一化为同一哈希:\n a=%s\n b=%s\n ha=%s hb=%s",
+			idorStableBody(a), idorStableBody(b), idorBodyHash(a), idorBodyHash(b))
+	}
+	// 反例：真实内容差异必须保留（否则 confirmed 永远判不出来）。
+	c := strings.Replace(a, `"owner":"alice"`, `"owner":"bob"`, 1)
+	if idorBodyHash(a) == idorBodyHash(c) {
+		t.Fatal("真实内容差异不得被归一化吃掉")
+	}
+}
+
+// TestDetectIDORVolatileOnlyConfirmed 端到端对照：两角色响应**只**差在
+// 时间戳/UUID/随机数上 → 归一化后一致 → 必须判 confirmed，不能被噪声
+// 误判成 possible（同一对象不该因为每次响应带不同 nonce 就降级）。
+func TestDetectIDORVolatileOnlyConfirmed(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/event/", func(w http.ResponseWriter, r *http.Request) {
+		role := roleOf(r)
+		if role == "" {
+			writeJSONBody(w, 401, `{"error":"unauthorized"}`)
+			return
+		}
+		uuid := "550e8400-e29b-41d4-a716-446655440000"
+		ts := "2026-11-03T16:09:09Z"
+		nonce := int64(1730000000123)
+		if role == "bob" { // 同一资源，只有易变字段不同（长度也不同）
+			uuid = "6ba7b810-9dad-11d1-80b4-00c04fd430c8"
+			ts = "2026-11-03T17:22:41.123Z"
+			nonce = 1730000009999
+		}
+		writeJSONBody(w, 200, fmt.Sprintf(
+			`{"id":1,"owner":"alice","email":"alice@example.com","request_id":%q,"server_time":%q,"nonce":%d}`,
+			uuid, ts, nonce))
+	})
+	f := newIDORTestFetcher(t, mux)
+	res, err := DetectIDOR(IDORMatrix{
+		BaseURL: f.srv.URL, Templates: []string{"/event/{id}"}, IDs: []string{"1"},
+		Sessions: []authn.Session{idorSession("alice"), idorSession("bob")},
+	}, f)
+	if err != nil {
+		t.Fatalf("DetectIDOR: %v", err)
+	}
+	if len(res.Findings) != 1 {
+		t.Fatalf("应产出 1 条 confirmed，实际 %d: %+v", len(res.Findings), res.Findings)
+	}
+	fnd := res.Findings[0]
+	if fnd.Verdict != "confirmed" || fnd.Severity != "high" {
+		t.Fatalf("仅易变字段不同（归一化后一致）应判 confirmed/high，实际 verdict=%q severity=%q\n证据: %s",
+			fnd.Verdict, fnd.Severity, fnd.Evidence)
+	}
+	if !strings.Contains(fnd.Evidence, "两角色返回同一对象内容") {
+		t.Fatalf("证据应说明归一化后返回同一对象内容: %q", fnd.Evidence)
 	}
 }

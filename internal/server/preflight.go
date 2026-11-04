@@ -120,7 +120,8 @@ type preflightResp struct {
 // hPreflight 扫描前只读预检：1 次 GET（≤ MaxHops 跳），结果缓存供建议卡展示
 // 与 /api/scan 首页复用。受 scan.preflight 总闸控制。
 func (s *Server) hPreflight(w http.ResponseWriter, r *http.Request) {
-	if !s.cfg.Scan.Preflight {
+	cfg := s.cfgSnap() // A-09：读配置快照（一次请求/操作内一致）
+	if !cfg.Scan.Preflight {
 		writeJSON(w, 400, map[string]any{"error": "预检已关闭（scan.preflight: false）"})
 		return
 	}

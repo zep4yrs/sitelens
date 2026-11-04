@@ -26,9 +26,11 @@ package afrogx
 import (
 	"fmt"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 )
 
 // Response 求值上下文（运行时）。
@@ -96,7 +98,17 @@ func (p *Program) PositiveGround() bool {
 
 // cache 编译结果缓存（表达式文本 → 编译产物）。
 // 编译失败也要缓存：同一批模板反复转换，失败原因不变。
-var cache sync.Map // map[string]*cacheEntry
+//
+// B2-08：缓存必须有界。键是模板文件里的 expression 原文，值持有整棵 AST 与
+// 编译好的 *regexp.Regexp；afrog 模板库来自远程同步，多轮同步后表达式集合只增
+// 不减，无上限会让进程常驻内存随模板历史线性增长（与 internal/dsl 的有界缓存
+// 口径对齐）。
+var (
+	cache      sync.Map // map[string]*cacheEntry
+	cacheCount atomic.Int64
+)
+
+const cacheMax = 8192
 
 type cacheEntry struct {
 	prog *Program
@@ -110,7 +122,9 @@ func Get(expr string) (*Program, error) {
 		return e.prog, e.err
 	}
 	prog, err := Compile(expr)
-	cache.Store(expr, &cacheEntry{prog: prog, err: err})
+	if cacheCount.Add(1) <= int64(cacheMax) {
+		cache.Store(expr, &cacheEntry{prog: prog, err: err})
+	}
 	return prog, err
 }
 
@@ -239,7 +253,22 @@ func lexString(src string, i int, prefix string) (token, int, error) {
 		ch := src[i]
 		if ch == '\\' && !raw && i+1 < len(src) {
 			i++
-			sb.WriteByte(src[i])
+			// B2-04：已知转义按 Go 语义解码；**未知转义保留反斜杠**。
+			// 此前一律只写反斜杠后的那个字节：`b"a\nb"` 变成 "anb"（永不命中），
+			// `b"(\d+)".bmatches(...)` 的正则元字符被吃成 "(d+)"（静默改写正则）。
+			switch src[i] {
+			case 'n':
+				sb.WriteByte('\n')
+			case 't':
+				sb.WriteByte('\t')
+			case 'r':
+				sb.WriteByte('\r')
+			case '\\', '\'', '"':
+				sb.WriteByte(src[i])
+			default:
+				sb.WriteByte('\\')
+				sb.WriteByte(src[i])
+			}
 			i++
 			continue
 		}
@@ -667,9 +696,16 @@ func (n *containsNode) eval(r Response) (bool, string) {
 	switch {
 	case n.value == "response.body":
 		hay = r.Body
-	case n.value == "response.raw", n.value == "response.raw_header":
-		// 本引擎未保留未解码的原始报文；按正文处理（少报不误报方向安全）
+	case n.value == "response.raw":
+		// 本引擎未保留未解码的原始报文；按正文处理——方向安全（raw 包含正文，
+		// 只可能少报，不会把"正文里的串"错当成"报文里的串"而误报）。
 		hay = r.Body
+	case n.value == "response.raw_header":
+		// B2-05：raw_header 走**响应头独立通道**，不再当正文求值。
+		// 旧实现把它别名成 body，两个方向都错：真实头命中全部漏报；
+		// 而正文里恰好出现的 "text/html"、"X-Powered-By" 等串会造成误报
+		// （注释声称"少报不误报方向安全"，实际不成立）。
+		hay = rawHeaderText(r.Headers)
 	case n.value == "response.content_type":
 		hay = r.header("Content-Type")
 	case strings.HasPrefix(n.value, "response.headers["):
@@ -688,6 +724,27 @@ func (n *containsNode) eval(r Response) (bool, string) {
 		return false, ""
 	}
 	return true, fmt.Sprintf("%s 包含 %q", n.value, n.needle)
+}
+
+// rawHeaderText 把响应头拼成 "Name: value\r\n" 形态（键排序保证确定性），
+// 供 response.raw_header 的包含判定使用。
+func rawHeaderText(headers map[string]string) string {
+	if len(headers) == 0 {
+		return ""
+	}
+	keys := make([]string, 0, len(headers))
+	for k := range headers {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	var b strings.Builder
+	for _, k := range keys {
+		b.WriteString(k)
+		b.WriteString(": ")
+		b.WriteString(headers[k])
+		b.WriteString("\r\n")
+	}
+	return b.String()
 }
 
 // ground 只有**正文**包含算内容判定；响应头 / content-type 单独使用对任意

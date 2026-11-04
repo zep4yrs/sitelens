@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"cnb.cool/feng-qiao/sitelens/internal/config"
@@ -35,7 +36,7 @@ func TestTryBypass403PathTrailingSlash(t *testing.T) {
 	srv := httptest.NewServer(mux)
 	defer srv.Close()
 
-	attempts := 0
+	var attempts atomic.Int64
 	resp, via := tryBypass403(client(), srv.URL+"/admin", "/admin", srv.URL, 0,
 		soft404Baseline{sizes: map[int]bool{19: true}}, &attempts, nil)
 	if resp == nil {
@@ -62,7 +63,7 @@ func TestTryBypass403TrustHeader(t *testing.T) {
 	srv := httptest.NewServer(mux)
 	defer srv.Close()
 
-	attempts := 0
+	var attempts atomic.Int64
 	resp, via := tryBypass403(client(), srv.URL+"/secret", "/secret", srv.URL, 0,
 		soft404Baseline{sizes: map[int]bool{19: true}}, &attempts, nil)
 	if resp == nil {
@@ -95,7 +96,7 @@ func TestTryBypass403RewriteHeader(t *testing.T) {
 	if err != nil || rootResp == nil {
 		t.Fatal("取根页基线失败")
 	}
-	attempts := 0
+	var attempts atomic.Int64
 	resp, via := tryBypass403(root, srv.URL+"/console", "/console", srv.URL,
 		len(rootResp.Body), soft404Baseline{sizes: map[int]bool{19: true}}, &attempts, nil)
 	if resp == nil {
@@ -109,6 +110,9 @@ func TestTryBypass403RewriteHeader(t *testing.T) {
 	}
 }
 
+// TestTryBypass403HeadMethod 语义修正（B2-03）：HEAD 返回 200 但 GET 仍 403 时
+// **不算**绕过成功——HEAD/OPTIONS 无正文，200 只说明"方法被放行"，不证明能读到
+// 受保护内容。旧测试断言"HEAD 200 = 命中"，正是误报来源。
 func TestTryBypass403HeadMethod(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/panel", func(w http.ResponseWriter, r *http.Request) {
@@ -122,14 +126,46 @@ func TestTryBypass403HeadMethod(t *testing.T) {
 	srv := httptest.NewServer(mux)
 	defer srv.Close()
 
-	attempts := 0
+	var attempts atomic.Int64
+	resp, via := tryBypass403(client(), srv.URL+"/panel", "/panel", srv.URL, 0,
+		soft404Baseline{sizes: map[int]bool{19: true}}, &attempts, nil)
+	if resp != nil {
+		t.Fatalf("HEAD 200 且 GET 仍 403 不应判绕过成功: via=%q", via)
+	}
+}
+
+// TestTryBypass403HeadMethodWithContent HEAD 200 且 GET 能读到与基线不同的真实
+// 内容时才算绕过（B2-03 的正向路径），且返回的必须是 GET 响应（证据可复核）。
+func TestTryBypass403HeadMethodWithContent(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/panel", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodHead {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		if r.Header.Get("X-Forwarded-For") == "127.0.0.1" {
+			fmt.Fprint(w, "internal panel real content")
+			return
+		}
+		w.WriteHeader(http.StatusForbidden)
+		fmt.Fprint(w, "denied")
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	var attempts atomic.Int64
+	// 只有信任头变体能拿到内容；HEAD/OPTIONS 分支必须先命中 200 再 GET 复核，
+	// 而此处 GET 无信任头 → 403，因此最终命中来自 header 变体。
 	resp, via := tryBypass403(client(), srv.URL+"/panel", "/panel", srv.URL, 0,
 		soft404Baseline{sizes: map[int]bool{19: true}}, &attempts, nil)
 	if resp == nil {
-		t.Fatal("HEAD 方法变体应命中")
+		t.Fatal("信任头变体应命中")
 	}
-	if via != "method:HEAD" {
-		t.Fatalf("技术名 = %q, 期望 method:HEAD", via)
+	if via != "header:X-Forwarded-For" {
+		t.Fatalf("技术名 = %q, 期望 header:X-Forwarded-For", via)
+	}
+	if !strings.Contains(resp.Body, "real content") {
+		t.Fatalf("命中响应必须是带内容的 GET 响应, got: %.60s", resp.Body)
 	}
 }
 
@@ -139,14 +175,14 @@ func TestTryBypass403AllFail(t *testing.T) {
 	srv := httptest.NewServer(mux)
 	defer srv.Close()
 
-	attempts := 0
+	var attempts atomic.Int64
 	if resp, _ := tryBypass403(client(), srv.URL+"/locked", "/locked", srv.URL, 0,
 		soft404Baseline{sizes: map[int]bool{19: true}}, &attempts, nil); resp != nil {
 		t.Fatal("全部失败时不应返回命中")
 	}
 	want := len(buildBypassVariants(srv.URL+"/locked", "/locked", srv.URL, 0))
-	if attempts != want {
-		t.Fatalf("attempts = %d, 期望 %d（变体总数）", attempts, want)
+	if got := attempts.Load(); got != int64(want) {
+		t.Fatalf("attempts = %d, 期望 %d（变体总数）", got, want)
 	}
 }
 
@@ -157,13 +193,14 @@ func TestTryBypass403AttemptsCap(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	attempts := bypassMaxAttempts - 2 // 已接近上限
+	var attempts atomic.Int64
+	attempts.Store(bypassMaxAttempts - 2) // 已接近上限
 	if resp, _ := tryBypass403(client(), srv.URL+"/x", "/x", srv.URL, 0,
 		soft404Baseline{}, &attempts, nil); resp != nil {
 		t.Fatal("不应命中")
 	}
-	if attempts > bypassMaxAttempts {
-		t.Fatalf("attempts = %d 超过硬上限 %d", attempts, bypassMaxAttempts)
+	if got := attempts.Load(); got > int64(bypassMaxAttempts) {
+		t.Fatalf("attempts = %d 超过硬上限 %d", got, bypassMaxAttempts)
 	}
 }
 

@@ -16,6 +16,7 @@ import (
 	"strings"
 
 	"cnb.cool/feng-qiao/sitelens/internal/checks"
+	"cnb.cool/feng-qiao/sitelens/internal/config"
 	"cnb.cool/feng-qiao/sitelens/internal/httpx"
 	"cnb.cool/feng-qiao/sitelens/internal/ml"
 )
@@ -35,13 +36,20 @@ var mlPriorFingerprintBoost = 0.9
 
 var reHTMLTags = regexp.MustCompile(`<[^>]*>`)
 
-// mlPrior 计算产品先验。返回：
+// mlPrior 计算产品先验（独立入口用：取当前配置快照）。返回：
 //
 //	prior    — check 提权表（nil = 本次无有效先验，调用方按 4.0 原样执行）
 //	promoted — 核心档位下增量纳入的扩展集 check id（非规则联动部分）
 //	info     — 落 Extras["ml_prior"] 的可解释信息（含产品、概率与来源）
 func (e *Engine) mlPrior(res *Result, home *httpx.Response, level string,
 	cmsIDs []string) (*checks.Prior, []string, map[string]any) {
+	return e.mlPriorWith(e.Config(), res, home, level, cmsIDs)
+}
+
+// mlPriorWith 用显式配置快照计算产品先验（扫描内部调用，A-09：
+// 模型资产目录与入口快照一致）。
+func (e *Engine) mlPriorWith(cfg *config.Config, res *Result, home *httpx.Response,
+	level string, cmsIDs []string) (*checks.Prior, []string, map[string]any) {
 	linked := make(map[string]bool, len(cmsIDs))
 	for _, id := range cmsIDs {
 		linked[id] = true
@@ -53,7 +61,7 @@ func (e *Engine) mlPrior(res *Result, home *httpx.Response, level string,
 	}
 
 	// ② 文本模型先验（旧路径，指纹无命中时兜底）。
-	assets := e.mlFor()
+	assets := e.mlForWith(cfg)
 	if assets == nil {
 		return nil, nil, nil
 	}

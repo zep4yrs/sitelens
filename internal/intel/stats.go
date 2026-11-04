@@ -115,37 +115,42 @@ func (k *KB) Search(q string, limit int) []SearchResult {
 		out = append(out, h.r)
 	}
 	// NVD 旁路检索：主库命中不足 limit 时用 NVD（CVE 前缀/厂商产品子串）补位。
-	nvd := k.nvdStore() // A3：用户主动检索 NVD 时按需加载
-	if nvd != nil && len(out) < limit {
-		seen := map[string]bool{}
-		for _, r := range out {
-			seen[r.CVE] = true
-		}
-		qcve := strings.ToUpper(q)
-		nvdLimit := limit - len(out)
-		if !strings.HasPrefix(qcve, "CVE-") || len(qcve) < 8 {
-			// 非 CVE 词：按产品约束补
-			for _, e := range nvd.ByProduct(q, nvdLimit) {
-				if !seen[e.CVE] {
-					seen[e.CVE] = true
-					out = append(out, SearchResult{
-						Src: "nvd", Name: e.Descr, Product: nvdProdsJoined(e),
-						CVE: e.CVE, Severity: e.Sev, CVSS: e.Score,
-					})
+	//
+	// C2-03：nvdStore() 会触发 1.7GB 全量索引的惰性解码，必须放进
+	// "本地命中不足" 分支内——旧实现先无条件 nvdStore() 再判断 len(out)，
+	// 常见关键词（本地已命中满额）也会白付一次秒级解码 + 常驻内存。
+	if len(out) < limit {
+		if nvd := k.nvdStore(); nvd != nil {
+			seen := map[string]bool{}
+			for _, r := range out {
+				seen[r.CVE] = true
+			}
+			qcve := strings.ToUpper(q)
+			nvdLimit := limit - len(out)
+			if !strings.HasPrefix(qcve, "CVE-") || len(qcve) < 8 {
+				// 非 CVE 词：按产品约束补
+				for _, e := range nvd.ByProduct(q, nvdLimit) {
+					if !seen[e.CVE] {
+						seen[e.CVE] = true
+						out = append(out, SearchResult{
+							Src: "nvd", Name: e.Descr, Product: nvdProdsJoined(e),
+							CVE: e.CVE, Severity: e.Sev, CVSS: e.Score,
+						})
+					}
 				}
 			}
-		}
-		if strings.HasPrefix(qcve, "CVE-") {
-			for _, e := range nvd.list {
-				if len(out) >= limit {
-					break
-				}
-				if strings.HasPrefix(e.CVE, qcve) && !seen[e.CVE] {
-					seen[e.CVE] = true
-					out = append(out, SearchResult{
-						Src: "nvd", Name: e.Descr, Product: nvdProdsJoined(e),
-						CVE: e.CVE, Severity: e.Sev, CVSS: e.Score,
-					})
+			if strings.HasPrefix(qcve, "CVE-") {
+				for _, e := range nvd.list {
+					if len(out) >= limit {
+						break
+					}
+					if strings.HasPrefix(e.CVE, qcve) && !seen[e.CVE] {
+						seen[e.CVE] = true
+						out = append(out, SearchResult{
+							Src: "nvd", Name: e.Descr, Product: nvdProdsJoined(e),
+							CVE: e.CVE, Severity: e.Sev, CVSS: e.Score,
+						})
+					}
 				}
 			}
 		}

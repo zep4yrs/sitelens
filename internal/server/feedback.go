@@ -26,10 +26,8 @@ import (
 //
 // 返回：结构化 JSON + 可直接粘贴的纯文本（text 字段）。
 func (s *Server) hDiagnostics(w http.ResponseWriter, r *http.Request) {
-	s.cfgMu.Lock()
-	cfg := s.cfg
-	s.cfgMu.Unlock()
-	writeJSON(w, 200, diag.Build(Version, cfg, s.recentScanErrors()))
+	cfg := s.cfgSnap() // A-09：读配置快照（无锁）
+	writeJSON(w, 200, diag.Build(Version, cfg, s.recentScanErrorsForTenant(tenantFromRequest(r))))
 }
 
 // hFeedback 转发用户已确认的诊断包到**用户自建**的收集端点。
@@ -53,10 +51,14 @@ func (s *Server) hFeedback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	s.cfgMu.Lock()
-	endpoint := strings.TrimSpace(s.cfg.Feedback.Endpoint)
-	timeout := s.cfg.Feedback.Timeout
-	s.cfgMu.Unlock()
+	// A-09：读配置快照（无锁），endpoint/timeout 取自同一份快照。
+	cfg := s.cfgSnap()
+	endpoint := ""
+	timeout := 0
+	if cfg != nil {
+		endpoint = strings.TrimSpace(cfg.Feedback.Endpoint)
+		timeout = cfg.Feedback.Timeout
+	}
 
 	if endpoint == "" {
 		writeJSON(w, 200, map[string]any{
@@ -96,12 +98,17 @@ func (s *Server) hFeedback(w http.ResponseWriter, r *http.Request) {
 //
 // 这回答的是用户最常问的「上次为什么失败」——比让用户贴整份日志有用得多。
 func (s *Server) recentScanErrors() []string {
+	return s.recentScanErrorsForTenant("")
+}
+
+// recentScanErrorsForTenant 同 recentScanErrors，但只读本租户历史（BL-5）。
+func (s *Server) recentScanErrorsForTenant(tenant string) []string {
 	if s.st == nil {
 		return nil
 	}
 	var out []string
-	for _, sum := range s.st.List(20, "") {
-		rec := s.st.Get(sum.ID)
+	for _, sum := range s.st.ListForTenant(20, "", tenant) {
+		rec := s.st.GetForTenant(sum.ID, tenant)
 		if rec == nil || rec.Result == nil || rec.Result.Error == "" {
 			continue
 		}

@@ -1,4 +1,6 @@
-# 构建上下文瘦身：只保留源码与运行数据
+# 构建上下文瘦身：只保留 Dockerfile 真正 COPY 的源码与运行数据。
+# 校验口径：本文件排除项 ∪ Dockerfile 的 COPY 目标 = 全部内容。
+# 新增 COPY 目标时记得同步放行，否则镜像里会缺文件。
 .git
 .gitignore
 .env
@@ -6,15 +8,32 @@
 server*.log
 *.exe
 .mimosa/
+
+# 运行产物（镜像内由 VOLUME 提供）
 data/state/
 data/nuclei/
+
+# 与构建无关的重目录（Dockerfile 不 COPY；E-08：实测 dist/ 1079MB、build/ 185MB、
+# ml/ 107MB、packs/ 47MB，曾全部随上下文传给 daemon，只为了被丢弃）
+dist/
+build/
+ml/
+packs/
+.archive/
+.tmp/
+benchmark/
+tui/
+
+# 文档与构建描述自身
+docs/
 docs/build/
-__pycache__/
-*.pyc
 CHANGELOG.md
 README.md
-docs/
 Dockerfile
 .dockerignore
 .sitelens.example.yml
 .sitelens.yml
+
+# Python 缓存
+__pycache__/
+*.pyc

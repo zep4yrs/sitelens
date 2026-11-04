@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"sort"
 
+	"cnb.cool/feng-qiao/sitelens/internal/config"
 	"cnb.cool/feng-qiao/sitelens/internal/modules"
 	"cnb.cool/feng-qiao/sitelens/internal/netx"
 	"cnb.cool/feng-qiao/sitelens/internal/nuclei"
@@ -25,13 +26,17 @@ type NetHit struct {
 
 // netprotoScan 对探测到的服务端口执行协议模板。services 为空时仅跑
 // dns 类模板（查询目标域名自身）。返回命中列表（可能为空）。
-func (e *Engine) netprotoScan(host string, services []modules.ServiceHit,
+// cfg 为本次扫描入口捕获的配置快照（A-09）。
+func (e *Engine) netprotoScan(cfg *config.Config, host string, services []modules.ServiceHit,
 	emit func(kind, text string), cancelled func() bool) []NetHit {
 
-	if e.cfg.Checks.NucleiDir == "" {
+	if cfg == nil {
+		cfg = config.Default()
+	}
+	if cfg.Checks.NucleiDir == "" {
 		return nil
 	}
-	entries := nuclei.IndexCached(filepath.Join(e.cfg.Store.DataDir, "nuclei_index.json"))
+	entries := nuclei.IndexCached(filepath.Join(cfg.Store.DataDir, "nuclei_index.json"))
 	if len(entries) == 0 {
 		return nil
 	}
@@ -48,16 +53,16 @@ func (e *Engine) netprotoScan(host string, services []modules.ServiceHit,
 	// （B24 解耦：不再复用 NucleiCap，避免 HTTP 子集调参误伤协议覆盖）
 	sort.Slice(protos, func(i, j int) bool { return protos[i].Sev < protos[j].Sev })
 
-	cfg := netx.Config{TimeoutMS: e.cfg.Active.ProbeTimeoutMS, MaxRounds: 4}
-	if cfg.TimeoutMS <= 0 {
-		cfg.TimeoutMS = 3000
+	ncfg := netx.Config{TimeoutMS: cfg.Active.ProbeTimeoutMS, MaxRounds: 4}
+	if ncfg.TimeoutMS <= 0 {
+		ncfg.TimeoutMS = 3000
 	}
 	var out []NetHit
 	for _, en := range protos {
 		if cancelled() {
 			break
 		}
-		data, err := os.ReadFile(filepath.Join(e.cfg.Checks.NucleiDir,
+		data, err := os.ReadFile(filepath.Join(cfg.Checks.NucleiDir,
 			filepath.FromSlash(en.Path)))
 		if err != nil {
 			continue
@@ -78,7 +83,7 @@ func (e *Engine) netprotoScan(host string, services []modules.ServiceHit,
 			if nc.Proto == "dns" {
 				tgt = netx.Target{Scheme: "dns", Host: host}
 			}
-			hit, sig, err := nuclei.RunNetCheck(nc, tgt, cfg, false)
+			hit, sig, err := nuclei.RunNetCheck(nc, tgt, ncfg, false)
 			if err != nil || !hit {
 				continue
 			}

@@ -22,10 +22,10 @@ import (
 // ml.LocateAssetsDir 解析。工作树无 ONNX 资产时 skip。
 func TestSevAssetsDirResolvesRepoModels(t *testing.T) {
 	t.Chdir("../..") // 运行时约定：模型资产相对路径相对进程 cwd（仓库根）
-	e := &Engine{cfg: config.Default()}
-	if st, err := os.Stat(e.cfg.ML.AssetsDir); err == nil && st.IsDir() {
+	e := testEngine(config.Default())
+	if st, err := os.Stat(e.Config().ML.AssetsDir); err == nil && st.IsDir() {
 		// 未来若仓内补了默认目录，配置优先语义本就指向它，无需求解候选
-		t.Skipf("默认资产目录已存在（%s），本回归前提不再成立", e.cfg.ML.AssetsDir)
+		t.Skipf("默认资产目录已存在（%s），本回归前提不再成立", e.Config().ML.AssetsDir)
 	}
 	got := e.sevAssetsDir()
 	want := filepath.Join("ml", "models", "go", "ml_assets")
@@ -54,9 +54,9 @@ func TestSevAssetsDirResolvesRepoModels(t *testing.T) {
 // （不成套线性模型资产）：候选全不合格时保持配置值原语义，不得静默改道。
 func TestSevAssetsDirFallbackToConfigured(t *testing.T) {
 	t.Chdir(t.TempDir()) // 默认候选（data/go、ml/models/go）在此均不存在
-	e := &Engine{cfg: config.Default()}
+	e := testEngine(config.Default())
 	custom := "custom-onnx-only"
-	e.cfg.ML.AssetsDir = custom
+	e.Config().ML.AssetsDir = custom
 	if got := e.sevAssetsDir(); got != custom {
 		t.Fatalf("候选全缺失时应退回配置值 %q，实得 %q", custom, got)
 	}
@@ -88,8 +88,8 @@ func TestMLNormRelevance(t *testing.T) {
 // 目录缺失 → nil 不死；资产损坏 → nil 且本进程禁用。
 func TestMLForSilentSemantics(t *testing.T) {
 	// 目录不存在：nil，且不置死标记（资产可能后补）
-	e := &Engine{cfg: config.Default()}
-	e.cfg.ML.AssetsDir = filepath.Join(t.TempDir(), "no-such-dir")
+	e := testEngine(config.Default())
+	e.Config().ML.AssetsDir = filepath.Join(t.TempDir(), "no-such-dir")
 	if a := e.mlFor(); a != nil {
 		t.Fatalf("目录缺失应返回 nil, got %v", a)
 	}
@@ -118,8 +118,8 @@ func TestMLForSilentSemantics(t *testing.T) {
 			t.Fatalf("写 %s: %v", fn, err)
 		}
 	}
-	e2 := &Engine{cfg: config.Default()}
-	e2.cfg.ML.AssetsDir = bad
+	e2 := testEngine(config.Default())
+	e2.Config().ML.AssetsDir = bad
 	if a := e2.mlFor(); a != nil {
 		t.Fatalf("损坏资产应返回 nil, got %v", a)
 	}
@@ -134,8 +134,8 @@ func TestMLForSilentSemantics(t *testing.T) {
 // TestMLEnrichSilentSkip mlEnrich 全链静默语义：资产缺失时 predictions
 // 缺席（nil），既不 panic 也不产生空数组。
 func TestMLEnrichSilentSkip(t *testing.T) {
-	e := &Engine{cfg: config.Default()}
-	e.cfg.ML.AssetsDir = filepath.Join(t.TempDir(), "absent")
+	e := testEngine(config.Default())
+	e.Config().ML.AssetsDir = filepath.Join(t.TempDir(), "absent")
 	res := &Result{Vulnerabilities: []intel.Finding{{CVE: "CVE-2024-1234"}}}
 	e.mlEnrich(res, nil)
 	if res.Predictions != nil {
@@ -143,7 +143,7 @@ func TestMLEnrichSilentSkip(t *testing.T) {
 	}
 	// 无 CVE 的结果在 CVE 收集阶段即返回，连资产目录都不触碰
 	res2 := &Result{}
-	e2 := &Engine{cfg: config.Default()}
+	e2 := testEngine(config.Default())
 	e2.mlEnrich(res2, nil)
 	if res2.Predictions != nil {
 		t.Errorf("无 CVE 时 predictions 应缺席, got %v", res2.Predictions)
@@ -194,8 +194,8 @@ func TestMLForPartialAssetsNotDead(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	e := &Engine{cfg: config.Default()}
-	e.cfg.ML.AssetsDir = dir
+	e := testEngine(config.Default())
+	e.Config().ML.AssetsDir = dir
 	if a := e.mlFor(); a != nil {
 		t.Fatalf("缺 cwe-type 四件应返回 nil, got %v", a)
 	}
@@ -218,8 +218,8 @@ func TestMLForPartialAssetsNotDead(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(bad, "cve-tech.coef.f32"), make([]byte, 4), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	e2 := &Engine{cfg: config.Default()}
-	e2.cfg.ML.AssetsDir = bad
+	e2 := testEngine(config.Default())
+	e2.Config().ML.AssetsDir = bad
 	if a := e2.mlFor(); a != nil {
 		t.Fatal("截断损坏应返回 nil")
 	}
@@ -234,8 +234,8 @@ func TestMLForPartialAssetsNotDead(t *testing.T) {
 func TestMLEnrichNoCVENotTouchAssets(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "assets")
 	writeTinyMLAssets(t, dir)
-	e := &Engine{cfg: config.Default()}
-	e.cfg.ML.AssetsDir = dir
+	e := testEngine(config.Default())
+	e.Config().ML.AssetsDir = dir
 	res := &Result{Vulnerabilities: []intel.Finding{{Tech: "some-tech", Title: "无 CVE 情报行"}}}
 	e.mlEnrich(res, nil)
 	if e.mlAssets != nil {
@@ -264,8 +264,8 @@ func TestMLEnrichNoCVENotTouchAssets(t *testing.T) {
 func TestMLEnrichCVEShape(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "assets")
 	writeTinyMLAssets(t, dir)
-	e := &Engine{cfg: config.Default()}
-	e.cfg.ML.AssetsDir = dir
+	e := testEngine(config.Default())
+	e.Config().ML.AssetsDir = dir
 	descr := "alpha bravo charlie delta echo" // 命中词表，走 fallback 描述
 	res := &Result{Vulnerabilities: []intel.Finding{
 		{CVE: "cve-2021-1001", Desc: descr},       // 小写：收集并保留原始形态
@@ -382,8 +382,8 @@ func TestMLEnrichSevSourcePriority(t *testing.T) {
 		t.Fatal("默认配置 ml.sev_linear 应为 true（5.2 阶段 1 默认后端）")
 	}
 
-	e := &Engine{cfg: config.Default()}
-	e.cfg.ML.AssetsDir = dir
+	e := testEngine(config.Default())
+	e.Config().ML.AssetsDir = dir
 	descr := "alpha bravo charlie delta"
 	res := &Result{Vulnerabilities: []intel.Finding{
 		{CVE: "CVE-2024-0001", Desc: descr, CVSSScore: 7.5}, // 查表优先
@@ -411,9 +411,9 @@ func TestMLEnrichSevSourcePriority(t *testing.T) {
 	}
 
 	// 关闭 sev_linear：无 NVD 分的条目不给分数（不臆造），来源留空。
-	e2 := &Engine{cfg: config.Default()}
-	e2.cfg.ML.AssetsDir = dir
-	e2.cfg.ML.SevLinear = false
+	e2 := testEngine(config.Default())
+	e2.Config().ML.AssetsDir = dir
+	e2.Config().ML.SevLinear = false
 	res2 := &Result{Vulnerabilities: []intel.Finding{
 		{CVE: "CVE-2024-0003", Desc: descr},
 	}}
@@ -431,8 +431,8 @@ func TestMLEnrichSevSourcePriority(t *testing.T) {
 func TestSevLinearOptionalLoadSemantics(t *testing.T) {
 	dir := t.TempDir()
 	writeTinyMLAssets(t, dir) // 只有 cve-tech/cwe-type
-	e := &Engine{cfg: config.Default()}
-	e.cfg.ML.AssetsDir = dir
+	e := testEngine(config.Default())
+	e.Config().ML.AssetsDir = dir
 	a := e.mlFor()
 	if a == nil {
 		t.Fatal("缺 sev-linear 不应影响必备线性模型加载")
@@ -447,8 +447,8 @@ func TestSevLinearOptionalLoadSemantics(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(bad, "sev-linear.coef.f32"), make([]byte, 4), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	e2 := &Engine{cfg: config.Default()}
-	e2.cfg.ML.AssetsDir = bad
+	e2 := testEngine(config.Default())
+	e2.Config().ML.AssetsDir = bad
 	a2 := e2.mlFor()
 	if a2 == nil {
 		t.Fatal("可选 sev-linear 损坏不应置死整个 ML 资产")
@@ -494,8 +494,8 @@ func TestMLEnrichLookupOnlyWithoutAssets(t *testing.T) {
 		"prods": []map[string]any{{"vp": "wordpress/wordpress"}},
 		"cwes":  []string{"CWE-79", "CWE-20"},
 	}})
-	e := &Engine{cfg: config.Default()}
-	e.cfg.ML.AssetsDir = filepath.Join(t.TempDir(), "absent")
+	e := testEngine(config.Default())
+	e.Config().ML.AssetsDir = filepath.Join(t.TempDir(), "absent")
 	res := &Result{Vulnerabilities: []intel.Finding{{CVE: "CVE-2024-1234"}}}
 	e.mlEnrich(res, kb)
 
@@ -530,8 +530,8 @@ func TestMLEnrichLookupBeatsModel(t *testing.T) {
 		"prods": []map[string]any{{"vp": "apache/tomcat"}},
 		"cwes":  []string{"CWE-22"},
 	}})
-	e := &Engine{cfg: config.Default()}
-	e.cfg.ML.AssetsDir = dir
+	e := testEngine(config.Default())
+	e.Config().ML.AssetsDir = dir
 	res := &Result{Vulnerabilities: []intel.Finding{{CVE: "CVE-2024-5678"}}}
 	e.mlEnrich(res, kb)
 
@@ -559,8 +559,8 @@ func TestMLEnrichModelFallback(t *testing.T) {
 	dir := t.TempDir()
 	writeTinyMLAssets(t, dir)
 	writeTinySevLinear(t, dir, 5.5)
-	e := &Engine{cfg: config.Default()}
-	e.cfg.ML.AssetsDir = dir
+	e := testEngine(config.Default())
+	e.Config().ML.AssetsDir = dir
 	res := &Result{Vulnerabilities: []intel.Finding{{
 		CVE: "CVE-2024-9999", Desc: "alpha bravo charlie delta echo",
 	}}}
@@ -584,8 +584,8 @@ func TestMLEnrichModelFallback(t *testing.T) {
 // TestMLEnrichIntelProductSource finding 自带 product 的回退（无 NVD 索引）：
 // 产品来源标 intel，CWE 来源空、严重度走 finding CVSS。
 func TestMLEnrichIntelProductSource(t *testing.T) {
-	e := &Engine{cfg: config.Default()}
-	e.cfg.ML.AssetsDir = filepath.Join(t.TempDir(), "absent")
+	e := testEngine(config.Default())
+	e.Config().ML.AssetsDir = filepath.Join(t.TempDir(), "absent")
 	res := &Result{Vulnerabilities: []intel.Finding{{
 		CVE: "CVE-2023-0001", Product: "wordpress/wordpress", CVSSScore: 8.0,
 	}}}
@@ -612,8 +612,8 @@ func TestMLEnrichIntelProductSource(t *testing.T) {
 // TestMLPriorFingerprintFirst 5.2 阶段 2：指纹技术名 → 产品映射优先，
 // 不加载模型资产、不读正文；无指纹命中且无资产时无先验。
 func TestMLPriorFingerprintFirst(t *testing.T) {
-	e := &Engine{cfg: config.Default()}
-	e.cfg.ML.AssetsDir = filepath.Join(t.TempDir(), "absent")
+	e := testEngine(config.Default())
+	e.Config().ML.AssetsDir = filepath.Join(t.TempDir(), "absent")
 	res := &Result{Technologies: []Tech{{Name: "WordPress"}, {Name: "Apache Tomcat"}}}
 	prior, _, info := e.mlPrior(res, nil, "core", []string{"wp-login"})
 	if prior == nil {

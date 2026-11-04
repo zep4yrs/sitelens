@@ -2,6 +2,7 @@ package intel
 
 import (
 	"encoding/json"
+	"log"
 	"os"
 	"strings"
 )
@@ -36,6 +37,12 @@ func (k *KB) CollectCVEs() []string {
 // 现改为：副本上合并/排序，完成后整体替换（读侧持读锁，见 MatchWithNVD）。
 func (k *KB) ApplyOverrides(ov map[string]Override) int {
 	k.ensureDecoded()
+	return k.applyOverridesLocked(ov)
+}
+
+// applyOverridesLocked 是 ApplyOverrides 的实现体：调用方须已确保解码完成
+// （ensureDecoded 内部重放挂起覆盖时直接调本函数，避免重入 loadMu）。
+func (k *KB) applyOverridesLocked(ov map[string]Override) int {
 	k.vulnsMu.Lock()
 	defer k.vulnsMu.Unlock()
 	if k.vulns == nil || len(ov) == 0 {
@@ -74,15 +81,26 @@ func LoadOverrides(path string) (map[string]Override, error) {
 	return ParseOverrides(data)
 }
 
-// server 启动合并：overrides 文件存在且非空时自动应用。
+// ApplyOverridesFile server 启动合并：overrides 文件存在且非空时自动应用。
 // （在 intel.Load 之后、serve 初始化前由调用方执行）
+//
+// C2-06：加载/解析失败必须留痕（log），不能静默返回 0——否则"OSV 覆盖没
+// 生效"在运行期完全不可见（无日志、无 Stats 字段）。
 func ApplyOverridesFile(k *KB, path string) int {
 	if path == "" {
 		return 0
 	}
 	ov, err := LoadOverrides(path)
-	if err != nil || len(ov) == 0 {
+	if err != nil {
+		log.Printf("intel: 覆盖文件解析失败，本次不合并（%s）：%v", path, err)
 		return 0
 	}
-	return k.ApplyOverrides(ov)
+	if len(ov) == 0 {
+		return 0
+	}
+	n := k.ApplyOverrides(ov)
+	if n == 0 {
+		log.Printf("intel: 覆盖文件已加载（%d 条）但未命中任何情报行（%s）", len(ov), path)
+	}
+	return n
 }

@@ -152,7 +152,7 @@ func runList(client *httpx.Client, targetURL string, list []Check,
 	}
 	selected := list
 
-	baseRaw, baseStripped, basePrefix := soft404Baseline(client, targetURL)
+	baseSamples := soft404Baseline(client, targetURL)
 
 	// 同路径聚类：Method+Path+Body+ContentType 相同的 check 共享一次
 	// 请求——Nuclei 子集大量模板探测同一路径（如 /），聚类后请求数从
@@ -257,40 +257,49 @@ func runList(client *httpx.Client, targetURL string, list []Check,
 		workers = 12
 	}
 	var mu sync.Mutex
-	processGroup := func(k string) {
-		if cancelCheck != nil && cancelCheck() {
-			return
+	// recordOutcome 追加一条组执行证据（调用方须持 mu）。
+	recordOutcome := func(g *group, executed bool, reason string) {
+		ids := make([]string, 0, len(g.idx))
+		for _, ci := range g.idx {
+			ids = append(ids, selected[ci].ID)
 		}
+		outcomes = append(outcomes, groupOutcome{ids: ids, executed: executed, reason: reason})
+	}
+	processGroup := func(k string) {
 		g := groups[k]
 		chk0 := selected[g.idx[0]]
+		// B-09：取消不是「从未调度」。此前这里直接 return，导致该组既无命中
+		// 也无 outcome，runs 里整组条目消失——下游会把「已调度但没执行」
+		// 误当成「不在执行集」，污染三值语义（not_executed 永远不作负样本）。
+		if cancelCheck != nil && cancelCheck() {
+			mu.Lock()
+			recordOutcome(g, false, "cancelled")
+			done += len(g.idx)
+			onProgress(done, total, chk0.Path)
+			mu.Unlock()
+			return
+		}
 		u := joinURL(targetURL, strings.TrimLeft(chk0.Path, "/"))
 		host := hostOf(u)
 
 		resp, gerr := fetch(u, chk0.Match)
 		if gerr != nil || resp == nil {
 			mu.Lock()
-			ids := make([]string, 0, len(g.idx))
-			for _, ci := range g.idx {
-				ids = append(ids, selected[ci].ID)
-			}
 			reason := "empty response"
 			if gerr != nil {
 				reason = "request failed: " + gerr.Error()
 			}
-			outcomes = append(outcomes, groupOutcome{ids: ids, executed: false, reason: reason})
+			recordOutcome(g, false, reason)
 			done += len(g.idx)
 			onProgress(done, total, chk0.Path)
 			mu.Unlock()
 			return
 		}
 		body := stripEcho(resp.Body, u, chk0.Path)
-		// B14 复扫修正：长度门以「剔除回显后」口径比较——原始长度含回显
-		// 文本，目标路径与探针路径不等长时必失配，catch-all 回显站漏判。
-		// 原始长度相等（静态站）作为快速路径保留。
-		soft404 := baseStripped > 0 &&
-			(len(body) == baseStripped || len(resp.Body) == baseRaw) &&
-			strings.HasPrefix(strings.ToLower(body[:min(200, len(body))]),
-				strings.ToLower(basePrefix[:min(200, len(basePrefix))]))
+		// B-01：软 404 判据改为「前缀为主判据 + 长度容差」（见 isSoft404）。
+		// 旧实现把「长度严格相等」当硬条件，动态 404 页（渲染耗时/request-id
+		// 变长）会让整站软 404 防护一次性失效。
+		soft404 := isSoft404(body, resp.Body, baseSamples)
 
 		// 组内首轮判定
 		var pending []int
@@ -300,9 +309,9 @@ func runList(client *httpx.Client, targetURL string, list []Check,
 		for _, ci := range g.idx {
 			groupChecks = append(groupChecks, selected[ci])
 		}
-		extractVars := extractVars(groupChecks, resp.Headers, resp.Body)
+		vars1 := extractVars(groupChecks, resp.Headers, resp.Body)
 		for _, ci := range g.idx {
-			ok, reason := matchBodyReason(selected[ci].Match, resp.Status, body, resp.Headers, host, extractVars)
+			ok, reason := matchBodyReason(selected[ci].Match, resp.Status, body, resp.Headers, host, vars1)
 			if !ok {
 				continue
 			}
@@ -317,9 +326,13 @@ func runList(client *httpx.Client, targetURL string, list []Check,
 			resp2, gerr2 := fetch(u, chk0.Match)
 			if gerr2 == nil && resp2 != nil {
 				body2 := stripEcho(resp2.Body, u, chk0.Path)
+				// B-04：二次确认必须在 resp2 上**重新**抽取变量。此前复用
+				// 首轮 extractVars，带 extract+DSL 的模板（版本区间判断等）
+				// 即使第二轮抽不到变量也照样通过，Confirmed 语义被削弱。
+				extractVars2 := extractVars(groupChecks, resp2.Headers, resp2.Body)
 				for _, ci := range pending {
 					chk := selected[ci]
-					ok, reason := matchBodyReason(chk.Match, resp2.Status, body2, resp2.Headers, host, extractVars)
+					ok, reason := matchBodyReason(chk.Match, resp2.Status, body2, resp2.Headers, host, extractVars2)
 					if !ok {
 						continue
 					}
@@ -352,11 +365,7 @@ func runList(client *httpx.Client, targetURL string, list []Check,
 				bumpFamily(familyOf(id))
 			}
 		}
-		ids := make([]string, 0, len(g.idx))
-		for _, ci := range g.idx {
-			ids = append(ids, selected[ci].ID)
-		}
-		outcomes = append(outcomes, groupOutcome{ids: ids, executed: true})
+		recordOutcome(g, true, "")
 		done += len(g.idx)
 		onProgress(done, total, chk0.Path)
 		mu.Unlock()
@@ -411,6 +420,7 @@ func runList(client *httpx.Client, targetURL string, list []Check,
 // 「名=值」合并区全包含，DSL 各表达式须全部为真；多类条件可并存。
 // 修复：此前实际响应状态码从未参与比较，纯状态码 check 会对任何响应命中。
 // dsl 求值失败（编译/类型/正则错误）一律不命中——宁少报不误报。
+// B-02：无任何条件的 Match 一律不命中（见 matchBodyReason 首段）。
 func matchBody(m Match, status int, body string, headers map[string]string, host string) bool {
 	ok, _ := matchBodyReason(m, status, body, headers, host, nil)
 	return ok
@@ -421,6 +431,13 @@ func matchBody(m Match, status int, body string, headers map[string]string, host
 // 语义与 matchBody 严格一致：任一条件不满足即不命中，全部满足才通过。
 func matchBodyReason(m Match, status int, body string, headers map[string]string, host string, extractVars map[string]string) (bool, string) {
 	var why []string
+	// B-02：无任何判定条件的 check 一律不命中。
+	// 旧实现里「零条件」会跳过所有检查走到 return true，于是插件 JSON 少写
+	// 或把 "c" 写成 "contains" 就静默变成「对任何响应命中」的全站误报源。
+	// 这里与 LoadPlugins 的加载期校验构成双保险。
+	if !m.hasAnyCondition() {
+		return false, ""
+	}
 	if m.Status != 0 && status != m.Status {
 		return false, ""
 	}
@@ -440,6 +457,17 @@ func matchBodyReason(m Match, status int, body string, headers map[string]string
 		low := strings.ToLower(body) // 对齐 Python：关键词/正文双降比较（不区分大小写）
 		for _, kw := range m.Contains {
 			if !strings.Contains(low, strings.ToLower(kw)) {
+				return false, ""
+			}
+		}
+	}
+	// NotContains：正文出现任一词即否决（弱断言收紧用，见 checks.go 的
+	// env-leak / composer / package-json）。放在 Contains 之后、OR 类条件
+	// 之前——它是 AND 取反，与 Contains 同属「必须满足」组。
+	if len(m.NotContains) > 0 {
+		low := strings.ToLower(body)
+		for _, kw := range m.NotContains {
+			if kw != "" && strings.Contains(low, strings.ToLower(kw)) {
 				return false, ""
 			}
 		}
@@ -748,20 +776,136 @@ func joinURL(base, path string) string {
 	return base + strings.TrimLeft(path, "/")
 }
 
-// soft404Baseline 取一个不存在路径的响应做软 404 基线。
-// 返回：原始长度、剔除回显后长度、剔除回显后的正文前缀（小写）。
-// 与比对侧同口径（B2）：先剔除本次探针自身的回显（URL/路径）再取前缀，
+// soft404ProbePaths 软 404 基线的多个不存在路径。
+//
+// B-01：单条基线只要「长度严格相等」就是唯一判据，任何逐次抖动的 404 页
+// （渲染耗时、request-id、A/B 广告位）都会让整站软 404 防护失效。多采样
+// 几态不同形态的不存在路径（目录式 / 文件式 / 带子路径）能覆盖
+// 「按扩展名区分 404 页」「按路径深度区分 404 页」这类站点。
+var soft404ProbePaths = []string{
+	"__sitelens_probe_none__",
+	"__sitelens_probe_missing__.html",
+	"__sitelens_probe_404__/x",
+}
+
+// soft404Sample 一条软 404 基线样本（与比对侧同口径：先剔除回显、再归一化）。
+type soft404Sample struct {
+	normLen    int    // 归一化后的「剔除回显」正文长度（数字折叠后，抖动基本消除）
+	rawNormLen int    // 归一化后的原始正文长度（未剔除回显；回显未剔净的站点靠它兜底）
+	prefix     string // 归一化正文前缀，≤ soft404PrefixWindow 字节
+}
+
+// soft404PrefixWindow 前缀比较窗口（字节）。200 字节足以覆盖 404 页的
+// <head> 与首屏骨架，又不至于把长页面的正文差异吃进来。
+const soft404PrefixWindow = 200
+
+// soft404LenTolerance 软 404 的长度容差：base 的 5%，下限 32 字节。
+// 归一化后长度已经很稳（数字串折叠成单字节），容差主要用于兜住
+// 「是否渲染某块可选区域」这类结构性差异。
+func soft404LenTolerance(base int) int {
+	t := base / 20
+	if t < 32 {
+		t = 32
+	}
+	return t
+}
+
+// soft404Normalize 软 404 比对用的正文归一化：小写 + 数字串折叠为 '#'。
+//
+// 动态 404 页的差异几乎都落在数字上：渲染耗时（0.123s / 0.1267s）、
+// request-id、时间戳、缓存计数。不折叠的话，前缀比较只要撞上中段的
+// 一个数字就失效——这正是「长度严格相等」判据失效的同源问题。
+// 只折叠数字串（不是全部非字母），避免把结构性差异也吃掉。
+func soft404Normalize(s string) string {
+	low := strings.ToLower(s)
+	var b strings.Builder
+	b.Grow(len(low))
+	inDigit := false
+	for i := 0; i < len(low); i++ {
+		c := low[i]
+		if c >= '0' && c <= '9' {
+			if !inDigit {
+				b.WriteByte('#')
+				inDigit = true
+			}
+			continue
+		}
+		inDigit = false
+		b.WriteByte(c)
+	}
+	return b.String()
+}
+
+// isSoft404 判定本次响应是否与「不存在路径」的响应不可区分。
+//
+// 判据（B-01 重写）：
+//  1. 前缀为主判据——归一化正文与任一条基线样本的前缀窗口逐字节相同；
+//  2. 前缀成立后，再看归一化长度是否落在容差内；
+//  3. 长度比较**不再**短路前缀比较：旧实现是 `len == base && prefixEqual`，
+//     长度一不等前缀就根本没机会生效。
+//
+// 空正文特例：基线本身就是空 200 页时，任何空正文响应都不可区分。
+func isSoft404(stripped, raw string, samples []soft404Sample) bool {
+	if len(samples) == 0 {
+		return false
+	}
+	norm := soft404Normalize(stripped)
+	normRaw := soft404Normalize(raw)
+	for _, s := range samples {
+		if s.normLen <= 0 {
+			// 基线是空正文：只有本次也空才不可区分。
+			if len(norm) == 0 {
+				return true
+			}
+			continue
+		}
+		n := len(norm)
+		if len(s.prefix) < n {
+			n = len(s.prefix)
+		}
+		if n == 0 || norm[:n] != s.prefix[:n] {
+			continue // 前缀不成立：不是软 404
+		}
+		tol := soft404LenTolerance(s.normLen)
+		// 主口径：剔除回显后的归一化长度。副口径：原始正文的归一化长度
+		// （回显未剔净的站点靠它兜底——两者各自与自己的基线比，不能串口径）。
+		if absDiff(len(norm), s.normLen) <= tol ||
+			absDiff(len(normRaw), s.rawNormLen) <= tol {
+			return true
+		}
+	}
+	return false
+}
+
+func absDiff(a, b int) int {
+	if a > b {
+		return a - b
+	}
+	return b - a
+}
+
+// soft404Baseline 对多个不存在路径采样，得到软 404 基线样本集。
+// 与比对侧同口径（B2）：先剔除本次探针自身的回显（URL/路径）再归一化取前缀，
 // 否则 catch-all 回显站会因探针路径与目标路径不同而漏判软 404。
-func soft404Baseline(client *httpx.Client, targetURL string) (int, int, string) {
-	probeURL := joinURL(targetURL, "__sitelens_probe_none__")
-	resp, err := client.GetFollow(probeURL)
-	if err != nil || resp == nil {
-		return 0, 0, ""
+// 任一采样失败即跳过（不因个别路径被 WAF 拦而整体失效）。
+func soft404Baseline(client *httpx.Client, targetURL string) []soft404Sample {
+	out := make([]soft404Sample, 0, len(soft404ProbePaths))
+	for _, p := range soft404ProbePaths {
+		probeURL := joinURL(targetURL, p)
+		resp, err := client.GetFollow(probeURL)
+		if err != nil || resp == nil {
+			continue
+		}
+		norm := soft404Normalize(stripEcho(resp.Body, probeURL, p))
+		prefix := norm
+		if len(prefix) > soft404PrefixWindow {
+			prefix = prefix[:soft404PrefixWindow]
+		}
+		out = append(out, soft404Sample{
+			normLen:    len(norm),
+			rawNormLen: len(soft404Normalize(resp.Body)),
+			prefix:     prefix,
+		})
 	}
-	stripped := stripEcho(resp.Body, probeURL, "__sitelens_probe_none__")
-	prefix := strings.ToLower(stripped)
-	if len(prefix) > 200 {
-		prefix = prefix[:200]
-	}
-	return len(resp.Body), len(stripped), prefix
+	return out
 }

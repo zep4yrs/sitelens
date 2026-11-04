@@ -158,11 +158,13 @@ func (g *ScanGraph) evidenceSet() map[string]bool {
 	return m
 }
 
-// allIDSet 图上全部实体 ID 集合（跨实体引用校验用）。
-func (g *ScanGraph) allIDSet() map[string]bool {
-	m := map[string]bool{}
+// allIDSet 图上全部实体 ID → 类型集合（跨实体引用校验用）。
+// C2-08：只判存在性会把「把证据 ID 填进 entry_id」这类类型错配当成合法，
+// 故集合保留类型，供 checkRef 做类型/前缀校验。
+func (g *ScanGraph) allIDSet() map[string]string {
+	m := map[string]string{}
 	for _, e := range g.entities() {
-		m[e.EntityID()] = true
+		m[e.EntityID()] = e.EntityKind()
 	}
 	return m
 }
@@ -170,12 +172,12 @@ func (g *ScanGraph) allIDSet() map[string]bool {
 // Validate 校验图的内在一致性。返回 nil 表示通过；否则返回合并后的全部问题
 // （errors.Join，逐条可读）。校验项对应 P1 的硬约束：
 //
-//  1. ID 形态合法且全局唯一；
+//  1. ID 形态合法（前缀与实体类型一致）且全局唯一；
 //  2. 观测态/置信级枚举合法；
 //  3. 所有 evidence 引用都能在图上解析（可追溯性，需求 2）；
 //  4. Positive 观测必须有证据；confirmed 关系必须有证据（需求 9）；
 //  5. chain_edge.derived_from 非空且指向真实证据（需求 8，无假链）；
-//  6. 跨实体引用（关联边/链端点/链节点 ref）都能解析。
+//  6. 跨实体引用（关联边/链端点/链节点 ref）都能解析**且类型匹配**。
 func (g *ScanGraph) Validate() error {
 	evset := g.evidenceSet()
 	allIDs := g.allIDSet()
@@ -197,18 +199,34 @@ func (g *ScanGraph) Validate() error {
 			}
 		}
 	}
-	checkRef := func(kind, id, field, ref string) {
+	// checkRef 校验跨实体引用：ref 为空跳过；否则必须存在，且（给了 wantKinds
+	// 时）被引用实体的类型必须落在期望集合内——防止「证据 ID 当入口点」
+	// 「影响节点当链节点」这类类型错配图静默通过契约自检。
+	checkRef := func(kind, id, field, ref string, wantKinds ...string) {
 		if ref == "" {
 			return
 		}
-		if !allIDs[ref] {
+		got, ok := allIDs[ref]
+		if !ok {
 			addIssue("%s %s 的 %s 引用了不存在的实体 %s", kind, id, field, ref)
+			return
 		}
+		if len(wantKinds) == 0 {
+			return
+		}
+		for _, w := range wantKinds {
+			if got == w {
+				return
+			}
+		}
+		addIssue("%s %s 的 %s 引用类型不符：%s 是 %s，期望 %s",
+			kind, id, field, ref, got, strings.Join(wantKinds, "|"))
 	}
 
 	for _, e := range g.entities() {
 		id, kind := e.EntityID(), e.EntityKind()
-		if err := ValidateID(id, ""); err != nil {
+		// C2-08：wantPrefix 真正使用——ID 前缀必须与声明类型一致。
+		if err := ValidateID(id, prefixOfKind(kind)); err != nil {
 			addIssue("%s 的 ID 非法：%v", kind, err)
 		}
 		if prev, dup := seen[id]; dup {
@@ -232,7 +250,7 @@ func (g *ScanGraph) Validate() error {
 		if v.Confidence == ConfConfirmed && len(v.EvidenceIDs) == 0 {
 			addIssue("vuln_node %s 为 confirmed 但无证据（需求 9）", v.ID)
 		}
-		checkRef(kindVuln, v.ID, "entry_id", v.EntryID)
+		checkRef(kindVuln, v.ID, "entry_id", v.EntryID, KindEntryPoint)
 	}
 
 	for _, l := range g.EvidenceLinks {
@@ -245,9 +263,9 @@ func (g *ScanGraph) Validate() error {
 		if l.Confidence == ConfConfirmed && len(l.EvidenceIDs) == 0 {
 			addIssue("evidence_link %s 为 confirmed 但无证据（需求 9：无真实证据的关系不得 confirmed）", l.ID)
 		}
-		checkRef(kindLink, l.ID, "blackbox_vuln_id", l.BlackboxVulnID)
-		checkRef(kindLink, l.ID, "whitebox_dataflow_id", l.WhiteboxDataflowID)
-		checkRef(kindLink, l.ID, "whitebox_vuln_id", l.WhiteboxVulnID)
+		checkRef(kindLink, l.ID, "blackbox_vuln_id", l.BlackboxVulnID, KindVulnNode)
+		checkRef(kindLink, l.ID, "whitebox_dataflow_id", l.WhiteboxDataflowID, KindDataflow)
+		checkRef(kindLink, l.ID, "whitebox_vuln_id", l.WhiteboxVulnID, KindVulnNode)
 		if !validBasis(l.Basis) {
 			addIssue("evidence_link %s 关联依据非法：%q", l.ID, l.Basis)
 		}
@@ -257,7 +275,7 @@ func (g *ScanGraph) Validate() error {
 		if len(d.EvidenceIDs) == 0 {
 			addIssue("dataflow %s 无证据引用（白盒数据流必须可追溯到源码证据）", d.ID)
 		}
-		checkRef(kindDataflow, d.ID, "vuln_id", d.VulnID)
+		checkRef(kindDataflow, d.ID, "vuln_id", d.VulnID, KindVulnNode)
 	}
 
 	for _, r := range g.CWERels {
@@ -265,13 +283,15 @@ func (g *ScanGraph) Validate() error {
 			addIssue("cwe_rel %s 缺 CWE 编号", r.ID)
 		}
 		// cve 主体可能是外部编号，未必是图内实体；其余主体必须可解析。
+		// 主体类型本身是图内实体类型时（vuln_node/dataflow/…）一并校验类型；
+		// check/rule 等外部主体保持原有「存在性」口径（不臆造类型映射）。
 		if r.SubjectKind != "cve" {
-			checkRef(kindCWE, r.ID, "subject_id", r.SubjectID)
+			checkRef(kindCWE, r.ID, "subject_id", r.SubjectID, subjectRefKind(r.SubjectKind)...)
 		}
 	}
 
 	for _, n := range g.ChainNodes {
-		checkRef(kindChainNode, n.ID, "ref_id", n.RefID)
+		checkRef(kindChainNode, n.ID, "ref_id", n.RefID, chainRefKinds(n.Kind)...)
 	}
 
 	for _, e := range g.ChainEdges {
@@ -281,15 +301,17 @@ func (g *ScanGraph) Validate() error {
 		if !e.Confidence.Valid() {
 			addIssue("chain_edge %s 置信级非法：%q", e.ID, e.Confidence)
 		}
-		checkRef(kindChainEdge, e.ID, "from", e.From)
-		checkRef(kindChainEdge, e.ID, "to", e.To)
+		checkRef(kindChainEdge, e.ID, "from", e.From, KindChainNode)
+		checkRef(kindChainEdge, e.ID, "to", e.To, KindChainNode)
 	}
 
 	for _, p := range g.PrivChanges {
-		checkRef(kindPrivChange, p.ID, "finding_id", p.FindingID)
+		// finding_id 的产出方有两种：exploit 证明的 vuln_node 与 403 绕过/
+		// 弱口令锚定的 entry_point，二者都是合法引用。
+		checkRef(kindPrivChange, p.ID, "finding_id", p.FindingID, KindVulnNode, KindEntryPoint)
 	}
 	for _, im := range g.Impacts {
-		checkRef(kindImpact, im.ID, "vuln_id", im.VulnID)
+		checkRef(kindImpact, im.ID, "vuln_id", im.VulnID, KindVulnNode)
 	}
 
 	if len(issues) == 0 {
@@ -317,6 +339,42 @@ func validBasis(b string) bool {
 		return true
 	}
 	return false
+}
+
+// subjectRefKind 把 cwe_rel.subject_kind 映射为期望的实体类型（C2-08）。
+// 只有主体类型本身是图内实体类型时才返回期望值；check/rule 等外部主体
+// 返回 nil，保持「存在性校验」的原有口径（不臆造外部 ID 的类型规则）。
+func subjectRefKind(subjectKind string) []string {
+	switch subjectKind {
+	case KindVulnNode:
+		return []string{KindVulnNode}
+	case KindEntryPoint:
+		return []string{KindEntryPoint}
+	case KindDataflow:
+		return []string{KindDataflow}
+	case KindEvidenceLink:
+		return []string{KindEvidenceLink}
+	case KindImpact:
+		return []string{KindImpact}
+	}
+	return nil
+}
+
+// chainRefKinds 链节点 kind → 其 ref_id 允许引用的实体类型（C2-08）。
+// 未收录的 kind 返回 nil（仅校验存在性，避免对扩展节点类型过度约束）。
+func chainRefKinds(nodeKind string) []string {
+	switch nodeKind {
+	case "recon", "entry":
+		return []string{KindEntryPoint}
+	case "exploit":
+		// 前置通道补建的白盒数据流节点也记为 exploit（chain.linkEvidenceLinks）。
+		return []string{KindVulnNode, KindDataflow}
+	case "impact":
+		return []string{KindImpact}
+	case "priv":
+		return []string{KindPrivChange}
+	}
+	return nil
 }
 
 // ---- graph JSONL ----

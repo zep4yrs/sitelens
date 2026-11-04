@@ -14,7 +14,15 @@ import (
 )
 
 // AttachTechCPE 挂载技术名 → CPE 映射（nil = 不启用）。
-func (k *KB) AttachTechCPE(m map[string]string) { k.techCPE = m }
+// C-10：映射由启动期/热重载写，扫描线程 nvdPossible 读，必须走 auxMu。
+func (k *KB) AttachTechCPE(m map[string]string) {
+	if k == nil {
+		return
+	}
+	k.auxMu.Lock()
+	k.techCPE = m
+	k.auxMu.Unlock()
+}
 
 // LoadTechCPE 从 tech_cpe.json 加载映射；文件缺失返回 (nil, nil)。
 func LoadTechCPE(path string) (map[string]string, error) {
@@ -50,12 +58,19 @@ func techCPEVendorProduct(cpe string) string {
 }
 
 // nvdPossible 按 CPE 检索 NVD 字典出 possible 级情报行。
-// 每技术上限 maxPerTech 条，严重度优先；CVE 与既有输出去重由调用方 seen 承担。
+// 每技术上限 maxPerTech 条，严重度优先（由 NVDStore.ByProduct 的确定性
+// 排序保证，C2-05）；CVE 与既有输出去重由调用方 seen 承担。
 func (k *KB) nvdPossible(techName string, seen map[int64]bool, out *[]Finding, intent nvdIntent) {
-	if k.nvd == nil || k.techCPE == nil || out == nil {
+	if k == nil || out == nil {
 		return
 	}
+	// C-10：techCPE 读侧持 auxMu 快照；nvd 只走带锁访问器。
+	k.auxMu.RLock()
 	cpe := k.techCPE[strings.ToLower(strings.TrimSpace(techName))]
+	k.auxMu.RUnlock()
+	if cpe == "" {
+		return
+	}
 	vp := techCPEVendorProduct(cpe)
 	if vp == "" {
 		return
@@ -64,7 +79,7 @@ func (k *KB) nvdPossible(techName string, seen map[int64]bool, out *[]Finding, i
 	if intent == intentLoad {
 		nvd = k.nvdStore() // 显式以 NVD 为数据源：可按需解码
 	} else {
-		nvd = k.nvd // 惰性口径：索引未常驻就不出 CPE 通道行
+		nvd = k.NVDIfLoaded() // 惰性口径：索引未常驻就不出 CPE 通道行
 	}
 	if nvd == nil {
 		return
@@ -75,8 +90,12 @@ func (k *KB) nvdPossible(techName string, seen map[int64]bool, out *[]Finding, i
 		if n >= maxPerTech {
 			return
 		}
-		// NVD 行无 ID 语义，用 CVE 哈希占位去重（负数段避开 vuln_kb 正 ID 空间）
-		fakeID := -int64(hashStr(e.CVE))
+		// NVD 行无 ID 语义，用 CVE 哈希占位去重（负数段避开 vuln_kb 正 ID
+		// 空间）。C2-05：64 位 FNV 取低 63 位，避免旧 32 位 %1e9 的静默碰撞。
+		fakeID := -int64(hash64(e.CVE) & 0x7fffffffffffffff)
+		if fakeID == 0 {
+			fakeID = -1
+		}
 		if seen[fakeID] {
 			continue
 		}
@@ -97,13 +116,14 @@ func (k *KB) nvdPossible(techName string, seen map[int64]bool, out *[]Finding, i
 	}
 }
 
-func hashStr(s string) uint32 {
-	var h uint32 = 2166136261
+// hash64 FNV-1a 64 位（占位 ID 用，碰撞概率可忽略）。
+func hash64(s string) uint64 {
+	var h uint64 = 14695981039346656037
 	for i := 0; i < len(s); i++ {
-		h ^= uint32(s[i])
-		h *= 16777619
+		h ^= uint64(s[i])
+		h *= 1099511628211
 	}
-	return h % 1000000007
+	return h
 }
 
 func firstRunes(s string, n int) string {

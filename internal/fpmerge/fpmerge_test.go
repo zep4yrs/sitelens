@@ -158,3 +158,111 @@ func TestCleanPatStripsPrivateSuffix(t *testing.T) {
 		t.Errorf("环视应被拒: %q", got)
 	}
 }
+
+// buildTarWithTechs 合成只含 categories + 单 tech 库（x.json）的 tarball。
+func buildTarWithTechs(t *testing.T, techsJSON string) []byte {
+	t.Helper()
+	files := map[string]string{
+		"webappanalyzer-main/src/categories.json":     `{"31": {"name": "CDN"}}`,
+		"webappanalyzer-main/src/technologies/x.json": techsJSON,
+	}
+	var buf bytes.Buffer
+	gz := gzip.NewWriter(&buf)
+	tw := tar.NewWriter(gz)
+	for name, content := range files {
+		if err := tw.WriteHeader(&tar.Header{
+			Name: name, Mode: 0o644, Size: int64(len(content)), Typeflag: tar.TypeReg,
+		}); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := tw.Write([]byte(content)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := tw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := gz.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return buf.Bytes()
+}
+
+// TestInvalidHeaderRegexFailsClosed C-11 回归：脏正则必须 fail-closed（丢弃），
+// 不能降级成 "^"（该 header 存在即命中 → 指纹误报）。
+func TestInvalidHeaderRegexFailsClosed(t *testing.T) {
+	dir := t.TempDir()
+	dst := filepath.Join(dir, "technologies.json")
+	cpeDst := filepath.Join(dir, "tech_cpe.json")
+	if err := os.WriteFile(dst, []byte(`{"version":1,"count":0,"technologies":[]}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	techs := `{
+		"BadRegex": {"cats": [31], "headers": {"x-bad": {"regex": "(?=lookahead)"}}},
+		"MixedTech": {"cats": [31], "meta": {"generator": {"regex": "^gen-[0-9.]+$"}},
+		              "headers": {"x-bad2": {"regex": "(?<!nope)foo"}}},
+		"GoodPresence": {"cats": [31], "headers": {"x-good": {}}},
+		"GoodRegex": {"cats": [31], "headers": {"x-ok": {"regex": "^foo$"}}}
+	}`
+	st, err := MergeFromTar(bytes.NewReader(buildTarWithTechs(t, techs)), dst, cpeDst)
+	if err != nil {
+		t.Fatalf("MergeFromTar: %v", err)
+	}
+	merged, err := os.ReadFile(dst)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out boxFile
+	if err := json.Unmarshal(merged, &out); err != nil {
+		t.Fatal(err)
+	}
+	byName := map[string]entry{}
+	for _, e := range out.Technologies {
+		byName[e.Name] = e
+	}
+	// 只有坏 header 的条目：不得生成任何规则（尤其不能是 "^"）
+	if e, ok := byName["BadRegex"]; ok {
+		t.Errorf("坏正则条目应整条丢弃（fail-closed），实际仍合并: %s", e.Rules)
+	}
+	if st.RejectedPats == 0 {
+		t.Error("坏正则应计入 RejectedPats（便于观测社区库质量）")
+	}
+	// 混合条目：坏 header 被丢弃，合法 meta 保留
+	mixed, ok := byName["MixedTech"]
+	if !ok {
+		t.Fatal("MixedTech 应保留（有合法 meta）")
+	}
+	var mr struct {
+		Headers map[string][]string `json:"headers"`
+		Meta    map[string]string   `json:"meta"`
+	}
+	if err := json.Unmarshal(mixed.Rules, &mr); err != nil {
+		t.Fatal(err)
+	}
+	if _, has := mr.Headers["x-bad2"]; has {
+		t.Errorf("坏 header 正则不应进入 rules: %+v", mr.Headers)
+	}
+	if mr.Meta["generator"] != "^gen-[0-9.]+$" {
+		t.Errorf("合法 meta 正则应保留: %+v", mr.Meta)
+	}
+	// 合法存在性判断仍是 "^"
+	var gp struct {
+		Headers map[string][]string `json:"headers"`
+	}
+	if err := json.Unmarshal(byName["GoodPresence"].Rules, &gp); err != nil {
+		t.Fatal(err)
+	}
+	if len(gp.Headers["x-good"]) != 1 || gp.Headers["x-good"][0] != "^" {
+		t.Errorf("显式存在性判断（{}）应转 ^: %+v", gp.Headers)
+	}
+	// 合法正则原样保留
+	var gr struct {
+		Headers map[string][]string `json:"headers"`
+	}
+	if err := json.Unmarshal(byName["GoodRegex"].Rules, &gr); err != nil {
+		t.Fatal(err)
+	}
+	if len(gr.Headers["x-ok"]) != 1 || gr.Headers["x-ok"][0] != "^foo$" {
+		t.Errorf("合法正则应原样保留: %+v", gr.Headers)
+	}
+}

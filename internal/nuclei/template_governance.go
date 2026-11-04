@@ -434,6 +434,10 @@ func FindDuplicateTemplates(metas []TemplateMeta, threshold float64) []Duplicate
 		}
 	}
 
+	// maxPairwiseBucket 超大桶（如根目录/镜像大包、同名 index.yaml 上千条）
+	// 跳过两两比对，防 O(n²)。B-12：此前只对 dirBucket 生效，nameBucket 缺上限。
+	const maxPairwiseBucket = 256
+
 	// 桶 1：归一化模板 id
 	idBucket := map[string][]int{}
 	// 桶 2：归一化文件名（去扩展名）
@@ -456,17 +460,32 @@ func FindDuplicateTemplates(metas []TemplateMeta, threshold float64) []Duplicate
 			union(idxs[0], idxs[k])
 		}
 	}
-	for _, idxs := range nameBucket {
+	// 同文件名桶（B-06 + B-12）：
+	//   - B-06：此前桶内用 PathSimilarity，而该函数的 stem 短路在"同名桶"里
+	//     恒成立（桶键就是 fileStem），恒返回 0.95 → 过滤是死代码，全库所有
+	//     index.yaml / detect.yaml / 1.yaml 被无条件并进同一"重复组"。现改为
+	//     走 pathSimilarityBucket：通用文件名不再享受 stem 短路，只有带区分度
+	//     的文件名（如 xss-fork、CVE-2024-0001）才保留同名强信号。
+	//   - B-12：补 maxPairwiseBucket 上限 + 桶内 tokens 预计算（一次 O(k)，
+	//     而非每对两次 tokenize），否则 14 万模板集下退化为 O(k²)。
+	for stem, idxs := range nameBucket {
+		if len(idxs) > maxPairwiseBucket {
+			continue
+		}
+		toks := make([]map[string]bool, len(idxs))
+		for k, i := range idxs {
+			toks[k] = pathTokens(metas[i].Path)
+		}
+		generic := isGenericStem(stem)
 		for a := 0; a < len(idxs); a++ {
 			for b := a + 1; b < len(idxs); b++ {
-				// 同文件名桶内再按路径相似度过滤，避免误并（如两个都叫 index.yaml）
-				if PathSimilarity(metas[idxs[a]].Path, metas[idxs[b]].Path) >= threshold {
+				if similarityFromTokens(metas[idxs[a]].Path, metas[idxs[b]].Path,
+					generic, toks[a], toks[b]) >= threshold {
 					union(idxs[a], idxs[b])
 				}
 			}
 		}
 	}
-	const maxPairwiseBucket = 256 // 超大目录（如根目录/镜像大包）跳过两两比对，防 O(n²)
 	for _, idxs := range dirBucket {
 		if len(idxs) > maxPairwiseBucket {
 			continue
@@ -561,7 +580,8 @@ func maxSimilarity(items []TemplateMeta) float64 {
 	}
 	best := 0.0
 	for i := 1; i < len(items); i++ {
-		if sim := PathSimilarity(items[0].Path, items[i].Path); sim > best {
+		// 与并组判定同一口径（B-06）：通用文件名的同名不享受 0.95 短路。
+		if sim := pathSimilarityBucket(items[0].Path, items[i].Path, false); sim > best {
 			best = sim
 		}
 	}
@@ -588,7 +608,47 @@ func parentDir(path string) string {
 //   - 同文件名（去扩展名）且路径不同 → 0.95（fork/镜像副本的强信号）；
 //   - 其余按路径 token 的 Jaccard 系数；
 //   - 任一路径为空 → 0。
+//
+// 注意：同名强信号只对**带区分度的文件名**成立。全库级通用名（index/detect/
+// 1/README…）的同名不构成重复证据，见 pathSimilarityBucket（B-06）。
 func PathSimilarity(a, b string) float64 {
+	return pathSimilarityBucket(a, b, false)
+}
+
+// genericStems 通用文件名（去扩展名、小写）：模板库里成百上千条重名，
+// 同名本身不构成"重复模板"证据。命中这里 → 桶内必须靠路径 token 相似度
+// 才能并组（B-06）。
+var genericStems = map[string]bool{
+	"index": true, "detect": true, "main": true, "default": true,
+	"config": true, "template": true, "test": true, "readme": true,
+	"cve": true, "poc": true, "rule": true, "rules": true,
+}
+
+// isGenericStem 是否为通用文件名（含纯数字名，如 1.yaml / 2.yaml）。
+func isGenericStem(stem string) bool {
+	stem = strings.ToLower(strings.TrimSpace(stem))
+	if stem == "" {
+		return true
+	}
+	if genericStems[stem] {
+		return true
+	}
+	for _, r := range stem {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return true // 纯数字
+}
+
+// pathSimilarityBucket 桶内路径相似度（B-06）：
+//   - 完全相同 → 1；
+//   - 同名且文件名带区分度（非通用名）→ 0.95；
+//   - 其余（含"同名但通用名"）→ pathTokens 的 Jaccard。
+//
+// 与 PathSimilarity 的唯一差别是"同名短路"受 isGenericStem 约束——这正是
+// nameBucket 里过滤失效的根因：桶键即 fileStem，短路恒成立。
+func pathSimilarityBucket(a, b string, forceGeneric bool) float64 {
 	if strings.EqualFold(a, b) {
 		if strings.TrimSpace(a) == "" {
 			return 0
@@ -599,10 +659,38 @@ func PathSimilarity(a, b string) float64 {
 	if sa == "" || sb == "" {
 		return 0
 	}
-	if sa == sb {
+	if sa == sb && !forceGeneric && !isGenericStem(sa) {
 		return 0.95
 	}
-	ta, tb := pathTokens(a), pathTokens(b)
+	return jaccardPaths(a, b)
+}
+
+// similarityFromTokens 桶内比较的免重复 tokenize 版本：tokens 已由调用方
+// 按桶一次性预计算（B-12），此处只做 O(1) 判定 + 集合交集。
+func similarityFromTokens(a, b string, forceGeneric bool, ta, tb map[string]bool) float64 {
+	if strings.EqualFold(a, b) {
+		if strings.TrimSpace(a) == "" {
+			return 0
+		}
+		return 1
+	}
+	sa, sb := fileStem(a), fileStem(b)
+	if sa == "" || sb == "" {
+		return 0
+	}
+	if sa == sb && !forceGeneric && !isGenericStem(sa) {
+		return 0.95
+	}
+	return jaccardSets(ta, tb)
+}
+
+// jaccardPaths 两条路径 token 集合的 Jaccard（现算版）。
+func jaccardPaths(a, b string) float64 {
+	return jaccardSets(pathTokens(a), pathTokens(b))
+}
+
+// jaccardSets 两个 token 集合的 Jaccard 系数（空集返回 0）。
+func jaccardSets(ta, tb map[string]bool) float64 {
 	if len(ta) == 0 || len(tb) == 0 {
 		return 0
 	}

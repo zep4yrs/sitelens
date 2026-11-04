@@ -24,7 +24,7 @@ func (s *Server) hGraph(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if s.st.Get(id) == nil {
+	if s.st.GetForTenant(id, tenantFromRequest(r)) == nil {
 		writeJSON(w, 404, map[string]any{"error": "记录不存在"})
 		return
 	}
@@ -61,12 +61,13 @@ func (s *Server) hGraphJSONL(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	// BL-5：跨租户下载图 JSONL 一律 404。
+	if s.st.GetForTenant(id, tenantFromRequest(r)) == nil {
+		writeJSON(w, 404, map[string]any{"error": "记录不存在"})
+		return
+	}
 	data, found := s.st.GraphJSONL(id)
 	if !found {
-		if s.st.Get(id) == nil {
-			writeJSON(w, 404, map[string]any{"error": "记录不存在"})
-			return
-		}
 		writeJSON(w, 404, map[string]any{"error": "该扫描未收集结构化事实图"})
 		return
 	}
@@ -80,6 +81,11 @@ func (s *Server) hGraphJSONL(w http.ResponseWriter, r *http.Request) {
 func (s *Server) hGraphChain(w http.ResponseWriter, r *http.Request) {
 	id, ok := s.graphID(w, r)
 	if !ok {
+		return
+	}
+	// BL-5：跨租户读链视图一律 404。
+	if s.st.GetForTenant(id, tenantFromRequest(r)) == nil {
+		writeJSON(w, 404, map[string]any{"error": "记录不存在"})
 		return
 	}
 	g, status := s.st.GraphWithStatus(id)

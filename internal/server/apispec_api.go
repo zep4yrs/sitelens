@@ -65,6 +65,7 @@ func (s *Server) hAPISpec(w http.ResponseWriter, r *http.Request) {
 // hAPISpecGraphQL 对一个 GraphQL 端点做 1 次只读 introspection（POST 固定 query），
 // 返回类型名清单。目标需通过 SSRF 校验与 allow_hosts 白名单。
 func (s *Server) hAPISpecGraphQL(w http.ResponseWriter, r *http.Request) {
+	cfg := s.cfgSnap() // A-09：读配置快照（一次请求/操作内一致）
 	var body struct {
 		Endpoint string `json:"endpoint"`
 	}
@@ -74,16 +75,18 @@ func (s *Server) hAPISpecGraphQL(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 400, map[string]any{"error": "endpoint 不能为空"})
 		return
 	}
-	_, host, _, err := target.Validate(raw, s.cfg.Scan.Resolve)
+	_, host, _, err := target.Validate(raw, cfg.Scan.Resolve)
 	if err != nil {
 		writeJSON(w, 400, map[string]any{"error": err.Error()})
 		return
 	}
-	if !target.Allowed(host, s.cfg.Scan.AllowHosts) {
+	if !target.Allowed(host, cfg.Scan.AllowHosts) {
 		writeJSON(w, 400, map[string]any{"error": "目标不在 allow_hosts 授权白名单：" + host})
 		return
 	}
-	spec, err := apispec.DiscoverGraphQL(raw)
+	// V-07：传输层交给 httpx（禁跟随重定向 + 拨号层一次解析/校验/按 IP 拨号），
+	// Resolve 跟随 scan.resolve 姿态，堵住校验与建连之间的 DNS 重绑定窗口。
+	spec, err := apispec.DiscoverGraphQL(raw, apispec.DiscoverOptions{Resolve: cfg.Scan.Resolve})
 	if err != nil {
 		writeJSON(w, 502, map[string]any{"error": err.Error()})
 		return

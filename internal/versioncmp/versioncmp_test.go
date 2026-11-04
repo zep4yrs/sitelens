@@ -129,3 +129,39 @@ func TestVersionInFourSegment(t *testing.T) {
 		}
 	}
 }
+
+// TestParseOverflowSaturates C-15 回归：超长数字段不得因 int 溢出回绕成负值、
+// 给出与语义相反的 Cmp 结论（intel 的 affected 数据来自远程情报，无长度约束）。
+func TestParseOverflowSaturates(t *testing.T) {
+	cases := []struct {
+		a, b string
+		want int
+	}{
+		// 20 位段在旧实现里回绕成负数 → 被误判为小于 1.9
+		{"1.9223372036854775808", "1.9", 1},
+		{"1.99999999999999999999", "1.2", 1},
+		{"3.18446744073709551616", "3.0", 1},
+		{"1.18446744073709551616", "1.2", 1},
+		// 长 0 段不溢出为垃圾值（段值仍为 0；按既有"多一段即更晚"语义 1.0… > 1）
+		{"1.000000000000000000000000000000", "1", 1},
+	}
+	for _, c := range cases {
+		if got := Cmp(c.a, c.b); got != c.want {
+			t.Errorf("Cmp(%q, %q) = %d, want %d（段溢出应朝更大饱和）", c.a, c.b, got, c.want)
+		}
+	}
+	// 长 0 段必须解析为 0（而不是溢出回绕的随机数）
+	if segs := Parse("1.000000000000000000000000000000"); len(segs) != 2 || segs[1] != 0 {
+		t.Fatalf("长 0 段应解析为 0: %v", segs)
+	}
+	// 超长段不得解析出负值
+	for _, seg := range Parse("1.9223372036854775808") {
+		if seg < 0 {
+			t.Fatalf("Parse 出现负段（整数溢出）: %v", Parse("1.9223372036854775808"))
+		}
+	}
+	// 区间判定：受影响上界为 1.9 时，超长段版本不应被判受影响
+	if VersionIn("1.9223372036854775808", "<=1.9") {
+		t.Error("超长段版本不应 <=1.9（溢出回绕会导致虚假 confirmed）")
+	}
+}

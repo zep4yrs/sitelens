@@ -32,19 +32,30 @@ function enginePkgName() {
   return `@fengqiao666/sitelens-${process.platform}-${process.arch}-engine`;
 }
 
+/** 是否是「普通文件」（存在、不是目录、不是断链）。 */
+function isRegularFile(p) {
+  try {
+    return fs.statSync(p).isFile();
+  } catch {
+    return false;
+  }
+}
+
 export function resolveEngine() {
   const errs = [];
   const envBin = (process.env.SITELENS_ENGINE || "").trim();
   if (envBin) {
-    if (fs.existsSync(envBin)) return { bin: envBin, from: "SITELENS_ENGINE" };
-    errs.push(`SITELENS_ENGINE 指向的文件不存在：${envBin}`);
+    // D-11：只接受普通文件。旧实现只 existsSync —— 目录（甚至指向目录的
+    // 软链）也会被当成引擎，spawn 时才报 EACCES/EISDIR，错误信息离现场很远。
+    if (isRegularFile(envBin)) return { bin: envBin, from: "SITELENS_ENGINE" };
+    errs.push(`SITELENS_ENGINE 不是可执行文件（不存在或是目录）：${envBin}`);
   }
   let pkgDir = null;
   try {
     const req = createRequire(import.meta.url);
     pkgDir = path.dirname(req.resolve(`${enginePkgName()}/package.json`));
     const bin = path.join(pkgDir, `SiteLens_${platToken(process.platform, process.arch)}_engine_${selfVersion()}${EXE}`);
-    if (fs.existsSync(bin)) return { bin, from: enginePkgName(), pkgDir };
+    if (isRegularFile(bin)) return { bin, from: enginePkgName(), pkgDir };
     errs.push(`平台包已装但二进制缺失：${bin}`);
   } catch (e) {
     errs.push(`平台包未安装（${enginePkgName()}）`);
@@ -52,7 +63,7 @@ export function resolveEngine() {
   for (const dir of (process.env.PATH || "").split(path.delimiter)) {
     if (!dir) continue;
     const cand = path.join(dir, `sitelens${EXE}`);
-    if (fs.existsSync(cand)) return { bin: cand, from: "PATH", pkgDir };
+    if (isRegularFile(cand)) return { bin: cand, from: "PATH", pkgDir };
   }
   throw new Error(
     `未找到 SiteLens 引擎二进制。\n${errs.map((e) => "  - " + e).join("\n")}\n` +
@@ -220,6 +231,36 @@ function freePort() {
   });
 }
 
+/**
+ * 杀掉引擎进程树（D-11）。
+ *
+ * 引擎在扫描时经 chromedp 拉起 Chrome 等子进程；只 kill 直接子进程会让它们
+ * 变成孤儿继续驻留（桌面壳侧用 taskkill /T 解决同一问题，见
+ * desktop-wails/main.go 的 killEngineTree）。这里按平台分派：
+ *   - Windows：taskkill /PID <pid> /T /F
+ *   - POSIX：进程组杀（spawn 时 detached:true），失败再退化为 kill 子进程
+ */
+export function killEngineTree(child) {
+  if (!child || !child.pid) return;
+  if (process.platform === "win32") {
+    try {
+      const tk = spawn("taskkill", ["/PID", String(child.pid), "/T", "/F"], {
+        windowsHide: true,
+        stdio: "ignore",
+      });
+      tk.on("error", () => {});
+    } catch {
+      try { child.kill(); } catch {}
+    }
+    return;
+  }
+  try {
+    process.kill(-child.pid, "SIGTERM");
+  } catch {
+    try { child.kill(); } catch {}
+  }
+}
+
 // startServe 起一次私有 serve：独立端口 + 用户级 profile（~/.sitelens，
 // 历史落 ~/.sitelens/data/state，跨次运行保留）。工作目录指到引擎二进制所在
 // 目录——平台包内捆绑的 data/go/technologies.json（指纹库）按引擎默认
@@ -267,6 +308,9 @@ export async function startServe(log = () => {}, { allowPrivate = false } = {}) 
     cwd: process.cwd(),
     stdio: ["ignore", "ignore", "pipe"],
     windowsHide: true,
+    // POSIX：独立进程组，stop() 时按组杀（引擎会经 chromedp 拉起 Chrome 子进程，
+    // 只 kill 直接子进程会留下孤儿；Windows 走 taskkill /T）。
+    detached: process.platform !== "win32",
   });
   let errTail = "";
   child.stderr.on("data", (d) => {
@@ -292,9 +336,10 @@ export async function startServe(log = () => {}, { allowPrivate = false } = {}) 
           async stop() {
             if (stopped) return;
             stopped = true;
-            try {
-              child.kill();
-            } catch {}
+            // D-11：树杀。引擎扫描时经 chromedp 拉起的 Chrome 等子进程只 kill
+            // 直接子进程会变成孤儿继续驻留（桌面壳侧同样问题用 taskkill /T 解决，
+            // 见 desktop-wails/main.go 的 killEngineTree）。
+            killEngineTree(child);
             // 立刻释放 stderr 管道句柄：Node 退出时若该句柄仍处于 CLOSING
             // 状态，libuv 会抛 "Assertion failed: !(handle->flags &
             // UV_HANDLE_CLOSING)"（Windows 必现）——表现为进程以

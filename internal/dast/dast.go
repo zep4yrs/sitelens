@@ -462,7 +462,7 @@ func (r *Runner) probeSequences(tgt Target, baseBody string, done *int, total in
 			if resp == nil {
 				continue
 			}
-			hit := probeJudge(pc.kind, resp, baseBody, tgt)
+			hit := probeJudge(pc.kind, resp, baseBody, tgt, value)
 			if hit == nil {
 				continue
 			}
@@ -742,7 +742,7 @@ func (r *Runner) RunForms(targets []FormTarget) []Finding {
 				if resp == nil {
 					continue
 				}
-				hit := probeJudge(pc.kind, resp, baseBody, Target{URL: p.ft.Action, Param: p.field})
+				hit := probeJudge(pc.kind, resp, baseBody, Target{URL: p.ft.Action, Param: p.field}, value)
 				if hit == nil {
 					continue
 				}
@@ -795,16 +795,40 @@ func (r *Runner) RunForms(targets []FormTarget) []Finding {
 	return hits
 }
 
-// timeBlind 时间盲注：基线计时 → 注入 SLEEP → 超阈值再复测一次双确认。
+// sleepFamily 一族时间盲注探针（DBMS 方言 + 该族的载荷）。
+type sleepFamily struct {
+	DBMS    string
+	Payload string
+}
+
+// sleepFamilies 时间盲注探针族（B-15）。
+//
+// 此前只有 MySQL 的 SLEEP(n) 一种语法，PostgreSQL / MSSQL / Oracle 目标上
+// 该通道恒不命中——而 Finding 标题与 Check 名并未声明这个限制，使用方会
+// 误以为"时间盲注已覆盖"。这里按方言各给一条，按族短路（命中即停）。
+func sleepFamilies(seconds int) []sleepFamily {
+	n := strconv.Itoa(seconds)
+	return []sleepFamily{
+		{"MySQL", "1 AND SLEEP(" + n + ")"},
+		{"PostgreSQL", "1 AND pg_sleep(" + n + ")"},
+		{"MSSQL", "1; WAITFOR DELAY '0:0:" + n + "'"},
+		{"Oracle", "1 AND dbms_pipe.receive_message('a'," + n + ")"},
+	}
+}
+
+// timeBlind 时间盲注：基线计时 → 逐方言注入延迟 → 超阈值再复测一次双确认。
+//
+// 基线只测一次（各族的"正常响应"是同一个请求），每族 2 次请求（注入 + 复测），
+// 命中即停。族数受 MaxProbesPerClass 约束（默认 12 → 4 族全跑）。
 func (r *Runner) timeBlind(tgt Target, done *int, total int) *Finding {
 	label := shortLabel(tgt)
 	sleep := r.opts.SleepSeconds
 	if sleep <= 0 {
 		sleep = 4
 	}
-	injURL := setParam(tgt.URL, tgt.Param, sleepPayload(sleep))
-	if len(injURL) > r.opts.MaxURLLen {
-		return nil
+	families := sleepFamilies(sleep)
+	if b := r.opts.MaxProbesPerClass; b > 0 && len(families) > b {
+		families = families[:b]
 	}
 
 	// 基线计时：目标原值已是 1（或该 URL 已被其它通道作 benign 基线取过）时，
@@ -822,56 +846,67 @@ func (r *Runner) timeBlind(tgt Target, done *int, total int) *Finding {
 	if r.stopped() {
 		return nil
 	}
-
-	start := time.Now()
-	inj := r.fetch.GetSmall(injURL)
-	injMS := time.Since(start).Milliseconds()
-	*done++
-	if r.prog != nil {
-		r.prog(*done, total, label)
-	}
-	if inj == nil || injMS < r.opts.BlindThresholdMS || baseMS >= r.opts.BlindThresholdMS {
-		return nil // 首测未超阈值，或基线本身就慢
-	}
-	if r.stopped() {
+	// 基线本身就慢：任何族的"延迟"都不可信，整块跳过。
+	if baseMS >= r.opts.BlindThresholdMS {
 		return nil
 	}
 
-	// 双确认：注入再测一次仍超阈值才报（防网络抖动）
-	if r.stopped() {
-		return nil
+	for _, fam := range families {
+		if r.stopped() {
+			return nil
+		}
+		injURL := setParam(tgt.URL, tgt.Param, fam.Payload)
+		if len(injURL) > r.opts.MaxURLLen {
+			continue
+		}
+		start := time.Now()
+		inj := r.fetch.GetSmall(injURL)
+		injMS := time.Since(start).Milliseconds()
+		*done++
+		if r.prog != nil {
+			r.prog(*done, total, label)
+		}
+		if inj == nil || injMS < r.opts.BlindThresholdMS {
+			continue // 本族首测未超阈值：换下一方言
+		}
+		if r.stopped() {
+			return nil
+		}
+		// 双确认：注入再测一次仍超阈值才报（防网络抖动）
+		start = time.Now()
+		again := r.fetch.GetSmall(injURL)
+		againMS := time.Since(start).Milliseconds()
+		*done++
+		if r.prog != nil {
+			r.prog(*done, total, label)
+		}
+		if again == nil || againMS < r.opts.BlindThresholdMS {
+			continue
+		}
+		return &Finding{
+			Check:    "sqli-blind-time",
+			Title:    "时间盲注 SQL 注入（" + fam.DBMS + " 方言，响应延迟异常）",
+			Severity: "high",
+			URL:      tgt.URL,
+			Param:    tgt.Param,
+			Payload:  fam.Payload,
+			Replay:   curlReplay(injURL),
+			Request:  reqText(injURL),
+			Signals: []string{"方言 " + fam.DBMS, "基线 " + formatMS(baseMS) + " / 注入 " + formatMS(injMS) +
+				" / 复测 " + formatMS(againMS)},
+			Response: &RespSnap{Status: inj.Status, Size: len(inj.Body), Snippet: snippetOf(inj.Body)},
+			Evidence: "注入 " + fam.DBMS + " 方言延迟载荷后响应耗时两次为 " +
+				formatMS(injMS) + " / " + formatMS(againMS) +
+				"，基线 " + formatMS(baseMS),
+			Advice: "使用参数化查询；限制查询执行时间",
+		}
 	}
-	start = time.Now()
-	again := r.fetch.GetSmall(injURL)
-	againMS := time.Since(start).Milliseconds()
-	*done++
-	if r.prog != nil {
-		r.prog(*done, total, label)
-	}
-	if again == nil || againMS < r.opts.BlindThresholdMS {
-		return nil
-	}
-	return &Finding{
-		Check:    "sqli-blind-time",
-		Title:    "时间盲注 SQL 注入（响应延迟异常）",
-		Severity: "high",
-		URL:      tgt.URL,
-		Param:    tgt.Param,
-		Payload:  sleepPayload(sleep),
-		Replay:   curlReplay(injURL),
-		Request:  reqText(injURL),
-		Signals: []string{"基线 " + formatMS(baseMS) + " / 注入 " + formatMS(injMS) +
-			" / 复测 " + formatMS(againMS)},
-		Response: &RespSnap{Status: inj.Status, Size: len(inj.Body), Snippet: snippetOf(inj.Body)},
-		Evidence: "注入 SLEEP 后响应耗时两次为 " +
-			formatMS(injMS) + " / " + formatMS(againMS) +
-			"，基线 " + formatMS(baseMS),
-		Advice: "使用参数化查询；限制查询执行时间",
-	}
+	return nil
 }
 
+// sleepPayload 兼容入口：默认族（MySQL）的延迟载荷。
 func sleepPayload(seconds int) string {
-	return "1 AND SLEEP(" + strconv.Itoa(seconds) + ")"
+	return sleepFamilies(seconds)[0].Payload
 }
 
 func formatMS(ms int64) string {
@@ -1160,11 +1195,23 @@ func judge(kind string, resp *Resp, baseline string, tgt Target) *Finding {
 
 	switch kind {
 	case "xss":
-		if strings.Contains(body, xssRaw) {
+		// B-08：两处修正。
+		//  1. 补基线排除——与 deep 通道（deep.go 的同族判定）口径一致。此前
+		//     只看"响应里有未转义标记"，页面固有内容/缓存残留也会命中。
+		//  2. 输出上下文判定——标记落在 <textarea>/<title>/<script> 或 HTML
+		//     注释内不构成可执行上下文，报 high 是典型误报，降级 low 并改标题。
+		if strings.Contains(body, xssRaw) && !strings.Contains(strings.ToLower(baseline), xssRaw) {
+			sev, title := "high", "反射型 XSS（标记未转义回显）"
+			evidence := "参数 " + tgt.Param + " 回显未转义标记"
+			if ctx := xssNonExecContext(resp.Body, xssRaw); ctx != "" {
+				sev = "low"
+				title = "参数回显（未确认可执行上下文：" + ctx + "）"
+				evidence = "参数 " + tgt.Param + " 回显未转义标记，但落点在 " + ctx + " 内，无法构成可执行上下文"
+			}
 			return &Finding{
-				Check: "xss-reflect", Title: "反射型 XSS（标记未转义回显）",
-				Severity: "high", URL: tgt.URL, Param: tgt.Param,
-				Evidence: "参数 " + tgt.Param + " 回显未转义标记",
+				Check: "xss-reflect", Title: title,
+				Severity: sev, URL: tgt.URL, Param: tgt.Param,
+				Evidence: evidence,
 				Advice:   "对该参数输出做 HTML 转义或上下文编码",
 			}
 		}
@@ -1222,6 +1269,45 @@ func judge(kind string, resp *Resp, baseline string, tgt Target) *Finding {
 
 func redirectStatus(code int) bool {
 	return code == 301 || code == 302 || code == 303 || code == 307 || code == 308
+}
+
+// xssNonExecContext 判定标记出现处是否落在**不可执行**上下文内（B-08）。
+//
+// 返回上下文名（"<textarea>" / "<title>" / "<script>" / "HTML 注释"），
+// 标记位于可执行上下文（元素内容、属性值、普通文本节点）时返回 ""。
+//
+// 判据只做「最近一个未闭合容器」的粗略扫描——它不是 HTML 解析器，目标也
+// 不是精确判定而是**避免把明显不可执行的落点报成 high**：DAST 报高危的
+// 门槛应该是"大概率可执行"，落点连上下文都不看就报 high 是误报主因。
+func xssNonExecContext(body, marker string) string {
+	low := strings.ToLower(body)
+	mk := strings.ToLower(marker)
+	idx := strings.Index(low, mk)
+	if idx < 0 {
+		return ""
+	}
+	before := low[:idx]
+	// HTML 注释：最后一个 <!-- 之后没有 --> 闭合。
+	if li := strings.LastIndex(before, "<!--"); li >= 0 &&
+		!strings.Contains(before[li:], "-->") {
+		return "HTML 注释"
+	}
+	// 容器标签：最近一个开标签之后没有对应的闭标签。
+	for _, c := range []struct{ open, close, name string }{
+		{"<textarea", "</textarea>", "<textarea>"},
+		{"<title", "</title>", "<title>"},
+		{"<script", "</script>", "<script>"},
+	} {
+		oi := strings.LastIndex(before, c.open)
+		if oi < 0 {
+			continue
+		}
+		if strings.Contains(before[oi:], c.close) {
+			continue // 该容器已闭合，落点不在里面
+		}
+		return c.name
+	}
+	return ""
 }
 
 // authzEnabled 越权通道总闸：跟随深度探测面总闸（默认开）。

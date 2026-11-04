@@ -472,7 +472,10 @@ func RunUploadBypass(opts UploadBypassOptions) (UploadBypassResult, error) {
 	base := attempts[0]
 	baseResp := opts.Poster.PostMultipart(plan.Endpoint, plan.FieldName, base.FileName,
 		base.ContentType, base.Content, plan.Extra)
-	baseOK, baseWhy := g10UploadAccepted(baseResp, marker)
+	// B-13：受理判定走三值 + 回读补证。仅"回显了上传内容"不再算受理，
+	// 避免把预览页/错误页/WAF 审计页当成可绕过面。
+	baseOK, baseWhy := g10Acceptance(baseResp, marker, plan.Endpoint, base,
+		opts.VerifyURL, opts.Poster.Get)
 	res.BaselineAccepted = baseOK
 	res.Attempts = append(res.Attempts, UploadAttemptResult{
 		Candidate: base, Status: g10Status(baseResp), Accepted: baseOK,
@@ -484,7 +487,8 @@ func RunUploadBypass(opts UploadBypassOptions) (UploadBypassResult, error) {
 	for _, c := range attempts[1:] {
 		resp := opts.Poster.PostMultipart(plan.Endpoint, plan.FieldName, c.FileName,
 			c.ContentType, c.Content, plan.Extra)
-		acc, why := g10UploadAccepted(resp, marker)
+		acc, why := g10Acceptance(resp, marker, plan.Endpoint, c,
+			opts.VerifyURL, opts.Poster.Get)
 		ar := UploadAttemptResult{
 			Candidate: c, Status: g10Status(resp), Accepted: acc,
 			Reason: why, Response: g10Snap(resp), Curl: plan.CurlFor(c),
@@ -528,30 +532,87 @@ func g10DryRun(p *bool) bool {
 	return *p
 }
 
-// g10UploadAccepted 受理判定：拒绝特征/4xx 优先；其次回显标记；再其次受理特征。
-func g10UploadAccepted(resp *UploadHTTPResp, marker string) (bool, string) {
+// g10Verdict 上传受理判定的三值结果（B-13）。
+//
+// 二值语义把「服务端把 POST 体回显回来」和「文件真的存下来了」混为一谈：
+// 错误提示页（"您上传的文件 <内容> 不合法"）、预览页、部分 WAF 的审计页
+// 都会回显请求体，但它们并没有落盘。三值把这种情形显式标成「未定」，
+// 由调用方用只读回读补证。
+type g10Verdict int
+
+const (
+	g10VerdictRejected     g10Verdict = iota // 明确拒绝：4xx / 拒绝特征
+	g10VerdictUndetermined                   // 未定：无受理信号，或仅回显上传内容
+	g10VerdictAccepted                       // 明确受理：命中受理特征
+)
+
+// g10UploadVerdict 三值受理判定。判定顺序：
+//  1. 4xx / 拒绝特征 → Rejected（先否决，避免把错误页当受理）；
+//  2. 受理特征 → Accepted（唯一强信号：服务端明确说存了）；
+//  3. 仅回显上传内容 → Undetermined（不能证明落盘）；
+//  4. 其它 → Undetermined。
+func g10UploadVerdict(resp *UploadHTTPResp, marker string) (g10Verdict, string) {
 	if resp == nil || resp.Status == 0 {
-		return false, "无响应"
+		return g10VerdictRejected, "无响应"
 	}
 	body := string(resp.Body)
 	low := strings.ToLower(body)
 	if resp.Status >= 400 {
-		return false, "HTTP " + strconv.Itoa(resp.Status)
+		return g10VerdictRejected, "HTTP " + strconv.Itoa(resp.Status)
 	}
 	for _, m := range uploadRejectMarkers {
 		if strings.Contains(low, strings.ToLower(m)) {
-			return false, "命中拒绝特征 " + m
+			return g10VerdictRejected, "命中拒绝特征 " + m
 		}
-	}
-	if strings.Contains(body, marker) {
-		return true, "响应回显上传内容标记"
 	}
 	for _, m := range uploadAcceptMarkers {
 		if strings.Contains(low, strings.ToLower(m)) {
-			return true, "命中受理特征 " + m
+			return g10VerdictAccepted, "命中受理特征 " + m
 		}
 	}
-	return false, "无受理信号"
+	if strings.Contains(body, marker) {
+		return g10VerdictUndetermined, "响应回显上传内容标记（未定：不能证明已存储）"
+	}
+	return g10VerdictUndetermined, "无受理信号"
+}
+
+// g10UploadAccepted 严格受理判定：只有 g10VerdictAccepted 才算受理。
+//
+// B-13 语义变更：此前「响应回显上传内容标记」也算受理（return true）。
+// 现按三值语义降级为「未定」——需要只读回读成功才算受理，见 g10Acceptance。
+func g10UploadAccepted(resp *UploadHTTPResp, marker string) (bool, string) {
+	v, why := g10UploadVerdict(resp, marker)
+	return v == g10VerdictAccepted, why
+}
+
+// g10Acceptance 判定一次上传是否「已受理」，未定时用只读回读补证。
+//
+// 只有「响应回显了标记」的未定情形才值得回读：连回显都没有说明服务端
+// 根本没读到内容，没有可验证的落点。回读取不到标记即按未受理处理
+// （宁少报，不把预览页/错误页算成上传绕过）。
+func g10Acceptance(resp *UploadHTTPResp, marker, endpoint string, c UploadCandidate,
+	verify func(string) string, get func(string) *UploadHTTPResp) (bool, string) {
+	v, why := g10UploadVerdict(resp, marker)
+	switch v {
+	case g10VerdictAccepted:
+		return true, why
+	case g10VerdictRejected:
+		return false, why
+	}
+	if resp == nil || !strings.Contains(string(resp.Body), marker) {
+		return false, why
+	}
+	u := g10VerifyURL(resp, endpoint, c.FileName, verify)
+	if u == "" {
+		return false, why + "；无可回读地址"
+	}
+	if get == nil {
+		return false, why + "；无回读通道"
+	}
+	if accessible, _ := g10ReadBack(get(u), marker, c); accessible {
+		return true, why + "；只读回读确认可访问 " + u
+	}
+	return false, why + "；只读回读未取到标记"
 }
 
 var (

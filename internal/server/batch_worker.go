@@ -23,7 +23,8 @@ import (
 
 // runBatch 批量入口：按配置分派 worker 池路径或旧并发路径（默认旧路径）。
 func (s *Server) runBatch(jobID string, items []batchItem, st *batchState) {
-	if s.cfg.Batch.UseWorkerPool {
+	cfg := s.cfgSnap() // A-09：读配置快照（一次请求/操作内一致）
+	if cfg.Batch.UseWorkerPool {
 		s.runBatchWorkerPool(jobID, items, st)
 		return
 	}
@@ -39,7 +40,8 @@ type batchTaskPayload struct {
 
 // runBatchWorkerPool 用 worker 池分派批量扫描。
 func (s *Server) runBatchWorkerPool(jobID string, items []batchItem, st *batchState) {
-	workers := s.cfg.Batch.Workers
+	cfg := s.cfgSnap() // A-09：读配置快照（一次请求/操作内一致）
+	workers := cfg.Batch.Workers
 	if workers <= 0 {
 		workers = 3
 	}
@@ -114,11 +116,12 @@ func (s *Server) runBatchWorkerPool(jobID string, items []batchItem, st *batchSt
 					}
 					mu.Unlock()
 				} else {
-					s.st.Save(res, map[string]any{"batch": true})
+					batchTenant := s.jobTenant(jobID)
+					s.st.SaveForTenant(res, map[string]any{"batch": true}, batchTenant)
 					row := map[string]any{"url": it.URL, "status": "done",
 						"level": it.Level, "attempts": attempts,
 						"findings": len(res.Vulnerabilities) + len(res.Verified), "techs": len(res.Technologies), "elapsed_ms": elapsed}
-					if n, fx, ok := s.DiffURL(it.URL); ok {
+					if n, fx, ok := s.DiffURLForTenant(it.URL, batchTenant); ok {
 						row["new_findings"] = n
 						row["fixed"] = fx
 					}
@@ -218,7 +221,7 @@ func (s *Server) runBatchWorkerPool(jobID string, items []batchItem, st *batchSt
 	copy(finalRows, rows)
 	finalDone := done
 	mu.Unlock()
-	if hook := s.cfg.Batch.WebhookURL; hook != "" {
+	if hook := cfg.Batch.WebhookURL; hook != "" {
 		event := "batch.done"
 		if wasCancelled {
 			event = "batch.cancelled"

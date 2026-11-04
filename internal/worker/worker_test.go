@@ -235,7 +235,8 @@ func TestRetryAndDeadLetter(t *testing.T) {
 	}
 }
 
-// TestIdempotencyKey 幂等键：同租户同 key 只保留一条任务（完成后再入队也不重复执行）。
+// TestIdempotencyKey 幂等键：同租户同 key 在任务存活期间只保留一条；
+// C-07 起任务进入终态后释放幂等键（同 key 再入队 = 新任务，不再返回旧 ID）。
 func TestIdempotencyKey(t *testing.T) {
 	ctx := context.Background()
 	q := NewMemoryQueue(QueueOptions{LeaseTTL: time.Second})
@@ -255,17 +256,24 @@ func TestIdempotencyKey(t *testing.T) {
 	if err != nil || id3 == id1 {
 		t.Fatalf("跨租户同 key 应独立: %q vs %q err=%v", id1, id3, err)
 	}
-	// 消费完成后再入队同 key：仍返回首次 ID，不产生新任务
+	// 消费完成后再入队同 key：C-07 语义——终态释放幂等键，应产生新任务。
+	// （旧实现返回已完成任务的 ID 并静默丢弃新任务，调用方以为入队成功。）
 	lease := dequeueWithTimeout(t, q, "w1", 0, time.Second)
+	if lease.Task.ID != id1 {
+		t.Fatalf("首个任务应为 %q，实际 %q", id1, lease.Task.ID)
+	}
 	if err := q.Ack(ctx, lease); err != nil {
 		t.Fatal(err)
 	}
 	id4, err := q.Enqueue(ctx, Task{TenantID: "t1", IdempotencyKey: "k1", Kind: "scan"})
-	if err != nil || id4 != id1 {
-		t.Fatalf("完成后同 key 入队应返回首次 ID: %q err=%v", id4, err)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if st := q.Stats(); st.Done != 1 || st.Pending != 1 { // pending=1 是 t2 的任务
-		t.Fatalf("完成后同 key 不应新增任务: %+v", st)
+	if id4 == id1 {
+		t.Fatalf("完成后同 key 入队应产生新任务，仍返回旧 ID %q（新任务被吞）", id4)
+	}
+	if st := q.Stats(); st.Done != 1 || st.Pending != 2 { // pending=2: k1 新任务 + t2 旧任务
+		t.Fatalf("完成后同 key 应新增任务: %+v", st)
 	}
 }
 
@@ -582,4 +590,111 @@ func TestHeartbeatCancelsHandler(t *testing.T) {
 	stopCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	_ = pool.Stop(stopCtx)
+}
+
+// TestQueueTerminalRetentionBounded C-07：已完成任务快照按上限回收，
+// 长驻服务不再随任务数无界增长；TaskState 对已淘汰的终态任务返回 false。
+func TestQueueTerminalRetentionBounded(t *testing.T) {
+	ctx := context.Background()
+	const total = 300
+	q := NewMemoryQueue(QueueOptions{LeaseTTL: time.Second, MaxTerminalRetained: 16})
+	for i := 0; i < total; i++ {
+		if _, err := q.Enqueue(ctx, Task{Kind: "scan", Payload: make([]byte, 256)}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	done := 0
+	for {
+		lease, err := func() (*Lease, error) {
+			c, cancel := context.WithTimeout(ctx, 200*time.Millisecond)
+			defer cancel()
+			return q.Dequeue(c, "w", time.Second)
+		}()
+		if err != nil {
+			break // 队列已空（超时）
+		}
+		if err := q.Ack(ctx, lease); err != nil {
+			t.Fatalf("Ack: %v", err)
+		}
+		done++
+		if done == total {
+			break
+		}
+	}
+	if done != total {
+		t.Fatalf("应处理 %d 条，实际 %d", total, done)
+	}
+	q.mu.Lock()
+	retained := len(q.tasks)
+	idem := len(q.idem)
+	q.mu.Unlock()
+	if retained > 16 {
+		t.Fatalf("终态任务快照应上限回收（<=16），实际保留 %d（内存无界）", retained)
+	}
+	if idem != 0 {
+		t.Fatalf("任务全部终态后幂等键应释放，实际残留 %d", idem)
+	}
+	// 幂等键释放后同 key 可重新入队为新任务
+	id1, err := q.Enqueue(ctx, Task{IdempotencyKey: "k", Kind: "scan"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := q.Enqueue(ctx, Task{IdempotencyKey: "k", Kind: "scan"}); err != nil {
+		t.Fatal(err)
+	}
+	if st := q.Stats(); st.Pending != 1 {
+		t.Fatalf("存活任务存在的同 key 仍应去重: %+v", st)
+	}
+	lease, err := func() (*Lease, error) {
+		c, cancel := context.WithTimeout(ctx, time.Second)
+		defer cancel()
+		return q.Dequeue(c, "w", time.Second)
+	}()
+	if err != nil || lease.Task.ID != id1 {
+		t.Fatalf("Dequeue: %+v %v", lease, err)
+	}
+	if err := q.Ack(ctx, lease); err != nil {
+		t.Fatal(err)
+	}
+	// DeadLetter 上限：连续失败不需要断言内部条数，只验证不 panic 且可读
+	if got := q.DeadLetters(); len(got) > 1024 {
+		t.Fatalf("死信无上限: %d", len(got))
+	}
+}
+
+// TestAckAfterLeaseDeadlineBeforeReap C-14：租约在 Ack 前一刻过期但尚未被
+// 任何 Dequeue/Stats 回收（token 仍在 inflight）时，成功任务的 Ack 必须被
+// 接受，不能判 ErrLeaseExpired 导致"实际成功却重跑/进死信"。
+func TestAckAfterLeaseDeadlineBeforeReap(t *testing.T) {
+	ctx := context.Background()
+	q := NewMemoryQueue(QueueOptions{LeaseTTL: 20 * time.Millisecond, DefaultMaxAttempts: 1})
+	id, err := q.Enqueue(ctx, Task{Kind: "scan"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	lease := dequeueWithTimeout(t, q, "w1", 20*time.Millisecond, time.Second)
+	if lease.Task.ID != id {
+		t.Fatalf("租约任务异常: %+v", lease)
+	}
+	// 等到租约过期，但不调用 Dequeue/Stats(不触发 reap)
+	time.Sleep(40 * time.Millisecond)
+	if err := q.Ack(ctx, lease); err != nil {
+		t.Fatalf("租约过期但未被回收时，成功任务的 Ack 应被接受（C-14）: %v", err)
+	}
+	if st := q.Stats(); st.Done != 1 || st.Dead != 0 {
+		t.Fatalf("Ack 后应为 done 且无死信: %+v", st)
+	}
+	if state, ok := q.TaskState(id); !ok || state != StateDone {
+		t.Fatalf("任务状态应为 done: %q %v", state, ok)
+	}
+	// 租约已被回收/重投后，旧 token 的 Ack 仍必须失败
+	if _, err := q.Enqueue(ctx, Task{Kind: "scan"}); err != nil {
+		t.Fatal(err)
+	}
+	l2 := dequeueWithTimeout(t, q, "w2", 10*time.Millisecond, time.Second)
+	time.Sleep(30 * time.Millisecond)
+	_ = q.Stats() // 触发 reap：任务回 ready/死信，token 被删
+	if err := q.Ack(ctx, l2); !errors.Is(err, ErrLeaseExpired) {
+		t.Fatalf("已被回收的租约 Ack 应 ErrLeaseExpired: %v", err)
+	}
 }

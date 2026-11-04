@@ -147,3 +147,51 @@ func TestDirScanCatchAllNotVerified(t *testing.T) {
 		}
 	}
 }
+
+// TestDirVerifiedEntryLowConfidence B2-01 接线：模块层标记 LowConfidence 的
+// 目录命中必须"保留但降级"——severity 降为 low、标题与证据标注低置信、
+// 并带 low_confidence 标记；可确证的命中保持原有严重度（不能被一起降级）。
+func TestDirVerifiedEntryLowConfidence(t *testing.T) {
+	// 低置信：敏感后缀 200，但无法确证是真文件（无魔数/拦截特征/非 JSON 信封）。
+	h := modules.PageHit{
+		URL: "http://t.example/config.yml", Path: "/config.yml",
+		Status: 200, ContentType: "text/plain", LowConfidence: true,
+	}
+	m := dirVerifiedEntry(h)
+	if m == nil {
+		t.Fatalf("低置信命中不应被丢弃（漏报同样有代价）")
+	}
+	if m["severity"] != "low" {
+		t.Fatalf("低置信命中 severity 应为 low，实际 %v", m["severity"])
+	}
+	if m["low_confidence"] != true {
+		t.Fatalf("应带 low_confidence 标记：%v", m)
+	}
+	if title, _ := m["title"].(string); !strings.Contains(title, "低置信") {
+		t.Fatalf("标题应标注低置信：%q", title)
+	}
+	if ev, _ := m["evidence"].(string); !strings.Contains(ev, "低置信") {
+		t.Fatalf("证据应标注低置信：%q", ev)
+	}
+
+	// 非低置信：同样路径但内容类型可确证，严重度保持 high（不被误降级）。
+	h2 := modules.PageHit{
+		URL: "http://t.example/config.yml", Path: "/config.yml",
+		Status: 200, ContentType: "text/yaml",
+	}
+	m2 := dirVerifiedEntry(h2)
+	if m2 == nil {
+		t.Fatalf("可确证命中不应被丢弃")
+	}
+	if m2["severity"] != "high" {
+		t.Fatalf("可确证命中 severity 应保持 high，实际 %v", m2["severity"])
+	}
+	if _, ok := m2["low_confidence"]; ok {
+		t.Fatalf("可确证命中不应带 low_confidence：%v", m2)
+	}
+
+	// 无缺陷语义的普通入口页仍返回 nil（不因低置信标记而进发现）。
+	if got := dirVerifiedEntry(modules.PageHit{Path: "/index.php", Status: 200}); got != nil {
+		t.Fatalf("普通入口页不应进发现：%v", got)
+	}
+}

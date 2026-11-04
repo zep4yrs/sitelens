@@ -270,7 +270,12 @@ if (Test-Path -LiteralPath $pkgPath) {
             $binRel = $null
             if ($pkg.bin -and $pkg.bin.sitelens) { $binRel = $pkg.bin.sitelens }
             if ($binRel -and (Test-Path -LiteralPath (Join-Path $root ("tui/" + $binRel)))) {
-                Add-Result "R11" "PASS" "CLI 包名/入口正常（v$($pkg.version)）"
+                # E-13：npm 包版本必须与产品版本同源（避免"发了 5.2.3、CLI 还标 0.0.1-rc"）。
+                if ($ver -and ([string]$pkg.version -ne [string]$ver)) {
+                    Add-Result "R11" "WARN" "CLI 版本与产品版本不一致" ("pkg=" + $pkg.version + " 期望=" + $ver)
+                } else {
+                    Add-Result "R11" "PASS" "CLI 包名/入口/版本正常（v$($pkg.version)）"
+                }
             } else {
                 Add-Result "R11" "WARN" "CLI bin 入口不存在" ("bin=" + $binRel)
             }

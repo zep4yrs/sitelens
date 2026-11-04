@@ -28,6 +28,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
+	"runtime/debug"
 	"slices"
 	"sync"
 )
@@ -198,6 +200,19 @@ func AllShardsDone(shards []Shard) bool {
 	return true
 }
 
+// callShardSafe V-09：单分片执行 panic 兜底——收敛为该分片失败（错误照常
+// 汇总/可重试），worker 循环继续消费后续分片：既不打崩进程，也不会让
+// "所有 worker 都死掉 → idxCh 无人消费 → 派发方永久阻塞"。
+func callShardSafe(ctx context.Context, fn ShardFunc, shard Shard) (err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("[panic] engine shard %d: %v\n%s", shard.ID, r, debug.Stack())
+			err = fmt.Errorf("分片执行 panic：%v", r)
+		}
+	}()
+	return fn(ctx, shard)
+}
+
 // RunShards 并发执行未完成分片：
 //   - Done=true 的分片直接跳过（checkpoint/续扫语义），计入 Skipped；
 //   - 并发度夹到 [1, MaxShardConcurrency]（最多 min(并发, 未完成分片数) 个 worker）；
@@ -270,7 +285,7 @@ func RunShards(ctx context.Context, shards []Shard, opts ShardOptions, fn ShardF
 						stats.Retries++
 						mu.Unlock()
 					}
-					lastErr = fn(ctx, shard)
+					lastErr = callShardSafe(ctx, fn, shard)
 					if lastErr == nil {
 						break
 					}

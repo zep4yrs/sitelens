@@ -11,9 +11,11 @@ package server
 import (
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"os"
 	"path/filepath"
+	"runtime/debug"
 	"strings"
 	"time"
 
@@ -23,6 +25,10 @@ import (
 
 // defaultOverridesName overrides_path 缺省文件名（相对数据目录）。
 const defaultOverridesName = "intel_overrides.json"
+
+// apiTokenMask GET /api/settings 回显 api_token 时的掩码（V-11）。
+// 不是可用 token：PUT 收到该值时按"不修改"处理（hSettingsPut）。
+const apiTokenMask = "sk-****"
 
 // resolveOverridesPath 校验并归一设置页提交的 overrides_path。
 //
@@ -62,10 +68,18 @@ func resolveOverridesPath(dataDir, raw string) (string, error) {
 }
 
 // settingsConfig 设置页可读写的配置投影（只含允许远程修改的键）。
+//
+// APIToken 用指针表达"字段是否出现"（D-04 契约）：
+//   - nil（请求体里没有该字段）→ 不修改当前 token；
+//   - 指向 ""（显式传空串）→ 清除 token（= 关闭 X-Token 鉴权）；
+//   - 指向非空字符串 → 覆盖为新 token。
+//
+// 注意：不能用 string 的零值判断——旧前端在"没动 token 输入框"时也会传空串，
+// 那会把已配置的 token 清掉（用户从有鉴权变成无鉴权）。
 type settingsConfig struct {
 	Web struct {
-		Listen   string `json:"listen"`
-		APIToken string `json:"api_token"`
+		Listen   string  `json:"listen"`
+		APIToken *string `json:"api_token,omitempty"`
 	} `json:"web"`
 	Crawler struct {
 		MaxPages        int  `json:"max_pages"`
@@ -97,66 +111,96 @@ type settingsConfig struct {
 }
 
 func (s *Server) settingsCfg() settingsConfig {
-	s.cfgMu.Lock()
-	defer s.cfgMu.Unlock()
+	// A-09：读配置快照（无锁），一次调用内用同一份，避免字段来自不同版本。
+	cfg := s.cfgSnap()
 	var v settingsConfig
-	v.Web.Listen = s.cfg.Web.Listen
-	v.Web.APIToken = s.token()
-	v.Crawler.MaxPages = s.cfg.Crawler.MaxPages
-	v.Crawler.RespectRobots = s.cfg.Crawler.RespectRobots
-	v.Crawler.MaxLinksPerPage = s.cfg.Crawler.MaxLinksPerPage
-	v.Crawler.TimeoutSec = s.cfg.Crawler.TimeoutSec
-	v.Scan.RateIntervalMS = s.cfg.Scan.RateIntervalMS
-	v.Scan.TimeoutSec = s.cfg.Scan.TimeoutSec
-	v.Checks.NucleiCap = s.cfg.Checks.NucleiCap
-	v.Exploit.Enabled = s.cfg.Exploit.Enabled
-	v.Intel.OverridesPath = s.cfg.Intel.OverridesPath
-	v.Batch.MaxURLs = s.cfg.Batch.MaxURLs
-	v.ML.Predict = s.cfg.ML.Predict
-	v.ML.SevLinear = s.cfg.ML.SevLinear
-	v.ML.SevONNX = s.cfg.ML.SevONNX
+	if cfg != nil {
+		v.Web.Listen = cfg.Web.Listen
+		v.Crawler.MaxPages = cfg.Crawler.MaxPages
+		v.Crawler.RespectRobots = cfg.Crawler.RespectRobots
+		v.Crawler.MaxLinksPerPage = cfg.Crawler.MaxLinksPerPage
+		v.Crawler.TimeoutSec = cfg.Crawler.TimeoutSec
+		v.Scan.RateIntervalMS = cfg.Scan.RateIntervalMS
+		v.Scan.TimeoutSec = cfg.Scan.TimeoutSec
+		v.Checks.NucleiCap = cfg.Checks.NucleiCap
+		v.Exploit.Enabled = cfg.Exploit.Enabled
+		v.Intel.OverridesPath = cfg.Intel.OverridesPath
+		v.Batch.MaxURLs = cfg.Batch.MaxURLs
+		v.ML.Predict = cfg.ML.Predict
+		v.ML.SevLinear = cfg.ML.SevLinear
+		v.ML.SevONNX = cfg.ML.SevONNX
+	}
+	// 内部视图带真实 token（供 hSettingsGet 判 api_token_set 与日志）；
+	// HTTP 响应里 hSettingsGet 会把它清成 nil（V-11 不回明文）。
+	tok := s.token()
+	v.Web.APIToken = &tok
 	return v
 }
 
 // applySettings 把设置页提交的值写回内存（热生效：扫描/爬取/API token）。
+//
+// A-09 copy-on-write 语义：全程持 cfgMu（写侧串行化），先深拷贝当前快照、
+// 只改拷贝、最后原子换枪并同步引擎快照；**绝不原地修改旧结构**。
+// 生效边界：对下一次扫描/请求生效；进行中的扫描持旧快照不受影响。
 func (s *Server) applySettings(v settingsConfig) {
 	s.cfgMu.Lock()
 	defer s.cfgMu.Unlock()
-	s.cfg.Web.APIToken = v.Web.APIToken
-	tok := v.Web.APIToken
-	s.apiToken.Store(&tok) // 原子换枪：guard 读侧无锁
-	if v.Crawler.MaxPages > 0 {
-		s.cfg.Crawler.MaxPages = v.Crawler.MaxPages
+
+	old := s.cfgSnap()
+	newCfg := cloneConfig(old)
+	if newCfg == nil {
+		newCfg = config.Default()
 	}
-	s.cfg.Crawler.RespectRobots = v.Crawler.RespectRobots
+	// D-04 契约：字段缺省 = 不修改；显式 "" = 清除；非空 = 覆盖。
+	if v.Web.APIToken != nil {
+		tok := *v.Web.APIToken
+		newCfg.Web.APIToken = tok
+		s.apiToken.Store(&tok) // 原子换枪：guard 读侧无锁
+	}
+	if v.Crawler.MaxPages > 0 {
+		newCfg.Crawler.MaxPages = v.Crawler.MaxPages
+	}
+	newCfg.Crawler.RespectRobots = v.Crawler.RespectRobots
 	if v.Crawler.MaxLinksPerPage > 0 {
-		s.cfg.Crawler.MaxLinksPerPage = v.Crawler.MaxLinksPerPage
+		newCfg.Crawler.MaxLinksPerPage = v.Crawler.MaxLinksPerPage
 	}
 	if v.Crawler.TimeoutSec > 0 {
-		s.cfg.Crawler.TimeoutSec = v.Crawler.TimeoutSec
+		newCfg.Crawler.TimeoutSec = v.Crawler.TimeoutSec
 	}
 	if v.Scan.RateIntervalMS >= 0 {
-		s.cfg.Scan.RateIntervalMS = v.Scan.RateIntervalMS
+		newCfg.Scan.RateIntervalMS = v.Scan.RateIntervalMS
 	}
 	if v.Scan.TimeoutSec > 0 {
-		s.cfg.Scan.TimeoutSec = v.Scan.TimeoutSec
+		newCfg.Scan.TimeoutSec = v.Scan.TimeoutSec
 	}
 	if v.Checks.NucleiCap > 0 {
-		s.cfg.Checks.NucleiCap = v.Checks.NucleiCap
+		newCfg.Checks.NucleiCap = v.Checks.NucleiCap
 	}
-	s.cfg.Exploit.Enabled = v.Exploit.Enabled
-	s.cfg.Intel.OverridesPath = v.Intel.OverridesPath
+	newCfg.Exploit.Enabled = v.Exploit.Enabled
+	newCfg.Intel.OverridesPath = v.Intel.OverridesPath
 	if v.Batch.MaxURLs > 0 {
-		s.cfg.Batch.MaxURLs = v.Batch.MaxURLs
+		newCfg.Batch.MaxURLs = v.Batch.MaxURLs
 	}
 	// ML 开关热生效：predict 引擎每次扫描现读；sev_onnx 翻转时作废
 	// 打分器的一次性尝试缓存（下次扫描按新开关重建/跳过）
-	if s.cfg.ML.SevONNX != v.ML.SevONNX {
+	if old != nil && old.ML.SevONNX != v.ML.SevONNX && s.eng != nil {
 		s.eng.InvalidateMLSev()
 	}
-	s.cfg.ML.Predict = v.ML.Predict
-	s.cfg.ML.SevLinear = v.ML.SevLinear
-	s.cfg.ML.SevONNX = v.ML.SevONNX
+	// C2-10：AI 总闸由开转关时释放 ML 资产常驻（cve-tech 系数 94MB），
+	// 下次重新开启扫描时按需重建。仅在"关"的瞬间释放，避免抖动反复读盘。
+	if old != nil && old.ML.Predict && !v.ML.Predict && s.eng != nil {
+		s.eng.InvalidateML()
+	}
+	newCfg.ML.Predict = v.ML.Predict
+	newCfg.ML.SevLinear = v.ML.SevLinear
+	newCfg.ML.SevONNX = v.ML.SevONNX
+
+	// 原子换枪：此后新请求/新扫描读到新快照；旧快照（含进行中的扫描）
+	// 保持不变，不会被后续写入污染。
+	s.cfgPtr.Store(newCfg)
+	if s.eng != nil {
+		s.eng.SetConfig(newCfg)
+	}
 }
 
 // persistSettings 把设置写回用户 yml（Node 读改写：保留注释与未纳管键）。
@@ -186,8 +230,10 @@ func (s *Server) persistSettings(v settingsConfig) error {
 		"batch":   {"max_urls": v.Batch.MaxURLs},
 		"ml":      {"predict": v.ML.Predict, "sev_linear": v.ML.SevLinear, "sev_onnx": v.ML.SevONNX},
 	}
-	if v.Web.APIToken != "" {
-		updates["web"]["api_token"] = v.Web.APIToken
+	// D-04：字段缺省时不写 api_token 键（避免把 yml 里的明文 token 抹掉）；
+	// 显式 "" 也要写（清除），非空则覆盖。
+	if v.Web.APIToken != nil {
+		updates["web"]["api_token"] = *v.Web.APIToken
 	}
 	out, err := config.UpsertYAMLSections(data, updates)
 	if err != nil {
@@ -204,18 +250,38 @@ func (s *Server) persistSettings(v settingsConfig) error {
 }
 
 func (s *Server) hSettingsGet(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, 200, map[string]any{
-		"config":      s.settingsCfg(),
-		"config_path": s.cfgPath,
-		"note":        "保存后：扫描/爬取/Token 立即生效；监听地址需重启服务",
-	})
+	c := s.settingsCfg()
+	// V-11：绝不回显 api_token 明文（只读角色也能读本接口）。以
+	// api_token_set 布尔为主判据（D-04/V-11 契约，F6 已按此实现），
+	// 并从响应结构里摘掉 api_token 字段（nil + omitempty）。
+	tokenSet := c.Web.APIToken != nil && strings.TrimSpace(*c.Web.APIToken) != ""
+	c.Web.APIToken = nil
+	resp := map[string]any{
+		"web": c.Web, "crawler": c.Crawler, "scan": c.Scan, "checks": c.Checks,
+		"exploit": c.Exploit, "intel": c.Intel, "batch": c.Batch, "ml": c.ML,
+		"api_token_set": tokenSet,
+		"note":          "保存后：扫描/爬取/Token 立即生效；监听地址需重启服务",
+	}
+	// config_path 含主机用户名/目录结构，仅 admin（none 模式按本机单用户处理）可见。
+	if isAdminRequest(r) && s.cfgPath != "" {
+		resp["config_path"] = s.cfgPath
+	}
+	writeJSON(w, 200, resp)
 }
 
 func (s *Server) hSettingsPut(w http.ResponseWriter, r *http.Request) {
+	// V-21：设置体正常只有几百字节；64KB 硬上限防超大 JSON 占内存/CPU
+	// （其余端点普遍 io.LimitReader 1MB，本端点此前完全无限制）。
+	r.Body = http.MaxBytesReader(w, r.Body, 64<<10)
 	var v settingsConfig
 	if err := json.NewDecoder(r.Body).Decode(&v); err != nil {
-		writeJSON(w, 400, map[string]any{"error": "JSON 解析失败"})
+		writeJSON(w, 400, map[string]any{"error": "JSON 解析失败（请求体需 ≤64KB）"})
 		return
+	}
+	// D-04 契约：api_token 字段"缺省 = 不修改 / 显式 "" = 清除 / 非空 = 覆盖"。
+	// 兼容旧前端把掩码原样回传的情况：掩码视为"不修改"。
+	if v.Web.APIToken != nil && *v.Web.APIToken == apiTokenMask {
+		v.Web.APIToken = nil
 	}
 	if v.Web.Listen == "" || v.Crawler.MaxPages <= 0 {
 		writeJSON(w, 400, map[string]any{"error": "listen 与 max_pages 必填"})
@@ -224,7 +290,13 @@ func (s *Server) hSettingsPut(w http.ResponseWriter, r *http.Request) {
 	// BUG-006：overrides_path 会被 OSV 同步当落盘路径使用，必须限定在
 	// 数据目录内；非法值整单拒绝（不落 yml、不改内存），避免"写盘路径
 	// 已生效但配置没保存"的半生效状态。
-	ovPath, err := resolveOverridesPath(s.cfg.Store.DataDir, v.Intel.OverridesPath)
+	// A-09：配置读快照（无锁）。overrides_path 的合法根目录取当前快照。
+	cfgSnap := s.cfgSnap()
+	if cfgSnap == nil {
+		writeJSON(w, 500, map[string]any{"error": "配置未初始化"})
+		return
+	}
+	ovPath, err := resolveOverridesPath(cfgSnap.Store.DataDir, v.Intel.OverridesPath)
 	if err != nil {
 		writeJSON(w, 400, map[string]any{"error": "overrides_path 非法：" + err.Error()})
 		return
@@ -235,8 +307,17 @@ func (s *Server) hSettingsPut(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.applySettings(v)
-	writeJSON(w, 200, map[string]any{"ok": true,
-		"note": "已保存：扫描/爬取/Token 立即生效；监听地址需重启服务"})
+	resp := map[string]any{"ok": true,
+		"note": "已保存：扫描/爬取/Token 立即生效；监听地址需重启服务"}
+	// 显式清空 token 是安全姿态变化（/api/* 立刻变成无鉴权），必须回执提示。
+	if v.Web.APIToken != nil && *v.Web.APIToken == "" {
+		resp["token_cleared"] = true
+		resp["api_token_set"] = false
+		resp["note"] = "已保存：API Token 已清除（当前 /api/* 无鉴权，仅建议本机使用）"
+	} else if v.Web.APIToken != nil {
+		resp["api_token_set"] = true
+	}
+	writeJSON(w, 200, resp)
 }
 
 // ---- OSV 同步 ----
@@ -258,10 +339,28 @@ func (s *Server) hOsvSync(w http.ResponseWriter, r *http.Request) {
 			s.osvRunning = false
 			s.osvMu.Unlock()
 		}()
+		// V-09：后台 goroutine panic 会终止整个进程（net/http 只 recover
+		// 处理请求的那个 goroutine）。情报同步涉及大 JSON 解码，必须兜住。
+		defer func() {
+			if rec := recover(); rec != nil {
+				log.Printf("[panic] OSV 同步已恢复：%v\n%s", rec, debug.Stack())
+				s.osvMu.Lock()
+				s.osvLastMsg = "内部错误（已恢复）"
+				s.osvMu.Unlock()
+			}
+		}()
 		kb := s.KB()
 		if kb == nil {
 			s.osvMu.Lock()
 			s.osvLastMsg = "知识库未加载"
+			s.osvMu.Unlock()
+			return
+		}
+		// A-09：落盘路径取同步开始时的配置快照（后台 goroutine 不裸读配置）。
+		cfgSnap := s.cfgSnap()
+		if cfgSnap == nil {
+			s.osvMu.Lock()
+			s.osvLastMsg = "配置未初始化"
 			s.osvMu.Unlock()
 			return
 		}
@@ -270,7 +369,7 @@ func (s *Server) hOsvSync(w http.ResponseWriter, r *http.Request) {
 		s.osvTotal = len(cves)
 		s.osvMu.Unlock()
 		ov := intel.OsvSyncCollect(cves, 8)
-		if err := intel.SaveOverrides(s.cfg.Intel.OverridesPath, ov); err != nil {
+		if err := intel.SaveOverrides(cfgSnap.Intel.OverridesPath, ov); err != nil {
 			s.osvMu.Lock()
 			s.osvLastMsg = "写入失败：" + err.Error()
 			s.osvMu.Unlock()

@@ -55,16 +55,26 @@ func resultAt(host, scannedAt string, techs ...string) *engine.Result {
 	return res
 }
 
-// loadYearDoc 读取并解析 archive/<year>.json。
+// loadYearDoc 读取并解析 archive/<year>.jsonl（C-01 append-only 分片）为
+// 测试视图 archiveYearFile（Scans 按文件行序）。旧格式断言保持等价。
 func loadYearDoc(t *testing.T, dir string, year int) archiveYearFile {
 	t.Helper()
-	data, err := os.ReadFile(filepath.Join(dir, "archive", fmt.Sprintf("%04d.json", year)))
+	path := filepath.Join(dir, "archive", fmt.Sprintf("%04d.jsonl", year))
+	data, err := os.ReadFile(path)
 	if err != nil {
-		t.Fatalf("读年度归档 %d: %v", year, err)
+		t.Fatalf("读年度归档分片 %d: %v", year, err)
 	}
-	var yf archiveYearFile
-	if err := json.Unmarshal(data, &yf); err != nil {
-		t.Fatalf("年度归档非法 JSON: %v", err)
+	yf := archiveYearFile{Year: year}
+	for _, line := range strings.Split(strings.TrimSpace(string(data)), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		var rec ScanRecord
+		if uerr := json.Unmarshal([]byte(line), &rec); uerr != nil {
+			t.Fatalf("年度归档分片 %d 行非法 JSON: %v\n%s", year, uerr, line)
+		}
+		yf.Scans = append(yf.Scans, rec)
 	}
 	return yf
 }
@@ -340,7 +350,13 @@ func TestArchiveCorruptYearFileSkip(t *testing.T) {
 	tv.Save(resultAt("b.com", "2025-05-01 10:00:00"), nil) // id2 → 2025
 	tv.Save(resultAt("c.com", "2025-06-01 10:00:00"), nil) // id3 → 归档 id1
 	tv.Save(resultAt("d.com", "2025-07-01 10:00:00"), nil) // id4 → 归档 id2
+	// C-01 新格式下"损坏可查"分两条路径：① 旧格式 v1 文件损坏（迁移解析失败，
+	// 原字节保留）；② append-only 分片损坏（重建时跳过）。这里构造 ①：
+	// 移除已写出的 2024 分片，放一个损坏的旧格式 2024.json 模拟历史遗留损坏文件。
 	corruptPath := filepath.Join(dir, "archive", "2024.json")
+	if err := os.Remove(filepath.Join(dir, "archive", "2024.jsonl")); err != nil {
+		t.Fatalf("移除 2024 分片: %v", err)
+	}
 	if err := os.WriteFile(corruptPath, []byte("{{{ broken"), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -371,7 +387,9 @@ func TestArchiveCorruptYearFileSkip(t *testing.T) {
 	}
 }
 
-// TestArchiveAtomicWritesClean 归档写入原子：无 .tmp 残留，所有归档文件合法 JSON。
+// TestArchiveAtomicWritesClean 归档写入原子：无 .tmp 残留，所有归档文件内容合法。
+// C-01 起年度归档是 append-only JSONL（整文件不是单个 JSON 文档）→ 分片按行校验，
+// 其余文件（索引/墓碑/旧格式 .bak）仍要求整份合法 JSON。
 func TestArchiveAtomicWritesClean(t *testing.T) {
 	dir := t.TempDir()
 	tv, err := NewTiered(dir, 2)
@@ -389,8 +407,22 @@ func TestArchiveAtomicWritesClean(t *testing.T) {
 	}
 	for _, e := range entries {
 		data, rerr := os.ReadFile(filepath.Join(dir, "archive", e.Name()))
-		if rerr != nil || !json.Valid(data) {
-			t.Fatalf("归档文件 %s 非合法 JSON: %v", e.Name(), rerr)
+		if rerr != nil {
+			t.Fatalf("归档文件 %s 不可读: %v", e.Name(), rerr)
+		}
+		if strings.HasSuffix(e.Name(), ".jsonl") {
+			for _, line := range strings.Split(strings.TrimSpace(string(data)), "\n") {
+				if strings.TrimSpace(line) == "" {
+					continue
+				}
+				if !json.Valid([]byte(line)) {
+					t.Fatalf("归档分片 %s 存在非法 JSON 行: %s", e.Name(), line)
+				}
+			}
+			continue
+		}
+		if !json.Valid(data) {
+			t.Fatalf("归档文件 %s 非合法 JSON", e.Name())
 		}
 	}
 	if data, err := os.ReadFile(filepath.Join(dir, "history.json")); err != nil || !json.Valid(data) {

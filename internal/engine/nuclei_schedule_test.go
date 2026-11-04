@@ -29,7 +29,7 @@ func TestLoadNucleiLRUNullSafe(t *testing.T) {
 			if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
 				t.Fatal(err)
 			}
-			e := &Engine{cfg: cfg}
+			e := testEngine(cfg)
 			e.loadNucleiLRU()
 			if e.nucleiLRU == nil {
 				t.Fatalf("%s: 调度表不得为 nil（后续写表会 panic）", name)
@@ -46,7 +46,7 @@ func TestLoadNucleiLRUNullSafe(t *testing.T) {
 	if err := os.WriteFile(path, []byte(`{"templates/a.yaml":123}`), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	e := &Engine{cfg: cfg}
+	e := testEngine(cfg)
 	e.loadNucleiLRU()
 	if got := e.nucleiLRU["templates/a.yaml"]; got != 123 {
 		t.Fatalf("合法调度表未恢复: %v", e.nucleiLRU)

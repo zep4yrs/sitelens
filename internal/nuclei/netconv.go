@@ -236,6 +236,11 @@ func matchOne(m tplMatcher, response string) (bool, string) {
 			if err != nil {
 				continue
 			}
+			// B2-06：与 buildChecks 的 dsl 组同口径的内容判定闸门——纯排除式/
+			// 恒真表达式不转换，避免"任意响应都命中"的空转 check。
+			if !prog.PositiveGround() {
+				continue
+			}
 			if ok, _ := prog.Eval(netEnv{response: response}); ok {
 				return true, "dsl 命中[" + strconv.Quote(expr) + "]"
 			}
@@ -265,12 +270,28 @@ func compileRE2(pattern string) (*regexp.Regexp, error) {
 }
 
 // netEnv 协议模板 dsl 求值环境：body 即原始响应，response 经 VarSource 注入。
+//
+// B2-06：协议模板（network/dns/tcp）没有 HTTP 状态码 / 响应头 / Host 语义。
+// 此前用 `StatusCode()=0`、`Header()=""`、`Host()=""` 伪造取值，导致
+// `status_code != 200`、`host != 'x'`、`!contains(header['X'],'y')` 等表达式
+// **恒真**——任意响应都命中。现在通过 dsl.EnvUnavailable 声明这些变量不可用，
+// 求值器按"未知变量"报错（不命中），与 dsl 包"未知即不命中"的哲学一致。
 type netEnv struct{ response string }
 
 func (e netEnv) StatusCode() int      { return 0 }
 func (e netEnv) Body() string         { return e.response }
 func (e netEnv) Header(string) string { return "" }
 func (e netEnv) Host() string         { return "" }
+
+// Unavailable 声明协议模板环境不提供的内置变量。
+func (e netEnv) Unavailable(name string) bool {
+	switch name {
+	case "status_code", "header", "headers", "host":
+		return true
+	}
+	return false
+}
+
 func (e netEnv) Var(name string) (string, bool) {
 	if name == "response" {
 		return e.response, true

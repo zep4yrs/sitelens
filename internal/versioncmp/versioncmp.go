@@ -8,6 +8,7 @@
 package versioncmp
 
 import (
+	"math"
 	"regexp"
 	"strings"
 )
@@ -27,21 +28,24 @@ func Parse(v string) []int {
 	return out
 }
 
+// parseSeg 取段内前导数字并转 int。
+//
+// C-15：溢出保护。原实现无长度上限，段 >19 位时 n*10 会回绕成负数或
+// 意外小值，Cmp 给出与语义相反的结论（实测 "1.9223372036854775808" 被
+// 解析成负值 → 判为 < 1.9）。这里在溢出方向**饱和到 math.MaxInt**：
+// 超长数字段一律视为"非常大"，保持比较方向正确（仍不做零补齐）。
 func parseSeg(seg string) int {
-	digits := ""
+	n := 0
 	for i := 0; i < len(seg); i++ {
 		c := seg[i]
 		if c < '0' || c > '9' {
 			break
 		}
-		digits += string(c)
-	}
-	if digits == "" {
-		return 0
-	}
-	n := 0
-	for i := 0; i < len(digits); i++ {
-		n = n*10 + int(digits[i]-'0')
+		d := int(c - '0')
+		if n > (math.MaxInt-d)/10 {
+			return math.MaxInt // 溢出：饱和（方向正确优先于精确值）
+		}
+		n = n*10 + d
 	}
 	return n
 }

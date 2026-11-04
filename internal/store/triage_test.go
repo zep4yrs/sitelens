@@ -13,7 +13,9 @@ import (
 	"time"
 )
 
-// newTriageStore 建一个临时 dataDir 的 Store，并在测试结束清理按实例挂的状态。
+// newTriageStore 建一个临时 dataDir 的 Store。
+// C-19 起 triage 状态挂在 Store 字段上（不再是按 *Store 的全局 map），
+// 随 Store 一起被 GC 回收，测试无需再手动清理。
 func newTriageStore(t *testing.T) (*Store, string) {
 	t.Helper()
 	dir := t.TempDir()
@@ -21,7 +23,6 @@ func newTriageStore(t *testing.T) (*Store, string) {
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	t.Cleanup(func() { triageStates.Delete(s) })
 	return s, dir
 }
 
@@ -32,7 +33,6 @@ func reopenTriageStore(t *testing.T, dir string) *Store {
 	if err != nil {
 		t.Fatalf("New(reopen): %v", err)
 	}
-	t.Cleanup(func() { triageStates.Delete(s) })
 	return s
 }
 

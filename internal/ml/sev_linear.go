@@ -31,10 +31,14 @@ func (m *Model) RegressionScore(text string) (float64, error) {
 	if m == nil {
 		return 0, fmt.Errorf("ml: 线性 severity 模型未加载")
 	}
+	// C2-10：与 Unload 互斥；读锁内完成"维度检查 + 推理"，避免卸载后
+	// nClasses 变 0 与推理交错产生半状态。
+	m.mu.RLock()
+	defer m.mu.RUnlock()
 	if m.nClasses != 1 {
 		return 0, fmt.Errorf("ml: %s 不是单输出回归模型（n_classes=%d）", m.name, m.nClasses)
 	}
-	scores := m.DecisionFunction(text)
+	scores := m.decisionLocked(text)
 	if len(scores) != 1 {
 		return 0, fmt.Errorf("ml: %s 回归输出维度异常（%d）", m.name, len(scores))
 	}

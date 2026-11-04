@@ -129,9 +129,18 @@ type KB struct {
 	// A5 惰性解码：intel_dump 启动不解码，首次真正用到（Match/检索/统计）才解。
 	dumpPath   string
 	rangesPath string
-	loadMu     sync.Mutex // 守护重解码；Release 复位后须可再次进入（Once 只触发一次）
-	decoded    bool
-	loadErr    error
+	// loadMu 守护惰性解码/释放的整个换代过程（C-10）：
+	//   - 写侧（ensureDecoded 慢路径、Release、挂起队列重放）持写锁；
+	//   - 读侧快速判断 decoded 持读锁（不能裸读 bool：与写侧并发是数据竞争）。
+	// 注意锁序：loadMu → vulnsMu/kevMu/auxMu/nvdMu；反向嵌套一律禁止。
+	loadMu  sync.RWMutex
+	decoded bool
+	loadErr error
+	// auxMu 守护非主表附加快照（fingerDir/serviceFP/techCPE，C-10）：
+	// ensureDecoded 换表、AttachTechCPE 写，扫描侧（ServiceProbe/FingerDir/
+	// nvdPossible）读。这些字段量小、读频繁，用独立 RWMutex 避免把热路径
+	// 拖进 loadMu（也避免与 vulnsMu 形成反向锁序）。
+	auxMu sync.RWMutex
 	// 惰性期挂起的附加操作（解码后按序应用）：
 	pendingTpl []Entry             // AttachTplIntel 待并入（Release 后亦存回模板行待重并）
 	pendingOv  map[string]Override // 待应用的覆盖（Release 后存回最近覆盖待重放）
@@ -166,6 +175,8 @@ type ServiceFPRow struct {
 // ServiceFP 返回端口服务 banner 指纹集。
 func (k *KB) ServiceFP() []ServiceFPRow {
 	k.ensureDecoded()
+	k.auxMu.RLock()
+	defer k.auxMu.RUnlock()
 	return k.serviceFP
 }
 
@@ -188,6 +199,8 @@ type FingerDirMatchSpec struct {
 // FingerDir 返回主动路径指纹集。
 func (k *KB) FingerDir() []FingerDirRow {
 	k.ensureDecoded()
+	k.auxMu.RLock()
+	defer k.auxMu.RUnlock()
 	return k.fingerDir
 }
 
@@ -214,6 +227,8 @@ func (k *KB) LoadError() string {
 	if k == nil {
 		return ""
 	}
+	k.loadMu.RLock()
+	defer k.loadMu.RUnlock()
 	if k.loadErr != nil {
 		return k.loadErr.Error()
 	}
@@ -221,17 +236,26 @@ func (k *KB) LoadError() string {
 }
 
 // ensureDecoded 确保表已解码（幂等；直接构造 &KB{vulns:...} 的测试场景视为已解码）。
+//
+// 并发（C-10）：decoded 是写侧持 loadMu 写锁、读侧持读锁的普通 bool，
+// 不再裸读；慢路径在整个解码+换表期间持写锁，与 Release 互斥。
 func (k *KB) ensureDecoded() {
-	if k == nil || k.decoded {
+	if k == nil {
 		return
 	}
-	if k.dumpPath == "" && k.rangesPath == "" {
-		k.decoded = true // 纯内存构造：无源可解
+	k.loadMu.RLock()
+	decoded := k.decoded
+	k.loadMu.RUnlock()
+	if decoded {
 		return
 	}
 	k.loadMu.Lock()
 	defer k.loadMu.Unlock()
 	if k.decoded { // 双检：等锁期间他人已完成
+		return
+	}
+	if k.dumpPath == "" && k.rangesPath == "" {
+		k.decoded = true // 纯内存构造：无源可解
 		return
 	}
 	nk, err := decodeAll(k.dumpPath, k.rangesPath)
@@ -258,6 +282,9 @@ func (k *KB) ensureDecoded() {
 	k.vulns, k.cveMs, k.index = nk.vulns, nk.cveMs, nk.index
 	k.ranges, k.tscanCount = nk.ranges, nk.tscanCount
 	k.vulnsMu.Unlock()
+	// 附加快照（C-10）：fingerDir/serviceFP/techCPE 由 auxMu 守护，
+	// 扫描侧 ServiceFP/FingerDir/nvdPossible 持读锁取快照。
+	k.auxMu.Lock()
 	k.fingerDir, k.serviceFP = nk.fingerDir, nk.serviceFP
 	// techCPE 由启动期/热重载 AttachTechCPE 显式挂载，decodeAll 不产出该表：
 	// 只在解码确实产出时覆盖，否则会把已挂载映射清成 nil → CPE 通道静默
@@ -265,15 +292,17 @@ func (k *KB) ensureDecoded() {
 	if nk.techCPE != nil {
 		k.techCPE = nk.techCPE
 	}
+	k.auxMu.Unlock()
 	k.decoded = true
 	// 应用挂起的附加操作（顺序：先并入模板情报，再打覆盖；
-	// Release 后的模板行/覆盖重放也走这两步）
+	// Release 后的模板行/覆盖重放也走这两步）。此时 loadMu 写锁在本函数
+	// 手里，必须调 *Locked 版本，否则重入 loadMu 会自死锁。
 	if len(k.pendingTpl) > 0 {
-		k.AttachTplIntel(k.pendingTpl)
+		k.attachTplIntelLocked(k.pendingTpl)
 		k.pendingTpl = nil
 	}
 	if len(k.pendingOv) > 0 {
-		k.ApplyOverrides(k.pendingOv)
+		k.applyOverridesLocked(k.pendingOv)
 		k.pendingOv = nil
 	}
 	// Release 后重载：KEV 表在释放时整表留存在 pendingKEV，换表完成后重放
@@ -464,7 +493,15 @@ func (k *KB) MatchWithNVD(techs []TechHit, intent nvdIntent) []Finding {
 	// 读到半新半旧的常驻表（BUG-014 一致性）。
 	k.vulnsMu.RLock()
 	defer k.vulnsMu.RUnlock()
-	out, seen := []Finding{}, map[int64]bool{}
+	// 行去重必须按「行身份」（指针）而不是 Entry.ID：仓库 data/intel_dump.json.gz
+	// 的 vuln_kb 行没有 id 字段，Entry.ID 全为 0——按 ID 去重会把同一技术的
+	// 所有候选行误当成同一条，导致每个技术最多只剩 1 条 possible，且具体留下
+	// 哪条由 map 迭代顺序决定（结果不确定 + 大量漏报，maxPerTech=20 形同虚设）。
+	// 跨技术复用同一行时同样按指针去重；NVD CPE 通道的占位 ID（负数段）单独
+	// 一张表，不参与行身份判定。
+	out := []Finding{}
+	seenRows := map[*Entry]bool{}
+	seenNVD := map[int64]bool{}
 	for _, tech := range techs {
 		ranges := k.ranges[strings.ToLower(tech.Name)]
 		if tech.Version != "" && len(ranges) > 0 {
@@ -488,7 +525,7 @@ func (k *KB) MatchWithNVD(techs []TechHit, intent nvdIntent) []Finding {
 			if perTech >= maxPerTech {
 				break
 			}
-			if seen[v.ID] {
+			if seenRows[v] {
 				continue
 			}
 			verdict, affected := "possible", ""
@@ -508,10 +545,10 @@ func (k *KB) MatchWithNVD(techs []TechHit, intent nvdIntent) []Finding {
 				}
 			}
 			if verdict == "excluded" {
-				seen[v.ID] = true
+				seenRows[v] = true
 				continue
 			}
-			seen[v.ID] = true
+			seenRows[v] = true
 			perTech++
 			out = append(out, Finding{
 				ID: v.ID, Tech: tech.Name, Version: tech.Version,
@@ -525,10 +562,22 @@ func (k *KB) MatchWithNVD(techs []TechHit, intent nvdIntent) []Finding {
 			k.nvdFill(&out[len(out)-1], intent)
 		}
 		// NVD 字典 CPE 通道：possible 级（区间判定 3.1 接入）
-		k.nvdPossible(tech.Name, seen, &out, intent)
+		k.nvdPossible(tech.Name, seenNVD, &out, intent)
 	}
-	sort.Slice(out, func(i, j int) bool {
-		return severityOrder[out[i].Severity] < severityOrder[out[j].Severity]
+	// 确定性输出：严重度优先，同严重度按 CVE/名称/产品排序兜底（否则同严重度
+	// 行的相对顺序取决于 vulnsFor 的 map 迭代顺序，两次扫描输出可能不同）。
+	sort.SliceStable(out, func(i, j int) bool {
+		si, sj := severityOrder[out[i].Severity], severityOrder[out[j].Severity]
+		if si != sj {
+			return si < sj
+		}
+		if out[i].CVE != out[j].CVE {
+			return out[i].CVE < out[j].CVE
+		}
+		if out[i].Name != out[j].Name {
+			return out[i].Name < out[j].Name
+		}
+		return out[i].Product < out[j].Product
 	})
 	return out
 }
@@ -565,7 +614,20 @@ func (k *KB) vulnsFor(techName string) []*Entry {
 		}
 	}
 	sort.Slice(out, func(i, j int) bool {
-		return severityOrder[out[i].Severity] < severityOrder[out[j].Severity]
+		si, sj := severityOrder[out[i].Severity], severityOrder[out[j].Severity]
+		if si != sj {
+			return si < sj
+		}
+		// 同严重度兜底排序：保证 maxPerTech 截断时"留下哪 20 条"也是确定性的
+		// （只有严重度比较时，sort.Slice 对相等元素不保证顺序，截断结果随
+		//  map 迭代顺序变化）。
+		if out[i].CVE != out[j].CVE {
+			return out[i].CVE < out[j].CVE
+		}
+		if out[i].Name != out[j].Name {
+			return out[i].Name < out[j].Name
+		}
+		return out[i].Product < out[j].Product
 	})
 	return out
 }
@@ -647,25 +709,37 @@ func (k *KB) MatchCVEMs(techs []TechHit, limit int) []CVEMsFinding {
 // 背景：A10 原方案是「情报库独立 sidecar 进程」，目标是任务间隔释放内存。
 // A3+A5 惰性化后，本方法以进程内方式达成同一目标（无 IPC/无额外进程），
 // 供 serve 模式在长时间空闲或管理操作时调用。
+//
+// C-10 修复：不再先 ensureDecoded()（那会让"空闲释放"反过来触发一次全量
+// 解码，Release 越频繁内存峰值越高）。未解码时只为"已加载的附加物"做释放，
+// 挂起队列原样保留。整个换代与 ensureDecoded 用 loadMu 写锁串行。
 func (k *KB) Release() {
 	if k == nil {
 		return
 	}
-	k.ensureDecoded() // 若尚未解码则无事发生（保持 decoded，不丢挂起队列）
-	// 附加物存回待应用队列，重载后经 ensureDecoded 重放：
-	// 模板行 = 负 ID 段；覆盖 = 最近一次 ApplyOverrides 的数据。
-	k.vulnsMu.Lock()
-	var tpl []Entry
-	for _, v := range k.vulns {
-		if v.ID < 0 {
-			tpl = append(tpl, v)
+	k.loadMu.Lock()
+	defer k.loadMu.Unlock()
+	if k.decoded {
+		// 附加物存回待应用队列，重载后经 ensureDecoded 重放：
+		// 模板行 = 负 ID 段；覆盖 = 最近一次 ApplyOverrides 的数据。
+		k.vulnsMu.Lock()
+		var tpl []Entry
+		for _, v := range k.vulns {
+			if v.ID < 0 {
+				tpl = append(tpl, v)
+			}
 		}
+		if len(tpl) > 0 {
+			k.pendingTpl = tpl
+		}
+		if k.lastOv != nil {
+			k.pendingOv = k.lastOv
+		}
+		k.vulns, k.cveMs, k.index = nil, nil, nil
+		k.ranges = map[string][]CuratedRange{}
+		k.tscanCount = 0
+		k.vulnsMu.Unlock()
 	}
-	k.pendingTpl = tpl
-	k.pendingOv = k.lastOv
-	k.vulns, k.cveMs, k.index = nil, nil, nil
-	k.ranges = map[string][]CuratedRange{}
-	k.vulnsMu.Unlock()
 	// KEV 表随释放清空（内存释放目标不变），但先把整表留存到 pendingKEV：
 	// 重载后由 ensureDecoded 重放。不这样做的话 kev_extra/守护协程拉到的
 	// 增量会在 Release→重载后丢到下次 KEV 轮询（静默丢数据）。
@@ -680,8 +754,14 @@ func (k *KB) Release() {
 	}
 	k.kev = map[string]bool{}
 	k.kevMu.Unlock()
-	k.tscanCount = 0
+	// 附加快照同样释放（C-10：写侧持 auxMu，读侧持读锁）。
+	k.auxMu.Lock()
+	k.fingerDir, k.serviceFP = nil, nil
+	k.auxMu.Unlock()
 	k.decoded = false
-	k.nvd = nil        // NVD 亦释放；nvdPath 保留
-	k.nvdTried = false // 复位尝试标记，下次访问可重载
+	// NVD 亦释放；nvdPath 保留，nvdTried 复位以便重载（nvdMu 守护）。
+	k.nvdMu.Lock()
+	k.nvd = nil
+	k.nvdTried = false
+	k.nvdMu.Unlock()
 }

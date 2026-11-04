@@ -27,6 +27,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -127,17 +128,52 @@ func (s *SQLStore) ready() error {
 // ---- 查询列（集中一处，fake driver/真实库共用同一 SQL 形态） ----
 
 const (
-	// scanSummaryCols 列表/摘要需要的列（不含 options_json，减少大字段传输）。
-	scanSummaryCols = "id,url,host,title,status,grade,score,scanned_at,result_json"
-	// scanFullCols 单条完整记录（含 options_json）。
-	scanFullCols = scanSummaryCols + ",options_json"
+	// scanSummaryCols 列表/摘要需要的列（C-08：不含 result_json/options_json；
+	// 条数/时长/技术名由迁移 002 的冗余列提供，列表不再解码大 JSON）。
+	// BL-5：tenant 列随摘要返回，供 server 侧租户归属校验（迁移 003）。
+	scanSummaryCols = "id,url,host,title,status,grade,score,scanned_at," +
+		"tech_count,vuln_count,duration_ms,tenant"
+	// scanFullCols 单条完整记录（result_json 仅在 Get 单条时解码）。
+	scanFullCols = scanSummaryCols + ",result_json,options_json"
+
+	// MaxListLimit 列表单页上限（防止一次拉爆内存；接线方可传更小值）。
+	MaxListLimit = 10000
+	// defaultListLimit ListScans limit<=0 时的默认值（与 JSON 版列表惯例一致）。
+	defaultListLimit = 100
 )
 
-// SaveScan 保存一次扫描结果，返回新 id（语义对齐 Tiered.Save）。
+// scanSummaryFields 由 engine.Result 派生列表冗余列（C-08）。
+//
+// techNames 用空格连接的**小写**技术名，供 SQL 子串过滤（语义对齐 JSON 版
+// 「Technologies 名称包含」）；tech_count/vuln_count/duration_ms 避免列表解码。
+func scanSummaryFields(res *engine.Result) (techCount, vulnCount, durationMs int64, techNames string) {
+	if res == nil {
+		return 0, 0, 0, ""
+	}
+	names := make([]string, 0, len(res.Technologies))
+	for _, t := range res.Technologies {
+		if n := strings.ToLower(strings.TrimSpace(t.Name)); n != "" {
+			names = append(names, n)
+		}
+	}
+	return int64(len(res.Technologies)), int64(len(res.Vulnerabilities)),
+		int64(res.Duration * 1000), strings.Join(names, " ")
+}
+
+// SaveScan 保存一次扫描结果，返回新 id（语义对齐 Tiered.Save；legacy 空租户）。
+func (s *SQLStore) SaveScan(res *engine.Result, options map[string]any) (int64, error) {
+	return s.SaveScanForTenant(res, options, "")
+}
+
+// SaveScanForTenant 保存一次扫描结果并写入归属租户（BL-5/A-04）。
+//
+// tenant 为空保持既有行为（tenant 为空视为 legacy/单机）；非空时列表/Get/
+// Delete 的租户过滤只返回本租户记录。
 //
 // result_json 保存完整 engine.Result；grade/score 冗余成列，列表页无需解 JSON
-// 即可展示评分（与 JSON 版 ScanSummary 字段一致）。
-func (s *SQLStore) SaveScan(res *engine.Result, options map[string]any) (int64, error) {
+// 即可展示评分（与 JSON 版 ScanSummary 字段一致）。C-08 起同时写入
+// tech_count/vuln_count/duration_ms/tech_names 冗余列，列表走纯 SQL 投影。
+func (s *SQLStore) SaveScanForTenant(res *engine.Result, options map[string]any, tenant string) (int64, error) {
 	if err := s.ready(); err != nil {
 		return 0, err
 	}
@@ -156,10 +192,13 @@ func (s *SQLStore) SaveScan(res *engine.Result, options map[string]any) (int64, 
 	if res.Security != nil {
 		grade, score = res.Security.Grade, res.Security.Score
 	}
-	cols := "url,host,title,status,grade,score,scanned_at,result_json,options_json"
+	techCount, vulnCount, durationMs, techNames := scanSummaryFields(res)
+	cols := "url,host,title,status,grade,score,scanned_at," +
+		"tech_count,vuln_count,duration_ms,tech_names,tenant,result_json,options_json"
 	args := []any{
 		res.URL, res.Host, res.Title, res.Status, grade, score,
-		res.ScannedAt, string(resultJSON), optionsJSON,
+		res.ScannedAt, techCount, vulnCount, durationMs, techNames,
+		strings.TrimSpace(tenant), string(resultJSON), optionsJSON,
 	}
 	if s.dialect == DialectPostgres {
 		q := "INSERT INTO " + ScansTable + " (" + cols + ") VALUES (" +
@@ -184,11 +223,22 @@ func (s *SQLStore) SaveScan(res *engine.Result, options map[string]any) (int64, 
 
 // GetScan 按 id 取完整记录；不存在返回 (nil, nil)（对齐 Tiered.Get）。
 func (s *SQLStore) GetScan(id int64) (*ScanRecord, error) {
+	return s.GetScanForTenant(id, "")
+}
+
+// GetScanForTenant 按 id 取记录并校验租户归属（不匹配返回 (nil,nil)，
+// 与「不存在」同形，server 统一映射 404，不泄露存在性）。
+func (s *SQLStore) GetScanForTenant(id int64, tenant string) (*ScanRecord, error) {
 	if err := s.ready(); err != nil {
 		return nil, err
 	}
 	q := "SELECT " + scanFullCols + " FROM " + ScansTable + " WHERE id = " + s.dialect.placeholder(1)
-	rec, err := scanFullRow(s.db.QueryRow(q, id))
+	args := []any{id}
+	if tenant = strings.TrimSpace(tenant); tenant != "" {
+		q += " AND tenant = " + s.dialect.placeholder(2)
+		args = append(args, tenant)
+	}
+	rec, err := scanFullRow(s.db.QueryRow(q, args...))
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
@@ -200,31 +250,56 @@ func (s *SQLStore) GetScan(id int64) (*ScanRecord, error) {
 
 // ListScans 历史列表（新→旧），tech 非空时按技术名子串过滤（语义对齐 Tiered.List）。
 //
-// tech 过滤在 Go 侧做：技术名保存在 result_json 里，SQL 直接 LIKE 会误命中
-// 证据/URL 文本（JSON 版语义是「Technologies 名称包含」）。代价是带 tech 过滤
-// 时多读 result_json；列表页默认 limit 100 内可接受，大历史场景建议接线方
-// 加 tech 冗余列（另开迁移 002）。
+// C-08：纯 SQL 投影，**不解码 result_json**；tech 过滤走迁移 002 的
+// `tech_names` 冗余列（SQL LIKE，转义通配符）并带 LIMIT，不再全表拉进 Go。
+// 保留原签名供既有接线使用；分页请用 ListScansPage。
 func (s *SQLStore) ListScans(limit int, tech string) ([]ScanSummary, error) {
+	return s.ListScansPage(0, limit, tech)
+}
+
+// ListScansPage 分页列表：offset 起始偏移（>=0），limit 单页条数（<=0 用默认，
+// 上限 MaxListLimit）；tech 非空时按技术名子串过滤（legacy 空租户路径）。
+func (s *SQLStore) ListScansPage(offset, limit int, tech string) ([]ScanSummary, error) {
+	return s.ListScansPageForTenant(offset, limit, tech, "")
+}
+
+// ListScansPageForTenant 分页列表 + 租户过滤（BL-5）。
+//
+// tenant 为空 = 不过滤（保持既有调用方语义）；非空 = WHERE tenant = ?，
+// legacy（tenant 为空）记录不会返回给具体租户。
+func (s *SQLStore) ListScansPageForTenant(offset, limit int, tech, tenant string) ([]ScanSummary, error) {
 	if err := s.ready(); err != nil {
 		return nil, err
 	}
 	if limit <= 0 {
-		limit = 100
+		limit = defaultListLimit
+	}
+	if limit > MaxListLimit {
+		limit = MaxListLimit
+	}
+	if offset < 0 {
+		offset = 0
 	}
 	tech = strings.ToLower(strings.TrimSpace(tech))
-	var (
-		rows *sql.Rows
-		err  error
-	)
-	if tech == "" {
-		q := "SELECT " + scanSummaryCols + " FROM " + ScansTable +
-			" ORDER BY id DESC LIMIT " + s.dialect.placeholder(1)
-		rows, err = s.db.Query(q, limit)
-	} else {
-		// 过滤在 Go 侧，SQL 不设 LIMIT：避免「先截断再过滤」丢结果。
-		q := "SELECT " + scanSummaryCols + " FROM " + ScansTable + " ORDER BY id DESC"
-		rows, err = s.db.Query(q)
+	tenant = strings.TrimSpace(tenant)
+	q := "SELECT " + scanSummaryCols + " FROM " + ScansTable
+	var args []any
+	var where []string
+	if tech != "" {
+		where = append(where, "tech_names LIKE "+s.dialect.placeholder(len(args)+1)+" ESCAPE '\\'")
+		args = append(args, "%"+escapeLike(tech)+"%")
 	}
+	if tenant != "" {
+		where = append(where, "tenant = "+s.dialect.placeholder(len(args)+1))
+		args = append(args, tenant)
+	}
+	if len(where) > 0 {
+		q += " WHERE " + strings.Join(where, " AND ")
+	}
+	q += " ORDER BY id DESC LIMIT " + s.dialect.placeholder(len(args)+1) +
+		" OFFSET " + s.dialect.placeholder(len(args)+2)
+	args = append(args, limit, offset)
+	rows, err := s.db.Query(q, args...)
 	if err != nil {
 		return nil, fmt.Errorf("ListScans: 查询失败：%w", err)
 	}
@@ -236,25 +311,133 @@ func (s *SQLStore) ListScans(limit int, tech string) ([]ScanSummary, error) {
 	}
 	out := make([]ScanSummary, 0, capHint)
 	for rows.Next() {
-		sm, res, err := scanSummaryRow(rows)
+		sm, err := scanSummaryRow(rows)
 		if err != nil {
 			return nil, fmt.Errorf("ListScans: 读取行失败：%w", err)
 		}
-		if tech != "" {
-			rec := ScanRecord{Result: res}
-			if !scanHasTech(&rec, tech) {
-				continue
-			}
-		}
 		out = append(out, sm)
-		if len(out) >= limit {
-			break
-		}
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("ListScans: 遍历失败：%w", err)
 	}
 	return out, nil
+}
+
+// escapeLike 转义 LIKE 通配符（tech 是用户输入，参数化 + 转义缺一不可）。
+func escapeLike(s string) string {
+	var b strings.Builder
+	b.Grow(len(s) + 4)
+	for _, r := range s {
+		switch r {
+		case '\\', '%', '_':
+			b.WriteByte('\\')
+		}
+		b.WriteRune(r)
+	}
+	return b.String()
+}
+
+// SQLStoreStats SQL 后端的轻量聚合结果（C-08：COUNT/GROUP BY，不拉列表）。
+type SQLStoreStats struct {
+	Scans     int64   `json:"scans"`
+	Hosts     int64   `json:"hosts"`
+	TechTotal int64   `json:"tech_total"`
+	AvgTechs  float64 `json:"avg_techs"`
+}
+
+// Stats 轻量聚合：条数 / 站点数 / 技术总数 / 平均技术数。
+//
+// 对应 server 侧 HistoryStats 的 hosts/avg_techs：原实现拉 10000 条列表再
+// 在 Go 里聚合（每请求解码大量 result_json），改为一条聚合 SQL。
+func (s *SQLStore) Stats() (SQLStoreStats, error) {
+	return s.StatsForTenant("")
+}
+
+// StatsForTenant 轻量聚合 + 租户过滤（tenant 为空 = 全局，保持既有语义）。
+func (s *SQLStore) StatsForTenant(tenant string) (SQLStoreStats, error) {
+	if err := s.ready(); err != nil {
+		return SQLStoreStats{}, err
+	}
+	q := "SELECT COUNT(*), COUNT(DISTINCT host), " +
+		"COALESCE(SUM(tech_count),0), COALESCE(AVG(tech_count),0) FROM " + ScansTable
+	var args []any
+	if tenant = strings.TrimSpace(tenant); tenant != "" {
+		q += " WHERE tenant = " + s.dialect.placeholder(1)
+		args = append(args, tenant)
+	}
+	var st SQLStoreStats
+	if err := s.db.QueryRow(q, args...).Scan(&st.Scans, &st.Hosts, &st.TechTotal, &st.AvgTechs); err != nil {
+		return SQLStoreStats{}, fmt.Errorf("Stats: %w", err)
+	}
+	return st, nil
+}
+
+// BackfillScanSummary 回填列表冗余列（C-08，一次性/按批）。
+//
+// 只处理「result_json 非 NULL 且 tech_names 仍为空」的旧行（升级前由旧版本
+// 写入的记录）：解码 result_json 后 UPDATE 冗余列。可重复执行（幂等，已回填
+// 的行不再被选中）；batch<=0 用 1000。返回本次回填条数。
+//
+// 接线建议：启动 ApplyMigrations 后调用一次；未调用时 List 对旧行展示
+// tech_count/vuln_count/duration=0（Get 单条仍从 result_json 回填，不受影响）。
+func BackfillScanSummary(db *sql.DB, dialect Dialect, batch int) (int, error) {
+	if db == nil {
+		return 0, errors.New("BackfillScanSummary: db 为空")
+	}
+	if batch <= 0 {
+		batch = 1000
+	}
+	total := 0
+	for {
+		q := "SELECT id, result_json FROM " + ScansTable +
+			" WHERE result_json IS NOT NULL AND tech_names = ''" +
+			" ORDER BY id LIMIT " + dialect.placeholder(1)
+		rows, err := db.Query(q, batch)
+		if err != nil {
+			return total, fmt.Errorf("BackfillScanSummary: 查询失败：%w", err)
+		}
+		type job struct {
+			id  int64
+			raw sql.NullString
+		}
+		var jobs []job
+		for rows.Next() {
+			var j job
+			if err := rows.Scan(&j.id, &j.raw); err != nil {
+				rows.Close()
+				return total, fmt.Errorf("BackfillScanSummary: 读行失败：%w", err)
+			}
+			jobs = append(jobs, j)
+		}
+		if err := rows.Err(); err != nil {
+			rows.Close()
+			return total, fmt.Errorf("BackfillScanSummary: 遍历失败：%w", err)
+		}
+		rows.Close()
+		if len(jobs) == 0 {
+			return total, nil
+		}
+		upd := "UPDATE " + ScansTable +
+			" SET tech_count = " + dialect.placeholder(1) +
+			", vuln_count = " + dialect.placeholder(2) +
+			", duration_ms = " + dialect.placeholder(3) +
+			", tech_names = " + dialect.placeholder(4) +
+			" WHERE id = " + dialect.placeholder(5)
+		for _, j := range jobs {
+			res, derr := decodeResultJSON(j.raw)
+			if derr != nil {
+				return total, fmt.Errorf("BackfillScanSummary: id=%d result_json 损坏：%w", j.id, derr)
+			}
+			tc, vc, dm, names := scanSummaryFields(res)
+			if _, uerr := db.Exec(upd, tc, vc, dm, names, j.id); uerr != nil {
+				return total, fmt.Errorf("BackfillScanSummary: id=%d 更新失败：%w", j.id, uerr)
+			}
+			total++
+		}
+		if len(jobs) < batch {
+			return total, nil
+		}
+	}
 }
 
 // CountScans 记录总数（分页 UI / 统计用；Tiered 无对应方法）。
@@ -271,11 +454,24 @@ func (s *SQLStore) CountScans() (int64, error) {
 
 // DeleteScan 删除一条记录；返回是否真的删到了（语义对齐 Tiered.Delete）。
 func (s *SQLStore) DeleteScan(id int64) (bool, error) {
+	return s.DeleteScanForTenant(id, "")
+}
+
+// DeleteScanForTenant 删除记录 + 租户归属校验（BL-5）。
+//
+// tenant 非空时只删除归属本租户的记录；不匹配返回 (false,nil)（与不存在
+// 同形，server 统一 404）。删除成功同时清理该扫描的复核记录（C-09 一致性）。
+func (s *SQLStore) DeleteScanForTenant(id int64, tenant string) (bool, error) {
 	if err := s.ready(); err != nil {
 		return false, err
 	}
 	q := "DELETE FROM " + ScansTable + " WHERE id = " + s.dialect.placeholder(1)
-	r, err := s.db.Exec(q, id)
+	args := []any{id}
+	if tenant = strings.TrimSpace(tenant); tenant != "" {
+		q += " AND tenant = " + s.dialect.placeholder(2)
+		args = append(args, tenant)
+	}
+	r, err := s.db.Exec(q, args...)
 	if err != nil {
 		return false, fmt.Errorf("DeleteScan(%d): %w", id, err)
 	}
@@ -283,7 +479,35 @@ func (s *SQLStore) DeleteScan(id int64) (bool, error) {
 	if err != nil {
 		return false, fmt.Errorf("DeleteScan(%d): 读取影响行数失败：%w", id, err)
 	}
+	if n > 0 {
+		if _, terr := s.db.Exec("DELETE FROM "+TriageTable+" WHERE scan_id = "+s.dialect.placeholder(1), id); terr != nil {
+			// 复核记录清理失败不影响删除结果（孤儿复核记录不会被列表读取），
+			// 但记录日志便于排查。
+			log.Printf("警告：删除扫描 %d 后清理复核记录失败：%v", id, terr)
+		}
+	}
 	return n > 0, nil
+}
+
+// DeleteScansForTenant 删除某租户全部扫描记录，返回删除条数（BL-5 清空）。
+func (s *SQLStore) DeleteScansForTenant(tenant string) (int64, error) {
+	if err := s.ready(); err != nil {
+		return 0, err
+	}
+	tenant = strings.TrimSpace(tenant)
+	if tenant == "" {
+		return 0, errors.New("DeleteScansForTenant: tenant 不能为空")
+	}
+	q := "DELETE FROM " + ScansTable + " WHERE tenant = " + s.dialect.placeholder(1)
+	r, err := s.db.Exec(q, tenant)
+	if err != nil {
+		return 0, fmt.Errorf("DeleteScansForTenant(%q): %w", tenant, err)
+	}
+	n, err := r.RowsAffected()
+	if err != nil {
+		return 0, fmt.Errorf("DeleteScansForTenant(%q): 读取影响行数失败：%w", tenant, err)
+	}
+	return n, nil
 }
 
 // ---- 行扫描 ----
@@ -293,24 +517,44 @@ type rowScanner interface {
 	Scan(dest ...any) error
 }
 
-// scanFullRow 读完整记录（含 options_json → Options）。
+// scanFullRow 读完整记录（result_json/options_json 仅在单条 Get 时解码）。
 func scanFullRow(sc rowScanner) (*ScanRecord, error) {
 	var (
 		rec                     ScanRecord
+		durationMs              int64
 		resultJSON, optionsJSON sql.NullString
 	)
 	if err := sc.Scan(
 		&rec.ID, &rec.URL, &rec.Host, &rec.Title, &rec.Status,
 		&rec.SecurityGrade, &rec.SecurityScore, &rec.ScannedAt,
+		&rec.TechCount, &rec.VulnCount, &durationMs, &rec.Tenant,
 		&resultJSON, &optionsJSON,
 	); err != nil {
 		return nil, err
 	}
+	rec.Duration = float64(durationMs) / 1000.0
 	res, err := decodeResultJSON(resultJSON)
 	if err != nil {
 		return nil, err
 	}
 	rec.Result = res
+	// 旧行（迁移 002 之前写入、尚未 Backfill）冗余列为 0：Get 单条时用
+	// result_json 的计数补齐（列表页不享受该回填，需跑 BackfillScanSummary）。
+	if res != nil {
+		if rec.TechCount == 0 && len(res.Technologies) > 0 {
+			rec.TechCount = len(res.Technologies)
+		}
+		if rec.VulnCount == 0 && len(res.Vulnerabilities) > 0 {
+			rec.VulnCount = len(res.Vulnerabilities)
+		}
+		if rec.Duration == 0 && res.Duration != 0 {
+			rec.Duration = res.Duration
+		}
+		if rec.SecurityGrade == "" && res.Security != nil {
+			rec.SecurityGrade = res.Security.Grade
+			rec.SecurityScore = res.Security.Score
+		}
+	}
 	if optionsJSON.Valid && strings.TrimSpace(optionsJSON.String) != "" && optionsJSON.String != "null" {
 		if err := json.Unmarshal([]byte(optionsJSON.String), &rec.Options); err != nil {
 			return nil, fmt.Errorf("options_json 解码失败：%w", err)
@@ -319,32 +563,21 @@ func scanFullRow(sc rowScanner) (*ScanRecord, error) {
 	return &rec, nil
 }
 
-// scanSummaryRow 读列表行（result_json 只用于计数/时长/tech 过滤）。
-func scanSummaryRow(sc rowScanner) (ScanSummary, *engine.Result, error) {
+// scanSummaryRow 读列表行（C-08：纯列投影，无 result_json 解码）。
+func scanSummaryRow(sc rowScanner) (ScanSummary, error) {
 	var (
 		sm         ScanSummary
-		resultJSON sql.NullString
+		durationMs int64
 	)
 	if err := sc.Scan(
 		&sm.ID, &sm.URL, &sm.Host, &sm.Title, &sm.Status,
-		&sm.SecurityGrade, &sm.SecurityScore, &sm.ScannedAt, &resultJSON,
+		&sm.SecurityGrade, &sm.SecurityScore, &sm.ScannedAt,
+		&sm.TechCount, &sm.VulnCount, &durationMs, &sm.Tenant,
 	); err != nil {
-		return ScanSummary{}, nil, err
+		return ScanSummary{}, err
 	}
-	res, err := decodeResultJSON(resultJSON)
-	if err != nil {
-		return ScanSummary{}, nil, err
-	}
-	if res != nil {
-		sm.TechCount = len(res.Technologies)
-		sm.VulnCount = len(res.Vulnerabilities)
-		sm.Duration = res.Duration // duration 没有独立列：从 result_json 取（与 JSON 版一致）
-		if sm.SecurityGrade == "" && res.Security != nil {
-			sm.SecurityGrade = res.Security.Grade
-			sm.SecurityScore = res.Security.Score
-		}
-	}
-	return sm, res, nil
+	sm.Duration = float64(durationMs) / 1000.0
+	return sm, nil
 }
 
 // decodeResultJSON 解码 result_json：NULL/空/"null" 均视为「无结果」（对齐
@@ -458,35 +691,85 @@ func parseMigrationVersion(name string) (int, error) {
 	return v, nil
 }
 
-// splitSQLStatements 简单的 SQL 语句拆分：跳过 `--` 注释行与空行，按行尾
-// 分号断句。不处理字符串字面量里的分号（schema 不用字符串字面量，够用且
-// 可自检；未来出现数据回填语句时请升级为真正的 tokenizer）。
+// splitSQLStatements 拆分迁移 SQL 语句（C-12）。
+//
+// 旧实现按行判断"行首 -- 注释 + 行尾分号"，一旦语句里出现字符串字面量
+// （如 DEFAULT ';'、CHECK (x = '--')）或行内注释，就会切错语句且难以定位。
+// 现改为最小状态机：识别单引号/双引号字符串（单引号内部以双写单引号转义）、
+// -- 行注释、/* */ 块注释，仅在"代码态"遇到 ; 才断句；未闭合引号/块注释直接
+// 报错。仍不支持 PostgreSQL 的 $$ dollar-quoting——当前迁移不需要，出现时请扩展。
 func splitSQLStatements(src string) ([]string, error) {
-	lines := strings.Split(strings.ReplaceAll(src, "\r\n", "\n"), "\n")
+	rs := []rune(strings.ReplaceAll(src, "\r\n", "\n"))
 	var (
 		stmts []string
-		cur   []string
+		cur   strings.Builder
 	)
 	flush := func() {
-		s := strings.TrimSpace(strings.Join(cur, "\n"))
+		s := strings.TrimSpace(cur.String())
 		s = strings.TrimSpace(strings.TrimSuffix(s, ";"))
 		if s != "" {
 			stmts = append(stmts, s)
 		}
-		cur = cur[:0]
+		cur.Reset()
 	}
-	for _, line := range lines {
-		trimmed := strings.TrimSpace(line)
-		if trimmed == "" || strings.HasPrefix(trimmed, "--") {
-			continue
-		}
-		cur = append(cur, line)
-		if strings.HasSuffix(trimmed, ";") {
-			flush()
+	var (
+		inSingle, inDouble bool
+		inLine, inBlock    bool
+	)
+	for i := 0; i < len(rs); i++ {
+		c := rs[i]
+		switch {
+		case inLine:
+			if c == '\n' {
+				inLine = false
+				cur.WriteRune('\n') // 保留换行，语句可读性不变
+			}
+		case inBlock:
+			if c == '*' && i+1 < len(rs) && rs[i+1] == '/' {
+				inBlock = false
+				i++
+			}
+		case inSingle:
+			cur.WriteRune(c)
+			if c == '\'' {
+				if i+1 < len(rs) && rs[i+1] == '\'' { // 双写单引号 = 转义
+					cur.WriteRune('\'')
+					i++
+				} else {
+					inSingle = false
+				}
+			}
+		case inDouble:
+			cur.WriteRune(c)
+			if c == '"' {
+				inDouble = false
+			}
+		default:
+			switch {
+			case c == '-' && i+1 < len(rs) && rs[i+1] == '-':
+				inLine = true
+				i++
+			case c == '/' && i+1 < len(rs) && rs[i+1] == '*':
+				inBlock = true
+				i++
+			case c == '\'':
+				inSingle = true
+				cur.WriteRune(c)
+			case c == '"':
+				inDouble = true
+				cur.WriteRune(c)
+			case c == ';':
+				flush()
+			default:
+				cur.WriteRune(c)
+			}
 		}
 	}
-	if strings.TrimSpace(strings.Join(cur, "\n")) != "" {
-		return nil, fmt.Errorf("末尾语句未以分号结尾：%q", strings.TrimSpace(strings.Join(cur, "\n")))
+	if inSingle || inDouble || inBlock {
+		return nil, fmt.Errorf("迁移 SQL 存在未闭合的字符串或块注释")
+	}
+	if strings.TrimSpace(cur.String()) != "" {
+		return nil, fmt.Errorf("末尾语句未以分号结尾：%q", strings.TrimSpace(cur.String()))
 	}
 	return stmts, nil
 }
@@ -528,11 +811,33 @@ func ApplyMigrationsDialect(db DB, dialect Dialect) error {
 	for _, f := range files {
 		for i, stmt := range f.Statements {
 			if _, err := db.Exec(migrationStatementForDialect(stmt, dialect)); err != nil {
+				// 002 起有 ALTER TABLE ADD COLUMN（SQLite/PG 均无 IF NOT EXISTS）：
+				// 已存在的列视为"该迁移已应用"，跳过以保证重复启动幂等。
+				// 只对 ALTER TABLE 容忍，其它错误照常中止。
+				if isDuplicateColumnStmt(stmt, err) {
+					continue
+				}
 				return fmt.Errorf("应用迁移 %s 第 %d 条语句失败：%w", f.Name, i+1, err)
 			}
 		}
 	}
 	return nil
+}
+
+// isDuplicateColumnStmt 判断 ALTER TABLE ADD COLUMN 是否因列已存在而失败
+// （SQLite: "duplicate column name"；PostgreSQL: SQLSTATE 42701 / 文本
+// "column \"x\" of relation \"scans\" already exists"）。
+func isDuplicateColumnStmt(stmt string, err error) bool {
+	if err == nil {
+		return false
+	}
+	if !strings.HasPrefix(strings.ToUpper(strings.TrimSpace(stmt)), "ALTER TABLE") {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "duplicate column") ||
+		strings.Contains(msg, "already exists") ||
+		strings.Contains(msg, "42701")
 }
 
 // ---- JSON → SQL 一次性迁移 ----
@@ -590,9 +895,13 @@ func MigrateFromJSONDialect(srcDir string, db *sql.DB, dialect Dialect) (int, er
 		}
 	}()
 
-	cols := "id,url,host,title,status,grade,score,scanned_at,result_json,options_json"
+	// C-08：迁移同样写入列表冗余列（tech_count/vuln_count/duration_ms/
+	// tech_names），迁移后列表无需解码 result_json。
+	// BL-5：tenant 一并迁移（旧 JSON 记录缺省 "" = legacy）。
+	cols := "id,url,host,title,status,grade,score,scanned_at," +
+		"tech_count,vuln_count,duration_ms,tech_names,tenant,result_json,options_json"
 	q := "INSERT INTO " + ScansTable + " (" + cols + ") VALUES (" +
-		dialect.placeholders(10) + ") ON CONFLICT(id) DO NOTHING"
+		dialect.placeholders(15) + ") ON CONFLICT(id) DO NOTHING"
 
 	inserted := 0
 	for _, rec := range h.Scans {
@@ -611,6 +920,16 @@ func MigrateFromJSONDialect(srcDir string, db *sql.DB, dialect Dialect) (int, er
 			inserted++
 		}
 	}
+	// C-02：PostgreSQL 的 GENERATED BY DEFAULT AS IDENTITY 允许显式写 id，
+	// 但**不会**把序列抬到已插入的最大值（与 SQLite AUTOINCREMENT 不同——
+	// SQLite 在显式插入更大 rowid 时会更新 sqlite_sequence）。不补这一步，
+	// 迁移后序列仍从 1 开始，第一次 SaveScan 就 duplicate key 撞主键。
+	// 在事务内 setval：要么一起提交、要么一起回滚。
+	if dialect == DialectPostgres {
+		if err := resetPostgresIdentitySeq(tx); err != nil {
+			return 0, fmt.Errorf("MigrateFromJSON: 重置 PostgreSQL 自增序列失败（已回滚）：%w", err)
+		}
+	}
 	if err := tx.Commit(); err != nil {
 		return 0, fmt.Errorf("MigrateFromJSON: 提交事务失败：%w", err)
 	}
@@ -618,7 +937,30 @@ func MigrateFromJSONDialect(srcDir string, db *sql.DB, dialect Dialect) (int, er
 	return inserted, nil
 }
 
-// scanInsertArgs 把 ScanRecord 转成 scans 表的 10 个列值（id + 9 列）。
+// postgresIdentitySeqResetSQL 把 scans.id 的 identity 序列推进到 MAX(id)+1。
+//
+// 3 参 setval(seq, v, false)：下次 nextval 返回 v（is_called=false），即
+// MAX(id)+1；空表时 v=1。pg_get_serial_sequence 对 IDENTITY 列同样适用。
+// 全部是常量 SQL（无用户输入拼接）。
+const postgresIdentitySeqResetSQL = `SELECT setval(pg_get_serial_sequence('scans','id'), ` +
+	`COALESCE((SELECT MAX(id) FROM ` + ScansTable + `), 0) + 1, false)`
+
+// rowQuerier *sql.Tx / *sql.DB 的 QueryRow 子集（便于单测替换）。
+type rowQuerier interface {
+	QueryRow(query string, args ...any) *sql.Row
+}
+
+// resetPostgresIdentitySeq 在迁移事务内推进 scans.id 的序列（C-02）。
+func resetPostgresIdentitySeq(q rowQuerier) error {
+	var next int64
+	if err := q.QueryRow(postgresIdentitySeqResetSQL).Scan(&next); err != nil {
+		return err
+	}
+	return nil
+}
+
+// scanInsertArgs 把 ScanRecord 转成 scans 表的 14 个列值
+// （id + 8 摘要列 + 4 冗余汇总列 + result_json + options_json）。
 func scanInsertArgs(rec ScanRecord) ([]any, error) {
 	var resultJSON any // nil → SQL NULL（无结果记录保持 result:null 语义）
 	if rec.Result != nil {
@@ -632,9 +974,11 @@ func scanInsertArgs(rec ScanRecord) ([]any, error) {
 	if err != nil {
 		return nil, err
 	}
+	techCount, vulnCount, durationMs, techNames := scanSummaryFields(rec.Result)
 	return []any{
 		rec.ID, rec.URL, rec.Host, rec.Title, rec.Status,
 		rec.SecurityGrade, rec.SecurityScore, rec.ScannedAt,
+		techCount, vulnCount, durationMs, techNames, strings.TrimSpace(rec.Tenant),
 		resultJSON, optionsJSON,
 	}, nil
 }

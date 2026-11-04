@@ -174,7 +174,7 @@ http:
 	cfg.Checks.NucleiDir = dir
 	cfg.Checks.NucleiCap = 1
 	cfg.Store.DataDir = t.TempDir()
-	e := &Engine{cfg: cfg}
+	e := testEngine(cfg)
 	e.SetKB(kb)
 	e.nucleiLRU = map[string]int64{}
 

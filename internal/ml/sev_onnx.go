@@ -13,6 +13,7 @@ package ml
 
 import (
 	"fmt"
+	"math"
 	"os"
 	"strings"
 	"sync"
@@ -109,6 +110,12 @@ func (s *SevScorer) Score(text string) (float64, error) {
 		outT.Destroy()
 	}
 	score := sum / float64(len(s.sess)) * 10
+	// C2-11：与 sev_linear.RegressionScore 同口径拦非有限输出。NaN 与任何
+	// 比较都为 false，会原样穿过下面的 clamp 写进 Prediction.SevScore，
+	// 让整份扫描结果 JSON 序列化失败（json: unsupported value: NaN）。
+	if math.IsNaN(score) || math.IsInf(score, 0) {
+		return 0, fmt.Errorf("ml: sev onnx 输出非有限（%v）", score)
+	}
 	if score < 0 {
 		score = 0
 	}

@@ -20,7 +20,10 @@ import (
 
 // dataPaths 参与热更新检查的数据文件（Nuclei 模板目录单独按 mtime 处理）。
 func (s *Server) dataPaths() []string {
-	cfg := s.cfg
+	cfg := s.cfgSnap() // A-09：读配置快照
+	if cfg == nil {
+		return nil
+	}
 	return []string{
 		cfg.Intel.TechnologiesPath,
 		cfg.Intel.DumpPath,
@@ -66,21 +69,25 @@ func (s *Server) markDataBaseline() {
 // reloadData 重建指纹库与知识库并原子换入引擎（元数据统计同步刷新）。
 // 单项加载失败保留旧数据继续服务。返回 (指纹条数, 情报条数)。
 func (s *Server) reloadData() (techN, vulnN int) {
-	if m, err := sitelens.LoadMatcher(s.cfg.Intel.TechnologiesPath); err == nil {
+	cfg := s.cfgSnap() // A-09：整次重建用同一份配置快照
+	if cfg == nil {
+		return 0, 0
+	}
+	if m, err := sitelens.LoadMatcher(cfg.Intel.TechnologiesPath); err == nil {
 		s.matcher = m
 		s.eng.SetMatcher(m)
 		techN = m.Count()
 	}
-	if kb, err := intel.Load(s.cfg.Intel.DumpPath, s.cfg.Intel.RangesPath); err == nil {
+	if kb, err := intel.Load(cfg.Intel.DumpPath, cfg.Intel.RangesPath); err == nil {
 		if entries, kerr := intel.LoadKEVExtra(
-			filepath.Join(s.cfg.Store.DataDir, "kev_extra.json")); kerr == nil {
+			filepath.Join(cfg.Store.DataDir, "kev_extra.json")); kerr == nil {
 			kb.MergeKEV(entries)
 		}
-		kb.AttachNVDPath(s.cfg.Intel.NVDPath) // A3 惰性：首次用到时才解码
+		kb.AttachNVDPath(cfg.Intel.NVDPath) // A3 惰性：首次用到时才解码
 		if tc, terr := intel.LoadTechCPE("data/go/tech_cpe.json"); terr == nil && tc != nil {
 			kb.AttachTechCPE(tc)
 		}
-		if tr, rerr := intel.LoadTplIntel(s.cfg.Intel.TplIntelPath); rerr == nil && tr != nil {
+		if tr, rerr := intel.LoadTplIntel(cfg.Intel.TplIntelPath); rerr == nil && tr != nil {
 			kb.AttachTplIntel(tr)
 		}
 		s.kb.Store(kb)
@@ -89,7 +96,7 @@ func (s *Server) reloadData() (techN, vulnN int) {
 			vulnN = n
 		}
 	}
-	if m, err := loadTechMeta(s.cfg); err == nil {
+	if m, err := loadTechMeta(cfg); err == nil {
 		s.tech.Store(&m) // 原子换枪：并发读 /api/categories、CSV 宽表不受影响
 	}
 	s.checksReload()
@@ -117,4 +124,10 @@ func (s *Server) reloadIfDataChanged() {
 }
 
 // checksReload 用户插件目录变化时重新加载（mtime 门控在 checks 内部）。
-func (s *Server) checksReload() { checks.ConfigurePlugins(s.cfg.Checks.PluginDir) }
+func (s *Server) checksReload() {
+	cfg := s.cfgSnap() // A-09：读配置快照
+	if cfg == nil {
+		return
+	}
+	checks.ConfigurePlugins(cfg.Checks.PluginDir)
+}

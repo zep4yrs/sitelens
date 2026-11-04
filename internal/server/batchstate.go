@@ -8,6 +8,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"cnb.cool/feng-qiao/sitelens/internal/store"
 )
 
 // batchStateItem 单条目标的持久化状态（断点续跑用）。
@@ -30,11 +32,14 @@ type batchState struct {
 	Finished  bool             `json:"finished"`
 	Cancelled bool             `json:"cancelled"`
 	Items     []batchStateItem `json:"items"`
+	// Tenant（BL-5）：批量任务归属租户；空 = legacy/单机（认证关闭）。
+	Tenant string `json:"tenant,omitempty"`
 }
 
 // batchStateDir 批量状态目录（与 history.json 同级的 batches/）。
 func (s *Server) batchStateDir() string {
-	return filepath.Join(s.cfg.Store.DataDir, "batches")
+	cfg := s.cfgSnap() // A-09：读配置快照（一次请求/操作内一致）
+	return filepath.Join(cfg.Store.DataDir, "batches")
 }
 
 func (s *Server) batchStatePath(jobID string) string {
@@ -187,6 +192,16 @@ func (s *Server) hBatchResume(w http.ResponseWriter, r *http.Request) {
 	}
 	newJobID := newID()
 	nst := newBatchState(newJobID, items)
+	// BL-5：续跑任务继承原批量状态租户；原状态无租户时用请求租户（token 模式）。
+	tenant := tenantFromRequest(r)
+	if tenant == "" {
+		tenant = st.Tenant
+	}
+	if tenant != "" && st.Tenant != "" && st.Tenant != tenant {
+		writeJSON(w, 404, map[string]any{"error": "批量状态不存在或已完成"})
+		return
+	}
+	nst.Tenant = tenant
 	if err := s.saveBatchState(nst); err != nil {
 		writeJSON(w, 500, map[string]any{"error": "保存批量状态失败：" + err.Error()})
 		return
@@ -197,6 +212,9 @@ func (s *Server) hBatchResume(w http.ResponseWriter, r *http.Request) {
 		urls[i] = it.URL
 	}
 	s.jobs.Create(newJobID, "batch", map[string]any{"urls": urls, "items": items, "resumed_from": oldID}, len(items))
+	if tenant != "" {
+		s.jobs.Update(newJobID, func(j *store.Job) { j.Tenant = tenant })
+	}
 	go s.runBatch(newJobID, items, nst)
 	writeJSON(w, 200, map[string]any{"job_id": newJobID, "total": len(items), "resumed_from": oldID})
 }

@@ -1,8 +1,10 @@
 package seedrefresh
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -234,6 +236,141 @@ func TestCoveredWhitelistBoundary(t *testing.T) {
 	for rel, want := range cases {
 		if got := covered(rel); got != want {
 			t.Errorf("covered(%q)=%v，期望 %v", rel, got, want)
+		}
+	}
+}
+
+// ---------------------------------------------------------------------------
+// C-16：清单原子写 + sha256 差分（升级只拷变化文件）
+// ---------------------------------------------------------------------------
+
+// TestBuildDiffSkipsUnchangedOnUpgrade 已交付过的版本升级：包内种子没变 →
+// 全部归入 Unchanged（不拷贝），Apply 后清单仍记录完整基线。
+func TestBuildDiffSkipsUnchangedOnUpgrade(t *testing.T) {
+	seed := t.TempDir()
+	user := t.TempDir()
+	newTree(t, seed)
+
+	// 首轮交付 5.1.0
+	plan1, err := Build(seed, user, "5.1.0", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n, err := Apply(plan1, user); err != nil || n != len(plan1.Copy) {
+		t.Fatalf("首轮 Apply: n=%d err=%v", n, err)
+	}
+	// 记录一份文件的 mtime：差分命中时不应被重写
+	target := filepath.Join(user, "data", "nvd_cves.json.gz")
+	before, err := os.Stat(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// 升级到 5.2.0：包内内容与用户区一致 → 不拷贝
+	plan2, err := Build(seed, user, "5.2.0", "5.1.0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plan2.Skipped {
+		t.Fatal("版本变化不应整批跳过")
+	}
+	if len(plan2.Copy) != 0 {
+		t.Fatalf("包内种子未变，不该再拷贝任何文件（差分失效）: %+v", plan2.Copy)
+	}
+	if len(plan2.Unchanged) == 0 {
+		t.Fatal("应把摘要一致的文件列入 Unchanged")
+	}
+	if n, err := Apply(plan2, user); err != nil || n != 0 {
+		t.Fatalf("升级 Apply 应拷贝 0 份: n=%d err=%v", n, err)
+	}
+	after, err := os.Stat(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !after.ModTime().Equal(before.ModTime()) {
+		t.Errorf("摘要一致的种子被重写（mtime 变化）: %v → %v", before.ModTime(), after.ModTime())
+	}
+	// 清单：版本更新 + 仍保留全部白名单文件摘要（差分基线不丢）
+	m := LoadManifest(user)
+	if m.Version != "5.2.0" {
+		t.Fatalf("清单版本 = %q，期望 5.2.0", m.Version)
+	}
+	if len(m.Files) != len(plan2.Unchanged) {
+		t.Fatalf("清单应记录全部白名单文件（%d），实际 %d: %+v", len(plan2.Unchanged), len(m.Files), m.Files)
+	}
+	if len(m.Files["data/nvd_cves.json.gz"]) != 64 {
+		t.Fatalf("清单缺 sha256: %+v", m.Files)
+	}
+}
+
+// TestBuildDiffReCopiesWhenDestinationModified 用户手动 update-* 改过的大资产
+// （dst 摘要 != 包内摘要）在版本升级时仍被包内快照覆盖（权威源语义不变）。
+func TestBuildDiffReCopiesWhenDestinationModified(t *testing.T) {
+	seed := t.TempDir()
+	user := t.TempDir()
+	newTree(t, seed)
+	plan1, _ := Build(seed, user, "5.1.0", "")
+	if _, err := Apply(plan1, user); err != nil {
+		t.Fatal(err)
+	}
+	// 用户手动更新 NVD（内容变化）
+	write(t, filepath.Join(user, "data", "nvd_cves.json.gz"), "nvd-online")
+
+	plan2, err := Build(seed, user, "5.2.0", "5.1.0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var reCopy bool
+	for _, it := range plan2.Copy {
+		if it.Rel == "data/nvd_cves.json.gz" {
+			reCopy = true
+		}
+	}
+	if !reCopy {
+		t.Fatalf("用户改过的种子应重新覆盖（差分只看摘要，不看版本号）: copy=%+v", plan2.Copy)
+	}
+	// 其余未变文件仍应复用
+	if len(plan2.Unchanged) == 0 {
+		t.Error("其余摘要一致文件应复用")
+	}
+	if _, err := Apply(plan2, user); err != nil {
+		t.Fatal(err)
+	}
+	if got := read(filepath.Join(user, "data", "nvd_cves.json.gz")); got != "nvd-new" {
+		t.Errorf("包内快照应覆盖用户改动，实际 %q", got)
+	}
+}
+
+// TestManifestAtomicWrite 清单原子写：内容合法、无临时文件残留、可被再次读取。
+func TestManifestAtomicWrite(t *testing.T) {
+	seed := t.TempDir()
+	user := t.TempDir()
+	newTree(t, seed)
+	plan, err := Build(seed, user, "5.1.0", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Apply(plan, user); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(filepath.Join(user, ManifestName))
+	if err != nil {
+		t.Fatalf("清单应可读: %v", err)
+	}
+	var m Manifest
+	if err := json.Unmarshal(data, &m); err != nil {
+		t.Fatalf("清单必须是完整 JSON（非半截写入）: %v\n%s", err, data)
+	}
+	if m.Version != "5.1.0" || len(m.Files) == 0 {
+		t.Fatalf("清单内容不完整: %+v", m)
+	}
+	entries, err := os.ReadDir(user)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range entries {
+		if strings.Contains(e.Name(), ".tmp") || strings.Contains(e.Name(), ".seedtmp") {
+			t.Fatalf("原子写残留临时文件: %s", e.Name())
 		}
 	}
 }

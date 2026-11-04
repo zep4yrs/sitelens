@@ -233,7 +233,15 @@ func TakeoverProbeWith(subdomains []string, cfg config.ActiveConfig,
 						continue
 					}
 				}
-				_ = status
+				// B-07：状态码参与判定。此前 status 被显式丢弃，只看正文；
+				// 而签名表里有极泛化的 Marker（CloudFront "Bad request."、
+				// Bitbucket "Repository not found"、Netlify "Not Found - Request ID"），
+				// 任意 5xx 边缘错误页都能凑出 high 级"可接管"发现。
+				// 排除 5xx 与无状态码（0）：可接管特征页由云边缘节点代答，
+				// 稳定形态是 404/410/403，不会是 5xx。
+				if status < 200 || status >= 500 {
+					continue
+				}
 				low := strings.ToLower(body)
 				for _, mk := range sig.Markers {
 					if strings.Contains(low, strings.ToLower(mk)) {
@@ -257,10 +265,26 @@ func TakeoverProbeWith(subdomains []string, cfg config.ActiveConfig,
 }
 
 // matchTakeoverSig 按 CNAME 后缀匹配签名表；无命中返回 nil。
+//
+// B-03：后缀必须带**点边界**。此前额外接受 `TrimPrefix(suffix, ".")` 形态，
+// 等价于 `HasSuffix(cname, "github.io")` 无边界匹配，`mygithub.io` /
+// `companygithub.io` 都会被判成 GitHub Pages 签名 → 误报 high 级"可接管"。
+// 现在统一把签名后缀补成前导点形态，只做点边界匹配。
 func matchTakeoverSig(cname string) *TakeoverSig {
+	cname = strings.ToLower(strings.TrimSuffix(strings.TrimSpace(cname), "."))
+	if cname == "" {
+		return nil
+	}
 	for i := range takeoverSigs {
 		for _, suffix := range takeoverSigs[i].CNAMEs {
-			if strings.HasSuffix(cname, suffix) || strings.HasSuffix(cname, strings.TrimPrefix(suffix, ".")) {
+			s := strings.ToLower(strings.TrimSpace(suffix))
+			if s == "" {
+				continue
+			}
+			if !strings.HasPrefix(s, ".") {
+				s = "." + s
+			}
+			if strings.HasSuffix(cname, s) {
 				return &takeoverSigs[i]
 			}
 		}

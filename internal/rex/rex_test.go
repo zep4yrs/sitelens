@@ -59,8 +59,11 @@ func TestLiteralsAndClasses(t *testing.T) {
 		{`\bword\b`, "a word here", true},
 		{`\bword\b`, "sword", false},
 		{`(?i)ABC`, "abc", true},
-		{`(?i:[A-Z]+)x`, "abcX", true},
-		{`(?i:ABC)x`, "ABCX", true},
+		// C2-07 修复：分组 flag 只作用于组内（PCRE/RE2 语义）。原断言把
+		// 「(?i:…) 的 i 外泄到组后」当成了正确行为，修复后组后的 x 区分
+		// 大小写，故 abcX / ABCX 不再命中；组内命中见下一行。
+		{`(?i:[A-Z]+)x`, "abcX", false},
+		{`(?i:ABC)x`, "ABCX", false},
 		{`(?i:ABC)x`, "ABCx", true},
 		{`(?i)AB(?-i)CD`, "abcd", false},
 		{`(?i)AB(?-i)CD`, "abCD", true},

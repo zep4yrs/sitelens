@@ -7,6 +7,8 @@ import (
 	"net/http/httptest"
 	"testing"
 	"time"
+
+	"cnb.cool/feng-qiao/sitelens/internal/config"
 )
 
 // newBatchTarget 起一个最小目标站（批量扫描对象）。
@@ -38,11 +40,11 @@ func resultRows(t *testing.T, s *Server, jobID string) []map[string]any {
 // TestBatchLegacyPathDefault 默认（UseWorkerPool=false）走旧路径：行为零变化。
 func TestBatchLegacyPathDefault(t *testing.T) {
 	s, _ := newServer(t)
-	if s.cfg.Batch.UseWorkerPool {
+	if s.cfgSnap().Batch.UseWorkerPool {
 		t.Fatal("默认 Batch.UseWorkerPool 必须为 false（旧路径）")
 	}
 	url := newBatchTarget(t)
-	s.cfg.Batch.Workers = 2
+	setTestConfig(s, func(c *config.Config) { c.Batch.Workers = 2 })
 	s.jobs.Create("job-legacy", "batch", map[string]any{"urls": []string{url}}, 1)
 	s.runBatch("job-legacy", []batchItem{{URL: url}}, nil)
 
@@ -59,8 +61,10 @@ func TestBatchLegacyPathDefault(t *testing.T) {
 func TestBatchWorkerPoolPath(t *testing.T) {
 	s, _ := newServer(t)
 	url := newBatchTarget(t)
-	s.cfg.Batch.UseWorkerPool = true
-	s.cfg.Batch.Workers = 2
+	setTestConfig(s, func(c *config.Config) {
+		c.Batch.UseWorkerPool = true
+		c.Batch.Workers = 2
+	})
 	s.jobs.Create("job-pool", "batch", map[string]any{"urls": []string{url}}, 1)
 	s.runBatch("job-pool", []batchItem{{URL: url}}, nil)
 
@@ -77,8 +81,10 @@ func TestBatchWorkerPoolPath(t *testing.T) {
 func TestBatchWorkerPoolMultiItems(t *testing.T) {
 	s, _ := newServer(t)
 	url := newBatchTarget(t)
-	s.cfg.Batch.UseWorkerPool = true
-	s.cfg.Batch.Workers = 2
+	setTestConfig(s, func(c *config.Config) {
+		c.Batch.UseWorkerPool = true
+		c.Batch.Workers = 2
+	})
 	items := []batchItem{{URL: url}, {URL: url + "/b"}, {URL: url + "/c"}}
 	s.jobs.Create("job-pool-multi", "batch", nil, len(items))
 	s.runBatch("job-pool-multi", items, nil)

@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"cnb.cool/feng-qiao/sitelens/internal/config"
 	"cnb.cool/feng-qiao/sitelens/internal/htmlx"
 	"cnb.cool/feng-qiao/sitelens/internal/httpx"
 	"cnb.cool/feng-qiao/sitelens/internal/sitelens"
@@ -82,20 +83,25 @@ func (p *Preflight) ValidFor(seedURL, authCookie string, now time.Time) bool {
 // 提取状态/标题/服务器/技术指纹/WAF 判定/正文（截断），供前端建议卡与
 // 扫描首页复用。不发 payload、不爬取、不写历史。
 func (e *Engine) Preflight(rawURL string, opts Options) (*Preflight, error) {
+	// A-09 配置快照：一次预检全程只用入口这一份。
+	cfg := e.Config()
+	if cfg == nil {
+		cfg = config.Default()
+	}
 	inputURL := rawURL
 	var corrections []string
-	if e.cfg.Target.AutoNormalize {
+	if cfg.Target.AutoNormalize {
 		if nr := target.Normalize(rawURL); len(nr.Changes) > 0 {
 			rawURL = nr.URL
 			corrections = nr.Changes
 		}
 	}
-	scheme, host, port, err := target.Validate(rawURL, e.cfg.Scan.Resolve)
+	scheme, host, port, err := target.Validate(rawURL, cfg.Scan.Resolve)
 	if err != nil {
 		return nil, err
 	}
 	seed := seedFromRaw(rawURL, scheme, host, port)
-	client := e.newClient(opts)
+	client := e.newClientWith(cfg, opts)
 	start := time.Now()
 	resp, err := client.GetFollow(seed)
 	if err != nil {

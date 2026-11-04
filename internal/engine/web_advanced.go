@@ -45,16 +45,17 @@ var protoCheckFn = protochk.Check
 // idorDetectFn 越权检测入口（仅测试可替换，生产= dast.DetectIDOR）。
 var idorDetectFn = dast.DetectIDOR
 
-// webAdvancedEnabled 是否任一进阶面开关开启。
+// webAdvancedEnabled 是否任一进阶面开关开启（取当前配置快照）。
 func (e *Engine) webAdvancedEnabled() bool {
-	return webAdvancedOn(e.cfg.DAST, Options{})
+	cfg := e.Config()
+	if cfg == nil {
+		cfg = config.Default()
+	}
+	return webAdvancedOn(cfg.DAST, Options{})
 }
 
 // runWebAdvanced DAST 结果之后的进阶面接线（默认全关 = 立即返回）。
-//
-// 参数复用 DAST 阶段的既有上下文：pages（已抓取页面，含首页）、forms（表单
-// 目标）、links（带参/同域链接）、baseURL（入口 URL）、sessions（调用方显式
-// 提供的多角色会话）。全部输出走 res.Verified / res.Extras["web_advanced"]。
+// 独立入口用：取当前配置快照。
 func (e *Engine) runWebAdvanced(
 	client *httpx.Client,
 	blocked *blockedTracker,
@@ -69,7 +70,35 @@ func (e *Engine) runWebAdvanced(
 	live *liveTracker,
 	emit func(kind, text string),
 ) {
-	adv := e.cfg.DAST
+	e.runWebAdvancedWith(e.Config(), client, blocked, pages, forms, links, baseURL,
+		res, opts, sessions, onProgress, live, emit)
+}
+
+// runWebAdvancedWith 用显式配置快照执行进阶面接线（A-09：扫描内部调用，
+// 进阶面开关与入口快照一致）。
+//
+// 参数复用 DAST 阶段的既有上下文：pages（已抓取页面，含首页）、forms（表单
+// 目标）、links（带参/同域链接）、baseURL（入口 URL）、sessions（调用方显式
+// 提供的多角色会话）。全部输出走 res.Verified / res.Extras["web_advanced"]。
+func (e *Engine) runWebAdvancedWith(
+	cfg *config.Config,
+	client *httpx.Client,
+	blocked *blockedTracker,
+	pages []crawlPage,
+	forms []dast.FormTarget,
+	links []string,
+	baseURL string,
+	res *Result,
+	opts Options,
+	sessions []authn.Session,
+	onProgress func(int, string),
+	live *liveTracker,
+	emit func(kind, text string),
+) {
+	if cfg == nil {
+		cfg = config.Default()
+	}
+	adv := cfg.DAST
 	if opts.AdvProto {
 		adv.Proto = true
 	}

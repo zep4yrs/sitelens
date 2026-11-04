@@ -11,7 +11,7 @@ import (
 
 func testServerWithDataDir(t *testing.T) *Server {
 	t.Helper()
-	return &Server{cfg: &config.Config{Store: config.StoreConfig{DataDir: t.TempDir()}}}
+	return testServer(&config.Config{Store: config.StoreConfig{DataDir: t.TempDir()}})
 }
 
 func TestBatchStateRoundTrip(t *testing.T) {

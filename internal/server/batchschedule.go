@@ -9,13 +9,17 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
+	"runtime/debug"
 	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"cnb.cool/feng-qiao/sitelens/internal/store"
 )
 
 const (
@@ -64,7 +68,8 @@ type Schedule struct {
 
 // schedulesPath 定时任务配置文件路径；未配置数据目录时返回空串。
 func (s *Server) schedulesPath() string {
-	if s.cfg == nil || strings.TrimSpace(s.cfg.Store.DataDir) == "" {
+	cfg := s.cfgSnap() // A-09：读配置快照（一次请求/操作内一致）
+	if cfg == nil || strings.TrimSpace(cfg.Store.DataDir) == "" {
 		return ""
 	}
 	return filepath.Join(s.batchStateDir(), schedulesFileName)
@@ -403,7 +408,15 @@ func (s *Server) RunScheduler(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case now := <-t.C:
-			s.runDueSchedules(now)
+			// V-09：单次调度内的 panic 不能让常驻调度协程/进程退出。
+			func() {
+				defer func() {
+					if rec := recover(); rec != nil {
+						log.Printf("[panic] 定时批量调度已恢复：%v\n%s", rec, debug.Stack())
+					}
+				}()
+				s.runDueSchedules(now)
+			}()
 		}
 	}
 }
@@ -441,6 +454,12 @@ func batchTagOf(items []batchItem) string {
 //     `jobID, total := s.startBatchJob(scheduleEntries(sc))`，并回写
 //     LastRunAt/NextRunAt（可复用 runDueSchedules 的落盘方式或单独 Upsert）。
 func (s *Server) startBatchJob(entries []batchItem) (string, int) {
+	return s.startBatchJobForTenant(entries, "")
+}
+
+// startBatchJobForTenant 同 startBatchJob，但把批量作业归属到指定租户（BL-5）：
+// 作业收尾保存扫描结果时按该租户写入，/api/job 与历史列表也只对该租户可见。
+func (s *Server) startBatchJobForTenant(entries []batchItem, tenant string) (string, int) {
 	items := make([]batchItem, 0, len(entries))
 	for _, it := range entries {
 		it.URL = strings.TrimSpace(it.URL)
@@ -460,6 +479,7 @@ func (s *Server) startBatchJob(entries []batchItem) (string, int) {
 	}
 	jobID := newID()
 	st := newBatchState(jobID, items)
+	st.Tenant = strings.TrimSpace(tenant) // BL-5：批量状态归属租户
 	_ = s.saveBatchState(st)
 	meta := map[string]any{"urls": urls, "items": items}
 	if tag := batchTagOf(items); tag != "" {
@@ -467,6 +487,9 @@ func (s *Server) startBatchJob(entries []batchItem) (string, int) {
 	}
 	if s.jobs != nil {
 		s.jobs.Create(jobID, "batch", meta, len(items))
+		if tenant = strings.TrimSpace(tenant); tenant != "" {
+			s.jobs.Update(jobID, func(j *store.Job) { j.Tenant = tenant })
+		}
 	}
 	go s.runBatch(jobID, items, st)
 	return jobID, len(items)

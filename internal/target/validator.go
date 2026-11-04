@@ -264,18 +264,50 @@ func ValidateIPs(addrs []netip.Addr) error {
 // AllowPrivate 返回当前 allow_private 姿态（拨号层与测试复用）。
 func AllowPrivate() bool { return allowPrivate }
 
+// reservedPrefixes 特殊用途/保留地址段（V-19）：既不是合法的公网扫描目标，
+// 也可能被当作 SSRF 跳板。重点说明几条：
+//   - 64:ff9b::/96  NAT64 知名前缀：64:ff9b::7f00:1 在启用 NAT64 的网络上
+//     就是 127.0.0.1（实测可通过 Go 的 IsLoopback/IsPrivate 判定，是真实缺口）；
+//   - 2002::/16     6to4（内嵌任意 IPv4，含私网/回环）；
+//   - 198.18.0.0/15 基准测试保留段；192.0.0.0/24 / 192.0.2.0/24 /
+//     198.51.100.0/24 / 203.0.113.0/24 为 IETF 文档与保留段；
+//   - fec0::/10     站点本地（RFC 3879 已废弃，部分栈仍可能路由）。
+//
+// 这些段在 allow_private 打开时**同样拒绝**（它们不是"授权内网靶场"的
+// 合理目标），但与恒久阻断的云 metadata 端点不同，仍归入私网/保留地址闸。
+var reservedPrefixes = []netip.Prefix{
+	netip.MustParsePrefix("64:ff9b::/96"),
+	netip.MustParsePrefix("2002::/16"),
+	netip.MustParsePrefix("198.18.0.0/15"),
+	netip.MustParsePrefix("192.0.0.0/24"),
+	netip.MustParsePrefix("192.0.2.0/24"),
+	netip.MustParsePrefix("198.51.100.0/24"),
+	netip.MustParsePrefix("203.0.113.0/24"),
+	netip.MustParsePrefix("fec0::/10"),
+}
+
 func isBlockedIP(addr netip.Addr) bool {
 	if !addr.IsValid() {
 		return true
 	}
 	if addr.IsLoopback() || addr.IsPrivate() || addr.IsLinkLocalUnicast() ||
-		addr.IsLinkLocalMulticast() || addr.IsUnspecified() {
+		addr.IsLinkLocalMulticast() || addr.IsUnspecified() || addr.IsMulticast() {
 		return true
 	}
 	// 100.64.0.0/10 运营商级 NAT
 	prefix, err := netip.ParsePrefix("100.64.0.0/10")
 	if err != nil {
-		return false
+		return true // 兜底拒绝：解析失败属编程错误，不放行
 	}
-	return prefix.Contains(addr.Unmap())
+	unmapped := addr.Unmap()
+	if prefix.Contains(unmapped) {
+		return true
+	}
+	for _, p := range reservedPrefixes {
+		if p.Contains(unmapped) {
+			return true
+		}
+	}
+	// 兜底：非全局单播（其余保留/组播/未分配空间）一律拒绝。
+	return !unmapped.IsGlobalUnicast()
 }

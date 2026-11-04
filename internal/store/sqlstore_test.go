@@ -34,14 +34,39 @@ import (
 
 var fakeDriverSeq atomic.Int64
 
-// fakeScan 内存表 scans 的一行（列对齐 migrations/001_init.sql）。
+// fakeScan 内存表 scans 的一行（列对齐 migrations/001_init.sql + 002 冗余列 + 003 tenant）。
 type fakeScan struct {
-	id               int64
-	url, host, title string
-	status, score    int
-	grade, scannedAt string
-	resultJSON       *string // nil = SQL NULL
-	optionsJSON      *string
+	id                   int64
+	url, host, title     string
+	status, score        int
+	grade, scannedAt     string
+	techCount, vulnCount int
+	durationMs           int64
+	techNames            string
+	tenant               string
+	resultJSON           *string // nil = SQL NULL
+	optionsJSON          *string
+}
+
+// finishRow 由 result_json 派生列表冗余列（C-08；与 SaveScan 的写入口径一致）。
+func (row *fakeScan) finishRow() {
+	if row.resultJSON == nil {
+		return
+	}
+	var res engine.Result
+	if err := json.Unmarshal([]byte(*row.resultJSON), &res); err != nil {
+		return
+	}
+	names := make([]string, 0, len(res.Technologies))
+	for _, t := range res.Technologies {
+		if n := strings.ToLower(strings.TrimSpace(t.Name)); n != "" {
+			names = append(names, n)
+		}
+	}
+	row.techCount = len(res.Technologies)
+	row.vulnCount = len(res.Vulnerabilities)
+	row.durationMs = int64(res.Duration * 1000)
+	row.techNames = strings.Join(names, " ")
 }
 
 // fakeDB 一个 fake driver 实例的后端存储。
@@ -57,6 +82,7 @@ type fakeDB struct {
 	rollbacks  int
 	inTx       bool
 	pending    []*fakeScan
+	seqResets  int // PG identity 序列重置（SELECT setval(...)）次数（C-02 断言用）
 }
 
 func newFakeDB() *fakeDB {
@@ -302,12 +328,23 @@ func (b *fakeDB) applyScanLocked(cols []string, args []driver.NamedValue) int64 
 			row.grade = valueString(v)
 		case "scanned_at":
 			row.scannedAt = valueString(v)
+		case "tech_count":
+			row.techCount = int(valueInt64(v))
+		case "vuln_count":
+			row.vulnCount = int(valueInt64(v))
+		case "duration_ms":
+			row.durationMs = valueInt64(v)
+		case "tech_names":
+			row.techNames = valueString(v)
+		case "tenant":
+			row.tenant = valueString(v)
 		case "result_json":
 			row.resultJSON = valueNullableString(v)
 		case "options_json":
 			row.optionsJSON = valueNullableString(v)
 		}
 	}
+	row.finishRow() // 由 result_json 派生冗余列（与生产写入口径一致）
 	if !hasID || row.id == 0 {
 		row.id = b.allocIDLocked()
 	}
@@ -362,11 +399,24 @@ func (b *fakeDB) execLocked(query string, args []driver.NamedValue) (driver.Resu
 		if b.failOnExec > 0 && b.execCount == b.failOnExec {
 			return nil, errors.New("fake: 注入的写入失败")
 		}
+		// BL-5：WHERE id=? [AND tenant=?] —— 末位参数可能是 tenant。
 		id := valueInt64(argValue(args, 0))
-		if _, ok := b.scans[id]; ok {
+		tenant := ""
+		hasTenant := strings.Contains(q, "AND TENANT =") || strings.Contains(q, "WHERE TENANT =")
+		if hasTenant && len(args) > 1 {
+			tenant = valueString(argValue(args, 1))
+		}
+		row, ok := b.scans[id]
+		if ok && hasTenant && row.tenant != tenant {
+			return fakeResult{}, nil // 跨租户：不删
+		}
+		if ok {
 			delete(b.scans, id)
 			return fakeResult{affected: 1}, nil
 		}
+		return fakeResult{}, nil
+	case strings.HasPrefix(q, "DELETE FROM SCAN_TRIAGE"):
+		// C-09：删除扫描后清理复核记录（fake 无复核表，空操作）。
 		return fakeResult{}, nil
 	default:
 		return nil, fmt.Errorf("fake driver 不支持的写语句：%s", query)
@@ -377,8 +427,36 @@ func (b *fakeDB) execLocked(query string, args []driver.NamedValue) (driver.Resu
 func (b *fakeDB) queryLocked(query string, args []driver.NamedValue) (driver.Rows, error) {
 	q := normalizeSQL(query)
 	switch {
+	case strings.HasPrefix(q, "SELECT SETVAL("):
+		// C-02：PostgreSQL 迁移后推进 identity 序列（fake 只记录次数）。
+		b.seqResets++
+		return &fakeRows{cols: []string{"setval"}, data: [][]driver.Value{{int64(1)}}}, nil
 	case strings.HasPrefix(q, "SELECT COUNT(*) FROM SCANS"):
 		return &fakeRows{cols: []string{"count"}, data: [][]driver.Value{{int64(len(b.scans))}}}, nil
+	case strings.HasPrefix(q, "SELECT COUNT(*),") && strings.Contains(q, "AVG(TECH_COUNT)"):
+		// C-08：轻量聚合（COUNT / COUNT(DISTINCT host) / SUM / AVG）。
+		// BL-5：可带 WHERE tenant = ?。
+		tenantFilter := ""
+		if strings.Contains(q, "AND TENANT =") || strings.Contains(q, "WHERE TENANT =") && len(args) > 0 {
+			tenantFilter = valueString(args[0].Value)
+		}
+		hosts := map[string]bool{}
+		var sum int64
+		n := 0
+		for _, r := range b.scans {
+			if tenantFilter != "" && r.tenant != tenantFilter {
+				continue
+			}
+			hosts[r.host] = true
+			sum += int64(r.techCount)
+			n++
+		}
+		avg := 0.0
+		if n > 0 {
+			avg = float64(sum) / float64(n)
+		}
+		return &fakeRows{cols: []string{"count", "hosts", "sum", "avg"},
+			data: [][]driver.Value{{int64(n), int64(len(hosts)), sum, avg}}}, nil
 	case strings.HasPrefix(q, "INSERT INTO SCANS") && strings.Contains(q, "RETURNING"):
 		b.execCount++
 		if b.failOnExec > 0 && b.execCount == b.failOnExec {
@@ -403,12 +481,23 @@ func (b *fakeDB) queryLocked(query string, args []driver.NamedValue) (driver.Row
 				row.grade = valueString(v)
 			case "scanned_at":
 				row.scannedAt = valueString(v)
+			case "tech_count":
+				row.techCount = int(valueInt64(v))
+			case "vuln_count":
+				row.vulnCount = int(valueInt64(v))
+			case "duration_ms":
+				row.durationMs = valueInt64(v)
+			case "tech_names":
+				row.techNames = valueString(v)
+			case "tenant":
+				row.tenant = valueString(v)
 			case "result_json":
 				row.resultJSON = valueNullableString(v)
 			case "options_json":
 				row.optionsJSON = valueNullableString(v)
 			}
 		}
+		row.finishRow()
 		if row.id == 0 {
 			row.id = b.allocIDLocked()
 		}
@@ -418,6 +507,10 @@ func (b *fakeDB) queryLocked(query string, args []driver.NamedValue) (driver.Row
 		cols := parseSelectColumns(query)
 		id := valueInt64(argValue(args, 0))
 		if row, ok := b.scans[id]; ok {
+			// BL-5：GetScanForTenant 附带 AND tenant=?（不匹配按不存在返回空行集）。
+			if strings.Contains(q, "AND TENANT =") || strings.Contains(q, "WHERE TENANT =") && len(args) > 1 && row.tenant != valueString(argValue(args, 1)) {
+				return &fakeRows{cols: cols}, nil
+			}
 			return &fakeRows{cols: cols, data: [][]driver.Value{projectRow(row, cols)}}, nil
 		}
 		return &fakeRows{cols: cols}, nil
@@ -428,16 +521,46 @@ func (b *fakeDB) queryLocked(query string, args []driver.NamedValue) (driver.Row
 			ids = append(ids, id)
 		}
 		sort.Slice(ids, func(i, j int) bool { return ids[i] > ids[j] }) // ORDER BY id DESC
-		limit := -1
+		// tech 过滤（tech_names LIKE ? ESCAPE '\'）
+		needle := ""
+		hasLike := strings.Contains(q, "LIKE")
+		if hasLike && len(args) > 0 {
+			needle = strings.ToLower(strings.Trim(valueString(args[0].Value), "%"))
+		}
+		// BL-5：租户过滤（WHERE tenant = ?），占位符在 LIMIT/OFFSET 之前。
+		tenantFilter := ""
+		hasTenant := strings.Contains(q, "AND TENANT =") || strings.Contains(q, "WHERE TENANT =")
+		if hasTenant && len(args) >= 3 {
+			tenantFilter = valueString(args[len(args)-3].Value)
+		}
+		// LIMIT/OFFSET 占位符位于参数尾部。
+		limit, offset := -1, 0
 		if strings.Contains(q, "LIMIT") && len(args) > 0 {
-			limit = int(valueInt64(args[len(args)-1].Value))
+			if strings.Contains(q, "OFFSET") && len(args) >= 2 {
+				limit = int(valueInt64(args[len(args)-2].Value))
+				offset = int(valueInt64(args[len(args)-1].Value))
+			} else {
+				limit = int(valueInt64(args[len(args)-1].Value))
+			}
 		}
 		data := make([][]driver.Value, 0, len(ids))
+		skipped := 0
 		for _, id := range ids {
+			row := b.scans[id]
+			if hasTenant && row.tenant != tenantFilter {
+				continue
+			}
+			if hasLike && !strings.Contains(strings.ToLower(row.techNames), needle) {
+				continue
+			}
+			if skipped < offset {
+				skipped++
+				continue
+			}
 			if limit >= 0 && len(data) >= limit {
 				break
 			}
-			data = append(data, projectRow(b.scans[id], cols))
+			data = append(data, projectRow(row, cols))
 		}
 		return &fakeRows{cols: cols, data: data}, nil
 	default:
@@ -466,6 +589,16 @@ func projectRow(row *fakeScan, cols []string) []driver.Value {
 			out[i] = row.grade
 		case "scanned_at":
 			out[i] = row.scannedAt
+		case "tech_count":
+			out[i] = int64(row.techCount)
+		case "vuln_count":
+			out[i] = int64(row.vulnCount)
+		case "duration_ms":
+			out[i] = row.durationMs
+		case "tech_names":
+			out[i] = row.techNames
+		case "tenant":
+			out[i] = row.tenant
 		case "result_json":
 			if row.resultJSON == nil {
 				out[i] = nil
@@ -543,10 +676,35 @@ func TestMigrationFilesSelfCheck(t *testing.T) {
 			t.Errorf("scans 表缺少列 %q", col)
 		}
 	}
-	// 注释里的"未来版本示例"不能被当成可执行语句。
-	upper := strings.ToUpper(joined)
-	if strings.Contains(upper, "ALTER TABLE") {
-		t.Errorf("注释中的示例 ALTER 被解析成语句：%s", joined)
+	// 注释剥离：迁移文件里 `--` 注释（含 001 文末的"未来版本示例"）不得被解析成语句。
+	// 注意 002 起有真实的 ALTER TABLE（C-08 冗余列），因此不再断言"joined 无 ALTER"，
+	// 改为断言：① 注释文本未泄露进语句；② 语句本身不含 "--" 注释残留；
+	// ③ 002 的 ALTER 确实被解析出来（防止拆分器把 ALTER 吞掉）。
+	for _, st := range all {
+		if strings.Contains(st, "--") {
+			t.Errorf("语句残留注释：%q", st)
+		}
+	}
+	if strings.Contains(joined, "002 计划") || strings.Contains(joined, "未来版本（示例") {
+		t.Errorf("注释被解析成语句：%s", joined)
+	}
+	for _, want := range []string{
+		"ALTER TABLE scans ADD COLUMN tech_count",
+		"ALTER TABLE scans ADD COLUMN vuln_count",
+		"ALTER TABLE scans ADD COLUMN duration_ms",
+		"ALTER TABLE scans ADD COLUMN tech_names",
+		// BL-5：迁移 003 的租户列 + 索引；C-09：迁移 004 的复核/白名单表
+		"ALTER TABLE scans ADD COLUMN tenant",
+		"idx_scans_tenant",
+		"CREATE TABLE IF NOT EXISTS scan_triage",
+		"CREATE TABLE IF NOT EXISTS whitelist",
+	} {
+		if !strings.Contains(joined, want) {
+			t.Errorf("迁移缺少 %q", want)
+		}
+	}
+	if len(files) < 4 || files[3].Name != "004_triage_whitelist.sql" || files[3].Version != 4 {
+		t.Fatalf("迁移文件应按版本升序包含 004，实得 %+v", files)
 	}
 
 	db, _ := openFake(t)
