@@ -56,3 +56,9 @@ test("设置页「关于与更新」用 available 判定桌面/浏览器", () =>
     "设置页必须用 window.sitelens.available 判定桌面形态");
   assert.match(settingsHtml, /"桌面版" : "浏览器模式"/, "缺少桌面版/浏览器模式文案分支");
 });
+test("关于与更新：只展示当前形态的更新说明（避免桌面版误读浏览器模式文案）", () => {
+  assert.match(settingsHtml, /id="updNoteDesktop"/, "缺少桌面版更新说明节点");
+  assert.match(settingsHtml, /id="updNoteBrowser"/, "缺少浏览器模式更新说明节点");
+  assert.match(settingsHtml, /updNoteDesktop"\)\.style\.display = isDesktop/, "桌面版说明未按形态切换");
+  assert.match(settingsHtml, /updNoteBrowser"\)\.style\.display = isDesktop \? "none"/, "浏览器说明未按形态隐藏");
+});

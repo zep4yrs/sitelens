@@ -328,11 +328,13 @@
         <button class="btn ghost small" id="openRel">发布页</button>
         <span id="updMsg" style="font-size:13px"></span>
       </div>
-      <p class="note" id="updNote">
+      <p class="note" id="updNoteDesktop">
         桌面版：应用内置自动更新——启动时静默检查，运行期每 6 小时复查，
         更新源按 <span class="mono">CNB → Gitee → GitHub</span> 自动轮询切换
         （哪个通用哪个）。发现新版本即后台差量下载，完成后弹窗提示重启升级；
-        也可在托盘图标右键菜单随时手动检查。<br>
+        也可在托盘图标右键菜单随时手动检查。
+      </p>
+      <p class="note" id="updNoteBrowser" style="display:none">
         浏览器模式：请关注发布页获取新版本，替换二进制即可（配置与历史数据兼容）。
       </p>
     </div>
@@ -1032,7 +1034,10 @@
   var isDesktop = !!((window.sitelens && window.sitelens.available) ||
     /Electron/i.test(navigator.userAgent));
   $("verKind").textContent = isDesktop ? "桌面版" : "浏览器模式";
-  $("updNote").style.display = "";
+  $("verKind").className = "badge " + (isDesktop ? "ok" : "warn");
+  // 只展示与当前形态相关的更新说明（此前两段都显示，桌面版用户会误以为自己是浏览器模式）
+  $("updNoteDesktop").style.display = isDesktop ? "" : "none";
+  $("updNoteBrowser").style.display = isDesktop ? "none" : "";
   window.api.get("/api/version").then(function (v) {
     if (v && v.version) $("verBig").textContent = "SiteLens v" + v.version;
   }).catch(function (e) { window.slReportError(e, { quiet: true }); });
