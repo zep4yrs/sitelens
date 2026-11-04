@@ -1031,13 +1031,35 @@
   // 桌面形态判定（5.2.3 修复）：以「壳桥是否可用」为准（D-06 的 window.sitelens.available）。
   // 旧实现只测 Electron UA，而 Wails 壳的 WebView2 UA 不含 "Electron"，导致桌面版也显示
   // 「浏览器模式」。Electron UA 判断保留为兼容旧壳的兜底（desktop-electron 归档线）。
-  var isDesktop = !!((window.sitelens && window.sitelens.available) ||
-    /Electron/i.test(navigator.userAgent));
-  $("verKind").textContent = isDesktop ? "桌面版" : "浏览器模式";
-  $("verKind").className = "badge " + (isDesktop ? "ok" : "warn");
-  // 只展示与当前形态相关的更新说明（此前两段都显示，桌面版用户会误以为自己是浏览器模式）
-  $("updNoteDesktop").style.display = isDesktop ? "" : "none";
-  $("updNoteBrowser").style.display = isDesktop ? "none" : "";
+  //
+  // 另外两个真实坑（5.2.3 实机反馈）：
+  //   1) Turbo 导航/缓存快照恢复时页面脚本不会重跑 → 徽标停留在旧状态；这里每次
+  //      turbo:load 都重算。
+  //   2) 旧发布包可能根本没有 /js/bridge.js（404）→ window.sitelens 不存在；检测到
+  //      缺失时补加载一次再判定，避免把「资源缺失」显示成「浏览器模式」。
+  function slApplyShellMode() {
+    var isDesktop = !!((window.sitelens && window.sitelens.available) ||
+      /Electron/i.test(navigator.userAgent));
+    var kind = $("verKind");
+    if (kind) {
+      kind.textContent = isDesktop ? "桌面版" : "浏览器模式";
+      kind.className = "badge " + (isDesktop ? "ok" : "warn");
+    }
+    var d = $("updNoteDesktop"), b = $("updNoteBrowser");
+    if (d) d.style.display = isDesktop ? "" : "none";
+    if (b) b.style.display = isDesktop ? "none" : "";
+    return isDesktop;
+  }
+  function slEnsureShellMode() {
+    if (window.sitelens) { slApplyShellMode(); return; }
+    var s = document.createElement("script");
+    s.src = "/js/bridge.js";
+    s.onload = slApplyShellMode;
+    s.onerror = slApplyShellMode;
+    document.head.appendChild(s);
+  }
+  slEnsureShellMode();
+  document.addEventListener("turbo:load", slEnsureShellMode);
   window.api.get("/api/version").then(function (v) {
     if (v && v.version) $("verBig").textContent = "SiteLens v" + v.version;
   }).catch(function (e) { window.slReportError(e, { quiet: true }); });
@@ -1051,11 +1073,13 @@
 
   /* ---- 检查更新：桌面版经壳桥直连主进程更新器（真实检查），
           浏览器模式跳发布页 ---- */
-  var bridge = (window.sitelens && window.sitelens.available) ? window.sitelens : null;
+
   var RELEASES = "https://cnb.cool/feng-qiao/sitelens/releases";
 
   $("checkUpd").addEventListener("click", function () {
     var m = $("updMsg");
+    // 每次点击重新取桥（Turbo 导航/缓存恢复后 window.sitelens 可能刚就绪）
+    var bridge = (window.sitelens && window.sitelens.available) ? window.sitelens : null;
     if (!bridge) {
       m.innerHTML = '浏览器模式请在 <a href="' + RELEASES +
         '" target="_blank" rel="noopener" style="color:var(--info)">发布页</a>比对最新版本号。';
