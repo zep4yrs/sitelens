@@ -24,7 +24,7 @@ import (
 
 // 更新源：唯一来源是 GitHub 的 desktop-stable release 附件区（与 Electron 壳
 // 一致，发版脚本产出的三件套直接可用）。
-var updateBaseURL = "https://github.com/zep4rs/sitelens/releases/download/desktop-stable/"
+var updateBaseURL = "https://github.com/zep4yrs/sitelens/releases/download/desktop-stable/"
 
 const updateManifestName = "latest.yml"
 
