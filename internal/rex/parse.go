@@ -371,7 +371,15 @@ func (p *parser) parseGroupBody(open int, capture bool) (node, error) {
 }
 
 // parseFlags 解析 (?flags) 与 (?flags:…) 形式（支持 i s m 与 '-' 取消）。
+//
+// 作用域语义（与 PCRE/RE2 一致）：
+//   - (?flags)   —— 作用到当前组剩余部分；组结束时由 parseGroupBody 恢复。
+//   - (?flags:…) —— **仅作用到本组**，组外必须恢复进入前的现场。为此这里
+//     先快照进入前的 flag，`':'` 分支解析完组体后显式恢复（C2-07：旧实现
+//     把快照放在 parseGroupBody，那时 flag 已被本函数改写，恢复等于没恢复，
+//     (?i:abc) 的 i 会外泄到后续模式）。
 func (p *parser) parseFlags(open int) (node, error) {
+	saveFold, saveDot, saveMulti := p.fold, p.dotAl, p.multi
 	neg := false
 	for p.i < len(p.src) {
 		switch c := p.src[p.i]; c {
@@ -391,7 +399,11 @@ func (p *parser) parseFlags(open int) (node, error) {
 			return &concatNode{}, nil // flag 持续到当前组结束（现场由组恢复）
 		case ':':
 			p.i++
-			return p.parseGroupBody(open, false)
+			sub, err := p.parseGroupBody(open, false)
+			// 作用域仅限本组：无论组体解析成功与否都恢复进入前的现场，
+			// 避免错误路径把 flag 带到后续模式。
+			p.fold, p.dotAl, p.multi = saveFold, saveDot, saveMulti
+			return sub, err
 		default:
 			return nil, fmt.Errorf("rex: 不支持的 flag %q: 偏移 %d", string(c), p.i)
 		}

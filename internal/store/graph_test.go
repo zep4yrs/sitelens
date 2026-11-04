@@ -228,19 +228,19 @@ func jsonContains(raw []byte, sub string) bool {
 
 // TestSaveGraphStampsScanID：落盘时回填 scan_id，使导出 JSONL 的 header 自带它
 // （5.0 读端据此关联来源扫描）。
+//
+// C-20 起回填发生在**图副本**上：调用方 *engine.Result / *model.ScanGraph
+// 保持只读（旧实现在调用方对象上回填，同一个 Result 二次保存会沿用旧 id）。
 func TestSaveGraphStampsScanID(t *testing.T) {
 	dir := t.TempDir()
 	st, _ := New(dir, 10)
 	g := sampleGraph() // 初始 ScanID 为空（模拟扫描流程产出）
 	id := st.Save(&engine.Result{URL: "http://t/", Graph: g}, nil)
 
-	if g.ScanID == "" {
-		t.Error("Save 应在图未填 ScanID 时回填 scan_id")
+	if g.ScanID != "" {
+		t.Errorf("Save 不应改写调用方图 ScanID（C-20），实际 %q", g.ScanID)
 	}
-	if g.ScanID != itoa(id) {
-		t.Errorf("回填的 ScanID = %q，期望 %q", g.ScanID, itoa(id))
-	}
-	// 读回时 header 应携带 scan_id。
+	// 读回时 header 应携带 scan_id（落盘副本已回填）。
 	got, ok := st.Graph(id)
 	if !ok || got.ScanID != itoa(id) {
 		t.Errorf("读回的图 ScanID = %q，期望 %q", got.ScanID, itoa(id))
@@ -249,5 +249,11 @@ func TestSaveGraphStampsScanID(t *testing.T) {
 	data, _ := st.GraphJSONL(id)
 	if !containsKey(data, "scan_id") {
 		t.Error("导出 JSONL 应含 scan_id")
+	}
+	// 同一张图二次保存：两条记录的图 scan_id 各自独立，调用方对象始终为空。
+	g2 := sampleGraph()
+	st.Save(&engine.Result{URL: "http://t2/", Graph: g2}, nil)
+	if g2.ScanID != "" {
+		t.Errorf("二次保存同样不应改写调用方图: %q", g2.ScanID)
 	}
 }

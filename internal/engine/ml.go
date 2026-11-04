@@ -15,19 +15,26 @@ import (
 	"regexp"
 	"strings"
 
+	"cnb.cool/feng-qiao/sitelens/internal/config"
 	"cnb.cool/feng-qiao/sitelens/internal/intel"
 	"cnb.cool/feng-qiao/sitelens/internal/ml"
 )
 
-// mlFor 惰性取 ML 资产：首次预测才读 coef（cve-tech 196×120k = 94MB）。
-// 相对路径相对进程 cwd（与 data/ 其他默认路径同约定）。
+// mlFor 惰性取 ML 资产（独立入口用：取当前配置快照）。
+func (e *Engine) mlFor() *ml.Assets {
+	return e.mlForWith(e.Config())
+}
+
+// mlForWith 用显式配置快照惰性取 ML 资产：首次预测才读 coef
+// （cve-tech 196×120k = 94MB）。相对路径相对进程 cwd（与 data/ 其他
+// 默认路径同约定）。
 //
 // 两种静默出口语义不同：
 //   - 目录/任一关键文件不存在 → 返回 nil 不置死标记（资产可能随后补齐
 //     或分步部署，每次扫描只付一次 stat 的代价）；
 //   - 加载失败（文件损坏/维度不符）→ 置 mlDead 本进程永久禁用：
 //     损坏不会自愈，重试只会每次扫描反复重读 94MB。
-func (e *Engine) mlFor() *ml.Assets {
+func (e *Engine) mlForWith(cfg *config.Config) *ml.Assets {
 	e.mlMu.Lock()
 	defer e.mlMu.Unlock()
 	if e.mlDead {
@@ -36,10 +43,13 @@ func (e *Engine) mlFor() *ml.Assets {
 	if e.mlAssets != nil {
 		return e.mlAssets
 	}
+	if cfg == nil {
+		cfg = config.Default()
+	}
 	// 资产目录候选：配置优先 → cwd 常规路径 → 仓库内建 ml/models/ →
 	// 可执行文件相对路径（CLI/壳从任意 cwd 启动时兜底）。候选表收敛在
 	// ml.AssetCandidates，诊断（internal/diag）引用同一份，避免两处漂移。
-	dir := ml.LocateAssetsDir(ml.AssetCandidates(e.cfg.ML.AssetsDir)...)
+	dir := ml.LocateAssetsDir(ml.AssetCandidates(cfg.ML.AssetsDir)...)
 	if dir == "" {
 		return nil
 	}
@@ -52,40 +62,54 @@ func (e *Engine) mlFor() *ml.Assets {
 	return a
 }
 
-// sevAssetsDir 解析 sev-prior ONNX 资产目录：与 mlFor 同源候选
-// （配置优先 → 运行时常规路径 → 仓库内建 ml/models/）。
+// sevAssetsDir 解析 sev-prior ONNX 资产目录（独立入口用：取当前快照）。
+func (e *Engine) sevAssetsDir() string {
+	return e.sevAssetsDirWith(e.Config())
+}
+
+// sevAssetsDirWith 用显式配置快照解析 sev-prior ONNX 资产目录：
+// 与 mlFor 同源候选（配置优先 → 运行时常规路径 → 仓库内建 ml/models/）。
 //
-// BUG-019：原实现直接用 e.cfg.ML.AssetsDir——默认值 data/go/ml_assets
+// BUG-019：原实现直接用 cfg.ML.AssetsDir——默认值 data/go/ml_assets
 // 在仓内不存在（资产随「模型进仓库本体」迁到 ml/models/go/ml_assets），
 // 于是 ONNX glob 恒落空、sev_onnx 通道恒不可用并静默回退 NVD 先验。
 // 与 mlFor 一样收敛到 ml.LocateAssetsDir，避免两处各自维护候选表。
 // 候选全不合格时退回配置值：自定义部署可能只投放 ONNX 文件（无线性
 // 模型成套资产），保持其原路径语义。
-func (e *Engine) sevAssetsDir() string {
-	if e.cfg == nil {
+func (e *Engine) sevAssetsDirWith(cfg *config.Config) string {
+	if cfg == nil {
 		return ""
 	}
-	if dir := ml.LocateAssetsDir(ml.AssetCandidates(e.cfg.ML.AssetsDir)...); dir != "" {
+	if dir := ml.LocateAssetsDir(ml.AssetCandidates(cfg.ML.AssetsDir)...); dir != "" {
 		return dir
 	}
-	return e.cfg.ML.AssetsDir
+	return cfg.ML.AssetsDir
 }
 
-// mlSevScorer 惰性取 sev-prior ONNX 打分器（阶段 B，§10.8）。一次尝试：
-// 未启用/无 onnx 构建标签/资产或共享库缺失，返回 nil 并带降级原因
-// （引擎回退 NVD CVSS 先验；原因落 extras["ml_sev"] 可解释）。
+// mlSevScorer 惰性取 sev-prior ONNX 打分器（独立入口用：取当前快照）。
 func (e *Engine) mlSevScorer() *ml.SevScorer {
+	return e.mlSevScorerWith(e.Config())
+}
+
+// mlSevScorerWith 用显式配置快照惰性取 sev-prior ONNX 打分器
+// （阶段 B，§10.8）。一次尝试：未启用/无 onnx 构建标签/资产或共享库
+// 缺失，返回 nil 并带降级原因（引擎回退 NVD CVSS 先验；原因落
+// extras["ml_sev"] 可解释）。
+func (e *Engine) mlSevScorerWith(cfg *config.Config) *ml.SevScorer {
 	e.mlMu.Lock()
 	defer e.mlMu.Unlock()
 	if e.mlSevTried {
 		return e.mlSev
 	}
 	e.mlSevTried = true
-	if !e.cfg.ML.SevONNX {
+	if cfg == nil {
+		cfg = config.Default()
+	}
+	if !cfg.ML.SevONNX {
 		e.mlSevReason = "sev_onnx 未启用"
 		return nil
 	}
-	assets := e.sevAssetsDir()
+	assets := e.sevAssetsDirWith(cfg)
 	// 集成清单：双种子 fp32 对 → int8 对 → 旧单文件（兼容既往资产布局）
 	var onnx []string
 	for _, pat := range []string{"sev-prior-v3.1-[ab].onnx", "sev-prior-v3.1-[ab]-int8.onnx"} {
@@ -104,7 +128,7 @@ func (e *Engine) mlSevScorer() *ml.SevScorer {
 	}
 	vocab := filepath.Join(assets, "sev-prior-v3.1.vocab.txt")
 	// 共享库候选：配置 → 运行时路径 → 仓库内建 ml/models/（克隆即用）
-	dll := e.cfg.ML.OnnxrtDLL
+	dll := cfg.ML.OnnxrtDLL
 	dllCands := []string{dll, filepath.Join("data", "onnxruntime", "onnxruntime.dll"),
 		filepath.Join("ml", "models", "onnxruntime", "onnxruntime.dll")}
 	dll = ""
@@ -139,7 +163,30 @@ func (e *Engine) InvalidateMLSev() {
 	e.mlMu.Unlock()
 }
 
-// mlEnrich 扫描收尾的 ML 富化：对 res.Vulnerabilities 中出现过的
+// InvalidateML 释放 ML 资产常驻（C2-10 引擎侧接线）：设置页把 AI 总闸
+// 由开转关时调用，释放 cve-tech 系数（196×120000×4 ≈ 94MB）与内部缓存。
+//
+// 幂等、并发安全（mlMu 与 mlForWith 的加载互斥）；卸载后旧 *ml.Assets
+// 指针推理会安全降级为空结果（ml 包内 Unload 保证），下次需要时
+// mlForWith 会按需重建。不清 mlDead：那是"加载失败"的进程级判断，
+// 与"显式释放"是两回事。
+func (e *Engine) InvalidateML() {
+	e.mlMu.Lock()
+	defer e.mlMu.Unlock()
+	if e.mlAssets != nil {
+		e.mlAssets.Unload()
+		e.mlAssets = nil
+	}
+}
+
+// mlEnrich 扫描收尾的 ML 富化（独立入口用：取当前配置快照）。
+func (e *Engine) mlEnrich(res *Result, kb *intel.KB) {
+	e.mlEnrichWith(e.Config(), res, kb)
+}
+
+// mlEnrichWith 用显式配置快照做扫描收尾 ML 富化（A-09：扫描内部调用，
+// ML 总闸/严重度通道与入口快照一致）：
+// 对 res.Vulnerabilities 中出现过的
 // 不重复 CVE id 组装 Prediction。5.2 阶段 2 起字段一律「查表优先」：
 //
 //	tech_top5  — NVD CPE（nvd）/ finding 自带 product（intel）→ 模型（model）
@@ -149,7 +196,10 @@ func (e *Engine) InvalidateMLSev() {
 // 只有当对应字段查不到时才惰性加载模型资产；查表全覆盖时不读 94MB
 // cve-tech。无描述且无任何查表字段的 CVE 跳过（不臆造）；一条预测都
 // 组不出来时不挂字段。
-func (e *Engine) mlEnrich(res *Result, kb *intel.KB) {
+func (e *Engine) mlEnrichWith(cfg *config.Config, res *Result, kb *intel.KB) {
+	if cfg == nil {
+		cfg = config.Default()
+	}
 	// 先收集 CVE：无 CVE 的结果在此即返回，连资产目录都不触碰——
 	// cve-tech coef（94MB）读入后没有任何卸载路径，不能为空结果白付常驻。
 	var cves []string
@@ -178,11 +228,11 @@ func (e *Engine) mlEnrich(res *Result, kb *intel.KB) {
 	getAssets := func() *ml.Assets {
 		if !assetsTried {
 			assetsTried = true
-			assets = e.mlFor()
+			assets = e.mlForWith(cfg)
 		}
 		return assets
 	}
-	sevScorer := e.mlSevScorer() // nil = ONNX 未启用/不可用
+	sevScorer := e.mlSevScorerWith(cfg) // nil = ONNX 未启用/不可用
 	sevBroken := false
 	sevStats := map[string]int{"nvd": 0, "linear": 0, "onnx": 0, "none": 0}
 	techStats := map[string]int{"nvd": 0, "intel": 0, "model": 0, "none": 0}
@@ -190,7 +240,7 @@ func (e *Engine) mlEnrich(res *Result, kb *intel.KB) {
 	preds := make([]ml.Prediction, 0, len(cves))
 	for _, cve := range cves {
 		info := mlCVEInfoOf(kb, res.Vulnerabilities, cve)
-		if info.Descr == "" && len(info.Prods) == 0 && len(info.CWEs) == 0 && info.Score == 0 {
+		if info.Descr == "" && len(info.Prods) == 0 && len(info.CWEs) == 0 && !info.HasScore {
 			continue // 无描述、无查表字段：不臆造
 		}
 		// 产品 Top-5：CPE / 情报行 product 查表优先，模型只补盲区。
@@ -237,11 +287,13 @@ func (e *Engine) mlEnrich(res *Result, kb *intel.KB) {
 			cweStats[cweSrc]++
 		}
 		// 严重度：查表 → sev-linear → 可选 ONNX → 无先验。
+		// C2-04：用 HasScore 判"查表有没有结论"，0.0 是合法 CVSS 分值
+		// （severity=none），不得当成缺失交给 ML 兜底抬分。
 		sev, sevSrc := 0.0, ""
-		if info.Score > 0 {
+		if info.HasScore {
 			sev, sevSrc = info.Score, "nvd"
 		}
-		if sevSrc == "" && e.cfg != nil && e.cfg.ML.SevLinear && info.Descr != "" {
+		if sevSrc == "" && cfg.ML.SevLinear && info.Descr != "" {
 			if a := getAssets(); a != nil && a.Sev != nil {
 				if s, err := a.Sev.RegressionScore(info.Descr); err == nil {
 					sev, sevSrc = s, "linear"
@@ -282,7 +334,7 @@ func (e *Engine) mlEnrich(res *Result, kb *intel.KB) {
 		"tech":   techStats, // 5.2 阶段 2：产品来源计数（nvd/intel/model/none）
 		"cwe":    cweStats,  // 5.2 阶段 2：CWE 来源计数（nvd/model/none）
 	}
-	if e.cfg != nil && e.cfg.ML.SevONNX && sevScorer == nil {
+	if cfg.ML.SevONNX && sevScorer == nil {
 		info["reason"] = e.mlSevReason
 	} else if sevBroken {
 		info["reason"] = "onnx 推理失败，已回退线性/NVD"
@@ -310,6 +362,7 @@ var cveIDRe = regexp.MustCompile(`^CVE-\d{4,}-\d{4,}$`)
 type mlCVEInfo struct {
 	Descr      string
 	Score      float64
+	HasScore   bool     // Score 是否来自真实查表（C2-04：0.0 也是有效评分）
 	Prods      []string // NVD CPE vendor/product；回退 finding.Product（单值）
 	CWEs       []string
 	ProdSource string // nvd = NVD CPE；intel = finding.Product；空 = 无
@@ -324,11 +377,12 @@ type mlCVEInfo struct {
 // 情报行自带的描述/CVSS/CWE/产品（数据已在结果里，不新增数据源）。
 func mlCVEInfoOf(kb *intel.KB, findings []intel.Finding, cve string) mlCVEInfo {
 	var info mlCVEInfo
-	if kb != nil && kb.NVDLoaded() {
-		// 索引已常驻：ByCVE 精确查询（NVDStore 为 nil 安全）
-		if e, ok := kb.NVD().ByCVE(cve); ok {
+	if nvd := kb.NVDIfLoaded(); nvd != nil {
+		// 索引已常驻（NVDIfLoaded 不触发加载）：ByCVE 精确查询
+		if e, ok := nvd.ByCVE(cve); ok {
 			info.Descr = e.Descr
 			info.Score = e.Score
+			info.HasScore = e.HasScore()
 			info.CWEs = e.CWEs
 			for _, p := range e.Prods {
 				if p.VP != "" {
@@ -350,8 +404,9 @@ func mlCVEInfoOf(kb *intel.KB, findings []intel.Finding, cve string) mlCVEInfo {
 		if info.Descr == "" && f.Desc != "" {
 			info.Descr = f.Desc
 		}
-		if info.Score == 0 && f.CVSSScore > 0 {
+		if !info.HasScore && f.CVSSScore > 0 {
 			info.Score = f.CVSSScore
+			info.HasScore = true
 		}
 		for _, c := range f.CWEs {
 			if c != "" && !seenCWE[c] {

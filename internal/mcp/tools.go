@@ -6,9 +6,51 @@ import (
 	"fmt"
 	"net/url"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 )
+
+// specRoot 返回本地 API 描述文件的可读根目录（V-16）。
+//
+// MCP 是给智能体调用的工具面：若允许任意绝对路径，模型可被页面/文档里的
+// 提示注入诱导读取 ~/.ssh/id_rsa、浏览器 Cookie 库等任意文件再 POST 给本机
+// API（confused deputy）。默认根 = 环境变量 SITELENS_SPEC_ROOT，未设置时
+// 回落到进程当前工作目录（与「从项目根启动」的既有约定一致）。
+func specRoot() string {
+	if root := strings.TrimSpace(os.Getenv("SITELENS_SPEC_ROOT")); root != "" {
+		return root
+	}
+	wd, err := os.Getwd()
+	if err != nil {
+		return ""
+	}
+	return wd
+}
+
+// resolveSpecPath 校验描述文件路径位于允许根目录内，返回绝对路径。
+// 判定用 filepath.Rel（而非字符串前缀）：Windows 卷标大小写与 / \ 分隔符
+// 差异会让 HasPrefix 误判（同 internal/server settings.resolveOverridesPath）。
+func resolveSpecPath(path string) (string, error) {
+	root := specRoot()
+	if root == "" {
+		return "", fmt.Errorf("无法确定描述文件根目录（请设置 SITELENS_SPEC_ROOT）")
+	}
+	absRoot, err := filepath.Abs(root)
+	if err != nil {
+		return "", fmt.Errorf("根目录不可解析: %w", err)
+	}
+	absPath, err := filepath.Abs(strings.TrimSpace(path))
+	if err != nil {
+		return "", fmt.Errorf("路径不可解析: %w", err)
+	}
+	rel, err := filepath.Rel(absRoot, absPath)
+	if err != nil || rel == "." || rel == ".." ||
+		strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return "", fmt.Errorf("描述文件必须位于允许目录内（%s）；可用 SITELENS_SPEC_ROOT 指定根目录", absRoot)
+	}
+	return absPath, nil
+}
 
 // ToolAnnotations MCP 工具注解（辰极 mcpgate 侧据此推断审批元组；
 // 注意对端 DeriveTuple 的 fail-closed 口径：注解只是声明，不构成信任）。
@@ -514,14 +556,23 @@ func (t *toolbox) apispecTool() Tool {
 			var body []byte
 			if path, _ := argString(m, "path", false); path != "" {
 				const maxSpec = 8 << 20
-				st, serr := os.Stat(path)
+				// V-16：路径必须落在允许根目录内（SITELENS_SPEC_ROOT，默认 cwd），
+				// 防止模型被提示注入诱导读取任意本地文件。
+				safePath, perr := resolveSpecPath(path)
+				if perr != nil {
+					return nil, perr
+				}
+				st, serr := os.Stat(safePath)
 				if serr != nil {
 					return nil, fmt.Errorf("读取描述文件失败: %w", serr)
+				}
+				if st.IsDir() {
+					return nil, fmt.Errorf("描述文件路径是目录: %s", safePath)
 				}
 				if st.Size() > maxSpec {
 					return nil, fmt.Errorf("描述文件超过 8MB 上限")
 				}
-				body, serr = os.ReadFile(path)
+				body, serr = os.ReadFile(safePath)
 				if serr != nil {
 					return nil, fmt.Errorf("读取描述文件失败: %w", serr)
 				}

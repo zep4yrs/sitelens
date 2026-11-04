@@ -7,6 +7,7 @@ package checks
 
 import (
 	"encoding/json"
+	"log"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -21,6 +22,7 @@ type Match struct {
 	StatusAny      []int    `json:"sany,omitempty"`   // 状态码任一命中（Nuclei 组转换用）
 	Contains       []string `json:"c"`                // 正文须全部包含（AND）
 	ContainsAny    []string `json:"cany,omitempty"`   // 正文任一包含（OR，Nuclei 组转换用）
+	NotContains    []string `json:"nc,omitempty"`     // 正文任一包含即否决（弱断言收紧用）
 	HeaderContains []string `json:"h,omitempty"`      // 响应头区须全部包含（Nuclei 头匹配）
 	RegexBody      []string `json:"rxbody,omitempty"` // 正文任一正则命中（OR，Nuclei regex 转换）
 	DSL            []string `json:"dsl,omitempty"`    // dsl 表达式须全部为真（安全子集，见 internal/dsl）
@@ -35,6 +37,25 @@ type Match struct {
 	Extract     *struct {
 		Keyword string `json:"keyword"`
 	} `json:"extract"`
+}
+
+// hasAnyCondition 判定 Match 是否至少带一个有效判定条件。
+//
+// B-02：此前无条件（空 Match）的 check 会在 matchBodyReason 里「零条件
+// 全部满足」直接命中——插件 JSON 少写/写错字段名即静默变成全站误报。
+// 这里把「有条件」显式定义出来，加载期与判定期各用一次：
+//   - LoadPlugins：无条件的插件 check 直接丢弃（并记 warning）；
+//   - matchBodyReason：无条件的 check 一律不命中（宁少报不误报）。
+func (m Match) hasAnyCondition() bool {
+	return m.Status != 0 ||
+		len(m.StatusAny) > 0 ||
+		len(m.Contains) > 0 ||
+		len(m.ContainsAny) > 0 ||
+		len(m.NotContains) > 0 ||
+		len(m.HeaderContains) > 0 ||
+		len(m.RegexBody) > 0 ||
+		len(m.DSL) > 0 ||
+		m.Expr != ""
 }
 
 // ExtractSpec 命名抽取（nuclei extractors regex 形态）：从响应抽取变量
@@ -92,11 +113,38 @@ func c(s int, contains ...string) Match {
 	return Match{Status: s, Contains: contains}
 }
 
+// envLeakMatch .env 泄露判据（B-14 收紧）。
+//
+// 旧判据是 c(200, "=", "\n")——正文同时含等号与换行，**任何 HTML 页面都满足**，
+// 唯一挡住它的是软 404 总闸；总闸一旦失效（见 B-01）就是全站 high 级误报。
+// 新判据要求「行首 KEY=VALUE」形态，并否决 HTML 文档。
+//
+// 取舍：只认大写键（12-factor 惯例）。小写键的 .env 会漏报——这是刻意的
+// 「宁少报不误报」：把小写也放进来，`abc=1` 这类行在普通文本响应里太容易撞。
+func envLeakMatch() Match {
+	return Match{
+		Status:      200,
+		RegexBody:   []string{`(?m)^[A-Z][A-Z0-9_]{2,}=`},
+		NotContains: []string{"<html", "<!doctype"},
+	}
+}
+
+// jsonManifestMatch JSON 清单文件判据（composer.json / package.json，B-14 收紧）。
+// 旧判据只找 "require" / "dependencies" 这类裸词，普通英文页面/JS bundle 里
+// 到处都是；新判据要求行级 `"key":` 的 JSON 键形态，并否决 HTML 文档。
+func jsonManifestMatch(keys ...string) Match {
+	return Match{
+		Status:      200,
+		RegexBody:   []string{`(?m)^\s*"(` + strings.Join(keys, "|") + `)"\s*:`},
+		NotContains: []string{"<html", "<!doctype"},
+	}
+}
+
 func builtinChecks() []Check {
 	return []Check{
 		{"git-leak", 0, "/.git/HEAD", c(200, "ref: refs/"), "Git 仓库泄露", "high", "删除 Web 根下 .git 目录"},
 		{"git-index", 0, "/.git/index", c(200, "DIRC"), "Git index 文件泄露", "high", "同上"},
-		{"env-leak", 0, "/.env", c(200, "=", "\n"), ".env 环境变量泄露", "high", "移除 .env，配置走环境变量"},
+		{"env-leak", 0, "/.env", envLeakMatch(), ".env 环境变量泄露", "high", "移除 .env，配置走环境变量"},
 		{"svn-leak", 1, "/.svn/entries", c(200, "dir"), "SVN 目录泄露", "high", "删除 .svn"},
 		{"ds-store", 1, "/.DS_Store", c(200, "Bud1"), ".DS_Store 泄露目录结构", "low", "部署过滤点开头文件"},
 		{"bak-dump", 0, "/dump.sql", c(200), "数据库 dump 文件暴露", "high", "删除备份文件"},
@@ -116,8 +164,8 @@ func builtinChecks() []Check {
 		{"wp-users", 1, "/?rest_route=/wp/v2/users", c(200, `"slug"`), "WP REST 用户枚举", "medium", "禁用 users 端点"},
 		{"wp-xmlrpc", 1, "/xmlrpc.php", c(405, "XML-RPC"), "xmlrpc.php 开启", "low", "不需要时禁用"},
 		{"wp-readme", 1, "/readme.html", m(200, "WordPress"), "WP 版本泄露(readme)", "low", "删除 readme.html"},
-		{"composer", 1, "/composer.json", c(200, "require"), "composer.json 泄露", "low", "移除依赖清单"},
-		{"package-json", 1, "/package.json", c(200, "dependencies"), "package.json 泄露", "low", "移除依赖清单"},
+		{"composer", 1, "/composer.json", jsonManifestMatch("require", "require-dev", "autoload"), "composer.json 泄露", "low", "移除依赖清单"},
+		{"package-json", 1, "/package.json", jsonManifestMatch("dependencies", "devDependencies"), "package.json 泄露", "low", "移除依赖清单"},
 		{"webconfig", 1, "/web.config", c(200, "<configuration"), "IIS web.config 泄露", "medium", "禁止下载配置文件"},
 		{"crossdomain", 1, "/crossdomain.xml", c(200, "<cross-domain-policy"), "过时跨域策略文件", "low", "删除 crossdomain.xml"},
 		{"metrics", 1, "/metrics", c(200, "# HELP", "# TYPE"), "Prometheus metrics 暴露", "medium", "加内网访问限制"},
@@ -252,6 +300,18 @@ func LoadPlugins(dir string) []Check {
 		}
 		for _, item := range arr {
 			if item.ID == "" {
+				continue
+			}
+			// B-02：无条件 / 无路径的插件 check 一律丢弃。空 Match 会在
+			// matchBodyReason 里「零条件全满足」恒命中（插件 JSON 把 "c"
+			// 写成 "contains" 就静默变成全站误报）；空 Path 会让探针落到
+			// 站点根路径。这里宁可丢弃并留痕，不放进执行集。
+			if !item.M.hasAnyCondition() {
+				log.Printf("[checks] 插件 %s 丢弃：Match 无任何判定条件（字段名可能拼错，注意 json 标签是 s/sany/c/cany/nc/h/rxbody/dsl/expr）", item.ID)
+				continue
+			}
+			if strings.TrimSpace(item.P) == "" {
+				log.Printf("[checks] 插件 %s 丢弃：路径为空", item.ID)
 				continue
 			}
 			sev := item.Sev

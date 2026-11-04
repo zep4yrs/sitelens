@@ -57,19 +57,26 @@ func (s *Server) hTasks(w http.ResponseWriter, r *http.Request) {
 	if limit > maxTaskLimit {
 		limit = maxTaskLimit
 	}
-	tasks := s.collectTasks(limit)
+	tasks := s.collectTasksForTenant(limit, tenantFromRequest(r))
 	writeJSON(w, 200, map[string]any{"tasks": tasks, "total": len(tasks)})
 }
 
-// collectTasks 合并全部来源 → 排序 → 截断。nil 服务返回空数组（而非 null）。
+// collectTasks 合并全部来源 → 排序 → 截断（legacy 空租户）。
 func (s *Server) collectTasks(limit int) []taskItem {
+	return s.collectTasksForTenant(limit, "")
+}
+
+// collectTasksForTenant 同 collectTasks，但按租户过滤（BL-5）：
+// scan 历史 / 活跃 job / 批量状态均只返回本租户条目；auth 关闭时 tenant 空
+// = 不过滤（既有行为不变）。nil 服务返回空数组（而非 null）。
+func (s *Server) collectTasksForTenant(limit int, tenant string) []taskItem {
 	items := []taskItem{}
 	if s == nil {
 		return items
 	}
-	items = append(items, s.batchTaskItems()...)
-	items = append(items, s.scanTaskItems(limit)...)
-	items = append(items, s.liveJobTaskItems()...)
+	items = append(items, s.batchTaskItems(tenant)...)
+	items = append(items, s.scanTaskItems(limit, tenant)...)
+	items = append(items, s.liveJobTaskItemsForTenant(tenant)...)
 	items = append(items, s.loginBruteTaskItems()...)
 	sortTaskItems(items)
 	if limit > 0 && len(items) > limit {
@@ -80,7 +87,8 @@ func (s *Server) collectTasks(limit int) []taskItem {
 
 // batchTaskItems 批量任务：直接读状态目录（不调用 listBatchStates——那会
 // 把已完成状态文件当陈旧数据清掉，任务中心需要保留最近完成记录）。
-func (s *Server) batchTaskItems() []taskItem {
+// tenant 非空时只返回归属该租户的批量状态（BL-5）。
+func (s *Server) batchTaskItems(tenant string) []taskItem {
 	entries, err := os.ReadDir(s.batchStateDir())
 	if err != nil {
 		return nil
@@ -93,6 +101,9 @@ func (s *Server) batchTaskItems() []taskItem {
 		}
 		st := s.loadBatchState(strings.TrimSuffix(name, ".json"))
 		if st == nil {
+			continue
+		}
+		if tenant != "" && st.Tenant != tenant {
 			continue
 		}
 		out = append(out, batchTaskItem(st))
@@ -141,14 +152,15 @@ func batchTaskItem(st *batchState) taskItem {
 }
 
 // scanTaskItems 最近完成的扫描（store 历史，最新在前由 Store.List 保证）。
-func (s *Server) scanTaskItems(limit int) []taskItem {
+// tenant 非空时只返回该租户记录（BL-5）。
+func (s *Server) scanTaskItems(limit int, tenant string) []taskItem {
 	if s.st == nil {
 		return nil
 	}
 	if limit <= 0 {
 		limit = 50
 	}
-	scans := s.st.List(limit, "")
+	scans := s.st.ListForTenant(limit, "", tenant)
 	out := make([]taskItem, 0, len(scans))
 	for _, rec := range scans {
 		msg := "扫描完成：" + rec.URL
@@ -164,10 +176,13 @@ func (s *Server) scanTaskItems(limit int) []taskItem {
 	return out
 }
 
-// liveJobTaskItems 若 JobManager 提供 List()（可选接口），聚合内存中的活跃
-// 作业。当前 store.JobManager 没有 List，故返回 nil——不通过 unsafe/反射
-// 读私有 map，避免和存储层实现耦合。
+// liveJobTaskItems 聚合内存中的活跃作业（legacy 空租户；兼容既有调用）。
 func (s *Server) liveJobTaskItems() []taskItem {
+	return s.liveJobTaskItemsForTenant("")
+}
+
+// liveJobTaskItemsForTenant 同 liveJobTaskItems，但按租户过滤（BL-5）。
+func (s *Server) liveJobTaskItemsForTenant(tenant string) []taskItem {
 	l, ok := any(s.jobs).(taskJobLister)
 	if !ok || s.jobs == nil {
 		return nil
@@ -176,6 +191,9 @@ func (s *Server) liveJobTaskItems() []taskItem {
 	out := make([]taskItem, 0, len(jobs))
 	for _, j := range jobs {
 		if j == nil {
+			continue
+		}
+		if tenant != "" && j.Tenant != tenant {
 			continue
 		}
 		out = append(out, jobToTaskItem(j))

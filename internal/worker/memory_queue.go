@@ -22,7 +22,18 @@ type QueueOptions struct {
 	DefaultMaxAttempts int              // 默认重试上限（<=0 → 3）
 	LeaseTTL           time.Duration    // Dequeue 传 leaseTTL<=0 时的默认租约（<=0 → 30s）
 	Now                func() time.Time // 时钟注入（仅测试用；nil = time.Now）
+	// MaxTerminalRetained 终态（done/dead）任务快照保留上限（<=0 → 4096）。
+	// C-07：完成任务此前永不释放（tasks/idem 只增），长驻服务内存无界；
+	// 超过上限后按进入终态的先后淘汰最旧快照（TaskState 查询随之消失）。
+	MaxTerminalRetained int
+	// MaxDeadLetters 死信快照上限（<=0 → 1024）：超出淘汰最旧。
+	MaxDeadLetters int
 }
+
+const (
+	defaultTerminalRetained = 4096
+	defaultDeadLetters      = 1024
+)
 
 // MemoryQueue 进程内任务队列（企业版单实例/测试基线实现）。
 type MemoryQueue struct {
@@ -32,8 +43,9 @@ type MemoryQueue struct {
 	tasks     map[string]*taskEntry
 	ready     []string // 待投递任务 ID（FIFO；pending/failed 均在此）
 	inflight  map[string]*inflightEntry
-	idem      map[string]string // tenant\x00key → 首次任务 ID
+	idem      map[string]string // tenant\x00key → 首次任务 ID（终态即释放）
 	dead      []DeadLetter
+	terminal  []string // 终态任务 ID（FIFO，用于按上限回收 tasks 快照）
 	closed    bool
 	wait      chan struct{} // 状态变更广播（close 后替换）
 	enqueued  int64
@@ -45,6 +57,7 @@ type taskEntry struct {
 	state    State
 	attempts int
 	lastErr  string
+	idemKey  string // 入队时的幂等键（终态时用于释放 q.idem）
 }
 
 type inflightEntry struct {
@@ -90,6 +103,58 @@ func (q *MemoryQueue) maxAttemptsFor(t Task) int {
 	return defaultMaxAttempts
 }
 
+// terminalLimit 终态任务快照保留上限。
+func (q *MemoryQueue) terminalLimit() int {
+	if q.opts.MaxTerminalRetained > 0 {
+		return q.opts.MaxTerminalRetained
+	}
+	return defaultTerminalRetained
+}
+
+// deadLimit 死信快照上限。
+func (q *MemoryQueue) deadLimit() int {
+	if q.opts.MaxDeadLetters > 0 {
+		return q.opts.MaxDeadLetters
+	}
+	return defaultDeadLetters
+}
+
+// dropIdemLocked 释放任务占用的幂等键（C-07）。
+// 终态（done/dead）后释放：同一 key 再次入队应作为**新任务**执行，
+// 不能被"已完成的旧任务"静默吞掉（旧实现 idem 表只增，返旧 ID 不执行）。
+func (q *MemoryQueue) dropIdemLocked(id string, e *taskEntry) {
+	if e == nil || e.idemKey == "" {
+		return
+	}
+	if cur, ok := q.idem[e.idemKey]; ok && cur == id {
+		delete(q.idem, e.idemKey)
+	}
+	e.idemKey = ""
+}
+
+// markTerminalLocked 把任务置为终态（done/dead），释放幂等键并按上限回收
+// 任务快照（C-07：原实现 tasks/idem/dead 随任务数单调增长，内存无界）。
+func (q *MemoryQueue) markTerminalLocked(id string, e *taskEntry, st State) {
+	e.state = st
+	q.dropIdemLocked(id, e)
+	q.terminal = append(q.terminal, id)
+	for len(q.terminal) > q.terminalLimit() {
+		oldest := q.terminal[0]
+		q.terminal = q.terminal[1:]
+		if oe, ok := q.tasks[oldest]; ok && (oe.state == StateDone || oe.state == StateDead) {
+			delete(q.tasks, oldest)
+		}
+	}
+}
+
+// appendDeadLocked 追加死信并按上限淘汰最旧（调用方持锁）。
+func (q *MemoryQueue) appendDeadLocked(d DeadLetter) {
+	q.dead = append(q.dead, d)
+	if over := len(q.dead) - q.deadLimit(); over > 0 {
+		q.dead = append([]DeadLetter(nil), q.dead[over:]...)
+	}
+}
+
 // Enqueue 入队（幂等键命中时返回首次任务 ID，不重复入队）。
 func (q *MemoryQueue) Enqueue(ctx context.Context, t Task) (string, error) {
 	if ctx != nil && ctx.Err() != nil {
@@ -106,9 +171,11 @@ func (q *MemoryQueue) Enqueue(ctx context.Context, t Task) (string, error) {
 	if key != "" {
 		idemKey = tenant + "\x00" + key
 		if id, ok := q.idem[idemKey]; ok {
-			if _, alive := q.tasks[id]; alive {
-				return id, nil // 幂等命中：同 key 只执行一次
+			if e, alive := q.tasks[id]; alive && e.state != StateDone && e.state != StateDead {
+				return id, nil // 幂等命中：任务仍在队列/执行中，不重复入队
 			}
+			// 映射残留（任务已终态但快照已被上限淘汰）：清掉，按新任务处理。
+			delete(q.idem, idemKey)
 		}
 	}
 	id := strings.TrimSpace(t.ID)
@@ -128,7 +195,7 @@ func (q *MemoryQueue) Enqueue(ctx context.Context, t Task) (string, error) {
 	if nt.CreatedAt.IsZero() {
 		nt.CreatedAt = q.now()
 	}
-	q.tasks[id] = &taskEntry{task: nt, state: StatePending}
+	q.tasks[id] = &taskEntry{task: nt, state: StatePending, idemKey: idemKey}
 	q.ready = append(q.ready, id)
 	if idemKey != "" {
 		q.idem[idemKey] = id
@@ -167,19 +234,33 @@ func (q *MemoryQueue) Dequeue(ctx context.Context, workerID string, leaseTTL tim
 		wait := q.wait
 		q.mu.Unlock()
 
-		var timer <-chan time.Time
+		// C-13：用 NewTimer 且每个分支都 Stop。原实现 time.After 在每次
+		// 循环都新建定时器，被广播唤醒时旧 timer 不可 Stop、要留到租约
+		// 到期（默认 30s）才释放；高吞吐/16 worker 下会堆积大量未到期
+		// timer，造成堆内存抖动。
+		var (
+			timer  *time.Timer
+			timerC <-chan time.Time
+		)
 		if !next.IsZero() {
 			d := next.Sub(now)
 			if d <= 0 {
 				continue // 有租约刚好到期：立刻重查回收
 			}
-			timer = time.After(d)
+			timer = time.NewTimer(d)
+			timerC = timer.C
 		}
 		select {
 		case <-ctx.Done():
+			if timer != nil {
+				timer.Stop()
+			}
 			return nil, ctx.Err()
 		case <-wait:
-		case <-timer:
+			if timer != nil {
+				timer.Stop()
+			}
+		case <-timerC:
 		}
 	}
 }
@@ -226,11 +307,11 @@ func (q *MemoryQueue) reapLocked(now time.Time) {
 		}
 		e.lastErr = "租约过期未确认"
 		if e.attempts >= q.maxAttemptsFor(e.task) {
-			e.state = StateDead
-			q.dead = append(q.dead, DeadLetter{
+			q.appendDeadLocked(DeadLetter{
 				Task: cloneTask(e.task), Reason: e.lastErr,
 				Attempts: e.attempts, FailedAt: now,
 			})
+			q.markTerminalLocked(inf.taskID, e, StateDead)
 		} else {
 			e.state = StateFailed
 			q.ready = append(q.ready, inf.taskID)
@@ -251,6 +332,12 @@ func (q *MemoryQueue) nextDeadlineLocked() time.Time {
 }
 
 // Ack 确认任务成功（租约已过期/非本次投递 → ErrLeaseExpired）。
+//
+// C-14：**先验 token 再 reap**。原实现先 reapLocked 再查 token：租约恰好在
+// Ack 前一刻到期时，reap 会把 inflight 删掉并把任务重投（甚至进死信），
+// 于是一个**实际已成功**的任务被判 ErrLeaseExpired → 重复执行 + 运维看到
+// 假失败。现在先取 token：token 还在（即使 deadline 已过）就认这次确认，
+// 只在 token 已被回收（真正的重投已发生）时才返回 ErrLeaseExpired。
 func (q *MemoryQueue) Ack(ctx context.Context, lease *Lease) error {
 	if err := validateLease(lease); err != nil {
 		return err
@@ -260,20 +347,24 @@ func (q *MemoryQueue) Ack(ctx context.Context, lease *Lease) error {
 	if q.closed {
 		return ErrQueueClosed
 	}
-	q.reapLocked(q.now())
 	inf, ok := q.inflight[lease.Token]
 	if !ok || inf.taskID != lease.Task.ID {
+		q.reapLocked(q.now()) // 顺手清理其它过期租约
 		return ErrLeaseExpired
 	}
 	delete(q.inflight, lease.Token)
 	if e, ok := q.tasks[inf.taskID]; ok {
-		e.state = StateDone
+		q.markTerminalLocked(inf.taskID, e, StateDone)
 	}
+	q.reapLocked(q.now())
 	q.broadcastLocked()
 	return nil
 }
 
 // Nack 标记本次尝试失败：未达重试上限回 failed 待重投，否则进死信。
+//
+// C-14：与 Ack 同理，先验 token 再 reap；只要租约未被回收，本次 Nack 就
+// 归属于这次投递，不能被"刚好到期"误判成 ErrLeaseExpired。
 func (q *MemoryQueue) Nack(ctx context.Context, lease *Lease, reason string) error {
 	if err := validateLease(lease); err != nil {
 		return err
@@ -284,9 +375,9 @@ func (q *MemoryQueue) Nack(ctx context.Context, lease *Lease, reason string) err
 		return ErrQueueClosed
 	}
 	now := q.now()
-	q.reapLocked(now)
 	inf, ok := q.inflight[lease.Token]
 	if !ok || inf.taskID != lease.Task.ID {
+		q.reapLocked(now)
 		return ErrLeaseExpired
 	}
 	delete(q.inflight, lease.Token)
@@ -299,15 +390,16 @@ func (q *MemoryQueue) Nack(ctx context.Context, lease *Lease, reason string) err
 		e.lastErr = "执行失败"
 	}
 	if e.attempts >= q.maxAttemptsFor(e.task) {
-		e.state = StateDead
-		q.dead = append(q.dead, DeadLetter{
+		q.appendDeadLocked(DeadLetter{
 			Task: cloneTask(e.task), Reason: e.lastErr,
 			Attempts: e.attempts, FailedAt: now,
 		})
+		q.markTerminalLocked(inf.taskID, e, StateDead)
 	} else {
 		e.state = StateFailed
 		q.ready = append(q.ready, inf.taskID)
 	}
+	q.reapLocked(now)
 	q.broadcastLocked()
 	return nil
 }

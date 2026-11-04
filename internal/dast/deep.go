@@ -168,7 +168,7 @@ func (r *Runner) deepResidual(tgt Target, baseHeaders map[string]bool, done *int
 		if len(u) <= r.opts.MaxURLLen {
 			resp := probeGet(r, u, label, done, total)
 			if resp != nil {
-				if f := judgeDeep("crlf", resp, "", Target{URL: tgt.URL, Param: tgt.Param}); f != nil {
+				if f := judgeDeep("crlf", resp, "", Target{URL: tgt.URL, Param: tgt.Param}, crlfInject); f != nil {
 					f.Payload = crlfInject
 					chainEvidence(f, u, resp)
 					f.Signals = []string{"响应头新增 " + crlfHeaderName}
@@ -886,9 +886,17 @@ var xpathFormProbes = []string{"'", `"`, "1' or '1'='1"}
 
 // judgeDeep 深度面判定（SSTI / CRLF / NoSQL / XPath）。
 // 与 judge 分开维护：核心四类走 judge，新增面走这里，文件边界清晰。
-func judgeDeep(kind string, resp *Resp, baseline string, tgt Target) *Finding {
+//
+// payload 为可选实参：传入本次真正发出的探针串后，matchMarkerNotIn 的
+// 「标记是 payload 自身字面量 → 回显不算命中」防线才真正生效（B-11；
+// 此前所有调用点传空串，该防线是死代码）。不传等价于旧行为。
+func judgeDeep(kind string, resp *Resp, baseline string, tgt Target, payload ...string) *Finding {
 	if resp == nil {
 		return nil
+	}
+	pl := ""
+	if len(payload) > 0 {
+		pl = payload[0]
 	}
 	switch kind {
 	case "ssti":
@@ -921,7 +929,7 @@ func judgeDeep(kind string, resp *Resp, baseline string, tgt Target) *Finding {
 				Advice:   "禁止对用户输入做表达式求值",
 			}
 		}
-		if m := matchMarkerNotIn(resp.Body, baseline, "", spelMarkers); m != "" {
+		if m := matchMarkerNotIn(resp.Body, baseline, pl, spelMarkers); m != "" {
 			return &Finding{
 				Check: "expression-inject", Title: "表达式注入（解析报错特征）",
 				Severity: "medium", URL: tgt.URL, Param: tgt.Param,
@@ -930,7 +938,7 @@ func judgeDeep(kind string, resp *Resp, baseline string, tgt Target) *Finding {
 			}
 		}
 	case "nosql":
-		if m := matchMarkerNotIn(resp.Body, baseline, "", nosqlMarkers); m != "" {
+		if m := matchMarkerNotIn(resp.Body, baseline, pl, nosqlMarkers); m != "" {
 			return &Finding{
 				Check: "nosql-inject", Title: "NoSQL 注入（数据层报错特征）",
 				Severity: "high", URL: tgt.URL, Param: tgt.Param,
@@ -939,7 +947,7 @@ func judgeDeep(kind string, resp *Resp, baseline string, tgt Target) *Finding {
 			}
 		}
 	case "xpath":
-		if m := matchMarkerNotIn(resp.Body, baseline, "", xpathMarkers); m != "" {
+		if m := matchMarkerNotIn(resp.Body, baseline, pl, xpathMarkers); m != "" {
 			return &Finding{
 				Check: "xpath-inject", Title: "XPath 注入（解析报错特征）",
 				Severity: "high", URL: tgt.URL, Param: tgt.Param,
@@ -948,7 +956,7 @@ func judgeDeep(kind string, resp *Resp, baseline string, tgt Target) *Finding {
 			}
 		}
 	case "ldap":
-		if m := matchMarkerNotIn(resp.Body, baseline, "", ldapMarkers); m != "" {
+		if m := matchMarkerNotIn(resp.Body, baseline, pl, ldapMarkers); m != "" {
 			return &Finding{
 				Check: "ldap-inject", Title: "LDAP 注入（解析报错特征）",
 				Severity: "high", URL: tgt.URL, Param: tgt.Param,
@@ -971,7 +979,7 @@ func judgeDeep(kind string, resp *Resp, baseline string, tgt Target) *Finding {
 			Advice: "禁止将用户输入拼接进系统命令；使用参数化 API 与白名单",
 		}
 	case "log4j":
-		if m := matchMarkerNotIn(resp.Body, baseline, "", log4jMarkers); m != "" {
+		if m := matchMarkerNotIn(resp.Body, baseline, pl, log4jMarkers); m != "" {
 			return &Finding{
 				Check: "log4j-inject", Title: "疑似 Log4Shell / JNDI 注入特征",
 				Severity: "critical", URL: tgt.URL, Param: tgt.Param,
@@ -988,8 +996,10 @@ func judgeDeep(kind string, resp *Resp, baseline string, tgt Target) *Finding {
 // 深度面的家族名各自有专属判定（expression / nosql / xpath / ldap / log4j），
 // 直接走 judgeDeep，不要落回核心 judge——否则类名语义被折叠，
 // 比如 expression 会被当成 ssti 判、ldap/log4j 干脆判不出来。
-func probeJudge(kind string, resp *Resp, baseline string, tgt Target) *Finding {
-	if hit := judgeDeep(kind, resp, baseline, tgt); hit != nil {
+//
+// payload 为可选实参，透传给 judgeDeep 用于「排除探针自身字面量回显」。
+func probeJudge(kind string, resp *Resp, baseline string, tgt Target, payload ...string) *Finding {
+	if hit := judgeDeep(kind, resp, baseline, tgt, payload...); hit != nil {
 		return hit
 	}
 	return judge(kind, resp, baseline, tgt)

@@ -119,14 +119,14 @@ func TestValidateIPsAllOrNothing(t *testing.T) {
 
 	allowPrivate = false
 	if err := ValidateIPs([]netip.Addr{
-		netip.MustParseAddr("203.0.113.9"), // TEST-NET-3，本身合规
-		netip.MustParseAddr("127.0.0.1"),   // 混入回环 → 整体拒绝
+		netip.MustParseAddr("93.184.216.34"), // example.com：公网
+		netip.MustParseAddr("127.0.0.1"),     // 混入回环 → 整体拒绝
 	}); err == nil {
 		t.Error("答案集混入回环地址时应整体拒绝")
 	}
 	if err := ValidateIPs([]netip.Addr{
-		netip.MustParseAddr("203.0.113.9"),
-		netip.MustParseAddr("198.51.100.7"),
+		netip.MustParseAddr("93.184.216.34"),
+		netip.MustParseAddr("8.8.8.8"),
 	}); err != nil {
 		t.Errorf("全公网地址不应被拒：%v", err)
 	}

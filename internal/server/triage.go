@@ -69,7 +69,8 @@ func (s *Server) hTriageMark(w http.ResponseWriter, r *http.Request) {
 	if !decodeTriageBody(w, r, &body) {
 		return
 	}
-	if st.Get(scanID) == nil {
+	// BL-5：跨租户标记复核一律 404（不泄露存在性）。
+	if st.GetForTenant(scanID, tenantFromRequest(r)) == nil {
 		writeJSON(w, http.StatusNotFound, map[string]any{"error": "扫描记录不存在"})
 		return
 	}
@@ -94,7 +95,8 @@ func (s *Server) hTriageList(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	rec := st.Get(scanID)
+	// BL-5：跨租户读复核列表一律 404。
+	rec := st.GetForTenant(scanID, tenantFromRequest(r))
 	if rec == nil {
 		writeJSON(w, http.StatusNotFound, map[string]any{"error": "扫描记录不存在"})
 		return
@@ -181,35 +183,18 @@ func (s *Server) hWhitelistCheck(w http.ResponseWriter, r *http.Request) {
 
 // ---- 内部工具 ----
 
-// triageStoreBackend 复核/白名单能力（JSON/Tiered 存储满足；SQL 后端不支持）。
-// server 的 st 已抽象为 scanStore，这里用可选接口探测具体后端能力。
-type triageStoreBackend interface {
-	Get(id int64) *store.ScanRecord
-	TriageMark(scanID int64, fingerprint, verdict, note string) error
-	TriageList(scanID int64) []store.TriageEntry
-	TriageSummary(scanID int64) (fp, confirmed, ignored int)
-	WhitelistAdd(host, ruleID, reason string) error
-	WhitelistRemove(host, ruleID string) (bool, error)
-	WhitelistList() []store.WhitelistEntry
-	IsWhitelisted(host, ruleID string) bool
-}
-
-// triageStore 取历史存储；未初始化或后端不支持复核时写 503 并返回 nil。
-func (s *Server) triageStore(w http.ResponseWriter) triageStoreBackend {
+// triageStore 取历史存储；未初始化时写 503 并返回 nil。
+//
+// C-09：复核/白名单已纳入 scanStore 接口（JSON/Tiered 与 SQL 后端均实现），
+// 不再用类型断言探测具体后端；SQL 后端由 store.SQLStore 的迁移 004 表持久化。
+func (s *Server) triageStore(w http.ResponseWriter) scanStore {
 	if s == nil || s.st == nil {
 		writeJSON(w, http.StatusServiceUnavailable, map[string]any{
 			"error": "存储未初始化（缺少 data_dir），triage 不可用",
 		})
 		return nil
 	}
-	st, ok := s.st.(triageStoreBackend)
-	if !ok {
-		writeJSON(w, http.StatusServiceUnavailable, map[string]any{
-			"error": "当前历史存储后端（SQL）不支持复核/白名单，请使用 json 存储",
-		})
-		return nil
-	}
-	return st
+	return s.st
 }
 
 // triageScanID 解析路径参数 {scanID}（正整数），失败写 400。

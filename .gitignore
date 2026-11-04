@@ -44,13 +44,25 @@ __pycache__/
 _issue_*.md
 _review_*.md
 bin/
-data/
-data/.nuclei_cursor
-data/import-report.txt
-data/intel_dump.json.gz.orig
-data/intel_overrides.json
-data/nuclei/
-data/nuclei_checks.json
+# data/：只忽略**运行产物/本地产物**，引擎与 Dockerfile 依赖的静态资产必须可提交。
+# 历史写法是整目录 `data/`，导致已跟踪的 46 个资产（data/go、data/wordlists、
+# data/*.gz 等）只能靠 `git add -f` 进来，而新增资产会被 `git add .` 静默漏掉（E-05）。
+# 注意 git 规则：父目录被排除时子项无法再 include，故这里用 `/data/*`（只排一层）
+# 而不是 `data/`，再用 `!` 逐项放行。
+/data/*
+!/data/go/
+!/data/wordlists/
+!/data/asset-extras/
+!/data/*.json
+!/data/*.gz
+# 以下为运行产物 / 本地产物，保持忽略（写在放行规则之后，后匹配者生效）
+/data/state/
+/data/nuclei/
+/data/.nuclei_cursor
+/data/import-report.txt
+/data/intel_dump.json.gz.orig
+/data/intel_overrides.json
+/data/nuclei_checks.json
 # .archive/：保留但不参与构建/测试/发版的退役产物
 # （Go/Node 工具链天然忽略点目录；此处只兜底归档物里可能出现的本机构建产物）
 .archive/**/node_modules/

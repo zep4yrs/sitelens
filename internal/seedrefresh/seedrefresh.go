@@ -69,12 +69,15 @@ func covered(rel string) bool {
 	return false
 }
 
-// Plan 一次交付计划：要覆盖的文件、跳过的原因。
+// Plan 一次交付计划：要覆盖的文件、跳过/复用的文件。
 type Plan struct {
 	Version string
 	Copy    []Item
 	Keep    []Item
-	Skipped bool // 版本一致，无需交付
+	// Unchanged 白名单内但「包内内容 == 用户区现有内容」的文件（C-16 差分：
+	// 不再整份重拷，升级时只写真正变化的大资产，如 NVD 32MB / onnxruntime）。
+	Unchanged []Item
+	Skipped   bool // 版本一致，无需交付
 }
 
 // Item 单个种子文件（相对路径 + 源/目标绝对路径 + 是否已存在）。
@@ -83,11 +86,17 @@ type Item struct {
 	Src      string
 	Dst      string
 	Existing bool
+	// Sha256 源文件摘要（Build 计算；Copy/Unchanged 均填充，供清单复用）。
+	Sha256 string
 }
 
 // Build 比较包种子目录（seedDir，即安装目录里的 data 目录）与用户数据区
 // （userDir），产出交付计划。installedVersion 为用户区已交付的版本
 // （空表示从未交付）。
+//
+// C-16：白名单内文件做 sha256 差分——包内内容与用户区现有内容一致时归入
+// Unchanged（不拷贝），仅 Copy 真正变化的文件。语义保持"包内快照是权威源"：
+// 用户手动 update-* 改过的大资产（dst 摘要 != 包内摘要）仍会被覆盖。
 func Build(seedDir, userDir, currentVersion, installedVersion string) (Plan, error) {
 	p := Plan{Version: currentVersion}
 	if currentVersion != "" && installedVersion == currentVersion {
@@ -113,11 +122,22 @@ func Build(seedDir, userDir, currentVersion, installedVersion string) (Plan, err
 		if _, serr := os.Stat(dst); serr == nil {
 			item.Existing = true
 		}
-		if covered(rel) {
-			p.Copy = append(p.Copy, item)
-		} else {
+		if !covered(rel) {
 			p.Keep = append(p.Keep, item)
+			return nil
 		}
+		srcSum, herr := SHA256File(path)
+		if herr != nil {
+			return fmt.Errorf("计算种子摘要 %s：%w", item.Rel, herr)
+		}
+		item.Sha256 = srcSum
+		if item.Existing {
+			if dstSum, derr := SHA256File(dst); derr == nil && dstSum == srcSum {
+				p.Unchanged = append(p.Unchanged, item) // 摘要一致：跳过拷贝
+				return nil
+			}
+		}
+		p.Copy = append(p.Copy, item)
 		return nil
 	})
 	if err != nil {
@@ -126,8 +146,8 @@ func Build(seedDir, userDir, currentVersion, installedVersion string) (Plan, err
 	return p, nil
 }
 
-// Apply 执行交付：覆盖白名单内种子（原子替换：临时文件 + rename），
-// 写回版本清单。delivered 为空时也写清单——「这次包的种子已交付」这一点
+// Apply 执行交付：只覆盖计划内的变化文件（原子替换：临时文件 + rename），
+// 写回版本清单。即使没有文件需要拷贝也写清单——「这次包的种子已交付」这一点
 // 必须落盘，否则下次启动会把同一批种子再覆盖一遍。
 func Apply(plan Plan, userDir string) (int, error) {
 	n := 0
@@ -143,7 +163,7 @@ func Apply(plan Plan, userDir string) (int, error) {
 	return n, nil
 }
 
-// CopyFile 原子拷贝（同目录临时文件 + rename），失败不留半截文件。
+// CopyFile 原子拷贝（同目录临时文件 + fsync + rename），失败不留半截文件。
 func CopyFile(src, dst string) error {
 	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
 		return err
@@ -163,6 +183,13 @@ func CopyFile(src, dst string) error {
 		os.Remove(tmp)
 		return err
 	}
+	// C-16：rename 前 fsync，避免"清单已记新版本、文件内容还在页缓存"的
+	// 崩溃窗口（桌面壳升级后立刻断电的典型场景）。
+	if err := out.Sync(); err != nil {
+		out.Close()
+		os.Remove(tmp)
+		return err
+	}
 	if err := out.Close(); err != nil {
 		os.Remove(tmp)
 		return err
@@ -175,12 +202,19 @@ func CopyFile(src, dst string) error {
 }
 
 // writeManifest 落交付清单（含每份种子的 sha256，供复核与后续差分交付复用）。
+//
+// C-16：temp + fsync + rename 原子替换（原实现直接 WriteFile，崩溃会留下
+// 半截 JSON → LoadManifest 视为"从未交付" → 下次启动整批重拷）。
+// 清单覆盖本次计划内**全部白名单文件**（Copy + Unchanged），差分才有完整基线。
 func writeManifest(userDir string, plan Plan) error {
 	m := Manifest{Version: plan.Version, Files: map[string]string{}}
-	for _, it := range plan.Copy {
-		sum, err := SHA256File(it.Dst)
-		if err != nil {
-			return err
+	for _, it := range append(append([]Item(nil), plan.Copy...), plan.Unchanged...) {
+		sum := it.Sha256
+		if sum == "" {
+			var err error
+			if sum, err = SHA256File(it.Dst); err != nil {
+				return err
+			}
 		}
 		m.Files[it.Rel] = sum
 	}
@@ -189,7 +223,30 @@ func writeManifest(userDir string, plan Plan) error {
 		return err
 	}
 	b = append(b, '\n')
-	return os.WriteFile(filepath.Join(userDir, ManifestName), b, 0o644)
+	if err := os.MkdirAll(userDir, 0o755); err != nil {
+		return err
+	}
+	tmp, err := os.CreateTemp(userDir, ManifestName+".*.tmp")
+	if err != nil {
+		return err
+	}
+	tmpName := tmp.Name()
+	defer os.Remove(tmpName) // 成功后 rename 已移走，失败则清理残留
+	if _, err := tmp.Write(b); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Sync(); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	if err := os.Rename(tmpName, filepath.Join(userDir, ManifestName)); err != nil {
+		return err
+	}
+	return nil
 }
 
 // LoadManifest 读用户区交付清单；不存在/损坏返回零值（视为从未交付）。
@@ -224,6 +281,6 @@ func (p Plan) Describe() string {
 	if p.Skipped {
 		return "种子已是 v" + p.Version + "，无需交付"
 	}
-	return fmt.Sprintf("种子交付 v%s：覆盖 %d 份，保留用户区独有 %d 份",
-		p.Version, len(p.Copy), len(p.Keep))
+	return fmt.Sprintf("种子交付 v%s：覆盖 %d 份，摘要一致复用 %d 份，保留用户区独有 %d 份",
+		p.Version, len(p.Copy), len(p.Unchanged), len(p.Keep))
 }

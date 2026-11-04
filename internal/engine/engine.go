@@ -4,13 +4,16 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"net"
 	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
+	"runtime/debug"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"cnb.cool/feng-qiao/sitelens/internal/authn"
@@ -89,8 +92,12 @@ type progress func(percent int, msg string)
 // Engine 一次完整扫描的编排器。
 // matcher/kb 支持运行期热替换（SetMatcher/SetKB）：换枪为指针原子语义，
 // 进行中的扫描持旧快照不受影响，新扫描取新数据。
+//
+// cfg 同为不可变快照（A-09）：写侧只在设置页保存时经 SetConfig 原子换枪；
+// 读侧一律经 Config() 取指针，单次 Scan 在入口取一次并贯穿全流程
+// （含其内部 goroutine），保证一次扫描内配置自洽。
 type Engine struct {
-	cfg         *config.Config
+	cfgPtr      atomic.Pointer[config.Config] // 当前配置快照（只读；SetConfig 换枪）
 	dataMu      sync.Mutex
 	matcher     *sitelens.Matcher
 	kb          *intel.KB
@@ -116,11 +123,35 @@ func New(cfg *config.Config, matcher *sitelens.Matcher, kb *intel.KB) *Engine {
 		cfg = config.Default()
 	}
 	target.SetAllowPrivate(cfg.Target.AllowPrivate) // 本机靶场/授权内网开关（默认 false）
-	e := &Engine{cfg: cfg}
+	e := &Engine{}
+	e.SetConfig(cfg)
 	e.SetMatcher(matcher)
 	e.SetKB(kb)
 	e.loadNucleiLRU()
 	return e
+}
+
+// Config 返回当前配置快照。返回的 *config.Config 视为**只读**：任何修改
+// 必须先自行深拷贝、改拷贝、再经 SetConfig 原子换枪（禁止原地改旧结构，
+// 否则与正在读快照的扫描/请求构成数据竞争）。
+func (e *Engine) Config() *config.Config {
+	if e == nil {
+		return nil
+	}
+	return e.cfgPtr.Load()
+}
+
+// SetConfig 原子换枪配置快照（nil = 默认配置）。换枪语义：进行中的扫描
+// 持旧快照不受影响，下一次扫描/调用才取新值。
+//
+// 注意：target.allow_private 是包级全局闸门（非本快照字段），只在装配时经
+// New 接线（与既往语义一致），这里刻意不重复写全局，避免设置页热更新与
+// 扫描期 target.Validate 的全局读构成竞争。
+func (e *Engine) SetConfig(c *config.Config) {
+	if c == nil {
+		c = config.Default()
+	}
+	e.cfgPtr.Store(c)
 }
 
 // SetMatcher 热替换指纹库（nil = 空 matcher，识别降级为无命中）。
@@ -149,7 +180,70 @@ func (e *Engine) snapshot() (*sitelens.Matcher, *intel.KB) {
 
 // Scan 执行扫描，异常统一进 Result.Error（消息可直接展示）。
 // cancel 非空时在阶段边界与 check 循环内轮询，返回 true 即尽快终止（局部结果仍返回）。
+//
+// V-09（引擎侧兜底）：Scan 是导出入口，调用方（scheduler/server/CLI/MCP）
+// 未必都包了 recover。顶层捕获 panic → 记日志（含栈）+ 返回带 Error 的
+// 非 nil 结果，绝不让 panic 穿透出引擎边界。scanImpl 保留原有正常路径语义。
 func (e *Engine) Scan(rawURL string, opts Options, onProgress progress, cancel func() bool) *Result {
+	return runScanGuarded(rawURL, func() *Result {
+		return e.scanImpl(rawURL, opts, onProgress, cancel)
+	})
+}
+
+// runScanGuarded 执行扫描主体并把 panic 收敛为 Error 结果（V-09）。
+// 独立成函数便于回归测试直接注入 panic 主体。
+func runScanGuarded(rawURL string, fn func() *Result) (res *Result) {
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("[panic] engine.Scan: %v\n%s", r, debug.Stack())
+			if res == nil {
+				res = &Result{
+					URL:             rawURL,
+					ScannedAt:       time.Now().Format("2006-01-02 15:04:05"),
+					Technologies:    []Tech{},
+					Vulnerabilities: []intel.Finding{},
+					Verified:        []map[string]any{},
+					Pages:           []PageInfo{},
+				}
+			}
+			if res.Extras == nil {
+				res.Extras = map[string]any{}
+			}
+			res.Error = "内部错误：" + panicSummary(r)
+			res.Extras["panic"] = panicSummary(r)
+		}
+	}()
+	return fn()
+}
+
+// panicSummary 把 panic 值压成单行摘要（完整栈只进日志，不进结果/接口）。
+func panicSummary(r any) string {
+	s := strings.TrimSpace(fmt.Sprintf("%v", r))
+	if s == "" {
+		s = "(空 panic)"
+	}
+	if len([]rune(s)) > 200 {
+		s = string([]rune(s)[:200]) + "…"
+	}
+	return s
+}
+
+// safeGo 引擎自建 goroutine 的统一入口（V-09）：worker 内 panic 只记日志
+// （含栈）不重抛，避免单个 goroutine panic 打崩整个进程。
+// name 用于日志定位；fn 自身负责 wg.Done / 锁清理等 defer。
+func safeGo(name string, fn func()) {
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				log.Printf("[panic] engine goroutine %s: %v\n%s", name, r, debug.Stack())
+			}
+		}()
+		fn()
+	}()
+}
+
+// scanImpl 扫描主体（原 Scan 实现；正常路径语义保持不变）。
+func (e *Engine) scanImpl(rawURL string, opts Options, onProgress progress, cancel func() bool) *Result {
 	// 活跃扫描计数：增减均持 dataMu，与 ReleaseIntel 的「检查+释放」互斥，
 	// 杜绝计数为 0 判定后、释放完成前新扫描取到快照的窗口。
 	e.dataMu.Lock()
@@ -195,7 +289,13 @@ func (e *Engine) Scan(rawURL string, opts Options, onProgress progress, cancel f
 
 	// 4.0 Track A / A7：内存预算器——超限逐级降档（爬取页数减半 → nuclei 减半 →
 	// 跳过主动模块），全部降档动作记入 Extras["budget"] 并推事件流（明示降级）。
-	maxMemMB := float64(e.cfg.Scan.MaxMemoryMB)
+	// A-09 配置快照：本次扫描（含其内部 goroutine）全程只用这里取到的一份，
+	// 设置页热更新只影响下一次扫描，避免扫描中途换枪导致前后段配置不一致。
+	cfg := e.Config()
+	if cfg == nil { // 防御：调用方未通过 New/SetConfig 注入配置
+		cfg = config.Default()
+	}
+	maxMemMB := float64(cfg.Scan.MaxMemoryMB)
 	var budgetDegrades []string
 	overBudget := func() bool {
 		return maxMemMB > 0 && resource.HeapAllocMB() > maxMemMB
@@ -208,7 +308,7 @@ func (e *Engine) Scan(rawURL string, opts Options, onProgress progress, cancel f
 	//    不猜域名、不切 www/apex、不扩范围；修正在 extras 留痕供前端/报告回显。
 	rawURLInput := rawURL
 	var urlCorrections []string
-	if e.cfg.Target.AutoNormalize {
+	if cfg.Target.AutoNormalize {
 		if nr := target.Normalize(rawURL); len(nr.Changes) > 0 {
 			rawURL = nr.URL
 			urlCorrections = nr.Changes
@@ -216,13 +316,13 @@ func (e *Engine) Scan(rawURL string, opts Options, onProgress progress, cancel f
 	}
 
 	// 1) 校验（含 SSRF 防护）
-	scheme, host, port, err := target.Validate(rawURL, e.cfg.Scan.Resolve)
+	scheme, host, port, err := target.Validate(rawURL, cfg.Scan.Resolve)
 	if err != nil {
 		res.Error = err.Error()
 		finish()
 		return res
 	}
-	if !target.Allowed(host, e.cfg.Scan.AllowHosts) {
+	if !target.Allowed(host, cfg.Scan.AllowHosts) {
 		res.Error = "目标不在 allow_hosts 授权白名单：" + host
 		finish()
 		return res
@@ -253,7 +353,7 @@ func (e *Engine) Scan(rawURL string, opts Options, onProgress progress, cancel f
 	res.URL, res.Host = baseURL, host
 	onProgress(5, "校验目标："+seedURL)
 
-	client := e.newClient(opts)
+	client := e.newClientWith(cfg, opts)
 	authDone := false
 	// CP-02：认证矩阵注入（SLENS_AUTH_*；无配置零行为变化）。既有表单登录流
 	// 在下方 authn.Login 路径保持不变；矩阵配置非法时显式失败（不静默降级）。
@@ -270,7 +370,7 @@ func (e *Engine) Scan(rawURL string, opts Options, onProgress progress, cancel f
 	// URL 不会命中，也不会写入）。blocked：拦截响应不进任何判定。
 	blocked := newBlockedTracker()
 	roCache := newReadOnlyCache()
-	diag = newDiagRecorder(client, blocked, opts.Deep, e.cfg.Scan.RateMode, e.cfg.Scan.RateMaxRPS)
+	diag = newDiagRecorder(client, blocked, opts.Deep, cfg.Scan.RateMode, cfg.Scan.RateMaxRPS)
 	// 实时统计：请求数/拦截数取自 client.Stats()，页面数由爬虫钩子累加；
 	// 节流推送给服务端 job（前端实时面板消费），不参与任何判定。
 	live = newLiveTracker(func() httpx.Stats { return client.Stats() }, opts.OnLive)
@@ -286,11 +386,11 @@ func (e *Engine) Scan(rawURL string, opts Options, onProgress progress, cancel f
 
 	// 认证深化：配置了登录流则以凭证登录，捕获的会话 Cookie 供
 	// 整次扫描（爬虫/DAST/目录探测）复用；用户显式给的 Cookie 优先
-	if e.cfg.Auth.LoginURL != "" && opts.AuthCookie == "" {
+	if cfg.Auth.LoginURL != "" && opts.AuthCookie == "" {
 		dt, ds := diag.begin()
 		onProgress(8, "认证登录…")
-		emit("auth", "登录中："+e.cfg.Auth.LoginURL)
-		if cookie, ok, msg := authn.Login(client, e.cfg.Auth); ok {
+		emit("auth", "登录中："+cfg.Auth.LoginURL)
+		if cookie, ok, msg := authn.Login(client, cfg.Auth); ok {
 			client.SetCookie(cookie)
 			authDone = true
 			onProgress(9, "认证成功："+msg)
@@ -366,7 +466,7 @@ func (e *Engine) Scan(rawURL string, opts Options, onProgress progress, cancel f
 	if matcher != nil {
 		favHash = sitelens.FaviconHashOf(client, baseURL)
 	}
-	stream := newPageStream(matcher, favHash, opts.Passive, e.cfg.Checks.Workers)
+	stream := newPageStream(matcher, favHash, opts.Passive, cfg.Checks.Workers)
 	stream.push(home, doc) // 首页先入流水线（不重复抓取）
 
 	acc := newTechAcc()
@@ -417,15 +517,15 @@ func (e *Engine) Scan(rawURL string, opts Options, onProgress progress, cancel f
 		dtCrawl, dsCrawl := diag.begin()
 		onProgress(40, "同域浅爬取…")
 		live.setPhase("crawl", "同域爬取")
-		cc := e.cfg.Crawler
+		cc := cfg.Crawler
 		if overBudget() {
 			cc.MaxPages /= 2
 			noteBudget("爬取页数减半（" + fmt.Sprint(cc.MaxPages) + "）")
 		}
 		c := crawler.New(client, cc, baseURL)
-		c.MaxDepth = e.cfg.Crawler.MaxDepth
-		if e.cfg.Crawler.Headless {
-			c.SetRenderer(chromeRenderer{headless.NewChrome(time.Duration(e.cfg.Crawler.HeadlessTimeoutSec)*time.Second, e.cfg.Crawler.HeadlessExecPath)})
+		c.MaxDepth = cfg.Crawler.MaxDepth
+		if cfg.Crawler.Headless {
+			c.SetRenderer(chromeRenderer{headless.NewChrome(time.Duration(cfg.Crawler.HeadlessTimeoutSec)*time.Second, cfg.Crawler.HeadlessExecPath)})
 		}
 		var seeds []string
 		for _, ep := range jsEndpoints {
@@ -465,8 +565,8 @@ func (e *Engine) Scan(rawURL string, opts Options, onProgress progress, cancel f
 		allLinks = append(allLinks, cr.AllLinks...)
 		// 认证深化：未配置 login_url 时，从爬到的表单里自动发现登录表单
 		// （含 password 输入框）并以凭证登录——DAST/目录探测随后带认证态
-		if e.cfg.Auth.LoginURL == "" && opts.AuthCookie == "" &&
-			e.cfg.Auth.Username != "" && e.cfg.Auth.Password != "" && !authDone {
+		if cfg.Auth.LoginURL == "" && opts.AuthCookie == "" &&
+			cfg.Auth.Username != "" && cfg.Auth.Password != "" && !authDone {
 			sigs := make([]authn.FormSig, 0, len(cr.Forms))
 			for _, f := range cr.Forms {
 				if !f.HasPwd {
@@ -478,7 +578,7 @@ func (e *Engine) Scan(rawURL string, opts Options, onProgress progress, cancel f
 				}
 				sigs = append(sigs, sg)
 			}
-			if cookie, ok, msg := authn.AutoDetect(client, sigs, baseURL, e.cfg.Auth); ok {
+			if cookie, ok, msg := authn.AutoDetect(client, sigs, baseURL, cfg.Auth); ok {
 				client.SetCookie(cookie)
 				authDone = true
 				onProgress(45, "自动发现登录表单并登录："+msg)
@@ -514,7 +614,7 @@ func (e *Engine) Scan(rawURL string, opts Options, onProgress progress, cancel f
 	}
 
 	// 4.0 Track A / A8：页面清单驻留上限（超出省略并计数，削扫描期内存）
-	if capN := e.cfg.Scan.PagesRetained; capN > 0 && len(res.Pages) > capN {
+	if capN := cfg.Scan.PagesRetained; capN > 0 && len(res.Pages) > capN {
 		res.Extras["pages_omitted"] = len(res.Pages) - capN
 		res.Pages = res.Pages[:capN]
 	}
@@ -618,8 +718,8 @@ func (e *Engine) Scan(rawURL string, opts Options, onProgress progress, cancel f
 		// 核心档位扩展集增量纳入（只增不删）；中段家族联动在 runner 内由
 		// 命中触发；收尾富化见步骤 12。任一环节失败静默跳过。
 		var prior *checks.Prior
-		if e.cfg.ML.Predict && !cancelled() {
-			if p, promoted, info := e.mlPrior(res, home, opts.Checks, cmsIDs); p != nil {
+		if cfg.ML.Predict && !cancelled() {
+			if p, promoted, info := e.mlPriorWith(cfg, res, home, opts.Checks, cmsIDs); p != nil {
 				prior = p
 				cmsIDs = append(cmsIDs, promoted...)
 				res.Extras["ml_prior"] = info
@@ -629,7 +729,7 @@ func (e *Engine) Scan(rawURL string, opts Options, onProgress progress, cancel f
 				}
 			}
 		}
-		hits, checkRuns := checks.RunChecksWithPrior(client, baseURL, opts.Checks, cmsIDs, prior, e.cfg.Checks.Workers, cancelled,
+		hits, checkRuns := checks.RunChecksWithPrior(client, baseURL, opts.Checks, cmsIDs, prior, cfg.Checks.Workers, cancelled,
 			func(done, total int, msg string) {
 				if total > 0 {
 					onProgress(75+done*10/total, "check："+msg)
@@ -667,7 +767,7 @@ func (e *Engine) Scan(rawURL string, opts Options, onProgress progress, cancel f
 	}
 
 	// 6.5) Nuclei 社区模板子集（all 级别 + 模板库存在时）
-	if opts.Checks == "all" && !cancelled() && e.cfg.Checks.NucleiCap > 0 && e.cfg.Checks.NucleiDir != "" {
+	if opts.Checks == "all" && !cancelled() && cfg.Checks.NucleiCap > 0 && cfg.Checks.NucleiDir != "" {
 		dtNuc, dsNuc := diag.begin()
 		onProgress(84, "运行 Nuclei 社区模板子集…")
 		live.setPhase("nuclei", "模板检测")
@@ -675,14 +775,14 @@ func (e *Engine) Scan(rawURL string, opts Options, onProgress progress, cancel f
 			// 先解析有效值：未显式指定（0）时降档须作用于配置默认上限，
 			// 否则 0/2=0 会被 nucleiSubset 重置回全量配置上限（降档空操作）
 			if opts.NucleiCap <= 0 {
-				opts.NucleiCap = e.cfg.Checks.NucleiCap
+				opts.NucleiCap = cfg.Checks.NucleiCap
 			}
 			if opts.NucleiCap > 1 {
 				opts.NucleiCap /= 2
 			}
 			noteBudget("Nuclei 模板上限减半（" + fmt.Sprint(opts.NucleiCap) + "）")
 		}
-		if nl, stat := e.nucleiSubset(res.Technologies, res.Title, opts.NucleiCap); stat != nil {
+		if nl, stat := e.nucleiSubsetWith(cfg, res.Technologies, res.Title, opts.NucleiCap); stat != nil {
 			// 模板通道可见性：不记录的话，报告里只有"跑了 N 条"，
 			// 看不出预算是被 tag 命中吃掉的还是被 LRU 轮转吃掉的——
 			// 而这两者的命中概率差一个量级（EXP-1003：info 暴露面类
@@ -690,7 +790,7 @@ func (e *Engine) Scan(rawURL string, opts Options, onProgress progress, cancel f
 			res.Extras["nuclei"] = stat
 			// CP-05：模板批次接入分片执行（默认 ShardWorkers=0 走原路径）。
 			nHits, nRuns, shardInfo := runCheckList(client, baseURL, nl,
-				e.cfg.Checks.Workers, cancelled,
+				cfg.Checks.Workers, cancelled,
 				func(done, total int, msg string) {
 					if total > 0 {
 						onProgress(84, fmt.Sprintf("nuclei %d/%d", done, total))
@@ -767,36 +867,36 @@ func (e *Engine) Scan(rawURL string, opts Options, onProgress progress, cancel f
 		// B4：不再 Reset 全局表——token 自 scoped（各自只认自己发出的），
 		// 并发扫描互不干扰；过期条目由 maxEntries LRU 自然淘汰
 		beaconBase := ""
-		if e.cfg.Ssrf.BeaconEnabled && e.cfg.Ssrf.BeaconBase != "" {
-			beaconBase = strings.TrimRight(e.cfg.Ssrf.BeaconBase, "/")
+		if cfg.Ssrf.BeaconEnabled && cfg.Ssrf.BeaconBase != "" {
+			beaconBase = strings.TrimRight(cfg.Ssrf.BeaconBase, "/")
 		}
-		deepOn := e.cfg.DAST.DeepProbes
-		errStatusOn := e.cfg.DAST.ErrorStatus
+		deepOn := cfg.DAST.DeepProbes
+		errStatusOn := cfg.DAST.ErrorStatus
 		// 只读页面复用：cache 里只有首页/种子/爬取页（DAST payload URL 不会命中）；
 		// 被 WAF/限流拦截的响应在 fetcher 层直接按「无响应」处理。
 		df := dastFetcher{c: client, cache: roCache, blocked: blocked, live: live}
 		r := dast.New(df, dast.Options{
-			MaxParams:         e.cfg.DAST.MaxParams,
-			TimeBlind:         e.cfg.DAST.TimeBlind,
-			BoolBlind:         e.cfg.DAST.BoolBlind,
-			BlindThresholdMS:  e.cfg.DAST.BlindThresholdMS,
-			SleepSeconds:      e.cfg.DAST.SleepSeconds,
-			MaxURLLen:         e.cfg.DAST.MaxURLLen,
+			MaxParams:         cfg.DAST.MaxParams,
+			TimeBlind:         cfg.DAST.TimeBlind,
+			BoolBlind:         cfg.DAST.BoolBlind,
+			BlindThresholdMS:  cfg.DAST.BlindThresholdMS,
+			SleepSeconds:      cfg.DAST.SleepSeconds,
+			MaxURLLen:         cfg.DAST.MaxURLLen,
 			BeaconBase:        beaconBase,
-			MaxProbes:         e.cfg.Ssrf.MaxProbes,
+			MaxProbes:         cfg.Ssrf.MaxProbes,
 			DeepProbes:        &deepOn,
-			CmdInject:         e.cfg.DAST.CmdInject && deepOn,
-			CRLF:              e.cfg.DAST.CRLF && deepOn,
+			CmdInject:         cfg.DAST.CmdInject && deepOn,
+			CRLF:              cfg.DAST.CRLF && deepOn,
 			ErrorStatus:       &errStatusOn,
-			RandomDiff:        e.cfg.DAST.RandomDiff && deepOn,
-			StoredXSS:         e.cfg.DAST.StoredXSS && deepOn,
-			WeakCookie:        e.cfg.DAST.WeakCookie && deepOn,
-			CaptchaReplay:     e.cfg.LoginBrute.CaptchaReplay && deepOn,
-			AuthzBypass:       e.cfg.DAST.AuthzBypass && deepOn,
-			APIAudit:          e.cfg.DAST.APIAudit && deepOn,
-			CryptoProbe:       e.cfg.DAST.CryptoProbe && deepOn,
-			UploadBypass:      e.cfg.DAST.UploadBypass && deepOn,
-			MaxProbesPerClass: e.cfg.DAST.MaxProbesPerClass,
+			RandomDiff:        cfg.DAST.RandomDiff && deepOn,
+			StoredXSS:         cfg.DAST.StoredXSS && deepOn,
+			WeakCookie:        cfg.DAST.WeakCookie && deepOn,
+			CaptchaReplay:     cfg.LoginBrute.CaptchaReplay && deepOn,
+			AuthzBypass:       cfg.DAST.AuthzBypass && deepOn,
+			APIAudit:          cfg.DAST.APIAudit && deepOn,
+			CryptoProbe:       cfg.DAST.CryptoProbe && deepOn,
+			UploadBypass:      cfg.DAST.UploadBypass && deepOn,
+			MaxProbesPerClass: cfg.DAST.MaxProbesPerClass,
 			OnHit: func(f dast.Finding) {
 				emit("hit", f.Severity+" · "+f.Title+" — "+f.Param)
 			},
@@ -806,12 +906,12 @@ func (e *Engine) Scan(rawURL string, opts Options, onProgress progress, cancel f
 		// 接收端/本地 CSV，覆盖 SSRF / 盲 XSS / XXE 外发 / JNDI 出带。
 		// 默认关；开启后对候选参数各发一次探针（有界）。
 		oobCfg := dast.OobConfig{
-			Enabled:   e.cfg.Oob.Enabled,
-			Mode:      e.cfg.Oob.Mode,
-			Callback:  e.cfg.Oob.Callback,
-			CSVPath:   e.cfg.Oob.CSVPath,
-			TokenHost: e.cfg.Oob.TokenHost,
-			MaxProbes: e.cfg.Oob.MaxProbes,
+			Enabled:   cfg.Oob.Enabled,
+			Mode:      cfg.Oob.Mode,
+			Callback:  cfg.Oob.Callback,
+			CSVPath:   cfg.Oob.CSVPath,
+			TokenHost: cfg.Oob.TokenHost,
+			MaxProbes: cfg.Oob.MaxProbes,
 		}
 		for _, f := range r.RunForms(dastFormTargets) {
 			dastAll = append(dastAll, f)
@@ -877,12 +977,12 @@ func (e *Engine) Scan(rawURL string, opts Options, onProgress progress, cancel f
 		}
 		// 3.0 利用级无害验证：双开关（请求开关 × config exploit.enabled，
 		// 设置页「利用级验证」控制总闸）；目标合规责任在使用者
-		if opts.Exploit && e.cfg.Exploit.Enabled && len(dastAll) > 0 {
+		if opts.Exploit && cfg.Exploit.Enabled && len(dastAll) > 0 {
 			onProgress(86, "利用级无害验证…")
 			live.setPhase("exploit", "利用级验证")
 			// exploit 层不复用只读缓存（proven 证据必须来自本次新鲜请求），
 			// 但仍做拦截隔离（WAF 回显 payload 不能算 proven）。
-			proven, observed := e.runExploit(host, dastAll, dastMaps,
+			proven, observed := e.runExploitWith(cfg, host, dastAll, dastMaps,
 				dastFetcher{c: client, blocked: blocked, live: live}, emit)
 			res.Extras["exploit"] = map[string]any{
 				"proven": proven, "observed": observed, "gate": "enabled",
@@ -901,7 +1001,7 @@ func (e *Engine) Scan(rawURL string, opts Options, onProgress progress, cancel f
 		// 8.1) G09/G10 进阶面（additive，config.DAST 五个开关默认全关）：
 		// 协议面 / 反序列化标记 / 业务逻辑与上传 dry-run 计划 / 多会话越权。
 		// 全关时无请求、无输出；开关开启也只做只读探测（logic/upload 仅计划）。
-		e.runWebAdvanced(client, blocked, pages, dastFormTargets, dastLinks, baseURL,
+		e.runWebAdvancedWith(cfg, client, blocked, pages, dastFormTargets, dastLinks, baseURL,
 			res, opts, opts.Sessions, onProgress, live, emit)
 		// 去重命中 = 引擎只读页复用 + DAST benign 基线跨通道复用（payload 不复用）。
 		diag.end("dast", dtDAST, dsDAST, (roCache.Hits()-dedupBefore)+r.BaseCacheHits())
@@ -914,7 +1014,7 @@ func (e *Engine) Scan(rawURL string, opts Options, onProgress progress, cancel f
 		emit("budget", "内存超预算，跳过主动模块段")
 	} else if opts.DirScan || opts.Subdomain || opts.Webshell || opts.WeakAudit || opts.ActiveFP || opts.ServiceProbe || opts.NetProto {
 		dtMod, dsMod := diag.begin()
-		ac := e.cfg.Active
+		ac := cfg.Active
 		if opts.DirBypass {
 			ac.DirBypass403 = true // 每次扫描可覆盖配置（对齐 Python options.dir_bypass）
 		}
@@ -944,8 +1044,8 @@ func (e *Engine) Scan(rawURL string, opts Options, onProgress progress, cancel f
 			// active 词表并集拉进来——默认 300 条保守词表在实测里
 			// 只覆盖全量 9633 条的 55/9633，upload 端点一个都不在。
 			// 升级只在显式大词表档位发生，不改默认档位的请求预算。
-			if opts.DirFullWords && ac.DirMaxPaths < len(fullWordlistUnion(e.cfg.Active.WordlistDir)) {
-				ac.DirMaxPaths = len(fullWordlistUnion(e.cfg.Active.WordlistDir))
+			if opts.DirFullWords && ac.DirMaxPaths < len(fullWordlistUnion(cfg.Active.WordlistDir)) {
+				ac.DirMaxPaths = len(fullWordlistUnion(cfg.Active.WordlistDir))
 			}
 			// 爬取链接扩展：端点存在性核查（词表猜不到的端点在链接里）。
 			viaOf := func(link string) string { return pageOfLink(link, pageURLs) }
@@ -970,17 +1070,12 @@ func (e *Engine) Scan(rawURL string, opts Options, onProgress progress, cancel f
 			// 目录列表开启 / 403 可绕过 / 路径存在且可直读（源码/配置/备份
 			// 的后缀判定由后缀白名单给出，不臆断「是漏洞」）。
 			for _, h := range dirHits {
-				check, title := dirFindingOf(h)
-				if check == "" {
+				m := dirVerifiedEntry(h)
+				if m == nil {
 					continue // 无缺陷语义的路径存在（普通入口页）不进发现
 				}
-				m := verifiedMap(map[string]any{
-					"check": check, "title": title, "severity": dirSeverityOf(h),
-					"url": h.URL, "advice": dirAdviceOf(h), "src": "dir",
-					"evidence": dirEvidenceOf(h),
-				})
 				res.Verified = append(res.Verified, m)
-				emit("hit", m["severity"].(string)+" · "+title+" — "+h.URL)
+				emit("hit", m["severity"].(string)+" · "+m["title"].(string)+" — "+h.URL)
 			}
 		}
 		if opts.Webshell {
@@ -990,18 +1085,18 @@ func (e *Engine) Scan(rawURL string, opts Options, onProgress progress, cancel f
 		if opts.ActiveFP && kb != nil && len(kb.FingerDir()) > 0 {
 			onProgress(89, "FingerDir 主动指纹…")
 			res.Extras["active_fp"] = modules.ActiveFP(client, baseURL,
-				kb.FingerDir(), nil, cancelled, e.cfg.Active.FPMaxRequests)
+				kb.FingerDir(), nil, cancelled, cfg.Active.FPMaxRequests)
 		}
 		var services []modules.ServiceHit
 		if opts.ServiceProbe && kb != nil && len(kb.ServiceFP()) > 0 {
 			onProgress(89, "端口服务识别…")
-			ports := e.cfg.Active.ProbePorts
+			ports := cfg.Active.ProbePorts
 			if len(opts.ProbePorts) > 0 {
 				ports = opts.ProbePorts // 强度档位的端口集覆盖（每扫描）
 			}
 			services = modules.ServiceProbe(host, kb.ServiceFP(),
-				ports, e.cfg.Active.ProbeTimeoutMS,
-				e.cfg.Active.ProbeWorkers, nil, cancelled)
+				ports, cfg.Active.ProbeTimeoutMS,
+				cfg.Active.ProbeWorkers, nil, cancelled)
 			res.Extras["service"] = services
 		}
 		// 3.0 协议模板检测（非 HTTP）：与端口服务识别解耦——独立选择时
@@ -1009,15 +1104,15 @@ func (e *Engine) Scan(rawURL string, opts Options, onProgress progress, cancel f
 		// 跑探测到的服务端口；同闸授权语义
 		if opts.ServiceProbe || opts.NetProto {
 			onProgress(90, "协议模板检测（tcp/dns/ssl）…")
-			if hits := e.netprotoScan(host, services, emit, cancelled); len(hits) > 0 {
+			if hits := e.netprotoScan(cfg, host, services, emit, cancelled); len(hits) > 0 {
 				res.Extras["netproto"] = hits
 			}
 		}
 		if opts.WeakAudit {
 			users := loginbrute.LoadList(
-				wordlistPath(e.cfg, "weak_users.txt"), e.cfg.LoginBrute.MaxUsers)
+				wordlistPath(cfg, "weak_users.txt"), cfg.LoginBrute.MaxUsers)
 			pwds := loginbrute.LoadList(
-				wordlistPath(e.cfg, "weak_passwords.txt"), e.cfg.LoginBrute.MaxPasswords)
+				wordlistPath(cfg, "weak_passwords.txt"), cfg.LoginBrute.MaxPasswords)
 			// 表单弱口令：爬取阶段发现的登录表单（DVWA/pikachu 这类弱口令
 			// 靶场的入口就在表单里）。此前只做 HTTP Basic 401 审计，
 			// 表单口令完全没覆盖——这是「登录爆破未识别 DVWA 表单」的根因。
@@ -1031,24 +1126,24 @@ func (e *Engine) Scan(rawURL string, opts Options, onProgress progress, cancel f
 					// 每次尝试前重取验证码图（旧码提交后即失效）。
 					capType, ocrURL := "none", ""
 					fetchImg := func(string) ([]byte, error) { return nil, errNoImageChannel }
-					if e.cfg.LoginBrute.CaptchaOCRURL != "" {
-						capType = e.cfg.LoginBrute.CaptchaType
+					if cfg.LoginBrute.CaptchaOCRURL != "" {
+						capType = cfg.LoginBrute.CaptchaType
 						if capType == "" {
 							capType = "digits"
 						}
-						ocrURL = e.cfg.LoginBrute.CaptchaOCRURL
+						ocrURL = cfg.LoginBrute.CaptchaOCRURL
 						fetchImg = imageFetcher(client)
 					}
 					hits, lerr := loginbrute.Brute(postFormPoster{client}, loginbrute.Options{
 						PageURL:     lf.URL,
 						Users:       users,
 						Passwords:   pwds,
-						MaxTries:    e.cfg.LoginBrute.MaxTries,
-						IntervalMS:  e.cfg.LoginBrute.IntervalMS,
+						MaxTries:    cfg.LoginBrute.MaxTries,
+						IntervalMS:  cfg.LoginBrute.IntervalMS,
 						CaptchaType: capType,
 						OCRURL:      ocrURL,
 						FetchImage:  fetchImg,
-						AllowHosts:  e.cfg.Scan.AllowHosts,
+						AllowHosts:  cfg.Scan.AllowHosts,
 					}, nil)
 					if lerr != nil {
 						continue // 无表单 / 验证码页：跳过，不中断其余审计
@@ -1081,7 +1176,7 @@ func (e *Engine) Scan(rawURL string, opts Options, onProgress progress, cancel f
 			if len(urls401) > 0 {
 				onProgress(89, "基础认证弱口令审计…")
 				for _, h := range loginbrute.BasicAuthBrute(client, urls401, users, pwds,
-					e.cfg.LoginBrute.MaxTries, e.cfg.LoginBrute.IntervalMS, nil) {
+					cfg.LoginBrute.MaxTries, cfg.LoginBrute.IntervalMS, nil) {
 					res.Verified = append(res.Verified, verifiedMap(map[string]any{
 						"check": "weak-basic-auth", "title": "基础认证弱口令",
 						"severity": "high", "url": h.URL,
@@ -1108,13 +1203,13 @@ func (e *Engine) Scan(rawURL string, opts Options, onProgress progress, cancel f
 			tlsPort = 443
 		}
 		findings := netsec.CheckTLS(host, tlsPort)
-		if e.cfg.Netsec.MailCheck {
+		if cfg.Netsec.MailCheck {
 			findings = append(findings, netsec.CheckDNSMail(host)...)
 		}
 		// HSTS / HTTP→HTTPS 跳转：一次只读 GET（≤5s、丢弃正文）。
 		findings = append(findings, netsec.CheckHTTP(seedURL)...)
 		// 端口探测默认关（额外 TCP 连接）：netsec.port_scan 显式开启。
-		if e.cfg.Netsec.PortScan {
+		if cfg.Netsec.PortScan {
 			findings = append(findings, netsec.CheckPorts(host, nil, 1500*time.Millisecond)...)
 		}
 		res.Extras["netsec"] = map[string]any{"findings": findings}
@@ -1128,7 +1223,7 @@ func (e *Engine) Scan(rawURL string, opts Options, onProgress progress, cancel f
 		techs := acc.techHits()
 		res.Vulnerabilities = append(res.Vulnerabilities, kb.Match(techs)...)
 		res.Vulnerabilities = append(res.Vulnerabilities, cveMsFindings(kb.MatchCVEMs(techs, 20))...)
-		attachTemplates(e, res.Vulnerabilities)
+		attachTemplates(cfg, res.Vulnerabilities)
 		if col != nil {
 			for _, f := range res.Vulnerabilities {
 				col.addIntelFinding(f)
@@ -1143,10 +1238,27 @@ func (e *Engine) Scan(rawURL string, opts Options, onProgress progress, cancel f
 
 	// 4.0 P2：结构化事实图挂到结果（失败不阻塞扫描——图是附加产物）
 	if col != nil {
+		dtGraph, dsGraph := diag.begin()
 		res.Graph = col.graph()
-		// 4.0 P5：CVE → CWE 关联（NVD weaknesses 通道；未挂 NVD 时跳过）
-		if kb != nil && kb.HasNVD() { // A3：只判断是否配置，不拉起索引
-			cwe.Relate(res.Graph, nvdLookup{kb})
+		// 4.0 P5：CVE → CWE 关联（NVD weaknesses 通道）。
+		//
+		// C2-02：这条路径**只允许消费已常驻的 NVD 索引**。旧代码用
+		// kb.HasNVD() 作闸门（只判断"配没配路径"），而 cwe 适配器内部走
+		// KB.NVD() 会真实惰性解码——graph 模式收尾因此隐式加载 1.7GB /
+		// 数秒，与 A3 惰性纪律相反。现在适配器用 NVDIfLoaded（绝不加载），
+		// 未常驻时跳过 CVE→CWE 通道并留痕（PhaseDiagnostics + 实时日志）。
+		nvdLoaded := kb != nil && kb.NVDLoaded()
+		if kb != nil && kb.HasNVD() && !nvdLoaded {
+			emit("graph", "NVD 索引未常驻：CVE→CWE/CVSS 富化跳过（不拉起全量索引）")
+			if res.Extras != nil {
+				res.Extras["graph_nvd"] = map[string]any{
+					"configured": true, "loaded": false,
+					"note": "graph 收尾不触发 NVD 全量索引加载",
+				}
+			}
+		}
+		if kb != nil {
+			cwe.Relate(res.Graph, nvdLookup{kb}) // 适配器只读常驻索引
 		}
 		// 4.0 P7/P10：为 impact 补 KEV/CVSS 先验标注（**仅解释，不参与建链**）。
 		if kb != nil {
@@ -1157,15 +1269,16 @@ func (e *Engine) Scan(rawURL string, opts Options, onProgress progress, cancel f
 		if err := res.Graph.Validate(); err != nil {
 			emit("graph", "结构化事实图校验异常："+err.Error())
 		}
+		diag.end("graph", dtGraph, dsGraph, 0)
 	}
 
 	// 12) 5.0 ML 推理富化（L3 阶段 A，cfg.ML.Predict 默认开）：对发现中的
 	// CVE 做受影响产品 Top-5 + CWE 弱点类型先验预测，附加 predictions
 	// 字段。模型只提供先验参考，不改变任何判定；资产缺失/加载失败/
 	// 推理异常一律静默跳过（字段缺席，主流程零影响）。
-	if !cancelled() && e.cfg.ML.Predict && len(res.Vulnerabilities) > 0 {
+	if !cancelled() && cfg.ML.Predict && len(res.Vulnerabilities) > 0 {
 		dtML, dsML := diag.begin()
-		e.mlEnrich(res, kb)
+		e.mlEnrichWith(cfg, res, kb)
 		diag.end("ml", dtML, dsML, 0)
 	}
 
@@ -1199,13 +1312,22 @@ type crawlPage struct {
 	doc  *htmlx.Doc
 }
 
-// newClient 按配置与本次选项装配客户端。
+// newClient 按配置与本次选项装配客户端（独立入口用：取当前快照）。
+func (e *Engine) newClient(opts Options) *httpx.Client {
+	return e.newClientWith(e.Config(), opts)
+}
+
+// newClientWith 用显式配置快照装配客户端（扫描内部调用，保证单次扫描
+// 前后段使用同一份限速/超时/UA 配置）。
 //
 // 限速档位（scan.rate_mode）：balanced = WAF-aware 自适应（400ms 起步，连续
 // 干净成功后加速到 200ms 硬下限；命中 429/503/WAF/挑战页后退避）；其余
 // （polite / 未知值，config 已归一到 polite）= 固定间隔、逐字节保持旧语义。
-func (e *Engine) newClient(opts Options) *httpx.Client {
-	sc := e.cfg.Scan
+func (e *Engine) newClientWith(cfg *config.Config, opts Options) *httpx.Client {
+	if cfg == nil {
+		cfg = config.Default()
+	}
+	sc := cfg.Scan
 	return httpx.NewWithOptions(httpx.ClientOptions{
 		Interval:     time.Duration(sc.RateIntervalMS) * time.Millisecond,
 		Timeout:      time.Duration(sc.TimeoutSec) * time.Second,
@@ -1267,11 +1389,12 @@ var nucleiLRUMu sync.Mutex
 // attachTemplates 模板情报层：CVE → 可运行模板路径。
 // 只读缓存（IndexCached），缓存未就绪时静默跳过——绝不 mid-scan 重建。
 // 单 CVE 最多挂 6 条避免报告膨胀。
-func attachTemplates(e *Engine, findings []intel.Finding) {
-	if len(findings) == 0 || e.cfg.Checks.NucleiDir == "" {
+// cfg 为本次扫描入口捕获的配置快照（A-09）。
+func attachTemplates(cfg *config.Config, findings []intel.Finding) {
+	if len(findings) == 0 || cfg.Checks.NucleiDir == "" {
 		return
 	}
-	entries := nuclei.IndexCached(filepath.Join(e.cfg.Store.DataDir, "nuclei_index.json"))
+	entries := nuclei.IndexCached(filepath.Join(cfg.Store.DataDir, "nuclei_index.json"))
 	if len(entries) == 0 {
 		return
 	}
@@ -1369,6 +1492,35 @@ func dirEvidenceOf(h modules.PageHit) string {
 	return b.String()
 }
 
+// dirVerifiedEntry 把目录命中组装成 verified 条目（nil = 无缺陷语义，跳过）。
+//
+// B2-01 接线：模块层对"敏感形态路径 200 但无法确证是真文件"标记
+// LowConfidence（无归档魔数/无拦截特征/非 JSON 错误信封）。这类命中保留
+// （漏报同样有代价）但必须**降级并标注**——否则把"疑似动态兜底页"报成
+// high 级确认缺陷，正是 f7c4e0a 那类误报的来源。
+func dirVerifiedEntry(h modules.PageHit) map[string]any {
+	check, title := dirFindingOf(h)
+	if check == "" {
+		return nil
+	}
+	sev := dirSeverityOf(h)
+	evidence := dirEvidenceOf(h)
+	if h.LowConfidence {
+		sev = "low"
+		title += "（低置信：无法排除动态兜底页）"
+		evidence += " · 低置信：无归档魔数/拦截特征/JSON 错误信封，建议人工复核"
+	}
+	m := verifiedMap(map[string]any{
+		"check": check, "title": title, "severity": sev,
+		"url": h.URL, "advice": dirAdviceOf(h), "src": "dir",
+		"evidence": evidence,
+	})
+	if h.LowConfidence {
+		m["low_confidence"] = true
+	}
+	return m
+}
+
 // pageOfLink 端点扩展的证据回链：给出「谁把这个链接带出来的」。
 //
 // 爬取结果只保留了链接集合，没有逐条保留「来源页」映射（Result.AllLinks
@@ -1459,9 +1611,18 @@ func (e *Engine) affectedCVEs(techs []Tech) map[string]bool {
 const maxAffectedCVEs = 64
 
 // nucleiSubset 按已识别技术挑选 Nuclei 模板并转换为 check。
+// 独立入口用：取当前配置快照。
 func (e *Engine) nucleiSubset(techs []Tech, pageTitle string, cap int) ([]checks.Check, map[string]any) {
-	entries, err := nuclei.Index(e.cfg.Checks.NucleiDir,
-		filepath.Join(e.cfg.Store.DataDir, "nuclei_index.json"))
+	return e.nucleiSubsetWith(e.Config(), techs, pageTitle, cap)
+}
+
+// nucleiSubsetWith 用显式配置快照挑选模板（扫描内部调用，A-09）。
+func (e *Engine) nucleiSubsetWith(cfg *config.Config, techs []Tech, pageTitle string, cap int) ([]checks.Check, map[string]any) {
+	if cfg == nil {
+		cfg = config.Default()
+	}
+	entries, err := nuclei.Index(cfg.Checks.NucleiDir,
+		filepath.Join(cfg.Store.DataDir, "nuclei_index.json"))
 	if err != nil || len(entries) == 0 {
 		return nil, nil
 	}
@@ -1483,7 +1644,7 @@ func (e *Engine) nucleiSubset(techs []Tech, pageTitle string, cap int) ([]checks
 	nucleiLRUMu.Lock()
 	defer nucleiLRUMu.Unlock()
 	if cap <= 0 {
-		cap = e.cfg.Checks.NucleiCap
+		cap = cfg.Checks.NucleiCap
 	}
 	selected := nuclei.SelectWithCVE(entries, tags, cveSet, query, cap, e.nucleiLRU)
 	stat := map[string]any{
@@ -1500,13 +1661,13 @@ func (e *Engine) nucleiSubset(techs []Tech, pageTitle string, cap int) ([]checks
 		for _, ent := range selected {
 			e.nucleiLRU[ent.Path] = now
 		}
-		e.saveNucleiLRU()
+		e.saveNucleiLRU(cfg)
 	}
 
 	var out []checks.Check
 	for _, ent := range selected {
 		// A6：走编译缓存（mtime 键控，模板更新自然失效）
-		cs, err := nuclei.LoadFileCached(filepath.Join(e.cfg.Checks.NucleiDir, filepath.FromSlash(ent.Path)))
+		cs, err := nuclei.LoadFileCached(filepath.Join(cfg.Checks.NucleiDir, filepath.FromSlash(ent.Path)))
 		if err != nil {
 			continue
 		}
@@ -1523,7 +1684,11 @@ func (e *Engine) nucleiSubset(techs []Tech, pageTitle string, cap int) ([]checks
 // assignment to entry in nil map。
 func (e *Engine) loadNucleiLRU() {
 	m := map[string]int64{}
-	if data, err := os.ReadFile(filepath.Join(e.cfg.Store.DataDir, "nuclei_schedule.json")); err == nil {
+	cfg := e.Config()
+	if cfg == nil {
+		cfg = config.Default()
+	}
+	if data, err := os.ReadFile(filepath.Join(cfg.Store.DataDir, "nuclei_schedule.json")); err == nil {
 		if derr := json.Unmarshal(data, &m); derr != nil || m == nil {
 			m = map[string]int64{}
 		}
@@ -1532,8 +1697,12 @@ func (e *Engine) loadNucleiLRU() {
 }
 
 // saveNucleiLRU 调度表落盘（tmp+rename 原子写，防中途崩溃损坏调度表）。
-func (e *Engine) saveNucleiLRU() {
-	dst := filepath.Join(e.cfg.Store.DataDir, "nuclei_schedule.json")
+// cfg 为本次扫描入口捕获的配置快照（A-09）。
+func (e *Engine) saveNucleiLRU(cfg *config.Config) {
+	if cfg == nil {
+		cfg = config.Default()
+	}
+	dst := filepath.Join(cfg.Store.DataDir, "nuclei_schedule.json")
 	data, err := json.Marshal(e.nucleiLRU)
 	if err != nil {
 		return

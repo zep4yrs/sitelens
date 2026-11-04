@@ -1,14 +1,13 @@
 package apispec
 
 import (
-	"bytes"
 	"encoding/json"
 	"fmt"
-	"io"
-	"net/http"
 	"net/url"
 	"strings"
 	"time"
+
+	"cnb.cool/feng-qiao/sitelens/internal/httpx"
 )
 
 // graphqlIntrospectionQuery 唯一允许发出的 GraphQL 请求：只读 introspection，
@@ -17,6 +16,14 @@ const graphqlIntrospectionQuery = "{__schema{types{name}}}"
 
 // graphqlTimeout DiscoverGraphQL 的端到端超时（连接 + 发送 + 读取）。
 const graphqlTimeout = 3 * time.Second
+
+// DiscoverOptions GraphQL introspection 的传输参数（V-07）。
+type DiscoverOptions struct {
+	// Resolve=true：走 httpx 拨号层「一次解析 → 全量校验 IP → 按已校验 IP
+	// 拨号」，把 target.Validate 与真正建连之间的 DNS 重绑定窗口关掉
+	// （与 BUG-021 同一修法）。调用方按 scan.resolve 传入。
+	Resolve bool
+}
 
 // gqlResponse introspection 响应最小结构。
 type gqlResponse struct {
@@ -36,9 +43,15 @@ type gqlResponse struct {
 // （POST {"query":"{__schema{types{name}}}"}，3s 超时），解析类型名并返回。
 //
 // 安全约束（硬编码，不接受调用方 query）：只读、单次请求、绝不发送
-// mutation；3s 超时；响应体 ≤8MB；端点必须是 http/https 绝对 URL。
+// mutation；3s 超时；端点必须是 http/https 绝对 URL。
+//
+// V-07：传输层改用 internal/httpx（不再用裸 http.Client）：
+//   - 不跟随重定向（httpx 客户端 CheckRedirect=ErrUseLastResponse）；
+//   - Resolve=true 时拨号层做「一次解析 → 全量校验 → 按已校验 IP 拨号」，
+//     消除 target.Validate 与真正建连之间的 DNS 重绑定窗口。
+//
 // 失败（网络/非 2xx/GraphQL errors/坏 JSON）返回错误，不返回半成品。
-func DiscoverGraphQL(endpoint string) (*Spec, error) {
+func DiscoverGraphQL(endpoint string, opts ...DiscoverOptions) (*Spec, error) {
 	u, err := url.Parse(strings.TrimSpace(endpoint))
 	if err != nil {
 		return nil, fmt.Errorf("apispec: GraphQL 端点 URL 非法: %w", err)
@@ -49,35 +62,29 @@ func DiscoverGraphQL(endpoint string) (*Spec, error) {
 	if u.Host == "" {
 		return nil, fmt.Errorf("apispec: GraphQL 端点缺少主机: %q", endpoint)
 	}
+	var opt DiscoverOptions
+	if len(opts) > 0 {
+		opt = opts[0]
+	}
 
 	reqBody, err := json.Marshal(map[string]string{"query": graphqlIntrospectionQuery})
 	if err != nil {
 		return nil, fmt.Errorf("apispec: 构造 introspection 请求失败: %w", err)
 	}
-	req, err := http.NewRequest(http.MethodPost, u.String(), bytes.NewReader(reqBody))
-	if err != nil {
-		return nil, fmt.Errorf("apispec: 构造 introspection 请求失败: %w", err)
-	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Accept", "application/json")
-
-	client := &http.Client{Timeout: graphqlTimeout}
-	resp, err := client.Do(req)
+	client := httpx.NewWithOptions(httpx.ClientOptions{
+		Timeout: graphqlTimeout,
+		Resolve: opt.Resolve,
+	})
+	resp, err := client.PostJSON(u.String(), string(reqBody))
 	if err != nil {
 		return nil, fmt.Errorf("apispec: GraphQL introspection 失败: %w", err)
 	}
-	defer func() { _ = resp.Body.Close() }()
-
-	// 响应体限读：多读 1 字节用于判定超限。
-	raw, err := io.ReadAll(io.LimitReader(resp.Body, MaxInputBytes+1))
-	if err != nil {
-		return nil, fmt.Errorf("apispec: 读取 GraphQL 响应失败: %w", err)
+	if resp.Status < 200 || resp.Status >= 300 {
+		return nil, fmt.Errorf("apispec: GraphQL 端点返回 HTTP %d", resp.Status)
 	}
+	raw := []byte(resp.Body)
 	if len(raw) > MaxInputBytes {
 		return nil, ErrTooLarge
-	}
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("apispec: GraphQL 端点返回 HTTP %d", resp.StatusCode)
 	}
 
 	var gr gqlResponse

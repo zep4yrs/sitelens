@@ -33,15 +33,21 @@ import (
 // verifiedFingerprint），描述/评分/证据等易变字段不参与，避免情报库刷新或
 // 证据措辞变化被误判成「新增/修复」。
 func (s *Server) DiffURL(rawURL string) (newFindings, fixed int, ok bool) {
+	return s.DiffURLForTenant(rawURL, "")
+}
+
+// DiffURLForTenant 同 DiffURL，但只在该租户的历史里比较（BL-5）。
+func (s *Server) DiffURLForTenant(rawURL, tenant string) (newFindings, fixed int, ok bool) {
+	cfg := s.cfgSnap() // A-09：读配置快照（一次请求/操作内一致）
 	key := diffURLKey(rawURL)
 	if key == "" || s.st == nil {
 		return 0, 0, false
 	}
 	limit := 1000
-	if s.cfg != nil && s.cfg.Web.HistoryCap > 0 {
-		limit = s.cfg.Web.HistoryCap
+	if cfg != nil && cfg.Web.HistoryCap > 0 {
+		limit = cfg.Web.HistoryCap
 	}
-	sums := s.st.List(limit, "")
+	sums := s.st.ListForTenant(limit, "", tenant)
 	ids := make([]int64, 0, 2)
 	for _, sm := range sums {
 		if diffURLKey(sm.URL) != key {
@@ -55,7 +61,7 @@ func (s *Server) DiffURL(rawURL string) (newFindings, fixed int, ok bool) {
 	if len(ids) < 2 {
 		return 0, 0, false
 	}
-	cur, prev := s.st.Get(ids[0]), s.st.Get(ids[1])
+	cur, prev := s.st.GetForTenant(ids[0], tenant), s.st.GetForTenant(ids[1], tenant)
 	if cur == nil || prev == nil || cur.Result == nil || prev.Result == nil {
 		return 0, 0, false
 	}

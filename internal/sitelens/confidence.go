@@ -188,29 +188,92 @@ func normalizeVersion(v string) string {
 	return v
 }
 
+// versionCanonicalKey 版本归一化键（B2-10）：把"精度不同"的同一版本折叠成同一键。
+//
+// 同一技术从不同来源拿到的版本精度常不一致（header 给 `1.24`、正文给 `1.24.0`；
+// 或 `5` vs `5.0`），此前按原始字符串比较 → 判成"版本冲突"→ 无谓降权 + 误标
+// low confidence + 报告里给出误导性的"版本不一致"理由。
+//
+// 规则：去尾部全 0 的数值段（`5.0` → `5`、`1.2.0` → `1.2`），保留预发布段；
+// 无法解析成数字段时退回 normalizeVersion 原样比较（不猜测语义）。
+func versionCanonicalKey(v string) string {
+	v = normalizeVersion(v)
+	if v == "" {
+		return ""
+	}
+	base := v
+	pre := ""
+	if i := strings.IndexAny(base, "-+"); i >= 0 {
+		pre = base[i+1:]
+		base = base[:i]
+	}
+	parts := strings.Split(base, ".")
+	nums := make([]string, 0, len(parts))
+	for _, p := range parts {
+		if p == "" {
+			return v // 形态异常（"1..2" 等）：不折叠，保持原样
+		}
+		for _, r := range p {
+			if r < '0' || r > '9' {
+				return v // 非纯数字段：不折叠
+			}
+		}
+		nums = append(nums, p)
+	}
+	// 去掉尾部 "0" 段（保留至少一段）。有预发布段时不折叠——semver 的
+	// 数值段在该场景下是规范形式（`1.0.0-beta` 不能写成 `1-beta`）。
+	if pre == "" {
+		for len(nums) > 1 && nums[len(nums)-1] == "0" {
+			nums = nums[:len(nums)-1]
+		}
+	}
+	// 去前导 0（"01" ≡ "1"）
+	for i, n := range nums {
+		trimmed := strings.TrimLeft(n, "0")
+		if trimmed == "" {
+			trimmed = "0"
+		}
+		nums[i] = trimmed
+	}
+	key := strings.Join(nums, ".")
+	if pre != "" {
+		key += "-" + pre
+	}
+	return key
+}
+
 // CrossCheckVersion 版本号交叉校验：不同来源给出不一致版本 → LowConfidence。
 // 无版本声明视为「无冲突但未校验」（Consistent=true，Version 为空）。
+//
+// B2-10：冲突判定按 versionCanonicalKey 折叠后的键进行（`5` ≡ `5.0`），
+// 展示仍用首个来源的原始归一化写法。
 func CrossCheckVersion(claims []VersionClaim) VersionCheck {
 	seen := map[string]bool{}
 	counts := map[string]int{}
 	sources := map[string][]string{}
+	display := map[string]string{} // key → 展示用原始写法（首见）
 	var order []string
 	for _, c := range claims {
 		v := normalizeVersion(c.Version)
 		if v == "" {
 			continue
 		}
-		if !seen[v] {
-			seen[v] = true
-			order = append(order, v)
+		key := versionCanonicalKey(v)
+		if key == "" {
+			continue
 		}
-		counts[v]++
+		if !seen[key] {
+			seen[key] = true
+			order = append(order, key)
+			display[key] = v
+		}
+		counts[key]++
 		src := strings.TrimSpace(c.Source)
 		if src == "" {
 			src = ChannelOther
 		}
-		if !containsString(sources[v], src) {
-			sources[v] = append(sources[v], src)
+		if !containsString(sources[key], src) {
+			sources[key] = append(sources[key], src)
 		}
 	}
 	vc := VersionCheck{Consistent: true}
@@ -218,18 +281,21 @@ func CrossCheckVersion(claims []VersionClaim) VersionCheck {
 		return vc
 	}
 	order = append([]string(nil), order...)
-	sort.Strings(order)
-	vc.Versions = order
-	// 采信版本：出现次数最多（并列取字典序最小，保证确定性）。
+	sort.Slice(order, func(i, j int) bool { return display[order[i]] < display[order[j]] })
+	for _, key := range order {
+		vc.Versions = append(vc.Versions, display[key])
+	}
+	// 采信版本：出现次数最多（并列取展示值字典序最小，保证确定性）。
 	best := order[0]
-	for _, v := range order {
-		if counts[v] > counts[best] || (counts[v] == counts[best] && v < best) {
-			best = v
+	for _, key := range order {
+		if counts[key] > counts[best] ||
+			(counts[key] == counts[best] && display[key] < display[best]) {
+			best = key
 		}
 	}
-	vc.Version = best
-	for _, v := range order {
-		vc.Sources = append(vc.Sources, strings.Join(sources[v], "+"))
+	vc.Version = display[best]
+	for _, key := range order {
+		vc.Sources = append(vc.Sources, strings.Join(sources[key], "+"))
 	}
 	if len(order) > 1 {
 		vc.Consistent = false

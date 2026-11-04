@@ -3,6 +3,7 @@ package intel
 import (
 	"compress/gzip"
 	"encoding/json"
+	"log"
 	"os"
 	"sort"
 	"strings"
@@ -39,11 +40,21 @@ type NVDEntry struct {
 	Vector string    `json:"vec,omitempty"`   // CVSS vector string
 	Descr  string    `json:"descr,omitempty"` // 英文首条描述（截断）
 	Prods  []NVDProd `json:"prods,omitempty"` // 受影响产品约束（去重）
+	// ScoreSet 标记 Score 是否来自真实评分数据（含合法的 0.0）。C2-04：
+	// CVSS 3.1 规范允许基础分 0.0（Impact<=0 时基础分即 0），旧实现用
+	// Score==0 当"缺失"哨兵，会把 0 分 CVE 当成无评分交给 ML 兜底
+	// （sev-linear 在描述文本上通常给 5~9 分）。写端取到 metric 即置 true；
+	// 读端用 HasScore() 兼容旧文件（无该字段 → 回退 Score>0）。
+	ScoreSet bool `json:"score_set,omitempty"`
 	// CWEs 弱类型编号（CWE-NNN，去重升序）。4.0 P5 新增：来自 NVD 的
 	// weaknesses 字段（NVD-CWE-* / NVD-CWE-noinfo 等占位值被过滤）。
 	// 旧数据文件（未含该字段）加载后为 nil，消费方按空处理——向后兼容。
 	CWEs []string `json:"cwes,omitempty"`
 }
+
+// HasScore 报告该条是否携带真实 CVSS 评分（0.0 也算真实评分）。
+// 旧数据文件没有 score_set 字段：回退到 Score>0 的兼容判定。
+func (e NVDEntry) HasScore() bool { return e.ScoreSet || e.Score > 0 }
 
 // NVDStore 内存索引（不可变，可并发读）。
 type NVDStore struct {
@@ -77,6 +88,11 @@ func (s *NVDStore) CWEsFor(cve string) []string {
 }
 
 // ByProduct 按 vendor/product 或其子串检索（q 逐条做子串匹配，小库量级够用）。
+//
+// C2-05：结果必须**确定**且**严重度优先**。旧实现直接按 map 迭代顺序收集，
+// 同一查询每次运行（甚至同进程内）返回的子集都可能不同，调用方按 limit
+// 截断时可能丢掉高分条目。这里先全量收集去重，再按
+// (有评分优先, score 降序, CVE 升序) 稳定排序后截断。
 func (s *NVDStore) ByProduct(q string, limit int) []NVDEntry {
 	if s == nil || q == "" || limit <= 0 {
 		return nil
@@ -94,17 +110,34 @@ func (s *NVDStore) ByProduct(q string, limit int) []NVDEntry {
 			}
 			seen[e] = true
 			out = append(out, *e)
-			if len(out) >= limit {
-				return out
-			}
 		}
+	}
+	sort.SliceStable(out, func(i, j int) bool {
+		hi, hj := out[i].HasScore(), out[j].HasScore()
+		if hi != hj {
+			return hi
+		}
+		if out[i].Score != out[j].Score {
+			return out[i].Score > out[j].Score
+		}
+		return out[i].CVE < out[j].CVE
+	})
+	if len(out) > limit {
+		out = out[:limit]
 	}
 	return out
 }
 
 // AttachNVD 直接挂载已解码的 NVD 索引（nil = 不启用）。
 // 已持有索引的调用方用这个；只有路径的调用方用 AttachNVDPath（惰性）。
-func (k *KB) AttachNVD(s *NVDStore) { k.nvd = s }
+func (k *KB) AttachNVD(s *NVDStore) {
+	if k == nil {
+		return
+	}
+	k.nvdMu.Lock()
+	k.nvd = s
+	k.nvdMu.Unlock()
+}
 
 // AttachNVDPath 惰性挂载 NVD：**只记路径**，首次真正用到时才解码索引（A3）。
 //
@@ -115,7 +148,9 @@ func (k *KB) AttachNVDPath(path string) {
 	if k == nil || path == "" {
 		return
 	}
+	k.nvdMu.Lock()
 	k.nvdPath = path
+	k.nvdMu.Unlock()
 }
 
 // HasNVD 报告是否配置了 NVD 数据源（**不触发加载**）。
@@ -124,6 +159,8 @@ func (k *KB) HasNVD() bool {
 	if k == nil {
 		return false
 	}
+	k.nvdMu.Lock()
+	defer k.nvdMu.Unlock()
 	return k.nvd != nil || k.nvdPath != ""
 }
 
@@ -132,10 +169,19 @@ func (k *KB) HasNVD() bool {
 // 首次拉起全量索引（30 万+ 条 ≈1.7GB 常驻、秒级同步阻塞），只需查询的
 // 动作不该付出拉起的代价——那是确实需要数据的消费方（nvdFill 等）的事。
 func (k *KB) NVDLoaded() bool {
+	return k.NVDIfLoaded() != nil
+}
+
+// NVDIfLoaded 返回**已常驻**的 NVD 索引（未加载返回 nil，绝不触发加载）。
+// C2-02：graph 收尾的 CWE/CVSS 富化只允许用本函数——旧代码走 NVD() 会在
+// 扫描收尾隐式拉起 1.7GB 索引，与 A3 惰性纪律相反。
+func (k *KB) NVDIfLoaded() *NVDStore {
 	if k == nil {
-		return false
+		return nil
 	}
-	return k.nvd != nil
+	k.nvdMu.Lock()
+	defer k.nvdMu.Unlock()
+	return k.nvd
 }
 
 // nvdStore 取 NVD 索引；未挂载时按需惰性加载（线程安全）。
@@ -144,37 +190,40 @@ func (k *KB) nvdStore() *NVDStore {
 	if k == nil {
 		return nil
 	}
+	k.nvdMu.Lock()
+	defer k.nvdMu.Unlock()
 	if k.nvd != nil {
 		return k.nvd
 	}
 	if k.nvdPath == "" {
 		return nil
 	}
-	k.nvdMu.Lock()
-	defer k.nvdMu.Unlock()
-	if k.nvdTried { // 双检：已尝试过（成功或失败），维持现值
+	if k.nvdTried { // 已尝试过（成功或失败），维持现值
 		return k.nvd
 	}
 	k.nvdTried = true
 	s, err := LoadNVD(k.nvdPath)
 	if err != nil {
 		k.nvdErr = err
+		log.Printf("intel: NVD 索引加载失败（%s）：%v", k.nvdPath, err)
 		return nil
 	}
 	k.nvd = s
-	return k.nvd
+	return s
 }
 
 // NVD 返回 NVD 索引（未挂载/加载失败返回 nil）。**会触发惰性加载**——
-// 供 cwe.Relate 等确实需要数据的消费方使用；只做存在性判断请用 HasNVD。
+// 供 cwe.Relate 等确实需要数据的消费方使用；只做存在性判断请用 HasNVD，
+// 扫描收尾/图收尾等"顺带查询"场景请用 NVDIfLoaded。
 func (k *KB) NVD() *NVDStore { return k.nvdStore() }
 
 // NVDCount 统计用：已解码的条数（**不触发加载**，避免统计动作拉起 1.7GB）。
 func (k *KB) NVDCount() int {
-	if k == nil || k.nvd == nil {
+	s := k.NVDIfLoaded()
+	if s == nil {
 		return 0
 	}
-	return k.nvd.Len()
+	return s.Len()
 }
 
 // nvdFill 在 Match 构造 Finding 后补全缺失的 CVSS 与 CWE（宁缺毋滥：只填空位）。
@@ -189,7 +238,7 @@ func (k *KB) nvdFill(f *Finding, intent nvdIntent) {
 	if intent == intentLoad {
 		nvd = k.nvdStore() // 显式以 NVD 为数据源：可按需解码
 	} else {
-		nvd = k.nvd // 惰性口径：只用已常驻索引，不触发加载
+		nvd = k.NVDIfLoaded() // 惰性口径：只用已常驻索引，不触发加载
 	}
 	if nvd == nil {
 		return
@@ -198,7 +247,9 @@ func (k *KB) nvdFill(f *Finding, intent nvdIntent) {
 	if !ok {
 		return
 	}
-	if f.CVSSScore <= 0 && e.Score > 0 {
+	// C2-04：用 HasScore 判"有没有评分"，0.0 也是合法评分——否则 0 分
+	// CVE 会被当成缺字段，后续被 ML 严重度兜底改写。
+	if f.CVSSScore <= 0 && e.HasScore() {
 		f.CVSSScore = e.Score
 		if f.CVSSSev == "" {
 			f.CVSSSev = e.Sev

@@ -118,3 +118,60 @@ func TestDirScanKeepsRealSensitiveFiles(t *testing.T) {
 		}
 	}
 }
+
+// TestLooksGenericPageDynamicFallback B2-01 回归：兜底页**回显请求路径**导致
+// 正文长度与 hash 都随路径变化时，仍必须判为兜底（旧实现只做精确尺寸/hash
+// 匹配，这类页面全部漏过 → 敏感文件误报）。
+func TestLooksGenericPageDynamicFallback(t *testing.T) {
+	// 基线来自两条敏感形态探测路径，正文回显各自路径 → 长度/hash 各不相同
+	echo := func(p string) string { return `{"code":404,"msg":"not found","path":"` + p + `"}` }
+	base := soft404Baseline{
+		sizes: map[int]bool{
+			len(echo("/.sl-nope-9f3a2.yml")):  true,
+			len(echo("/.sl-nope-81b7d.conf")): true,
+			2000:                              true, // 大页面基线：容差窗口 = 5% = 100B
+		},
+		hashes: map[string]bool{
+			bodyDigest(echo("/.sl-nope-9f3a2.yml")):  true,
+			bodyDigest(echo("/.sl-nope-81b7d.conf")): true,
+		},
+	}
+	cases := []struct {
+		name string
+		path string
+		r    *httpx.Response
+		want bool
+	}{
+		// 关键回归：长度与 hash 都不在基线集合里，但正文回显了请求路径
+		{"JSON 兜底页回显路径", "/.env", respOf(200, "application/json", echo("/.env")), true},
+		{"纯文本兜底页回显路径", "/db.sql", respOf(200, "text/plain", "404 not found: /db.sql"), true},
+		{"长度随路径微变（容差窗口内）", "/.git/config",
+			respOf(200, "text/plain", strings.Repeat("y", 2050)), true},
+		{"长度偏离基线超过容差", "/.git/config",
+			respOf(200, "text/plain", strings.Repeat("y", 2400)), false},
+		// 真实文件：长度明显偏离基线、正文不含自身路径、非 JSON 信封
+		{"真实 env", "/.env", respOf(200, "text/plain", "DB_HOST=127.0.0.1\nDB_PASS=secret\n"), false},
+	}
+	for _, c := range cases {
+		if got := looksGenericPage(c.path, c.r, base); got != c.want {
+			t.Fatalf("%s: looksGenericPage=%v want %v", c.name, got, c.want)
+		}
+	}
+}
+
+// TestDirScanSuppressesPathEchoFallback B2-01 端到端回归：任意敏感路径都返回
+// "200 + 回显路径的模板化 404 页（长度随路径变）"的站点，不得产生命中。
+func TestDirScanSuppressesPathEchoFallback(t *testing.T) {
+	dir := writeWordlist(t, "dir_default.txt", []string{".env", "db.sql", ".codacy.yml", "www.zip"})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		fmt.Fprintf(w, `{"code":404,"msg":"not found","path":%q}`, r.URL.Path)
+	}))
+	defer srv.Close()
+
+	hits := DirScan(client(), srv.URL, benchCfg(dir), nil, nil)
+	if len(hits) != 0 {
+		t.Fatalf("回显路径的模板化兜底页不应产生命中，got %d: %+v", len(hits), hits)
+	}
+}

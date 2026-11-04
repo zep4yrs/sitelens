@@ -41,6 +41,17 @@ type Env interface {
 	Host() string
 }
 
+// EnvUnavailable 可选扩展：环境**无法提供**某个内置变量时返回 true。
+// 求值器随即按"未知变量"报错（不命中），而不是拿 0/空串参与比较。
+//
+// B2-06：协议模板（network/dns/tcp）没有 HTTP 状态码/响应头语义，此前
+// netEnv 用 `StatusCode()=0`、`Header()=""` 伪造取值，于是 `status_code != 200`
+// 恒真、`!contains(header['X'],'y')` 恒真——任意响应都命中。真实语义应是
+// "该变量不可用 → 表达式不可判定 → 不命中"。
+type EnvUnavailable interface {
+	Unavailable(name string) bool
+}
+
 // ---- 值模型：三类（字符串/整数/布尔），跨类运算即求值错误 ----
 
 const (
@@ -306,6 +317,10 @@ func (n callNode) eval(e Env) (value, error) {
 		if err != nil {
 			return value{}, err
 		}
+		// B2-09：编译期已要求字面量；此处兜底防超长模式（纵深防御）。
+		if len(pat) > maxRegexPatternLen {
+			return value{}, fmt.Errorf("dsl: regex 模式长度超过 %d", maxRegexPatternLen)
+		}
 		s, err := evalString(n.args[1], e)
 		if err != nil {
 			return value{}, err
@@ -408,6 +423,9 @@ type varNode struct {
 }
 
 func (n varNode) eval(e Env) (value, error) {
+	if u, ok := e.(EnvUnavailable); ok && u.Unavailable(n.name) {
+		return value{}, fmt.Errorf("dsl: 变量 %s 在当前环境不可用", n.name)
+	}
 	switch n.name {
 	case "status_code":
 		return value{kind: kInt, i: int64(e.StatusCode())}, nil
@@ -436,6 +454,11 @@ type idxNode struct {
 }
 
 func (n idxNode) eval(e Env) (value, error) {
+	// B2-06：环境若声明 header 不可用（协议模板），下标取值必须报错而不是
+	// 拿空串参与 contains/取反（空串会让 `!contains(header['X'],'y')` 恒真）。
+	if u, ok := e.(EnvUnavailable); ok && u.Unavailable(n.mapName) {
+		return value{}, fmt.Errorf("dsl: 变量 %s 在当前环境不可用", n.mapName)
+	}
 	k, err := evalString(n.key, e)
 	if err != nil {
 		return value{}, err
@@ -501,12 +524,20 @@ func tokenize(src string) ([]token, error) {
 				ch := src[j]
 				if ch == '\\' && !isRaw && j+1 < len(src) {
 					j++
+					// B2-13：已知转义按 Go 语义解码；**未知转义保留反斜杠**。
+					// 此前 default 分支直接写字符本体，`'(\d+)'` 会静默变成
+					// `'(d+)'`（正则元字符被吃），与 afrogx 同源缺陷。
 					switch src[j] {
 					case 'n':
 						sb.WriteByte('\n')
 					case 't':
 						sb.WriteByte('\t')
+					case 'r':
+						sb.WriteByte('\r')
+					case '\\', '\'', '"':
+						sb.WriteByte(src[j])
 					default:
+						sb.WriteByte('\\')
 						sb.WriteByte(src[j])
 					}
 					j++
@@ -584,6 +615,10 @@ const maxDepth = 64
 // maxExprLen 表达式长度上限：真实 dsl 行均在数百字符内，超长即拒绝
 // （正则实参的编译成本与长度和嵌套正相关，入口封顶最省心）。
 const maxExprLen = 8192
+
+// maxRegexPatternLen regex 模式长度上限（B2-09）。真实模板的正则远短于此；
+// 上限防的是"超长模式 → regexp.Compile 内存/CPU 尖峰"。
+const maxRegexPatternLen = 1024
 
 func (p *parser) peek() token { return p.toks[p.pos] }
 func (p *parser) next() token { t := p.toks[p.pos]; p.pos++; return t }
@@ -669,9 +704,11 @@ func (p *parser) parsePrimary() (node, error) {
 	t := p.next()
 	switch t.kind {
 	case tNum:
-		var n int64
-		for _, c := range t.text {
-			n = n*10 + int64(c-'0')
+		// B2-12：整数字面量必须可解析，溢出即编译错误（此前手写循环静默回绕成
+		// 负数，`status_code == 99999999999999999999` 会变成任意负数比较）。
+		n, err := strconv.ParseInt(t.text, 10, 64)
+		if err != nil {
+			return nil, fmt.Errorf("dsl: 整数字面量 %q 超出 int64 范围", t.text)
 		}
 		return litNode{value{kind: kInt, i: n}}, nil
 	case tStr:
@@ -732,6 +769,18 @@ func (p *parser) parsePrimary() (node, error) {
 					return nil, fmt.Errorf("dsl: %s 至少 2 个参数", name)
 				}
 			}
+			// B2-09：regex 的正则源必须是字符串字面量——不接受抽取变量/body 等
+			// 运行期取值（否则目标站点的响应内容会变成不可信的 regexp 输入，
+			// 每次取值都触发一次 Compile，且模式长度完全不可控）。
+			if name == "regex" {
+				lit, ok := args[0].(litNode)
+				if !ok || lit.v.kind != kStr {
+					return nil, fmt.Errorf("dsl: regex 的第一个参数必须是字符串字面量")
+				}
+				if len(lit.v.s) > maxRegexPatternLen {
+					return nil, fmt.Errorf("dsl: regex 模式长度超过 %d", maxRegexPatternLen)
+				}
+			}
 			return callNode{name: name, args: args}, nil
 		case tLBracket:
 			if name != "header" && name != "headers" {
@@ -767,8 +816,13 @@ func arityOf(name string) int {
 	}
 }
 
-// compareVersions 语义对齐 nuclei compare_versions：点分数字逐段比较，
-// 空版本一律不成立（抽取未命中等价于未证明）。
+// compareVersions 语义对齐 nuclei compare_versions：点分数字逐段比较。
+//
+// B2-07 修正：
+//   - `!=` 此前落入 default 分支被当成 `=`，两个方向都反（相等返回 true、
+//     不等返回 false）；现在按 cmp 结果严格映射到 6 个运算符。
+//   - 非数字段不再静默 ParseInt 成 0（`1.0.0-beta` 曾被判等于 `1.0.0`）：
+//     解析失败即"不可比"返回 false；预发布段按 semver 语义（pre < release）。
 func compareVersions(version, constraint string) bool {
 	version = strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(version), "v"))
 	constraint = strings.TrimSpace(constraint)
@@ -776,7 +830,8 @@ func compareVersions(version, constraint string) bool {
 		return false
 	}
 	op, cv := "=", constraint
-	for _, o := range []string{"<=", ">=", "==", "!=", "<", ">"} {
+	// "=" 必须排在 "==" 之后：前缀匹配按顺序，"==1.0" 否则会被切成 "=" + "=1.0"。
+	for _, o := range []string{"<=", ">=", "==", "!=", "<", ">", "="} {
 		if strings.HasPrefix(cv, o) {
 			op, cv = o, strings.TrimSpace(strings.TrimPrefix(cv, o))
 			break
@@ -785,35 +840,96 @@ func compareVersions(version, constraint string) bool {
 	if cv == "" {
 		return false
 	}
-	a := versionParts(version)
-	b := versionParts(cv)
+	a, preA, ok := versionSegments(version)
+	if !ok {
+		return false // 不可比（非数字段）→ 不臆造结论
+	}
+	b, preB, ok := versionSegments(cv)
+	if !ok {
+		return false
+	}
 	n := len(a)
 	if len(b) > n {
 		n = len(b)
 	}
+	cmp := 0
 	for i := 0; i < n; i++ {
 		var x, y int64
 		if i < len(a) {
-			x, _ = strconv.ParseInt(a[i], 10, 64)
+			x = a[i]
 		}
 		if i < len(b) {
-			y, _ = strconv.ParseInt(b[i], 10, 64)
+			y = b[i]
 		}
 		if x != y {
-			return (x < y && (op == "<" || op == "<=")) || (x > y && (op == ">" || op == ">="))
+			if x < y {
+				cmp = -1
+			} else {
+				cmp = 1
+			}
+			break
+		}
+	}
+	if cmp == 0 {
+		// 数值段相同：预发布版 < 正式版（1.0.0-beta < 1.0.0）
+		switch {
+		case preA == "" && preB != "":
+			cmp = 1
+		case preA != "" && preB == "":
+			cmp = -1
+		default:
+			cmp = strings.Compare(preA, preB)
 		}
 	}
 	switch op {
-	case "<", ">":
-		return false
-	default:
-		return true
+	case "=", "==":
+		return cmp == 0
+	case "!=":
+		return cmp != 0
+	case "<":
+		return cmp < 0
+	case "<=":
+		return cmp <= 0
+	case ">":
+		return cmp > 0
+	case ">=":
+		return cmp >= 0
 	}
+	return false
 }
 
-// versionParts 点分版本切段（非数字段由调用方按词法兜底）。
-func versionParts(v string) []string {
-	return strings.Split(v, ".")
+// versionSegments 点分版本切段：返回数值段与预发布标记。
+// 非数字段（如 "abc"、纯文本版本）返回 ok=false —— 调用方按"不可比"处理，
+// 不得静默归零（B2-07）。允许 "1.2.3b" 这类数字前缀段，其余并入预发布。
+func versionSegments(v string) (nums []int64, pre string, ok bool) {
+	v = strings.TrimSpace(v)
+	if i := strings.IndexAny(v, "-+"); i >= 0 {
+		pre = v[i+1:]
+		v = v[:i]
+	}
+	if v == "" {
+		return nil, "", false
+	}
+	parts := strings.Split(v, ".")
+	out := make([]int64, 0, len(parts))
+	for _, p := range parts {
+		digits := 0
+		for digits < len(p) && p[digits] >= '0' && p[digits] <= '9' {
+			digits++
+		}
+		if digits == 0 {
+			return nil, "", false
+		}
+		n, err := strconv.ParseInt(p[:digits], 10, 64)
+		if err != nil {
+			return nil, "", false
+		}
+		out = append(out, n)
+		if digits < len(p) && pre == "" {
+			pre = p[digits:]
+		}
+	}
+	return out, pre, true
 }
 
 // ---- 对外 API ----

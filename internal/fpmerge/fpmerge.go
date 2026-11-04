@@ -141,14 +141,25 @@ func rulesJSON(spec rawSpec, rejected *int) (json.RawMessage, error) {
 	}
 	rules := map[string]any{}
 
-	presence := func(v rawVal) string {
+	// presence 把 header/meta 规则值转成引擎模式（C-11：fail-closed）。
+	//
+	// 三种输入必须区分：
+	//   - 显式存在性判断（JSON 里 {} 或空串）：合法语义 → "^"（任意非空值即命中）；
+	//   - 可编译的正则：原样返回；
+	//   - **有正则但清洗/编译失败**：整条丢弃（ok=false，计入 RejectedPats）。
+	// 旧实现对"坏正则"也返回 "^"，等于把一条精确规则放宽成"该 header 存在
+	// 即命中该技术"，社区库里任何 RE2 不兼容写法都会造成指纹误报。
+	presence := func(v rawVal) (string, bool) {
 		if v.Regex == nil {
-			return ""
+			return "", false
+		}
+		if strings.TrimSpace(*v.Regex) == "" {
+			return "^", true // 显式存在性判断
 		}
 		if p := cleanPat(*v.Regex); p != "" {
-			return p
+			return p, true
 		}
-		return "^" // 存在性判断：任意值都算
+		return "", false
 	}
 
 	headers := map[string][]string{}
@@ -156,7 +167,11 @@ func rulesJSON(spec rawSpec, rejected *int) (json.RawMessage, error) {
 		if v.Regex == nil {
 			continue
 		}
-		p := presence(v)
+		p, ok := presence(v)
+		if !ok {
+			*rejected++
+			continue
+		}
 		hl := strings.ToLower(h)
 		if len(headers[hl]) < 4 {
 			headers[hl] = append(headers[hl], p)
@@ -171,7 +186,12 @@ func rulesJSON(spec rawSpec, rejected *int) (json.RawMessage, error) {
 		if v.Regex == nil {
 			continue
 		}
-		meta[strings.ToLower(m)] = presence(v)
+		p, ok := presence(v)
+		if !ok {
+			*rejected++
+			continue
+		}
+		meta[strings.ToLower(m)] = p
 	}
 	if len(meta) > 0 {
 		rules["meta"] = meta

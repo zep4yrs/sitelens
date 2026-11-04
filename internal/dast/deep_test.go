@@ -631,3 +631,90 @@ func (f *formEchoFetcher) PostFormSmall(u string, data map[string]string) *Resp 
 	}
 	return &Resp{Status: 200, Body: "<pre>PING " + v + " ok</pre>"}
 }
+
+// ---- B 组修复的回归测试（B-08 / B-11 / B-15） -----------------------------
+
+// TestXSSJudgeBaselineExcluded B-08：基线本来就含标记时不得命中。
+func TestXSSJudgeBaselineExcluded(t *testing.T) {
+	tgt := Target{URL: "https://a.com/s?q=1", Param: "q"}
+	resp := &Resp{Status: 200, Body: "<html>cached " + xssRaw + "</html>"}
+	if hit := judge("xss", resp, strings.ToLower(resp.Body), tgt); hit != nil {
+		t.Fatalf("基线已含标记（缓存残留）不应判 XSS: %+v", hit)
+	}
+	if hit := judge("xss", resp, "<html>clean</html>", tgt); hit == nil {
+		t.Fatal("基线不含标记时应命中")
+	}
+}
+
+// TestXSSJudgeNonExecContextDowngraded B-08：落点在 textarea/title/script/
+// HTML 注释内不可执行，应降级 low 并改标题。
+func TestXSSJudgeNonExecContextDowngraded(t *testing.T) {
+	tgt := Target{URL: "https://a.com/s?q=1", Param: "q"}
+	cases := []struct{ name, body string }{
+		{"textarea", "<html><textarea>" + xssRaw + "</textarea></html>"},
+		{"title", "<html><title>" + xssRaw + "</title></html>"},
+		{"script", "<html><script>var a='" + xssRaw + "';</script></html>"},
+		{"comment", "<html><!-- " + xssRaw + " --></html>"},
+	}
+	for _, tc := range cases {
+		hit := judge("xss", &Resp{Status: 200, Body: tc.body}, "", tgt)
+		if hit == nil {
+			t.Fatalf("%s: 应命中（回显了未转义标记）", tc.name)
+		}
+		if hit.Severity != "low" {
+			t.Fatalf("%s: severity = %q, 期望 low（不可执行上下文）", tc.name, hit.Severity)
+		}
+		if !strings.Contains(hit.Title, "未确认可执行上下文") {
+			t.Fatalf("%s: title = %q, 期望含「未确认可执行上下文」", tc.name, hit.Title)
+		}
+	}
+	// 反例：普通文本节点内仍然报 high。
+	hit := judge("xss", &Resp{Status: 200, Body: "<html><body><p>" + xssRaw + "</p></body></html>"}, "", tgt)
+	if hit == nil || hit.Severity != "high" {
+		t.Fatalf("可执行上下文应保持 high: %+v", hit)
+	}
+}
+
+// TestMarkerPayloadEchoExcluded B-11：marker 是探针自身字面量时，
+// 回显不得判成"解析报错"（该防线此前因 payload 恒为空而是死代码）。
+func TestMarkerPayloadEchoExcluded(t *testing.T) {
+	tgt := Target{URL: "https://a.com/s?q=1", Param: "q"}
+	// 构造一个"payload 里含 marker 字面量"的场景：把 mongoerror 塞进探针。
+	payload := `{"$ne":"mongoerror"}`
+	echo := &Resp{Status: 200, Body: "<html>echo: " + payload + "</html>"}
+	if hit := judgeDeep("nosql", echo, "", tgt, payload); hit != nil {
+		t.Fatalf("marker 来自 payload 回显时不得命中: %+v", hit)
+	}
+	// 反例：真实数据层报错（正文含 marker 但不是 payload 回显）仍要命中。
+	realErr := &Resp{Status: 200, Body: "<html>MongoError: unknown operator $ne</html>"}
+	if hit := judgeDeep("nosql", realErr, "", tgt, payload); hit == nil {
+		t.Fatal("真实数据层报错应命中")
+	}
+}
+
+// TestSleepFamiliesCoverage B-15：时间盲注覆盖 4 种 DBMS 方言。
+func TestSleepFamiliesCoverage(t *testing.T) {
+	fams := sleepFamilies(4)
+	if len(fams) != 4 {
+		t.Fatalf("方言族数 = %d, 期望 4", len(fams))
+	}
+	want := map[string]string{
+		"MySQL":      "SLEEP(4)",
+		"PostgreSQL": "pg_sleep(4)",
+		"MSSQL":      "WAITFOR DELAY '0:0:4'",
+		"Oracle":     "dbms_pipe.receive_message('a',4)",
+	}
+	for _, f := range fams {
+		w, ok := want[f.DBMS]
+		if !ok {
+			t.Fatalf("未知方言 %q", f.DBMS)
+		}
+		if !strings.Contains(f.Payload, w) {
+			t.Fatalf("%s 载荷 %q 不含 %q", f.DBMS, f.Payload, w)
+		}
+	}
+	// 兼容入口仍返回默认族（MySQL）。
+	if got := sleepPayload(4); !strings.Contains(got, "SLEEP(4)") {
+		t.Fatalf("sleepPayload 兼容入口应返回 MySQL 形态，实际 %q", got)
+	}
+}

@@ -27,15 +27,16 @@ import (
 // 返回（原始 host、校验后主机名、TLS 探测端口）。语义与 hNetsec 一致：
 // URL 里显式端口优先；未指定或 http 默认 80 时按 443 探 TLS。
 func (s *Server) assetHostQuery(r *http.Request) (rawHost, vhost string, tlsPort int, err error) {
+	cfg := s.cfgSnap() // A-09：读配置快照（一次请求/操作内一致）
 	rawHost = strings.TrimSpace(r.URL.Query().Get("host"))
 	if rawHost == "" {
 		return "", "", 0, fmt.Errorf("缺少 host 参数")
 	}
-	_, vhost, port, verr := target.Validate(rawHost, s.cfg.Scan.Resolve)
+	_, vhost, port, verr := target.Validate(rawHost, cfg.Scan.Resolve)
 	if verr != nil {
 		return "", "", 0, verr
 	}
-	if !target.Allowed(vhost, s.cfg.Scan.AllowHosts) {
+	if !target.Allowed(vhost, cfg.Scan.AllowHosts) {
 		return "", "", 0, fmt.Errorf("目标不在 allow_hosts 授权白名单：%s", vhost)
 	}
 	tlsPort = port

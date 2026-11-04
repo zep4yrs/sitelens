@@ -107,21 +107,23 @@ type triageState struct {
 	entries []WhitelistEntry                 // 白名单（保序，落盘前排序）
 }
 
-// triageStates 按 Store 实例惰性挂状态：不往 Store 结构体加字段（store.go 不动），
-// 同一 Store 的所有调用共享同一份内存态。键为 *Store，新建 Store 会重新从磁盘
-// 加载——这既符合「一个 dataDir 一个使用者」的既有语义，也让往返测试能验证真落盘。
-var triageStates sync.Map // map[*Store]*triageState
-
 // atomicRename 落盘替换钩子（生产恒为 os.Rename；测试注入失败以验证回滚）。
 var atomicRename = os.Rename
 
 // triageState 取（首次懒加载）当前 Store 的 triage 状态。
+//
+// C-19：状态挂在 Store 字段（s.triage，见 store.go）上，不再用按 *Store
+// 的全局 sync.Map。原实现里 map 键永不删除：进程内每次 New/NewTiered
+// 都留下一个无法回收的 triageState（测试、CLI 多命令、未来多租户场景），
+// 20000 次 New 即 20000 份状态常驻，属于缓慢内存泄漏。
 func (s *Store) triageState() (*triageState, error) {
 	if s == nil || s.dataDir == "" {
 		return nil, errors.New("triage: 存储未初始化（data_dir 为空）")
 	}
-	if v, ok := triageStates.Load(s); ok {
-		return v.(*triageState), nil
+	s.triageMu.Lock()
+	defer s.triageMu.Unlock()
+	if s.triage != nil {
+		return s.triage, nil
 	}
 	st := &triageState{
 		dir:           s.dataDir,
@@ -130,8 +132,8 @@ func (s *Store) triageState() (*triageState, error) {
 		triage:        map[int64]map[string]TriageEntry{},
 	}
 	st.load()
-	actual, _ := triageStates.LoadOrStore(s, st)
-	return actual.(*triageState), nil
+	s.triage = st
+	return st, nil
 }
 
 // ---- 加载 / 隔离 ----

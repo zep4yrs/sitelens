@@ -343,7 +343,10 @@ func (c *collector) annotatePriorsFromKB(kb *intel.KB) {
 			continue
 		}
 		kevOf[key] = kb.IsKEV(cve)
-		cvssOf[key] = kb.CVSSFor(cve)
+		// C2-02：只用已常驻索引（CVSSForLoaded 不触发 NVD 懒加载）。
+		if s, ok := kb.CVSSForLoaded(cve); ok {
+			cvssOf[key] = s
+		}
 	}
 	c.annotateImpactPriors(cveOf, kevOf, cvssOf)
 }
@@ -427,11 +430,15 @@ func splitURL(rawURL string) (base string, params []string) {
 type nvdLookup struct{ kb *intel.KB }
 
 // CWEsFor 查 CVE 的 CWE（无挂载/无数据返回 nil）。
+//
+// C2-02：只查**已常驻**的 NVD 索引（NVDIfLoaded 不触发加载）。旧实现走
+// KB.NVD()，会在 graph 收尾隐式解码 1.7GB 全量索引——engine.go 的
+// HasNVD() 闸门只判断"是否配置"，挡不住这一步。
 func (n nvdLookup) CWEsFor(cve string) []string {
 	if n.kb == nil {
 		return nil
 	}
-	s := n.kb.NVD()
+	s := n.kb.NVDIfLoaded()
 	if s == nil {
 		return nil
 	}

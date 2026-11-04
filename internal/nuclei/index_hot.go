@@ -24,6 +24,8 @@ package nuclei
 
 import (
 	"encoding/json"
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -40,18 +42,27 @@ type dirStamp struct {
 
 // walkTemplateFiles 全量 walk 模板目录：收集 yaml/yml 文件与所有目录戳。
 // 文件集合与目录戳来自同一次 walk，保证缓存内容自洽。
+//
+// B2-11：walk 错误**必须上抛**。旧实现四处 `return nil` 静默吞错——某目录
+// stat 失败时其文件不进索引、目录戳也不记录，此后该目录内容怎么变都检测不到
+// （目录戳列表里没有它），残缺索引被当作有效缓存长期复用 → 模板静默缺失、
+// 无任何告警。现在收集所有错误并 Join 返回，由 Index 决定失败语义。
 func walkTemplateFiles(dir string) (files []string, stamps []dirStamp, err error) {
-	err = filepath.WalkDir(dir, func(p string, d os.DirEntry, werr error) error {
+	var errs []error
+	walkErr := filepath.WalkDir(dir, func(p string, d os.DirEntry, werr error) error {
 		if werr != nil {
-			return nil // 与旧实现一致：walk 期错误忽略，不中断整库构建
+			errs = append(errs, fmt.Errorf("walk %s: %w", p, werr))
+			return nil // 继续走其余目录，最后统一上抛
 		}
 		if d.IsDir() {
 			info, ierr := d.Info()
 			if ierr != nil {
+				errs = append(errs, fmt.Errorf("stat %s: %w", p, ierr))
 				return nil
 			}
 			rel, rerr := filepath.Rel(dir, p)
 			if rerr != nil {
+				errs = append(errs, fmt.Errorf("rel %s: %w", p, rerr))
 				return nil
 			}
 			stamps = append(stamps, dirStamp{Path: filepath.ToSlash(rel), MTime: info.ModTime().UnixNano()})
@@ -62,7 +73,10 @@ func walkTemplateFiles(dir string) (files []string, stamps []dirStamp, err error
 		}
 		return nil
 	})
-	return files, stamps, err
+	if walkErr != nil {
+		errs = append(errs, walkErr)
+	}
+	return files, stamps, errors.Join(errs...)
 }
 
 // dirStampsCurrent 校验缓存目录戳与当前目录树是否一致：stamps 全等（含根
@@ -117,11 +131,13 @@ func dirStampCurrent(root string, s dirStamp) bool {
 }
 
 // indexMemoEntry 最近一次成功解码的索引缓存（单条）。stamps 是缓存里记录的
-// 目录戳，供 Index 热路径校验模板目录是否仍然新鲜。
+// 目录戳，供 Index 热路径校验模板目录是否仍然新鲜；root 是模板根目录
+// （B2-11：IndexCached 只有缓存路径，靠缓存里记下的 root 才能校验目录戳）。
 type indexMemoEntry struct {
 	cachePath string
 	mtime     int64
 	size      int64
+	root      string
 	stamps    []dirStamp
 	entries   []Entry
 }
@@ -203,7 +219,7 @@ func indexLoadHot(dir, cachePath string) ([]Entry, bool) {
 	}
 	indexMemoStore(&indexMemoEntry{
 		cachePath: cachePath, mtime: mtime, size: size,
-		stamps: cached.Dirs, entries: cached.Entries,
+		root: dir, stamps: cached.Dirs, entries: cached.Entries,
 	})
 	return cached.Entries, true
 }

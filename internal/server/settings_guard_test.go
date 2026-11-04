@@ -51,7 +51,7 @@ func putJSONReq(t *testing.T, url, body string) (int, map[string]any) {
 func TestSettingsRejectsOverridesPathEscape(t *testing.T) {
 	s, api := newServer(t)
 	before := s.settingsCfg().Intel.OverridesPath
-	absDir, err := filepath.Abs(s.cfg.Store.DataDir)
+	absDir, err := filepath.Abs(s.cfgSnap().Store.DataDir)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -88,7 +88,7 @@ func TestSettingsRejectsOverridesPathEscape(t *testing.T) {
 // 内的相对路径应归一为绝对路径并被接受（不能把功能修死）。
 func TestSettingsAcceptsOverridesPathInsideDataDir(t *testing.T) {
 	s, api := newServer(t)
-	absDir, err := filepath.Abs(s.cfg.Store.DataDir)
+	absDir, err := filepath.Abs(s.cfgSnap().Store.DataDir)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -93,12 +93,16 @@ func probaNormalized(scores []float64) []float64 {
 // ProbaTopK 同 TopK（按线性得分降序的前 k 类），但 Score 换成
 // predict_proba 口径概率。排序依据仍是原始得分（概率单调于 sigmoid，
 // 排序与 Python 侧 proba.argsort 一致）。
+// 并发（C2-10）：读锁内取分数与类别快照；卸载后返回空。
 func (m *Model) ProbaTopK(text string, k int) []Pred {
-	if k <= 0 { // 与 TopK 同口径：负/零 k 返回空而非 panic
+	if m == nil || k <= 0 { // 与 TopK 同口径：负/零 k 返回空而非 panic
 		return nil
 	}
-	scores := m.DecisionFunction(text)
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	scores := m.decisionLocked(text)
 	probs := probaNormalized(scores)
+	classes := m.classes
 	if k > len(scores) {
 		k = len(scores)
 	}
@@ -114,14 +118,20 @@ func (m *Model) ProbaTopK(text string, k int) []Pred {
 	})
 	out := make([]Pred, k)
 	for i := 0; i < k; i++ {
-		out[i] = Pred{Class: m.classes[idx[i]], Score: probs[idx[i]]}
+		out[i] = Pred{Class: classes[idx[i]], Score: probs[idx[i]]}
 	}
 	return out
 }
 
 // Proba 返回指定类别的 predict_proba 口径概率（预测单个类别的置信度）。
+// 并发（C2-10）：卸载后返回 0。
 func (m *Model) Proba(text string, class string) float64 {
-	scores := m.DecisionFunction(text)
+	if m == nil {
+		return 0
+	}
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	scores := m.decisionLocked(text)
 	probs := probaNormalized(scores)
 	for i, c := range m.classes {
 		if c == class {

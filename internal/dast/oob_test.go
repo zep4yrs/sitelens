@@ -87,3 +87,51 @@ func TestOobNoTokenHost(t *testing.T) {
 		t.Fatalf("未配 token_host 不应探测: %+v", hits)
 	}
 }
+
+// TestOobAllFormsSent B-05 回归：5 种出带形态必须**各发一次**。
+//
+// 旧实现在第一个形态后无条件 break，payloads[1..4]（file / gopher / JNDI /
+// XXE）在任何配置下都不会真正发出——XXE 与 Log4Shell 的出带通道属于结构性
+// 漏报。这里断言实际发出的请求数与形态数一致，且每种形态的载荷都上了线。
+func TestOobAllFormsSent(t *testing.T) {
+	f := &oobFetcher{}
+	r := New(f, DefaultOptions())
+	r.OobProbe([]Target{{URL: "https://a.com/s?u=1", Param: "u"}}, OobConfig{
+		Enabled: true, Mode: "csv",
+		CSVPath:   filepath.Join(t.TempDir(), "absent.csv"),
+		TokenHost: "oast.example.com",
+	})
+	if len(f.seen) != len(oobFormLabels) {
+		t.Fatalf("应发送 %d 种出带形态，实际 %d 次: %v", len(oobFormLabels), len(f.seen), f.seen)
+	}
+	joined := strings.Join(f.seen, "\n")
+	// 形态关键词都是字母，不会被 url.Values.Encode 转义。
+	for _, want := range []string{"oast.example.com", "gopher", "jndi", "SYSTEM", "file"} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("出带形态 %q 未真正发出:\n%s", want, joined)
+		}
+	}
+}
+
+// TestOobFormBudgetRespected B-05 预算：请求数受「目标数 × 形态数」约束，
+// 且 MaxProbes 仍然限制目标数（不因多形态而放大目标面）。
+func TestOobFormBudgetRespected(t *testing.T) {
+	f := &oobFetcher{}
+	r := New(f, DefaultOptions())
+	targets := []Target{
+		{URL: "https://a.com/s?u=1", Param: "u"},
+		{URL: "https://a.com/s?v=1", Param: "v"},
+		{URL: "https://a.com/s?w=1", Param: "w"},
+	}
+	r.OobProbe(targets, OobConfig{
+		Enabled: true, Mode: "csv",
+		CSVPath:   filepath.Join(t.TempDir(), "absent.csv"),
+		TokenHost: "oast.example.com",
+		MaxProbes: 2, // 只测前 2 个目标
+	})
+	want := 2 * len(oobFormLabels)
+	if len(f.seen) != want {
+		t.Fatalf("MaxProbes=2 时应发 %d 次（2 目标 × %d 形态），实际 %d 次",
+			want, len(oobFormLabels), len(f.seen))
+	}
+}

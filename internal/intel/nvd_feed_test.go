@@ -43,9 +43,11 @@ func TestSyncNVDFeed(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	oldURL := nvdFeedURL
+	oldURL, oldMetaURL := nvdFeedURL, nvdFeedMetaURL
 	nvdFeedURL = srv.URL + "/nvdcve-2.0-%d.json.gz"
-	defer func() { nvdFeedURL = oldURL }()
+	// C2-12 起 SyncNVDFeed 会先取 meta：一并注入测试服务器，避免访问真实源。
+	nvdFeedMetaURL = srv.URL + "/nvdcve-2.0-%d.meta"
+	defer func() { nvdFeedURL, nvdFeedMetaURL = oldURL, oldMetaURL }()
 
 	out := filepath.Join(t.TempDir(), "feed.json.gz")
 	var lastDone, lastTotal int
@@ -85,9 +87,10 @@ func TestSyncNVDFeedPartialFailure(t *testing.T) {
 		w.WriteHeader(500) // 2020 失败
 	}))
 	defer srv.Close()
-	oldURL := nvdFeedURL
+	oldURL, oldMetaURL := nvdFeedURL, nvdFeedMetaURL
 	nvdFeedURL = srv.URL + "/nvdcve-2.0-%d.json.gz"
-	defer func() { nvdFeedURL = oldURL }()
+	nvdFeedMetaURL = srv.URL + "/nvdcve-2.0-%d.meta" // 同注入 meta，避免真实外网请求
+	defer func() { nvdFeedURL, nvdFeedMetaURL = oldURL, oldMetaURL }()
 
 	out := filepath.Join(t.TempDir(), "f.json.gz")
 	err := SyncNVDFeed(out, 2019, 2020, nil)
@@ -110,9 +113,10 @@ func TestSyncNVDFeedAllFail(t *testing.T) {
 		w.WriteHeader(503)
 	}))
 	defer srv.Close()
-	oldURL := nvdFeedURL
+	oldURL, oldMetaURL := nvdFeedURL, nvdFeedMetaURL
 	nvdFeedURL = srv.URL + "/x-%d.json.gz"
-	defer func() { nvdFeedURL = oldURL }()
+	nvdFeedMetaURL = srv.URL + "/x-%d.meta" // 同注入 meta，避免真实外网请求
+	defer func() { nvdFeedURL, nvdFeedMetaURL = oldURL, oldMetaURL }()
 
 	out := filepath.Join(t.TempDir(), "none.json.gz")
 	if err := SyncNVDFeed(out, 2021, 2022, nil); err == nil {

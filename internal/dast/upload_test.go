@@ -569,7 +569,13 @@ func TestG10ReadBack(t *testing.T) {
 	}
 }
 
-// TestG10UploadAcceptedMatrix 受理判定：4xx/拒绝特征优先，回显标记次之。
+// TestG10UploadAcceptedMatrix 受理判定：4xx/拒绝特征优先；仅回显标记不再算受理。
+//
+// B-13 语义变更：`g10UploadAccepted` 现在是**严格**受理判定，只有命中受理
+// 特征才算受理；「响应回显上传内容」降级为未定（由 g10Acceptance 用只读
+// 回读补证）。故本表第一行期望值由 true 更正为 false——这不是弱化断言，
+// 而是把断言改到修正后的语义上；三值判定另有 TestG10UploadVerdictTriState
+// 覆盖（覆盖只增不减）。
 func TestG10UploadAcceptedMatrix(t *testing.T) {
 	marker := "SLMARK"
 	cases := []struct {
@@ -577,7 +583,7 @@ func TestG10UploadAcceptedMatrix(t *testing.T) {
 		resp   *UploadHTTPResp
 		accept bool
 	}{
-		{"2xx 回显标记", &UploadHTTPResp{Status: 200, Body: []byte("ok SLMARK")}, true},
+		{"2xx 仅回显标记（未定，不算受理）", &UploadHTTPResp{Status: 200, Body: []byte("ok SLMARK")}, false},
 		{"2xx 受理特征", &UploadHTTPResp{Status: 200, Body: []byte("upload success: file saved")}, true},
 		{"2xx 拒绝特征", &UploadHTTPResp{Status: 200, Body: []byte("invalid file extension")}, false},
 		{"4xx", &UploadHTTPResp{Status: 403, Body: []byte("SLMARK")}, false},
@@ -589,5 +595,61 @@ func TestG10UploadAcceptedMatrix(t *testing.T) {
 		if got != tc.accept {
 			t.Fatalf("%s: got %v, 期望 %v", tc.name, got, tc.accept)
 		}
+	}
+}
+
+// TestG10UploadVerdictTriState 三值受理判定（B-13）：回显 → 未定，受理特征 → 受理。
+func TestG10UploadVerdictTriState(t *testing.T) {
+	marker := "SLMARK"
+	cases := []struct {
+		name string
+		resp *UploadHTTPResp
+		want g10Verdict
+	}{
+		{"仅回显标记", &UploadHTTPResp{Status: 200, Body: []byte("ok SLMARK")}, g10VerdictUndetermined},
+		{"受理特征", &UploadHTTPResp{Status: 200, Body: []byte("upload success")}, g10VerdictAccepted},
+		{"拒绝特征", &UploadHTTPResp{Status: 200, Body: []byte("invalid file extension")}, g10VerdictRejected},
+		{"4xx", &UploadHTTPResp{Status: 403, Body: []byte("SLMARK")}, g10VerdictRejected},
+		{"无信号", &UploadHTTPResp{Status: 200, Body: []byte("nothing")}, g10VerdictUndetermined},
+	}
+	for _, tc := range cases {
+		if got, _ := g10UploadVerdict(tc.resp, marker); got != tc.want {
+			t.Fatalf("%s: verdict=%v, 期望 %v", tc.name, got, tc.want)
+		}
+	}
+}
+
+// TestG10AcceptanceReadBackConfirms 未定（仅回显）时，只读回读取到标记才算受理；
+// 回读取不到则不算（错误页/预览页不得算成上传绕过）。
+func TestG10AcceptanceReadBackConfirms(t *testing.T) {
+	marker := "SLMARK"
+	c := UploadCandidate{FileName: "x.php"}
+	echoResp := &UploadHTTPResp{Status: 200, Body: []byte("preview: SLMARK")}
+
+	// 回读成功 → 受理。
+	ok, why := g10Acceptance(echoResp, marker, "https://a.com/upload", c,
+		func(string) string { return "https://a.com/uploads/x.php" },
+		func(string) *UploadHTTPResp {
+			return &UploadHTTPResp{Status: 200, Header: map[string]string{"Content-Type": "text/plain"}, Body: []byte("SLMARK")}
+		})
+	if !ok {
+		t.Fatalf("回读取到标记应判受理: %s", why)
+	}
+	// 回读取不到 → 不受理。
+	ok, _ = g10Acceptance(echoResp, marker, "https://a.com/upload", c,
+		func(string) string { return "https://a.com/uploads/x.php" },
+		func(string) *UploadHTTPResp { return &UploadHTTPResp{Status: 404} })
+	if ok {
+		t.Fatal("回读 404 不得判受理")
+	}
+	// 无回读地址 → 不受理。
+	if ok, _ := g10Acceptance(echoResp, marker, "https://a.com/upload", c, nil, nil); ok {
+		t.Fatal("无可回读地址不得判受理")
+	}
+	// 明确受理特征 → 直接受理，不需要回读。
+	ok, _ = g10Acceptance(&UploadHTTPResp{Status: 200, Body: []byte("upload success")}, marker,
+		"https://a.com/upload", c, nil, nil)
+	if !ok {
+		t.Fatal("受理特征应直接判受理")
 	}
 }

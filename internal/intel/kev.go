@@ -146,3 +146,21 @@ func (k *KB) CVSSFor(cve string) float64 {
 	}
 	return 0
 }
+
+// CVSSForLoaded 同 CVSSFor，但**只在 NVD 索引已常驻时**查询（不触发 1.7GB
+// 懒加载），第二个返回值报告该条是否携带真实评分（0.0 也算，C2-04/C2-02）。
+// 供扫描/图收尾这类"顺带查询"的消费方使用。
+func (k *KB) CVSSForLoaded(cve string) (float64, bool) {
+	if k == nil || cve == "" {
+		return 0, false
+	}
+	s := k.NVDIfLoaded()
+	if s == nil {
+		return 0, false
+	}
+	e, ok := s.ByCVE(cve)
+	if !ok {
+		return 0, false
+	}
+	return e.Score, e.HasScore()
+}

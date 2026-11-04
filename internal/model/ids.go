@@ -146,6 +146,35 @@ func PrefixOf(id string) string {
 	return p
 }
 
+// prefixOfKind 实体类型（EntityKind）→ 稳定 ID 前缀。
+// 供 Validate 用 wantPrefix 校验「实体的 ID 前缀与其声明类型一致」，
+// 以及跨实体引用的类型校验（C2-08）。未知类型返回空串（跳过前缀约束）。
+func prefixOfKind(kind string) string {
+	switch kind {
+	case KindEntryPoint:
+		return prefixEntryPoint
+	case KindVulnNode:
+		return prefixVulnNode
+	case KindEvidence:
+		return prefixEvidence
+	case KindEvidenceLink:
+		return prefixEvidenceLink
+	case KindDataflow:
+		return prefixDataflow
+	case KindCWERel:
+		return prefixCWERel
+	case KindChainNode:
+		return prefixChainNode
+	case KindChainEdge:
+		return prefixChainEdge
+	case KindPrivChange:
+		return prefixPrivChange
+	case KindImpact:
+		return prefixImpact
+	}
+	return ""
+}
+
 // ValidateID 校验稳定 ID 形态：前缀 + '_' + 12 位十六进制。
 // wantPrefix 非空时一并校验前缀；用于跨实体引用前的快速合法性检查。
 func ValidateID(id, wantPrefix string) error {

@@ -66,12 +66,16 @@ type Entry struct {
 //   - 5.2 索引构建优化（worker pool 并行 + 前端形状预筛）是纯性能改动：
 //     转换产物与 entries 顺序/去重语义经全语料差分对照确认逐条等价
 //     （见 index_equiv_test.go，5,094 文件 0 差异）。
-const cacheSchema = 10
+//   - v11（B2-11）：缓存增「模板根目录」（Root），供 IndexCached 复用目录戳
+//     新鲜度校验——此前 IndexCached 只校验缓存文件自身的 mtime/size，模板
+//     目录变化后仍返回旧条目。v10 及更旧缓存无 Root → 整体失效重建一次。
+const cacheSchema = 11
 
 type cacheFile struct {
 	Schema  int        `json:"schema"`
-	Files   int        `json:"files"` // 目录内 yaml/yml 总数（诊断用；热路径校验改用 Dirs）
-	Dirs    []dirStamp `json:"dirs"`  // v10：模板目录树 mtime 戳（热路径新鲜度校验）
+	Files   int        `json:"files"`          // 目录内 yaml/yml 总数（诊断用；热路径校验改用 Dirs）
+	Root    string     `json:"root,omitempty"` // v11：模板根目录（IndexCached 校验目录戳用）
+	Dirs    []dirStamp `json:"dirs"`           // v10：模板目录树 mtime 戳（热路径新鲜度校验）
 	Entries []Entry    `json:"entries"`
 }
 
@@ -165,14 +169,14 @@ func Index(dir, cachePath string) ([]Entry, error) {
 	}
 	if cachePath != "" {
 		if data, jerr := json.Marshal(cacheFile{
-			Schema: cacheSchema, Files: len(files), Dirs: stamps, Entries: entries,
+			Schema: cacheSchema, Files: len(files), Root: dir, Dirs: stamps, Entries: entries,
 		}); jerr == nil {
 			_ = os.WriteFile(cachePath, data, 0o644)
 			// 缓存落盘成功后写入 memo（键取落盘后的真实文件戳）。
 			if mtime, size, ok := indexCacheStat(cachePath); ok {
 				indexMemoStore(&indexMemoEntry{
 					cachePath: cachePath, mtime: mtime, size: size,
-					stamps: stamps, entries: entries,
+					root: dir, stamps: stamps, entries: entries,
 				})
 			}
 		}
@@ -283,17 +287,34 @@ func IndexCached(cachePath string) []Entry {
 		return nil
 	}
 	if m := indexMemoLoad(cachePath, mtime, size); m != nil {
-		return m.entries
+		// B2-11：memo 命中也要校验模板目录戳——缓存文件没变不等于模板库没变。
+		if cachedIndexFresh(m.root, m.stamps) {
+			return m.entries
+		}
+		return nil
 	}
 	cached, ok := readIndexCache(cachePath)
 	if !ok {
 		return nil
 	}
+	if !cachedIndexFresh(cached.Root, cached.Dirs) {
+		return nil // 模板目录已变：交给 Index 重建，不返回过期条目
+	}
 	indexMemoStore(&indexMemoEntry{
 		cachePath: cachePath, mtime: mtime, size: size,
-		stamps: cached.Dirs, entries: cached.Entries,
+		root: cached.Root, stamps: cached.Dirs, entries: cached.Entries,
 	})
 	return cached.Entries
+}
+
+// cachedIndexFresh 缓存里的目录戳是否仍然成立（B2-11）。
+// root 为空（v10 及更旧缓存 / 测试手工构造）时无法校验 → 保持旧行为（视为新鲜），
+// 冷路径重建后即写入 root，之后就能真正校验。
+func cachedIndexFresh(root string, stamps []dirStamp) bool {
+	if root == "" || len(stamps) == 0 {
+		return true
+	}
+	return dirStampsCurrent(root, stamps)
 }
 
 // sourceTop 来源类别白名单——与 sync.go / update-afrog 的镜像目录一一对应

@@ -3,9 +3,58 @@ package checks
 // CP-10 每来源通过率统计单测：语义 / 归一 / 排序 / 适配器。
 
 import (
+	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"reflect"
+	"sync/atomic"
 	"testing"
+
+	"cnb.cool/feng-qiao/sitelens/internal/httpx"
 )
+
+// TestCancelledGroupsRecorded B-09 回归：取消时已领取的组必须留下
+// not_executed 执行证据，不得从 runs 中整组消失。
+//
+// 旧实现在 processGroup 开头 `if cancelCheck() { return }` 直接返回，既不
+// 记命中也不记 outcome，于是 runs 里整组条目消失——下游会把「已调度但没
+// 执行」误当成「不在执行集」，破坏 CheckRun 的三值语义（not_executed
+// 永远不作负样本）。
+func TestCancelledGroupsRecorded(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, "<html><body>ok</body></html>")
+	}))
+	defer srv.Close()
+
+	var calls atomic.Int64
+	// 首次 false（让 worker 领到一个组），之后 true（让 processGroup 走取消分支）。
+	cancel := func() bool { return calls.Add(1) > 1 }
+
+	list := []Check{
+		{ID: "c1", Path: "/a", Match: Match{Status: 200}, Title: "a", Sev: "low"},
+		{ID: "c2", Path: "/b", Match: Match{Status: 200}, Title: "b", Sev: "low"},
+	}
+	_, runs := RunListWithLog(httpx.New(0), srv.URL, list, 1, cancel, nil, nil)
+
+	if len(runs) == 0 {
+		t.Fatal("取消后 runs 为空：已领取的组从执行证据中消失了（B-09 回归）")
+	}
+	sawCancelled := false
+	for _, r := range runs {
+		if r.Reason == "cancelled" {
+			sawCancelled = true
+			if r.Status != RunStatusNotExecuted {
+				t.Fatalf("取消组的 status = %q, 期望 %q", r.Status, RunStatusNotExecuted)
+			}
+			if r.Hit {
+				t.Fatalf("取消组不得标记为命中: %+v", r)
+			}
+		}
+	}
+	if !sawCancelled {
+		t.Fatalf("未记录到 reason=cancelled 的执行证据: %+v", runs)
+	}
+}
 
 // TestAggregateBySource 基础聚合：pass=executed、fail=not_executed、hit 单列。
 func TestAggregateBySource(t *testing.T) {

@@ -304,19 +304,21 @@ func (s *pageStream) push(resp *httpx.Response, doc *htmlx.Doc) {
 	s.mu.Unlock()
 
 	// 指纹匹配：CPU 热点，派发 worker（结果按 idx 回填，合并仍按页序）。
+	// V-09：worker 走 safeGo（panic 只记日志不重抛），单个页面指纹 panic
+	// 不会打崩进程；wg.Done/sem 释放由 defer 保证。
 	if s.matcher != nil {
 		s.wg.Add(1)
-		go func(i int, r *httpx.Response) {
+		safeGo("fingerprint", func() {
 			defer s.wg.Done()
 			s.sem <- struct{}{}
 			defer func() { <-s.sem }()
-			ev := sitelens.Extract(r)
+			ev := sitelens.Extract(resp)
 			ev.FaviconHash = s.favHash
 			hits := s.matcher.Match(ev)
 			s.mu.Lock()
-			s.fpHits[i] = hits
+			s.fpHits[idx] = hits
 			s.mu.Unlock()
-		}(idx, resp)
+		})
 	}
 }
 

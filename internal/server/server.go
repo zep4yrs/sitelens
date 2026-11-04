@@ -19,6 +19,7 @@ import (
 	"path"
 	"path/filepath"
 	"runtime"
+	"runtime/debug"
 	"strconv"
 	"strings"
 	"sync"
@@ -30,6 +31,7 @@ import (
 	"cnb.cool/feng-qiao/sitelens/internal/beacon"
 	"cnb.cool/feng-qiao/sitelens/internal/checks"
 	"cnb.cool/feng-qiao/sitelens/internal/config"
+	"cnb.cool/feng-qiao/sitelens/internal/dast"
 	"cnb.cool/feng-qiao/sitelens/internal/engine"
 	"cnb.cool/feng-qiao/sitelens/internal/headless"
 	"cnb.cool/feng-qiao/sitelens/internal/intel"
@@ -71,7 +73,10 @@ func categoryName(id string) string {
 
 // Server Web 服务。
 type Server struct {
-	cfg     *config.Config
+	// cfgPtr 当前配置快照（A-09）：写侧只在设置页保存时经 applySettings
+	// 深拷贝后原子换枪；读侧一律经 cfgSnap() 取指针。指向的 *config.Config
+	// 一经发布不得原地修改（否则与正在读快照的请求/扫描构成数据竞争）。
+	cfgPtr  atomic.Pointer[config.Config]
 	cfgPath string // 用户配置文件路径（设置页保存目标）
 	eng     *engine.Engine
 	matcher *sitelens.Matcher
@@ -84,7 +89,9 @@ type Server struct {
 	apiToken atomic.Pointer[string]
 	tech     atomic.Pointer[techMeta] // 类别全集 + 指纹条数（CSV 宽表列序）
 
-	cfgMu    sync.Mutex // 保护 cfg 的设置页热更新（apiToken 见上）
+	// cfgMu 串行化设置页写侧（持久化 + 深拷贝 + 原子换枪的读改写序列），
+	// 读侧不取锁：一律经 cfgSnap() 读不加速快照。
+	cfgMu    sync.Mutex
 	dataMu   sync.Mutex
 	lastData map[string]int64 // 数据文件路径 → 上次加载时的 mtime（热更新基线）
 
@@ -114,10 +121,11 @@ func New(cfg *config.Config, cfgPath string) (*Server, error) {
 	default:
 		return nil, fmt.Errorf("web.auth_mode 非法：%q（可选 none/token）", cfg.Web.AuthMode)
 	}
-	s := &Server{cfg: cfg, cfgPath: cfgPath, jobs: store.NewJobManagerWithCap(200),
+	s := &Server{cfgPath: cfgPath, jobs: store.NewJobManagerWithCap(200),
 		sem:        make(chan struct{}, cfg.Scan.MaxConcurrent),
 		preflights: newPreflightCache(),
 		lastData:   map[string]int64{}}
+	s.cfgPtr.Store(cfg)
 	checks.ConfigurePlugins(cfg.Checks.PluginDir)
 	tok := os.Getenv("SLENS_API_TOKEN")
 	if tok == "" {
@@ -284,9 +292,13 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/admin/reload", s.hAdminReload)
 	// A10 自适应：长空闲释放情报常驻（惰性路径保留，下次访问自动重载）
 	mux.HandleFunc("POST /api/admin/release-intel", s.hAdminReleaseIntel)
-	// 内置 SPA 靶页：JS 延迟注入登录表单，用于无头渲染/登录爆破链路自测
-	mux.HandleFunc("GET /dev/spa-target", hSPATarget)
-	mux.HandleFunc("POST /dev/spa-target/login", hSPATargetLogin)
+	// 内置 SPA 靶页：JS 延迟注入登录表单，用于无头渲染/登录爆破链路自测。
+	// V-18：该页含硬编码演示凭据（admin/admin123），默认不注册；只有自测/
+	// 演示环境显式设置 SITELENS_DEV_SPA_TARGET=1 才暴露（生产/桌面壳零暴露）。
+	if devSPATargetEnabled() {
+		mux.HandleFunc("GET /dev/spa-target", hSPATarget)
+		mux.HandleFunc("POST /dev/spa-target/login", hSPATargetLogin)
+	}
 	mux.HandleFunc("POST /api/scan", s.hScan)
 	mux.HandleFunc("POST /api/preflight", s.hPreflight) // 扫描前只读预检（1 次 GET，供建议卡 + 首页复用）
 	mux.HandleFunc("GET /api/job/{id}", s.hJob)
@@ -316,7 +328,9 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/diff", s.hDiff)
 	mux.HandleFunc("GET /api/vuln-search", s.hVulnSearch)
 	mux.HandleFunc("GET /api/verified", s.hVerified)
-	mux.HandleFunc("GET /api/replay/{id}", s.hReplay)
+	// V-06：重放会对外发起网络请求（有副作用），必须是 POST —— GET 可被
+	// <img>/链接诱导触发，且违背 GET 幂等语义。
+	mux.HandleFunc("POST /api/replay/{id}", s.hReplay)
 	mux.HandleFunc("POST /api/netsec", s.hNetsec)
 	mux.HandleFunc("POST /api/loginbrute", s.hLoginBrute)
 	mux.HandleFunc("GET /api/captcha/capability", s.hCaptchaCapability)
@@ -325,7 +339,9 @@ func (s *Server) Handler() http.Handler {
 	// CP-08 UI triage：误报标记 + 白名单（internal/server/triage.go）
 	s.registerTriageRoutes(mux)
 
-	return s.guard(s.headers(mux))
+	// V-05/BL-1：originGuard 必须在最外层——Host/来源校验先于任何凭据判定，
+	// 且能覆盖 none 模式（无凭据）的全部路径。
+	return s.originGuard(s.guard(s.headers(mux)))
 }
 
 // Run 启动 HTTP 服务（Ctrl+C 优雅关闭）。
@@ -344,11 +360,19 @@ func (s *Server) hAdminReleaseIntel(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) Run() error {
+	cfg := s.cfgSnap() // A-09：读配置快照（一次请求/操作内一致）
 	s.startKEVDaemon()
 	srv := &http.Server{
-		Addr:              s.cfg.Web.Listen,
+		Addr:              cfg.Web.Listen,
 		Handler:           s.Handler(),
 		ReadHeaderTimeout: 10 * time.Second,
+		// V-20：只设 ReadHeaderTimeout 时，慢速 body（Slowloris 变体）没有截止
+		// 时间，可长期占用连接。扫描器是长任务程序：读超时 120s（覆盖
+		// /api/audit 的 8MB 上传），空闲连接 60s 回收，头大小 64KB 封顶。
+		// 写超时保持 0：导出/报告是同步长响应，由各 handler 自行控制。
+		ReadTimeout:    120 * time.Second,
+		IdleTimeout:    60 * time.Second,
+		MaxHeaderBytes: 64 << 10,
 	}
 	done := make(chan struct{})
 	go func() {
@@ -356,17 +380,17 @@ func (s *Server) Run() error {
 		signal.Notify(sig, os.Interrupt, syscall.SIGTERM)
 		<-sig
 		ctx, cancel := context.WithTimeout(context.Background(),
-			time.Duration(s.cfg.Web.ShutdownSec)*time.Second)
+			time.Duration(cfg.Web.ShutdownSec)*time.Second)
 		defer cancel()
 		_ = srv.Shutdown(ctx)
 		close(done)
 	}()
 	// SEC-8 加固：非回环监听且未设 Token 时给出醒目警告
 	//（此时全部 /api/* 对所在网络开放，包括主动扫描与爆破能力）
-	if !strings.HasPrefix(s.cfg.Web.Listen, "127.0.0.1") && !strings.HasPrefix(s.cfg.Web.Listen, "localhost") && s.token() == "" {
-		log.Printf("警告：监听 %s 为非回环地址且未设置 API Token，全部 API 对所在网络开放（含主动扫描能力）。生产部署请设置 SLENS_API_TOKEN 或 web.api_token", s.cfg.Web.Listen)
+	if !strings.HasPrefix(cfg.Web.Listen, "127.0.0.1") && !strings.HasPrefix(cfg.Web.Listen, "localhost") && s.token() == "" {
+		log.Printf("警告：监听 %s 为非回环地址且未设置 API Token，全部 API 对所在网络开放（含主动扫描能力）。生产部署请设置 SLENS_API_TOKEN 或 web.api_token", cfg.Web.Listen)
 	}
-	log.Printf("SiteLens %s 监听 http://%s", Version, s.cfg.Web.Listen)
+	log.Printf("SiteLens %s 监听 http://%s", Version, cfg.Web.Listen)
 	err := srv.ListenAndServe()
 	if errors.Is(err, http.ErrServerClosed) {
 		<-done
@@ -378,10 +402,11 @@ func (s *Server) Run() error {
 // startKEVDaemon 情报守护：立即拉取一次 KEV，此后按 update_hours 轮询。
 // 失败仅记日志（离线环境降级为静态知识库）。
 func (s *Server) startKEVDaemon() {
-	if s.KB() == nil || s.cfg.Intel.UpdateHours <= 0 {
+	cfg := s.cfgSnap() // A-09：读配置快照（一次请求/操作内一致）
+	if s.KB() == nil || cfg.Intel.UpdateHours <= 0 {
 		return
 	}
-	dest := filepath.Join(s.cfg.Store.DataDir, "kev_extra.json")
+	dest := filepath.Join(cfg.Store.DataDir, "kev_extra.json")
 	refresh := func() {
 		// 固定 15s 超时：KEV 源为外部固定地址，不随 netsec 探测配置联动
 		entries, err := intel.FetchKEV(intel.KEVFeedURL, 15*time.Second)
@@ -398,7 +423,7 @@ func (s *Server) startKEVDaemon() {
 	}
 	go func() {
 		refresh()
-		ticker := time.NewTicker(time.Duration(s.cfg.Intel.UpdateHours) * time.Hour)
+		ticker := time.NewTicker(time.Duration(cfg.Intel.UpdateHours) * time.Hour)
 		defer ticker.Stop()
 		for range ticker.C {
 			refresh()
@@ -436,10 +461,19 @@ func (s *Server) guard(next http.Handler) http.Handler {
 }
 
 // headers 安全响应头。
+//
+// V-15：补点击劫持 / 来源泄露 / 敏感设备权限的默认拒绝。CSP 只放
+// frame-ancestors/base-uri/form-action 三个不影响脚本执行的指令——SPA 大量
+// 使用内联 <script>、内联事件与 Monaco 的 blob worker，加 script-src 会白屏，
+// 故本轮不加（后续做 nonce 化后可再收）。
 func (s *Server) headers(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Server", "SiteLens")
 		w.Header().Set("X-Content-Type-Options", "nosniff")
+		w.Header().Set("X-Frame-Options", "DENY")
+		w.Header().Set("Referrer-Policy", "no-referrer")
+		w.Header().Set("Permissions-Policy", "geolocation=(), microphone=(), camera=(), payment=()")
+		w.Header().Set("Content-Security-Policy", "frame-ancestors 'none'; base-uri 'self'; form-action 'self'")
 		next.ServeHTTP(w, r)
 	})
 }
@@ -554,7 +588,7 @@ func redirect(to string) http.HandlerFunc {
 // ---- 简单端点 ----
 
 func (s *Server) hVersion(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, 200, map[string]any{"name": "SiteLens", "version": Version, "engine": "go"})
+	writeJSON(w, 200, versionBody())
 }
 
 func (s *Server) hStats(w http.ResponseWriter, r *http.Request) {
@@ -569,8 +603,8 @@ func (s *Server) hStats(w http.ResponseWriter, r *http.Request) {
 			stats[k] = v
 		}
 	}
-	stats["history"] = s.st.HistoryStats()
-	stats["top_techs"] = s.st.TopTechs(8)
+	stats["history"] = s.st.HistoryStatsForTenant(tenantFromRequest(r))
+	stats["top_techs"] = s.st.TopTechsForTenant(8, tenantFromRequest(r))
 	writeJSON(w, 200, stats)
 }
 
@@ -584,6 +618,7 @@ func (s *Server) hCategories(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) hVulnSearch(w http.ResponseWriter, r *http.Request) {
+	cfg := s.cfgSnap() // A-09：读配置快照（一次请求/操作内一致）
 	q := strings.TrimSpace(r.URL.Query().Get("q"))
 	if q == "" {
 		writeJSON(w, 200, map[string]any{"results": []any{}})
@@ -594,17 +629,20 @@ func (s *Server) hVulnSearch(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 200, map[string]any{"results": []any{}})
 		return
 	}
-	writeJSON(w, 200, map[string]any{"results": kb.Search(q, s.cfg.Intel.SearchLimit)})
+	writeJSON(w, 200, map[string]any{"results": kb.Search(q, cfg.Intel.SearchLimit)})
 }
 
 func (s *Server) hVerified(w http.ResponseWriter, r *http.Request) {
-	limit := safeLimit(r.URL.Query().Get("limit"), s.cfg.Web.HistoryLimit, s.cfg.Web.HistoryCap)
-	writeJSON(w, 200, map[string]any{"items": s.st.Verified(limit)})
+	cfg := s.cfgSnap() // A-09：读配置快照（一次请求/操作内一致）
+	limit := safeLimit(r.URL.Query().Get("limit"), cfg.Web.HistoryLimit, cfg.Web.HistoryCap)
+	// BL-5：只汇总本租户已验证漏洞（空租户=全局，auth 关闭行为不变）。
+	writeJSON(w, 200, map[string]any{"items": s.st.VerifiedForTenant(limit, tenantFromRequest(r))})
 }
 
 // ---- 扫描 ----
 
 func (s *Server) hScan(w http.ResponseWriter, r *http.Request) {
+	cfg := s.cfgSnap() // A-09：读配置快照（一次请求/操作内一致）
 	s.reloadIfDataChanged()
 	var body map[string]any
 	_ = json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&body)
@@ -615,7 +653,7 @@ func (s *Server) hScan(w http.ResponseWriter, r *http.Request) {
 	// 修正在响应里回显，前端 toast + 结果 extras 留痕。
 	inputURL := urlStr
 	var urlCorrections []string
-	if s.cfg.Target.AutoNormalize {
+	if cfg.Target.AutoNormalize {
 		if nr := target.Normalize(urlStr); len(nr.Changes) > 0 {
 			urlStr = nr.URL
 			urlCorrections = nr.Changes
@@ -631,11 +669,15 @@ func (s *Server) hScan(w http.ResponseWriter, r *http.Request) {
 	}
 	jobID := newID()
 	s.jobs.Create(jobID, "scan", map[string]any{"url": urlStr, "options": opts}, 100)
-	if _, vhost, _, verr := target.Validate(urlStr, s.cfg.Scan.Resolve); verr != nil {
+	// BL-5：作业归属租户（token 模式取令牌租户；none 模式为空 = legacy）。
+	// 扫描是异步的，收尾时请求上下文已不在——租户必须随 job 一起捕获。
+	tenant := tenantFromRequest(r)
+	s.jobs.Update(jobID, func(j *store.Job) { j.Tenant = tenant })
+	if _, vhost, _, verr := target.Validate(urlStr, cfg.Scan.Resolve); verr != nil {
 		s.jobs.Update(jobID, func(j *store.Job) { j.Status = "error"; j.Message = verr.Error() })
 		writeJSON(w, 400, map[string]any{"job_id": jobID, "error": verr.Error()})
 		return
-	} else if !target.Allowed(vhost, s.cfg.Scan.AllowHosts) {
+	} else if !target.Allowed(vhost, cfg.Scan.AllowHosts) {
 		msg := "目标不在 allow_hosts 授权白名单：" + vhost
 		s.jobs.Update(jobID, func(j *store.Job) { j.Status = "error"; j.Message = msg })
 		writeJSON(w, 400, map[string]any{"job_id": jobID, "error": msg})
@@ -746,8 +788,22 @@ func scanOptions(body map[string]any) engine.Options {
 
 func (s *Server) runScanJob(jobID, urlStr string, opts engine.Options) {
 	s.jobs.Update(jobID, func(j *store.Job) { j.Status = "running" })
+	// BL-5：租户随 job 捕获（请求上下文在异步收尾时已不可用）。
+	tenant := s.jobTenant(jobID)
 	s.sem <- struct{}{}
 	defer func() { <-s.sem }()
+	// V-09：后台 goroutine 拿不到 net/http 的 per-request recover——引擎在
+	// 不可信输入（HTML/JSON/JS/协议模板）上 panic 会直接终止整个进程，正在
+	// 跑的所有扫描与前端连接一起断。这里兜底恢复并落 job 错误。
+	defer func() {
+		if rec := recover(); rec != nil {
+			log.Printf("[panic] 扫描任务 %s 已恢复（进程继续运行）：%v\n%s", jobID, rec, debug.Stack())
+			s.jobs.Update(jobID, func(j *store.Job) {
+				j.Status = "error"
+				j.Message = "内部错误（已恢复）：" + fmt.Sprint(rec)
+			})
+		}
+	}()
 
 	// 实时事件流：引擎阶段/命中/认证事件写入 job 事件环，前端轮询消费
 	opts.OnEvent = func(kind, text string) {
@@ -780,10 +836,28 @@ func (s *Server) runScanJob(jobID, urlStr string, opts engine.Options) {
 		s.jobs.Update(jobID, func(j *store.Job) { j.Status = "error"; j.Message = res.Error })
 		return
 	}
-	scanID := s.st.Save(res, map[string]any{
+	scanID := s.st.SaveForTenant(res, map[string]any{
 		"deep": opts.Deep, "checks": opts.Checks, "netsec": opts.Netsec,
 		"dast": opts.DAST, "passive": opts.Passive,
-	})
+	}, tenant)
+	// C-03：Save 的 int64 签名无法表达错误，失败时后端返回 0。此时绝不能把 job
+	// 标成 done——"结果没落库、任务却显示完成"是静默丢数据（SQL 断连/权限/磁盘满
+	// 都可能触发）。失败要显式失败，并带上后端给出的原因。
+	if scanID <= 0 {
+		msg := "结果保存失败：存储后端未返回记录 ID"
+		if rep, ok := s.st.(saveErrReporter); ok {
+			if e := rep.LastSaveError(); e != "" {
+				msg = "结果保存失败（已写入回退队列，可在诊断中查看）：" + e
+			}
+		}
+		log.Printf("错误：扫描结果保存失败（job=%s url=%s）：%s", jobID, urlStr, msg)
+		s.jobs.Update(jobID, func(j *store.Job) {
+			j.Status = "error"
+			j.Progress = 100
+			j.Message = msg
+		})
+		return
+	}
 	s.jobs.Update(jobID, func(j *store.Job) {
 		j.Status = "done"
 		j.Progress = 100
@@ -792,17 +866,29 @@ func (s *Server) runScanJob(jobID, urlStr string, opts engine.Options) {
 	})
 }
 
+// jobTenant 读取作业归属租户（BL-5）。作业不存在/legacy 时返回空 = 全局。
+func (s *Server) jobTenant(jobID string) string {
+	if s == nil || s.jobs == nil || jobID == "" {
+		return ""
+	}
+	if j := s.jobs.Get(jobID); j != nil {
+		return strings.TrimSpace(j.Tenant)
+	}
+	return ""
+}
+
 func (s *Server) hJob(w http.ResponseWriter, r *http.Request) {
-	s.jobOut(w, r.PathValue("id"), false)
+	s.jobOut(w, r.PathValue("id"), false, tenantFromRequest(r))
 }
 
 func (s *Server) hJobResults(w http.ResponseWriter, r *http.Request) {
-	s.jobOut(w, r.PathValue("id"), true)
+	s.jobOut(w, r.PathValue("id"), true, tenantFromRequest(r))
 }
 
-func (s *Server) jobOut(w http.ResponseWriter, id string, withResults bool) {
+func (s *Server) jobOut(w http.ResponseWriter, id string, withResults bool, tenant string) {
 	j := s.jobs.Get(id)
-	if j == nil {
+	// BL-5：跨租户按 job id 读取一律 404（job payload 含目标 URL/结果）。
+	if j == nil || (tenant != "" && j.Tenant != tenant) {
 		writeJSON(w, 404, map[string]any{"error": "任务不存在"})
 		return
 	}
@@ -843,7 +929,8 @@ func (s *Server) jobOut(w http.ResponseWriter, id string, withResults bool) {
 func (s *Server) hJobCancel(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	j := s.jobs.Get(id)
-	if j == nil {
+	// BL-5：跨租户按 job id 取消一律 404（不能取消别人的任务）。
+	if j == nil || (tenantFromRequest(r) != "" && j.Tenant != tenantFromRequest(r)) {
 		writeJSON(w, 404, map[string]any{"error": "任务不存在"})
 		return
 	}
@@ -858,11 +945,12 @@ func (s *Server) hJobCancel(w http.ResponseWriter, r *http.Request) {
 // ---- 批量 ----
 
 func (s *Server) hBatch(w http.ResponseWriter, r *http.Request) {
+	cfg := s.cfgSnap() // A-09：读配置快照（一次请求/操作内一致）
 	s.reloadIfDataChanged()
 	var body batchRequest
 	_ = json.NewDecoder(io.LimitReader(r.Body, 4<<20)).Decode(&body)
-	items := parseBatchItems(body, s.cfg.Batch.MaxURLs)
-	jobID, total := s.startBatchJob(items)
+	items := parseBatchItems(body, cfg.Batch.MaxURLs)
+	jobID, total := s.startBatchJobForTenant(items, tenantFromRequest(r))
 	if total == 0 {
 		writeJSON(w, 400, map[string]any{"error": "URL 列表为空"})
 		return
@@ -875,7 +963,8 @@ const batchMaxAttempts = 3
 
 // runBatchLegacy 旧批量并发路径（Batch.UseWorkerPool=false，默认行为零变化）。
 func (s *Server) runBatchLegacy(jobID string, items []batchItem, st *batchState) {
-	workers := s.cfg.Batch.Workers
+	cfg := s.cfgSnap() // A-09：读配置快照（一次请求/操作内一致）
+	workers := cfg.Batch.Workers
 	if workers <= 0 {
 		workers = 3
 	}
@@ -940,11 +1029,12 @@ func (s *Server) runBatchLegacy(jobID string, items []batchItem, st *batchState)
 						}
 						mu.Unlock()
 					} else {
-						s.st.Save(res, map[string]any{"batch": true})
+						batchTenant := s.jobTenant(jobID)
+						s.st.SaveForTenant(res, map[string]any{"batch": true}, batchTenant)
 						row := map[string]any{"url": it.URL, "status": "done",
 							"level": it.Level, "attempts": attempts,
 							"findings": len(res.Vulnerabilities) + len(res.Verified), "techs": len(res.Technologies), "elapsed_ms": elapsed}
-						if n, fx, ok := s.DiffURL(it.URL); ok {
+						if n, fx, ok := s.DiffURLForTenant(it.URL, batchTenant); ok {
 							row["new_findings"] = n
 							row["fixed"] = fx
 						}
@@ -1004,7 +1094,7 @@ func (s *Server) runBatchLegacy(jobID string, items []batchItem, st *batchState)
 		}
 	})
 	// Webhook 通知（可选；配置 batch.webhook_url 后异步推送，不阻塞任务收尾）。
-	if hook := s.cfg.Batch.WebhookURL; hook != "" {
+	if hook := cfg.Batch.WebhookURL; hook != "" {
 		event := "batch.done"
 		if wasCancelled {
 			event = "batch.cancelled"
@@ -1024,9 +1114,11 @@ func (s *Server) runBatchLegacy(jobID string, items []batchItem, st *batchState)
 // ---- 历史 / 导出 / 差异 ----
 
 func (s *Server) hHistory(w http.ResponseWriter, r *http.Request) {
-	limit := safeLimit(r.URL.Query().Get("limit"), s.cfg.Web.HistoryLimit, s.cfg.Web.HistoryCap)
+	cfg := s.cfgSnap() // A-09：读配置快照（一次请求/操作内一致）
+	limit := safeLimit(r.URL.Query().Get("limit"), cfg.Web.HistoryLimit, cfg.Web.HistoryCap)
 	tech := r.URL.Query().Get("tech")
-	writeJSON(w, 200, map[string]any{"scans": s.st.List(limit, tech)})
+	// BL-5：token 模式只返回本租户记录（auth 关闭 tenant 空 → 全局，行为不变）。
+	writeJSON(w, 200, map[string]any{"scans": s.st.ListForTenant(limit, tech, tenantFromRequest(r))})
 }
 
 func (s *Server) hHistoryDetail(w http.ResponseWriter, r *http.Request) {
@@ -1035,7 +1127,8 @@ func (s *Server) hHistoryDetail(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 400, map[string]any{"error": "id 非法"})
 		return
 	}
-	rec := s.st.Get(id)
+	// BL-5：跨租户按 id 读取一律 404（不泄露存在性）。
+	rec := s.st.GetForTenant(id, tenantFromRequest(r))
 	if rec == nil {
 		writeJSON(w, 404, map[string]any{"error": "记录不存在"})
 		return
@@ -1044,20 +1137,78 @@ func (s *Server) hHistoryDetail(w http.ResponseWriter, r *http.Request) {
 }
 
 // hReplay 验证回归（3.0）：重放一次历史扫描的全部 dast 类发现。
+//
+// V-06：①只允许 POST（GET 会被 <img> 等无副作用语义触发，且违背幂等）；
+// ②重放前对每条待请求 URL（含注入探针 URL）重新做 SSRF 校验 + allow_hosts，
+// 历史记录里的 URL 可能来自被扫站点的可控内容，不可盲信。
 func (s *Server) hReplay(w http.ResponseWriter, r *http.Request) {
+	cfg := s.cfgSnap() // A-09：读配置快照（一次请求/操作内一致）
 	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
 	if err != nil {
 		writeJSON(w, 400, map[string]any{"error": "id 非法"})
 		return
 	}
-	rec := s.st.Get(id)
+	// BL-5：跨租户按 id 重放一律 404。
+	rec := s.st.GetForTenant(id, tenantFromRequest(r))
 	if rec == nil || rec.Result == nil {
 		writeJSON(w, 404, map[string]any{"error": "记录不存在"})
 		return
 	}
-	timeoutMS := s.cfg.Active.ProbeTimeoutMS
-	stats, details := replay.Batch(replay.NewFetcher(timeoutMS), rec.Result.Verified)
-	writeJSON(w, 200, map[string]any{"scan_id": id, "stats": stats, "details": details})
+	timeoutMS := cfg.Active.ProbeTimeoutMS
+	entries, blocked := s.replayableEntries(rec.Result.Verified)
+	stats, details := replay.Batch(replay.NewFetcher(timeoutMS), entries)
+	writeJSON(w, 200, map[string]any{
+		"scan_id": id, "stats": stats, "details": details, "blocked_targets": blocked,
+	})
+}
+
+// replayableEntries 过滤可安全重放的条目。
+//
+// 不可信来源：历史 verified 里的 url/param/payload 可能源自被扫站点的可控
+// 内容（跳转目标、JS 抽取等）。重放会真实发请求，故逐条重建探针 URL 后
+// 重新走 target.Validate(resolve=true) + allow_hosts；不合规条目置空 url
+// （replay.One 会判 unsupported，索引与前端列表保持一致），并统计条数。
+func (s *Server) replayableEntries(verified []map[string]any) ([]map[string]any, int) {
+	cfg := s.cfgSnap() // A-09：读配置快照（一次请求/操作内一致）
+	out := make([]map[string]any, 0, len(verified))
+	blocked := 0
+	for _, v := range verified {
+		src, _ := v["src"].(string)
+		if src != "dast" {
+			out = append(out, v)
+			continue
+		}
+		rawURL, _ := v["url"].(string)
+		param, _ := v["param"].(string)
+		payload, _ := v["payload"].(string)
+		urls := []string{rawURL}
+		if rawURL != "" && param != "" && payload != "" {
+			urls = append(urls, dast.SetParam(rawURL, param, payload))
+		}
+		ok := true
+		for _, u := range urls {
+			if u == "" {
+				continue
+			}
+			_, host, _, verr := target.Validate(u, true)
+			if verr != nil || !target.Allowed(host, cfg.Scan.AllowHosts) {
+				ok = false
+				break
+			}
+		}
+		if ok {
+			out = append(out, v)
+			continue
+		}
+		blocked++
+		cp := make(map[string]any, len(v))
+		for k, val := range v {
+			cp[k] = val
+		}
+		cp["url"] = ""
+		out = append(out, cp)
+	}
+	return out, blocked
 }
 
 func (s *Server) hHistoryDelete(w http.ResponseWriter, r *http.Request) {
@@ -1066,12 +1217,22 @@ func (s *Server) hHistoryDelete(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 400, map[string]any{"error": "id 非法"})
 		return
 	}
-	writeJSON(w, 200, map[string]any{"deleted": s.st.Delete(id)})
+	tenant := tenantFromRequest(r)
+	// BL-5：token 模式下跨租户删除一律 404（不泄露存在性）；auth 关闭保持
+	// 既有语义（不存在返回 deleted:false，不改成 404）。
+	if tenant != "" && s.st.GetForTenant(id, tenant) == nil {
+		writeJSON(w, 404, map[string]any{"error": "记录不存在"})
+		return
+	}
+	writeJSON(w, 200, map[string]any{"deleted": s.st.DeleteForTenant(id, tenant)})
 }
 
-// hHistoryClear 清空全部扫描历史（设置页·数据管理；前端二次确认后调用）。
+// hHistoryClear 清空扫描历史（设置页·数据管理；前端二次确认后调用）。
+//
+// BL-5：token 模式下只清空本租户历史（tenant 空 = 全局，auth 关闭时行为不变），
+// 避免租户管理员跨租户销毁他人数据。
 func (s *Server) hHistoryClear(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, 200, map[string]any{"cleared": s.st.ClearAll()})
+	writeJSON(w, 200, map[string]any{"cleared": s.st.ClearAllForTenant(tenantFromRequest(r))})
 }
 
 func (s *Server) hExport(w http.ResponseWriter, r *http.Request) {
@@ -1080,7 +1241,8 @@ func (s *Server) hExport(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 400, map[string]any{"error": "id 非法"})
 		return
 	}
-	rec := s.st.Get(id)
+	// BL-5：跨租户导出一律 404。
+	rec := s.st.GetForTenant(id, tenantFromRequest(r))
 	if rec == nil {
 		writeJSON(w, 404, map[string]any{"error": "记录不存在"})
 		return
@@ -1126,6 +1288,18 @@ func (s *Server) hExport(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Disposition",
 			fmt.Sprintf("attachment; filename=sitelens-%d.sarif", id))
 		_, _ = w.Write(data)
+	case "har":
+		// HAR 1.2：把证据链重建为「扫描器实际发出了什么」，可直接导入
+		// Chrome DevTools 或兼容 HAR 的工具复核；?raw=1 保留敏感头原值。
+		data, herr := buildScanHAR(rec, r.URL.Query().Get("raw") == "1")
+		if herr != nil {
+			writeJSON(w, 404, map[string]any{"error": herr.Error()})
+			return
+		}
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		w.Header().Set("Content-Disposition",
+			fmt.Sprintf("attachment; filename=sitelens-%d.har", id))
+		_, _ = w.Write(data)
 	case "mlps", "asvs", "compliance":
 		fw := FrameworkMLPS
 		if r.URL.Query().Get("fmt") == "asvs" {
@@ -1170,10 +1344,11 @@ type exportReport struct {
 // sourceStats 每来源 runs/pass/fail 统计（CP-10 报告链路）。
 // 模板条目取本地索引缓存（热路径）；无 runs 时返回 nil（JSON 省略该字段）。
 func (s *Server) sourceStats(runs []checks.CheckRun) []checks.SourcePassRate {
-	if len(runs) == 0 || s.cfg == nil {
+	cfg := s.cfgSnap() // A-09：读配置快照（一次请求/操作内一致）
+	if len(runs) == 0 || cfg == nil {
 		return nil
 	}
-	entries := nuclei.IndexCached(filepath.Join(s.cfg.Store.DataDir, "nuclei_index.json"))
+	entries := nuclei.IndexCached(filepath.Join(cfg.Store.DataDir, "nuclei_index.json"))
 	return checks.AggregateCheckRuns(runs, nuclei.SourceResolver(entries))
 }
 
@@ -1198,7 +1373,9 @@ func (s *Server) hDiff(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 400, map[string]any{"error": "id 非法"})
 		return
 	}
-	ra, rb := s.st.Get(aID), s.st.Get(bID)
+	// BL-5：diff 两侧都必须归属当前租户（任一不匹配 → 404，不泄露另一侧存在性）。
+	tenant := tenantFromRequest(r)
+	ra, rb := s.st.GetForTenant(aID, tenant), s.st.GetForTenant(bID, tenant)
 	if ra == nil || rb == nil || ra.Result == nil || rb.Result == nil {
 		writeJSON(w, 404, map[string]any{"error": "记录不存在"})
 		return
@@ -1231,6 +1408,7 @@ func (s *Server) hDiff(w http.ResponseWriter, r *http.Request) {
 // ---- 网络层 / 爆破 / 审计 ----
 
 func (s *Server) hNetsec(w http.ResponseWriter, r *http.Request) {
+	cfg := s.cfgSnap() // A-09：读配置快照（一次请求/操作内一致）
 	var body map[string]any
 	_ = json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&body)
 	host, _ := body["host"].(string)
@@ -1239,12 +1417,12 @@ func (s *Server) hNetsec(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 400, map[string]any{"error": "请输入域名"})
 		return
 	}
-	scheme, host, port, err := target.Validate(host, s.cfg.Scan.Resolve)
+	scheme, host, port, err := target.Validate(host, cfg.Scan.Resolve)
 	if err != nil {
 		writeJSON(w, 400, map[string]any{"error": err.Error()})
 		return
 	}
-	if !target.Allowed(host, s.cfg.Scan.AllowHosts) {
+	if !target.Allowed(host, cfg.Scan.AllowHosts) {
 		writeJSON(w, 400, map[string]any{"error": "目标不在 allow_hosts 授权白名单：" + host})
 		return
 	}
@@ -1253,7 +1431,7 @@ func (s *Server) hNetsec(w http.ResponseWriter, r *http.Request) {
 		tlsPort = 443
 	}
 	findings := netsec.CheckTLS(host, tlsPort)
-	if s.cfg.Netsec.MailCheck {
+	if cfg.Netsec.MailCheck {
 		findings = append(findings, netsec.CheckDNSMail(host)...)
 	}
 	// HSTS / HTTP→HTTPS 跳转：一次只读 GET（≤5s、丢弃正文）。
@@ -1277,10 +1455,19 @@ func (s *Server) hNetsec(w http.ResponseWriter, r *http.Request) {
 		if q == "1" || q == "common" || q == "true" {
 			ports = netsec.DefaultPorts
 		} else {
+			// V-10：显式端口列表去重 + 硬上限。此前无上限：一个请求可列近
+			// 6.5 万端口，8 并发 × 1.5s 超时 ≈ 3.4 小时挂起且响应体数万条。
+			seen := make(map[int]bool, 32)
 			for _, part := range strings.Split(q, ",") {
-				if n, perr := strconv.Atoi(strings.TrimSpace(part)); perr == nil && n > 0 && n < 65536 {
-					ports = append(ports, n)
+				if len(ports) >= maxNetsecPorts {
+					break
 				}
+				n, perr := strconv.Atoi(strings.TrimSpace(part))
+				if perr != nil || n <= 0 || n >= 65536 || seen[n] {
+					continue
+				}
+				seen[n] = true
+				ports = append(ports, n)
 			}
 		}
 		resp["ports"] = netsec.CheckPorts(host, ports, 1500*time.Millisecond)
@@ -1288,8 +1475,13 @@ func (s *Server) hNetsec(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, resp)
 }
 
+// maxNetsecPorts 单次 /api/netsec 端口探测上限（V-10）。默认端口表远小于此值，
+// 显式列表按序截断；配合去重防止重复探测。
+const maxNetsecPorts = 1024
+
 func (s *Server) hCaptchaCapability(w http.ResponseWriter, r *http.Request) {
-	available := s.cfg.LoginBrute.CaptchaOCRURL != ""
+	cfg := s.cfgSnap() // A-09：读配置快照（一次请求/操作内一致）
+	available := cfg.LoginBrute.CaptchaOCRURL != ""
 	reason := "已就绪（ddddocr sidecar）"
 	if !available {
 		reason = "未配置 loginbrute.captcha_ocr_url；启动 python tools/ocr_server.py 并配置后即可识别验证码"
@@ -1303,6 +1495,7 @@ func (s *Server) hCaptchaCapability(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) hLoginBrute(w http.ResponseWriter, r *http.Request) {
+	cfg := s.cfgSnap() // A-09：读配置快照（一次请求/操作内一致）
 	var body map[string]any
 	_ = json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&body)
 	urlStr, _ := body["url"].(string)
@@ -1320,23 +1513,47 @@ func (s *Server) hLoginBrute(w http.ResponseWriter, r *http.Request) {
 	multiStep, _ := body["multistep"].(bool)
 	jobID := newID()
 	s.jobs.Create(jobID, "loginbrute", map[string]any{"url": urlStr, "login_mode": loginMode}, 100)
-	if _, _, _, verr := target.Validate(urlStr, s.cfg.Scan.Resolve); verr != nil {
+	if _, _, _, verr := target.Validate(urlStr, cfg.Scan.Resolve); verr != nil {
 		s.jobs.Update(jobID, func(j *store.Job) { j.Status = "error"; j.Message = verr.Error() })
 		writeJSON(w, 400, map[string]any{"job_id": jobID, "error": verr.Error()})
 		return
 	}
+	// V-10：爆破是重型任务（可选无头 Chrome + MaxTries 次登录尝试），此前
+	// 完全无并发闸——单请求即可开无限作业。现复用扫描信号量（扫描/爆破共享
+	// 并发上限），满则 429 快速失败，不把作业排进内存。
+	select {
+	case s.sem <- struct{}{}:
+	default:
+		s.jobs.Update(jobID, func(j *store.Job) { j.Status = "error"; j.Message = "并发已满" })
+		writeJSON(w, http.StatusTooManyRequests, map[string]any{
+			"job_id": jobID,
+			"error":  "并发任务已满（扫描/爆破共享并发闸），请稍后重试",
+		})
+		return
+	}
 	go func() {
+		defer func() { <-s.sem }()
+		// V-09：同扫描任务——后台 goroutine panic 必须兜住，否则整进程退出。
+		defer func() {
+			if rec := recover(); rec != nil {
+				log.Printf("[panic] 登录爆破任务 %s 已恢复：%v\n%s", jobID, rec, debug.Stack())
+				s.jobs.Update(jobID, func(j *store.Job) {
+					j.Status = "error"
+					j.Message = "内部错误（已恢复）：" + fmt.Sprint(rec)
+				})
+			}
+		}()
 		f := &httpPoster{c: s.eng.ClientFor(scanOptions(body))}
 		users := loginbrute.LoadList(
-			filepath.Join(s.cfg.Active.WordlistDir, "weak_users.txt"), s.cfg.LoginBrute.MaxUsers)
+			filepath.Join(cfg.Active.WordlistDir, "weak_users.txt"), cfg.LoginBrute.MaxUsers)
 		pwds := loginbrute.LoadList(
-			filepath.Join(s.cfg.Active.WordlistDir, "weak_passwords.txt"), s.cfg.LoginBrute.MaxPasswords)
+			filepath.Join(cfg.Active.WordlistDir, "weak_passwords.txt"), cfg.LoginBrute.MaxPasswords)
 		s.jobs.Update(jobID, func(j *store.Job) { j.Status = "running" })
 
 		// SPA 登录页支持：开启无头渲染时先渲染登录页，用渲染后的 DOM 解析表单
 		rendered := ""
-		if s.cfg.Crawler.Headless {
-			r := headless.NewChrome(time.Duration(s.cfg.Crawler.HeadlessTimeoutSec)*time.Second, s.cfg.Crawler.HeadlessExecPath)
+		if cfg.Crawler.Headless {
+			r := headless.NewChrome(time.Duration(cfg.Crawler.HeadlessTimeoutSec)*time.Second, cfg.Crawler.HeadlessExecPath)
 			if html, rerr := r.Render(urlStr); rerr == nil {
 				rendered = html
 			}
@@ -1358,12 +1575,12 @@ func (s *Server) hLoginBrute(w http.ResponseWriter, r *http.Request) {
 				JSONTemplate:    jsonTemplate,
 				Users:           users,
 				Passwords:       pwds,
-				MaxTries:        s.cfg.LoginBrute.MaxTries,
-				IntervalMS:      s.cfg.LoginBrute.IntervalMS,
+				MaxTries:        cfg.LoginBrute.MaxTries,
+				IntervalMS:      cfg.LoginBrute.IntervalMS,
 				SuccessContains: successContains,
 				CaptchaField:    captchaField, // 用户显式指定优先于自动识别
 				MultiStep:       multiStep,
-				AllowHosts:      s.cfg.Scan.AllowHosts,
+				AllowHosts:      cfg.Scan.AllowHosts,
 				Cancel:          func() bool { return s.jobs.CancelRequested(jobID) },
 			}, progress)
 		} else {
@@ -1371,13 +1588,13 @@ func (s *Server) hLoginBrute(w http.ResponseWriter, r *http.Request) {
 				PageURL:      urlStr,
 				Users:        users,
 				Passwords:    pwds,
-				MaxTries:     s.cfg.LoginBrute.MaxTries,
-				IntervalMS:   s.cfg.LoginBrute.IntervalMS,
+				MaxTries:     cfg.LoginBrute.MaxTries,
+				IntervalMS:   cfg.LoginBrute.IntervalMS,
 				CaptchaType:  captchaType,
 				CaptchaField: captchaField, // 用户显式指定优先（空 = 自动识别）
 				MultiStep:    multiStep,
-				OCRURL:       s.cfg.LoginBrute.CaptchaOCRURL,
-				AllowHosts:   s.cfg.Scan.AllowHosts,
+				OCRURL:       cfg.LoginBrute.CaptchaOCRURL,
+				AllowHosts:   cfg.Scan.AllowHosts,
 				Cancel:       func() bool { return s.jobs.CancelRequested(jobID) },
 				FetchImage: func(rawURL string) ([]byte, error) {
 					rr, rerr := s.eng.ClientFor(scanOptions(body)).GetDirect(rawURL)
@@ -1409,9 +1626,10 @@ func (s *Server) hLoginBrute(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) hAudit(w http.ResponseWriter, r *http.Request) {
+	cfg := s.cfgSnap() // A-09：读配置快照（一次请求/操作内一致）
 	// B23：上传体先加硬上限（multipart 解析会落盘 TempDir，无上限可耗尽磁盘）
-	r.Body = http.MaxBytesReader(w, r.Body, int64(s.cfg.Audit.MaxArchiveMB+8)<<20)
-	if err := r.ParseMultipartForm(int64(s.cfg.Audit.MaxArchiveMB) << 20); err != nil {
+	r.Body = http.MaxBytesReader(w, r.Body, int64(cfg.Audit.MaxArchiveMB+8)<<20)
+	if err := r.ParseMultipartForm(int64(cfg.Audit.MaxArchiveMB) << 20); err != nil {
 		writeJSON(w, 400, map[string]any{"error": "上传解析失败：" + err.Error()})
 		return
 	}
@@ -1426,7 +1644,7 @@ func (s *Server) hAudit(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 400, map[string]any{"error": "缺少 file/files 上传字段"})
 		return
 	}
-	maxFiles := s.cfg.Audit.MaxFiles
+	maxFiles := cfg.Audit.MaxFiles
 	if maxFiles <= 0 {
 		maxFiles = 1
 	}
@@ -1483,7 +1701,7 @@ func (s *Server) hAudit(w http.ResponseWriter, r *http.Request) {
 
 	// 三闸门对齐：解压/直传单文件已放大到 8MB，规则扫描的读入上限一并抬到
 	// 8MB，否则 512KB~8MB 源码计入「扫描文件」却一条规则都不跑（零发现）
-	acfg := s.cfg.Audit
+	acfg := cfg.Audit
 	if acfg.MaxFileKB < 8192 {
 		acfg.MaxFileKB = 8192
 	}
@@ -1502,6 +1720,7 @@ func (s *Server) hAudit(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) hAuditDemo(w http.ResponseWriter, r *http.Request) {
+	cfg := s.cfgSnap() // A-09：读配置快照（一次请求/操作内一致）
 	dir, err := os.MkdirTemp("", "sitelens_demo_")
 	if err != nil {
 		writeJSON(w, 500, map[string]any{"error": "创建临时目录失败"})
@@ -1539,7 +1758,7 @@ func (s *Server) hAuditDemo(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 500, map[string]any{"error": "写样本失败"})
 		return
 	}
-	acfg := s.cfg.Audit
+	acfg := cfg.Audit
 	if acfg.MaxFileKB < 8192 {
 		acfg.MaxFileKB = 8192 // 与 hAudit 一致：审计读入上限对齐 8MB 上传闸门
 	}
@@ -1623,6 +1842,24 @@ func techMap(res *engine.Result) map[string]engine.Tech {
 	return m
 }
 
+// csvCellSafe CSV 公式注入转义（V-14）。
+//
+// 技术名/版本/官网/证据全部来自被扫页面（<meta generator>、响应头、JS 变量），
+// 攻击者可控。Excel/WPS 会把以 = + - @ 或制表/回车开头的单元格当公式求值
+// （=HYPERLINK(...) 外带、DDE 命令执行）。OWASP CSV Injection 的标准缓解是
+// 前置单引号并保持字段整体被引号包裹——csv.Writer 只在必要时加引号，所以
+// 这里既前置 ' 又强制包一层双引号（内容里的双引号转义为两个）。
+func csvCellSafe(s string) string {
+	if s == "" {
+		return s
+	}
+	switch s[0] {
+	case '=', '+', '-', '@', '\t', '\r':
+		return `"'` + strings.ReplaceAll(s, `"`, `""`) + `"`
+	}
+	return s
+}
+
 // detailCSV 明细 CSV：每行一项技术（对齐 Python Exporter.detail_csv）。
 func detailCSV(rec *store.ScanRecord, catOrder []string) string {
 	buf := &strings.Builder{}
@@ -1634,9 +1871,9 @@ func detailCSV(rec *store.ScanRecord, catOrder []string) string {
 			cats = append(cats, categoryName(c))
 		}
 		_ = w.Write([]string{
-			t.Name, strings.Join(cats, " / "),
-			fmt.Sprintf("%d%%", t.Confidence), t.Version, t.Website,
-			strings.Join(t.Evidence, " | "),
+			csvCellSafe(t.Name), csvCellSafe(strings.Join(cats, " / ")),
+			fmt.Sprintf("%d%%", t.Confidence), csvCellSafe(t.Version), csvCellSafe(t.Website),
+			csvCellSafe(strings.Join(t.Evidence, " | ")),
 		})
 	}
 	w.Flush()
@@ -1656,12 +1893,12 @@ func wideCSV(recs []*store.ScanRecord, catOrder []string) string {
 		cells := map[string][]string{}
 		for _, t := range rec.Result.Technologies {
 			for _, c := range t.Categories {
-				cells[c] = append(cells[c], t.Name)
+				cells[c] = append(cells[c], csvCellSafe(t.Name))
 			}
 		}
-		line := []string{rec.URL}
+		line := []string{csvCellSafe(rec.URL)}
 		for _, c := range catOrder {
-			line = append(line, strings.Join(cells[c], " ; "))
+			line = append(line, csvCellSafe(strings.Join(cells[c], " ; ")))
 		}
 		_ = w.Write(line)
 	}

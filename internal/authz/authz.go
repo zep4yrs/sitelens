@@ -74,19 +74,33 @@ type RoleDef struct {
 // DefaultRoleDefs 内置默认权限矩阵（返回副本，调用方修改不会污染包级默认）：
 //
 //	viewer   Allow "*:read"
+//	         Deny  "settings:*" "diagnostics:*" "admin:*" "whitelist:*"
+//	               （配置/诊断/管理/白名单属管理面，只读角色也不该看：
+//	                诊断含主机与运行事实、settings 含配置路径）
 //	operator Allow "scan:*" "report:*" "asset:*" "triage:*"
-//	         Deny  "scan:delete"（删除归档记录属管理动作）
+//	         Deny  "scan:delete"（删除归档记录属管理动作）、管理面四类
 //	admin    Allow "*:*"
 //
 // operator 的 Deny 同时作为「拒绝优先」的默认演示：即使日后给 operator 加
-// 宽 Allow（如 "*:*"），"scan:delete" 仍被拒绝。
+// 宽 Allow（如 "*:*"），"scan:delete" 与管理面仍被拒绝。
 func DefaultRoleDefs() []RoleDef {
 	defs := []RoleDef{
-		{Role: RoleViewer, Allow: []Permission{PermissionOf("*", "read")}},
+		{
+			Role:  RoleViewer,
+			Allow: []Permission{PermissionOf("*", "read")},
+			Deny: []Permission{
+				PermissionOf("settings", "*"), PermissionOf("diagnostics", "*"),
+				PermissionOf("admin", "*"), PermissionOf("whitelist", "*"),
+			},
+		},
 		{
 			Role:  RoleOperator,
 			Allow: []Permission{PermissionOf("scan", "*"), PermissionOf("report", "*"), PermissionOf("asset", "*"), PermissionOf("triage", "*")},
-			Deny:  []Permission{PermissionOf("scan", "delete"), PermissionOf("tenant", "*"), PermissionOf("user", "*")},
+			Deny: []Permission{
+				PermissionOf("scan", "delete"), PermissionOf("tenant", "*"), PermissionOf("user", "*"),
+				PermissionOf("settings", "*"), PermissionOf("diagnostics", "*"),
+				PermissionOf("admin", "*"), PermissionOf("whitelist", "*"),
+			},
 		},
 		{Role: RoleAdmin, Allow: []Permission{PermissionOf("*", "*")}},
 	}
