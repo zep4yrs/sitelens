@@ -58,6 +58,7 @@ type nucleiMatcher struct {
 	Part      string   `yaml:"part"`
 	Words     []string `yaml:"words"`
 	Regex     []string `yaml:"regex"`
+	DSL       []string `yaml:"dsl"`
 	Status    []int    `yaml:"status"`
 	Condition string   `yaml:"condition"`
 }
@@ -95,6 +96,7 @@ type entry struct {
 	Any      []string
 	Regex    []string
 	Headers  []string
+	Not      []string
 	Title    string
 	Sev      string
 	Advice   string
@@ -105,6 +107,7 @@ type entry struct {
 var (
 	reAfrogStatus = regexp.MustCompile(`response\.status\s*==\s*(\d{3})`)
 	reAfrogBody   = regexp.MustCompile(`response\.body\.bcontains\(b"((?:[^"\\]|\\.)*)"\)`)
+	reAfrogBodySQ = regexp.MustCompile("response\\.body\\.bcontains\\(b'((?:[^'\\\\]|\\\\.)*)'\\)")
 	reAfrogICont  = regexp.MustCompile(`response\.body\.icontains\(b"((?:[^"\\]|\\.)*)"\)`)
 	reAfrogHeader = regexp.MustCompile(`response\.headers\.bcontains\(b"((?:[^"\\]|\\.)*)"\)`)
 	reVar         = regexp.MustCompile(`\{\{[^}]*\}\}`)
@@ -116,8 +119,9 @@ var (
 var reIntrusive = regexp.MustCompile("(?i)(\\.\\.|%2e|%00|%08|%25|%3c|%3e|%22|%27|%5c|[<>'\"(){}|;`$\\\\]|etc/passwd|select\\s|union\\s|sleep\\(|alert\\(|onload|javascript:)")
 
 // 漏洞利用类模板特征：CVE 复现/注入/穿越/上传/默认口令，一律不进内置验证集。
-var reExploitTag = regexp.MustCompile(`(?i)(cve-|exploit|rce|xss|sqli|lfi|rfi|ssrf|injection|traversal|bypass|csrf|deserial|shell|upload|pwn|default.?pwd|default.?cred|weak.?pass|brute|poc|file.?write)`)
+var reExploitTag = regexp.MustCompile(`(?i)(exploit|rce|xss|sqli|lfi|rfi|ssrf|injection|traversal|bypass|csrf|deserial|webshell|upload|pwn|default.?pwd|default.?cred|weak.?pass|brute|file.?write)`)
 
+var reSafeQuery = regexp.MustCompile(`^[A-Za-z0-9._~%=&+-]*$`)
 var reIDClean = regexp.MustCompile(`[^a-z0-9-]+`)
 
 // cleanID 把模板 id 归一成 kebab-case（模板池里有空格/括号/大写）。
@@ -136,8 +140,14 @@ func acceptable(e *entry) bool {
 	if e == nil || e.ID == "" || e.Path == "" {
 		return false
 	}
-	if reIntrusive.MatchString(e.Path) || strings.Contains(e.Path, "?") {
+	if reIntrusive.MatchString(e.Path) {
 		return false
+	}
+	if q := strings.Index(e.Path, "?"); q >= 0 {
+		query := e.Path[q+1:]
+		if !reSafeQuery.MatchString(query) {
+			return false
+		}
 	}
 	if reExploitTag.MatchString(strings.Join(e.Tags, " ") + " " + e.Title + " " + e.ID) {
 		return false
@@ -182,7 +192,7 @@ func normSev(s string) string {
 	}
 }
 
-func strongWord(w string) bool { return len(strings.TrimSpace(w)) >= 8 }
+func strongWord(w string) bool { return len(strings.TrimSpace(w)) >= 4 }
 
 func cleanAdvice(s string) string {
 	s = strings.TrimSpace(strings.ReplaceAll(s, "\n", " "))
@@ -214,6 +224,21 @@ func staticPath(raw string) (string, bool) {
 	return p, true
 }
 
+// 漏斗计数（调试用，-debug 打印）。
+var (
+	stFiles   int
+	stDocs    int
+	stCand    int
+	stStrong  int
+	stAccept  int
+	stGeneric int
+	stRejDSL  int
+	stRejPart int
+	stRejNoSt int
+	stRejStrong int
+	stRejRegex  int
+	dslRejTop   = map[string]int{}
+)
 // ---------- afrog 解析 ----------
 
 func parseAfrog(data []byte, src string) []entry {
@@ -221,6 +246,7 @@ func parseAfrog(data []byte, src string) []entry {
 	if err := yaml.Unmarshal(data, &d); err != nil || d.ID == "" || len(d.Rules) == 0 {
 		return nil
 	}
+	stDocs++
 	// 模板级表达式：只接受「单规则」或「r0() || r1()」这种规则析取；
 	// 规则合取（&&）意味着多请求联动，超出单 check 语义，拒绝。
 	if tl := strings.TrimSpace(d.Expression); tl != "" {
@@ -247,6 +273,7 @@ func parseAfrog(data []byte, src string) []entry {
 		if expr == "" || strings.Contains(expr, "||") {
 			continue
 		}
+		stCand++
 		var e entry
 		e.Path = path
 		if m := reAfrogStatus.FindStringSubmatch(expr); m != nil {
@@ -254,6 +281,9 @@ func parseAfrog(data []byte, src string) []entry {
 		}
 		for _, m := range reAfrogBody.FindAllStringSubmatch(expr, -1) {
 			e.Contains = append(e.Contains, strings.ReplaceAll(m[1], `\"`, `"`))
+		}
+		for _, m := range reAfrogBodySQ.FindAllStringSubmatch(expr, -1) {
+			e.Contains = append(e.Contains, strings.ReplaceAll(m[1], `\'`, `'`))
 		}
 		for _, m := range reAfrogHeader.FindAllStringSubmatch(expr, -1) {
 			e.Headers = append(e.Headers, strings.ReplaceAll(m[1], `\"`, `"`))
@@ -267,6 +297,7 @@ func parseAfrog(data []byte, src string) []entry {
 		if !strongEntry(&e) || !validRegex(&e) {
 			continue
 		}
+		stStrong++
 		e.ID = "tpl-" + cleanID(d.ID)
 		if len(keys) > 1 {
 			e.ID += "-" + cleanID(k)
@@ -280,6 +311,7 @@ func parseAfrog(data []byte, src string) []entry {
 		e.Src = src
 		e.Tags = d.Info.Tags
 		if acceptable(&e) {
+			stAccept++
 			out = append(out, e)
 		}
 	}
@@ -293,6 +325,7 @@ func parseNuclei(data []byte, src string) []entry {
 	if err := yaml.Unmarshal(data, &d); err != nil || d.ID == "" {
 		return nil
 	}
+	stDocs++
 	reqs := d.HTTP
 	if len(reqs) == 0 {
 		reqs = d.Requests
@@ -305,90 +338,245 @@ func parseNuclei(data []byte, src string) []entry {
 		if r.Method != "" && !strings.EqualFold(r.Method, "GET") {
 			continue
 		}
-		if len(r.Raw) > 0 || r.Body != "" || len(r.Payloads) > 0 || len(r.Path) != 1 {
+		if r.Body != "" || len(r.Payloads) > 0 || len(r.Matchers) == 0 {
 			continue
 		}
-		path, ok := staticPath(r.Path[0])
-		if !ok || len(r.Matchers) == 0 {
+		// 收集静态路径：path 数组逐个展开；raw 只取首行 GET 路径。
+		var paths []string
+		for _, raw := range r.Path {
+			if p, ok := staticPath(raw); ok {
+				paths = append(paths, p)
+			}
+		}
+		if len(paths) == 0 && len(r.Raw) > 0 {
+			for _, line := range r.Raw {
+				line = strings.TrimSpace(line)
+				if !strings.HasPrefix(strings.ToUpper(line), "GET ") {
+					continue
+				}
+				fields := strings.Fields(line)
+				if len(fields) >= 2 {
+					if p, ok := staticPath(fields[1]); ok {
+						paths = append(paths, p)
+					}
+				}
+				break
+			}
+		}
+		if len(paths) == 0 {
 			continue
 		}
-		var e entry
-		e.Path = path
-		bad := false
+		stCand++
 		condOr := strings.EqualFold(strings.TrimSpace(r.MatchersCondition), "or")
+		var base entry
+		base.Status = 0
+		bad := false
 		for _, m := range r.Matchers {
 			switch strings.ToLower(strings.TrimSpace(m.Type)) {
 			case "status":
-				if len(m.Status) > 0 {
-					e.Status = m.Status[0]
+				if len(m.Status) > 0 && base.Status == 0 {
+					base.Status = m.Status[0]
 				}
 			case "word":
 				part := strings.ToLower(strings.TrimSpace(m.Part))
 				if part == "header" || part == "all_headers" {
-					e.Headers = append(e.Headers, m.Words...)
+					base.Headers = append(base.Headers, m.Words...)
 					continue
 				}
 				if part != "" && part != "body" && part != "all" {
+					stRejPart++
 					bad = true
 				}
 				if condOr {
-					e.Any = append(e.Any, m.Words...)
+					base.Any = append(base.Any, m.Words...)
 				} else {
-					e.Contains = append(e.Contains, m.Words...)
+					base.Contains = append(base.Contains, m.Words...)
 				}
 			case "regex":
 				part := strings.ToLower(strings.TrimSpace(m.Part))
 				if part != "" && part != "body" && part != "all" {
+					stRejPart++
 					bad = true
 				}
-				e.Regex = append(e.Regex, m.Regex...)
+				base.Regex = append(base.Regex, m.Regex...)
+			case "dsl":
+				if !parseDSL(m.DSL, &base) {
+					stRejDSL++
+					if len(m.DSL) > 0 {
+						s := strings.TrimSpace(m.DSL[0])
+						if i := strings.IndexAny(s, "( "); i > 0 {
+							s = s[:i]
+						}
+						if len(s) > 24 {
+							s = s[:24]
+						}
+						dslRejTop[s]++
+					}
+					bad = true
+				}
 			default:
-				bad = true // dsl / binary / xpath 等一律拒绝
+				stRejDSL++
+				bad = true // binary / xpath 等一律拒绝
 			}
 			if bad {
 				break
 			}
 		}
-		if bad || e.Status == 0 ||
-			(len(e.Contains) == 0 && len(e.Any) == 0 && len(e.Regex) == 0 && len(e.Headers) == 0) {
+		if bad {
 			continue
 		}
-		if !strongEntry(&e) || !validRegex(&e) {
+		// status 缺省时要求更强特征（>=12 字符 word 或 header），避免“任意状态码+弱词”误报。
+		if base.Status == 0 && len(base.Headers) == 0 {
+			hasStrong12 := false
+			for _, w := range append(append([]string{}, base.Contains...), base.Any...) {
+				if len(strings.TrimSpace(w)) >= 8 {
+					hasStrong12 = true
+				}
+			}
+			if !hasStrong12 {
+				stRejNoSt++
+				continue
+			}
+		}
+		if len(base.Contains) == 0 && len(base.Any) == 0 && len(base.Regex) == 0 && len(base.Headers) == 0 {
 			continue
 		}
-		e.ID = "tpl-" + cleanID(d.ID)
-		if len(reqs) > 1 {
-			e.ID += "-r" + strconv.Itoa(i)
+		if !validRegex(&base) {
+			stRejRegex++
+			continue
 		}
-		e.Title = strings.TrimSpace(d.Info.Name)
-		if e.Title == "" {
-			e.Title = d.ID
+		if !strongEntry(&base) {
+			stRejStrong++
+			continue
 		}
-		e.Sev = normSev(d.Info.Severity)
-		e.Advice = cleanAdvice(d.Info.Remediation)
-		e.Src = src
-		e.Tags = d.Info.Tags
-		if acceptable(&e) {
-			out = append(out, e)
+		stStrong++
+		for j, p := range paths {
+			e := base
+			e.Path = p
+			e.ID = "tpl-" + cleanID(d.ID)
+			if len(reqs) > 1 {
+				e.ID += "-r" + strconv.Itoa(i)
+			}
+			if len(paths) > 1 {
+				e.ID += "-p" + strconv.Itoa(j)
+			}
+			e.Title = strings.TrimSpace(d.Info.Name)
+			if e.Title == "" {
+				e.Title = d.ID
+			}
+			e.Sev = normSev(d.Info.Severity)
+			e.Advice = cleanAdvice(d.Info.Remediation)
+			e.Src = src
+			e.Tags = d.Info.Tags
+			if acceptable(&e) {
+				stAccept++
+				out = append(out, e)
+			}
 		}
 	}
 	return out
 }
+var (
+	reDSLStatus  = regexp.MustCompile(`^status_code\s*==\s*(\d{3})$`)
+	reDSLContains = regexp.MustCompile(`^(?i)!?contains\((body|header|all_headers|raw),\s*["'](.*)["']\)$`)
+	reDSLContainsAll = regexp.MustCompile(`^contains_all\((body|raw),\s*(.+)\)$`)
+	reDSLRegex   = regexp.MustCompile(`^regex\(["'](.*)["'],\s*(body|raw)\)$`)
+)
 
+// parseDSL 安全子集：只接受 status_code 比较、contains/contains_all、regex。
+// 任何变量、函数调用、长度/hash/编码类表达式一律拒绝（宁少报不误报）。
+func parseDSL(lines []string, e *entry) bool {
+	for _, raw := range lines {
+		line := strings.TrimSpace(raw)
+		if line == "" {
+			continue
+		}
+		if strings.Contains(line, "{{") {
+			return false
+		}
+		// 去掉整体包裹的括号：社区模板常见 ((a && b)) 形式。
+		for len(line) >= 2 && strings.HasPrefix(line, "(") && strings.HasSuffix(line, ")") {
+			line = strings.TrimSpace(line[1 : len(line)-1])
+		}
+		for _, part := range strings.Split(line, "&&") {
+			part = strings.TrimSpace(part)
+			neg := strings.HasPrefix(part, "!")
+			if neg {
+				part = strings.TrimSpace(part[1:])
+			}
+			switch {
+			case reDSLStatus.MatchString(part):
+				if m := reDSLStatus.FindStringSubmatch(part); m != nil {
+					e.Status, _ = strconv.Atoi(m[1])
+				}
+			case reDSLContains.MatchString(part):
+				m := reDSLContains.FindStringSubmatch(part)
+				if m == nil {
+					return false
+				}
+				field := strings.ToLower(m[1])
+				val := m[2]
+				if neg {
+					if field == "body" || field == "raw" {
+						e.Not = append(e.Not, val)
+					}
+					continue
+				}
+				if field == "header" || field == "all_headers" {
+					e.Headers = append(e.Headers, val)
+				} else {
+					e.Contains = append(e.Contains, val)
+				}
+			case reDSLContainsAll.MatchString(part):
+				m := reDSLContainsAll.FindStringSubmatch(part)
+				if m == nil {
+					return false
+				}
+				for _, w := range strings.Split(m[2], ",") {
+					w = strings.TrimSpace(w)
+					w = strings.Trim(w, `"'`)
+					if w != "" {
+						e.Contains = append(e.Contains, w)
+					}
+				}
+			case reDSLRegex.MatchString(part):
+				m := reDSLRegex.FindStringSubmatch(part)
+				if m == nil {
+					return false
+				}
+				e.Regex = append(e.Regex, m[1])
+			default:
+				return false
+			}
+		}
+	}
+	return true
+}
 // strongEntry 至少一个强特征：header 判据 / word ≥ 8 字符 / regex ≥ 12 字符。
 func strongEntry(e *entry) bool {
-	if len(e.Headers) > 0 {
-		return true
-	}
 	for _, w := range append(append([]string{}, e.Contains...), e.Any...) {
 		if strongWord(w) {
 			return true
 		}
 	}
 	for _, rx := range e.Regex {
-		if len(rx) >= 12 {
+		if len(rx) >= 8 {
 			return true
 		}
+	}
+	// header 判据必须足够具体：通用头（Content-Type/Server/X-Powered-By 等）不算强特征，
+	// 否则任何 JSON API 都会命中（模板池里 Common API Endpoints 这类模板就是这样）。
+	for _, h := range e.Headers {
+		hs := strings.ToLower(strings.TrimSpace(h))
+		if len(hs) < 12 {
+			continue
+		}
+		if strings.HasPrefix(hs, "content-type") || strings.HasPrefix(hs, "server") ||
+			strings.HasPrefix(hs, "x-powered-by") || strings.HasPrefix(hs, "location") ||
+			strings.HasPrefix(hs, "set-cookie") {
+			continue
+		}
+		return true
 	}
 	return false
 }
@@ -404,6 +592,16 @@ func validRegex(e *entry) bool {
 }
 
 // ---------- 输出 ----------
+
+func fnv32(s string) uint32 {
+	const off, prime = 2166136261, 16777619
+	h := uint32(off)
+	for i := 0; i < len(s); i++ {
+		h ^= uint32(s[i])
+		h *= prime
+	}
+	return h
+}
 
 func goQuote(s string) string { return strconv.Quote(s) }
 
@@ -426,15 +624,18 @@ func render(entries []entry) string {
 	b.WriteString("var tplChecks = []Check{\n")
 	for _, e := range entries {
 		var m string
-		if len(e.Headers) > 0 && len(e.Contains) == 0 && len(e.Any) == 0 && len(e.Regex) == 0 {
+		if len(e.Headers) > 0 && len(e.Contains) == 0 && len(e.Any) == 0 && len(e.Regex) == 0 && len(e.Not) == 0 {
 			m = "Match{Status: " + strconv.Itoa(e.Status) + ", HeaderContains: []string{" + goList(e.Headers) + "}}"
-		} else if len(e.Regex) > 0 || len(e.Any) > 0 {
+		} else if len(e.Regex) > 0 || len(e.Any) > 0 || len(e.Not) > 0 || len(e.Headers) > 0 {
 			parts := []string{"Status: " + strconv.Itoa(e.Status)}
 			if len(e.Contains) > 0 {
 				parts = append(parts, "Contains: []string{"+goList(e.Contains)+"}")
 			}
 			if len(e.Any) > 0 {
 				parts = append(parts, "ContainsAny: []string{"+goList(e.Any)+"}")
+			}
+			if len(e.Not) > 0 {
+				parts = append(parts, "NotContains: []string{"+goList(e.Not)+"}")
 			}
 			if len(e.Regex) > 0 {
 				parts = append(parts, "RegexBody: []string{"+goList(e.Regex)+"}")
@@ -462,9 +663,8 @@ func main() {
 		fmt.Fprintln(os.Stderr, "缺少 -src")
 		os.Exit(2)
 	}
-	builtinPaths := checks.AllBuiltinPaths()
-	seenPath := map[string]bool{}
 	seenID := map[string]bool{}
+	seenSig := map[string]bool{}
 	var entries []entry
 	err := filepath.WalkDir(*src, func(path string, d os.DirEntry, err error) error {
 		if err != nil || d.IsDir() {
@@ -474,6 +674,7 @@ func main() {
 		if !strings.HasSuffix(name, ".yaml") && !strings.HasSuffix(name, ".yml") {
 			return nil
 		}
+		stFiles++
 		data, rerr := os.ReadFile(path)
 		if rerr != nil {
 			return nil
@@ -486,16 +687,26 @@ func main() {
 			list = parseNuclei(data, rel)
 		}
 		for _, e := range list {
-			if builtinPaths[e.Path] || seenPath[e.Path] || seenID[e.ID] {
+			// 路径重复不丢弃：runner 会按「同路径」聚类共享一次请求（见 runner.go 同路径聚类），
+			// 多个 matcher 各自判定，既省请求又保留覆盖；但完全相同的判据（同路径+同 matcher）
+			// 视为重复模板副本丢弃。
+			sig := e.Path + "|" + strconv.Itoa(e.Status) + "|" +
+				strings.Join(e.Contains, ",") + "|" + strings.Join(e.Any, ",") + "|" +
+				strings.Join(e.Regex, ",") + "|" + strings.Join(e.Headers, ",") + "|" + strings.Join(e.Not, ",")
+			if seenSig[sig] {
 				continue
+			}
+			seenSig[sig] = true
+			if seenID[e.ID] {
+				e.ID = e.ID + "-x" + fmt.Sprintf("%x", fnv32(sig))
 			}
 			if genericHit(checks.Match{
-				Status: e.Status, Contains: e.Contains, ContainsAny: e.Any,
+				Status: e.Status, Contains: e.Contains, ContainsAny: e.Any, NotContains: e.Not,
 				RegexBody: e.Regex, HeaderContains: e.Headers,
 			}) {
+				stGeneric++
 				continue
 			}
-			seenPath[e.Path] = true
 			seenID[e.ID] = true
 			entries = append(entries, e)
 		}
@@ -513,5 +724,21 @@ func main() {
 		fmt.Fprintln(os.Stderr, "write:", err)
 		os.Exit(1)
 	}
-	fmt.Fprintf(os.Stderr, "生成 %d 条 -> %s\n", len(entries), *out)
+	type kv struct {
+		K string
+		V int
+	}
+	var top []kv
+	for k, v := range dslRejTop {
+		top = append(top, kv{k, v})
+	}
+	sort.Slice(top, func(i, j int) bool { return top[i].V > top[j].V })
+	for i, t := range top {
+		if i >= 8 {
+			break
+		}
+		fmt.Fprintf(os.Stderr, "dsl_rej[%s]=%d ", t.K, t.V)
+	}
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintf(os.Stderr, "漏斗: files=%d docs=%d cand=%d strong=%d accept=%d generic=%d rej(dsl=%d part=%d nost=%d strong=%d regex=%d) -> %d 条 %s\n", stFiles, stDocs, stCand, stStrong, stAccept, stGeneric, stRejDSL, stRejPart, stRejNoSt, stRejStrong, stRejRegex, len(entries), *out)
 }

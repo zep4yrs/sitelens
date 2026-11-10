@@ -140,6 +140,20 @@ func jsonManifestMatch(keys ...string) Match {
 	}
 }
 
+// HandwrittenPaths 返回手写 check 的路径集合（不含模板转译集），
+// 供 tools/tpl2check 重新生成时去重（否则会把自己上次的产物当成手写集）。
+func HandwrittenPaths() map[string]bool {
+	list := builtinChecks()
+	out := make(map[string]bool, len(list))
+	for _, c := range list {
+		if strings.HasPrefix(c.ID, "tpl-") {
+			continue
+		}
+		out[c.Path] = true
+	}
+	return out
+}
+
 // AllBuiltinPaths 返回内置 check 的路径集合（供 tools/tpl2check 转译管线去重）。
 func AllBuiltinPaths() map[string]bool {
 	list := builtinChecks()
@@ -215,7 +229,7 @@ func builtinChecks() []Check {
 		{"phpmyadmin", 1, "/phpmyadmin/", c(200, "phpMyAdmin"), "phpMyAdmin 入口暴露", "medium", "加访问控制或删除"},
 		{"gitlab", 1, "/users/sign_in", c(200, "GitLab"), "GitLab 登录入口暴露", "low", "加访问控制"},
 	}
-	return append(list, tplChecks...)
+	return append(append(list, extraChecks...), tplChecks...)
 }
 
 // m 带版本抽取条件的 Match 快捷构造。

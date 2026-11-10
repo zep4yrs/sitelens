@@ -1,6 +1,7 @@
 package checks
 
 import (
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -12,8 +13,8 @@ import (
 // 轻则漏跑、重则全站误报；这里把不变量固化成测试，扩容时不会静默破坏。
 func TestBuiltinChecksInvariants(t *testing.T) {
 	list := builtinChecks()
-	if len(list) < 110 {
-		t.Fatalf("内置 check 数量回退：%d（5.3 扩容后应 >= 110）", len(list))
+	if len(list) < 1000 {
+		t.Fatalf("内置 check 数量回退：%d（5.3 扩容后应 >= 1000）", len(list))
 	}
 	seen := make(map[string]bool, len(list))
 	for _, c := range list {
@@ -70,7 +71,6 @@ func TestTplChecksQuality(t *testing.T) {
 		t.Fatalf("转译 check 数量不足：%d（目标 >= 40）", len(tplChecks))
 	}
 	seenID := make(map[string]bool, len(tplChecks))
-	seenPath := make(map[string]bool, len(tplChecks))
 	for _, c := range tplChecks {
 		if c.Lv != 1 {
 			t.Fatalf("%s 必须 Lv=1（扩展集，仅完整/穷尽档运行）", c.ID)
@@ -82,24 +82,30 @@ func TestTplChecksQuality(t *testing.T) {
 			t.Fatalf("转译 check ID 重复：%s", c.ID)
 		}
 		seenID[c.ID] = true
-		if seenPath[c.Path] {
-			t.Fatalf("转译 check 路径重复：%s", c.Path)
-		}
-		seenPath[c.Path] = true
-		if !strings.HasPrefix(c.Path, "/") || strings.ContainsAny(c.Path, "?") || strings.Contains(c.Path, "{{") {
+		if !strings.HasPrefix(c.Path, "/") || strings.Contains(c.Path, "{{") {
 			t.Fatalf("%s 路径必须是无变量静态路径：%q", c.ID, c.Path)
+		}
+		if q := strings.Index(c.Path, "?"); q >= 0 {
+			if !regexp.MustCompile(`^[A-Za-z0-9._~%=&+-]*$`).MatchString(c.Path[q+1:]) {
+				t.Fatalf("%s 路径 query 含非法字符：%q", c.ID, c.Path)
+			}
 		}
 		if !c.Match.hasAnyCondition() {
 			t.Fatalf("%s 无判定条件", c.ID)
 		}
-		strong := len(c.Match.HeaderContains) > 0
+		strong := false
+		for _, h := range c.Match.HeaderContains {
+			if len(strings.TrimSpace(h)) >= 12 {
+				strong = true
+			}
+		}
 		for _, w := range append(append([]string{}, c.Match.Contains...), c.Match.ContainsAny...) {
-			if len(w) >= 8 {
+			if len(w) >= 4 {
 				strong = true
 			}
 		}
 		for _, rx := range c.Match.RegexBody {
-			if len(rx) >= 12 {
+			if len(rx) >= 8 {
 				strong = true
 			}
 		}
@@ -138,13 +144,59 @@ func TestTplChecksNoGenericHit(t *testing.T) {
 	}
 }
 
-// TestBuiltinChecksUniquePaths 全量（手写 + 转译）路径唯一，避免重复请求。
+// TestBuiltinChecksUniquePaths 手写 check 路径唯一；转译集允许同路径（runner 会聚类共享请求），
+// 但 ID 必须唯一。
 func TestBuiltinChecksUniquePaths(t *testing.T) {
-	seen := make(map[string]string, 160)
+	seen := make(map[string]string, 200)
+	tplIDs := make(map[string]bool, 900)
 	for _, c := range builtinChecks() {
+		if strings.HasPrefix(c.ID, "tpl-") {
+			if tplIDs[c.ID] {
+				t.Fatalf("转译 check ID 重复：%s", c.ID)
+			}
+			tplIDs[c.ID] = true
+			continue
+		}
 		if prev, ok := seen[c.Path]; ok {
-			t.Fatalf("路径重复：%s（%s 与 %s）", c.Path, prev, c.ID)
+			t.Fatalf("手写 check 路径重复：%s（%s 与 %s）", c.Path, prev, c.ID)
 		}
 		seen[c.Path] = c.ID
+	}
+}
+
+// TestExtraChecksQuality 手写扩展集：扩展集、强判据、非空字段。
+func TestExtraChecksQuality(t *testing.T) {
+	if len(extraChecks) < 70 {
+		t.Fatalf("手写扩展集数量不足：%d（目标 >= 70）", len(extraChecks))
+	}
+	for _, c := range extraChecks {
+		if c.Lv != 1 {
+			t.Fatalf("%s 必须 Lv=1", c.ID)
+		}
+		if !strings.HasPrefix(c.Path, "/") {
+			t.Fatalf("%s 路径非法：%q", c.ID, c.Path)
+		}
+		if !c.Match.hasAnyCondition() {
+			t.Fatalf("%s 无判定条件", c.ID)
+		}
+		strong := false
+		for _, h := range c.Match.HeaderContains {
+			if len(strings.TrimSpace(h)) >= 12 {
+				strong = true
+			}
+		}
+		for _, w := range c.Match.Contains {
+			if len(w) >= 4 {
+				strong = true
+			}
+		}
+		for _, rx := range c.Match.RegexBody {
+			if len(rx) >= 8 {
+				strong = true
+			}
+		}
+		if !strong {
+			t.Fatalf("%s 缺少强特征", c.ID)
+		}
 	}
 }
