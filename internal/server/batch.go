@@ -23,13 +23,13 @@ type batchRequest struct {
 // batchLevels 允许的档位（与 scanOptions/levelPresets 对齐；空 = 默认）。
 var batchLevels = map[string]bool{
 	"": true, "quick": true, "standard": true, "deep": true, "full": true,
-	"stealth": true, "assets": true, "apocalypse": true,
+	"stealth": true, "assets": true, "apocalypse": true, "exhaustive": true,
 }
 
 // batchLevelAlias 中文档位别名（UI 输入友好）。
 var batchLevelAlias = map[string]string{
 	"快速": "quick", "标准": "standard", "深度": "deep", "完整": "full",
-	"隐身": "stealth", "资产": "assets",
+	"隐身": "stealth", "资产": "assets", "穷尽": "exhaustive", "极限": "exhaustive",
 }
 
 // normalizeBatchItem 解析一行目标：`url` 或 `url 档位`（档位支持中英文）。

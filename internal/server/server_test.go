@@ -257,6 +257,28 @@ func TestScanOptionsLevels(t *testing.T) {
 	if o.Deep {
 		t.Fatal("quick 预设 deep 应为 false")
 	}
+	if o.NucleiSubset {
+		t.Fatal("quick 不应开启社区模板池")
+	}
+	// 5.3 五档：deep 开模板池（core + nuclei 3000），exhaustive 最大覆盖（12000）
+	o = scanOptions(map[string]any{"level": "deep"})
+	if !o.NucleiSubset || o.NucleiCap != 3000 || o.Checks != "core" {
+		t.Fatalf("deep 应 nuclei=true/cap=3000/checks=core: %+v", o)
+	}
+	o = scanOptions(map[string]any{"level": "exhaustive"})
+	if !o.NucleiSubset || o.NucleiCap != 12000 || o.Checks != "all" {
+		t.Fatalf("exhaustive 应 nuclei=true/cap=12000/checks=all: %+v", o)
+	}
+	// 默认（无 level）不得开启模板池：保持默认请求行为
+	o = scanOptions(map[string]any{})
+	if o.NucleiSubset {
+		t.Fatal("默认档不得默认跑模板池")
+	}
+	// 显式 nuclei 覆盖
+	o = scanOptions(map[string]any{"nuclei": true, "nuclei_cap": 800})
+	if !o.NucleiSubset || o.NucleiCap != 800 {
+		t.Fatalf("显式 nuclei/nuclei_cap 未生效: %+v", o)
+	}
 	// apocalypse：全开 + 全量模板
 	o = scanOptions(map[string]any{"level": "apocalypse"})
 	if !o.Deep || !o.DirScan || !o.DirBypass || !o.Subdomain || !o.Takeover ||

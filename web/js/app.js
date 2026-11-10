@@ -459,7 +459,8 @@ function renderPreflight(pf, err) {
   var s = window.slLive ? window.slLive.suggest(pf) : { strength: "std", verify: {}, reasons: [], warnings: [] };
   lastSuggestion = s;
   var tech = (pf.tech || []).slice(0, 6).join(" · ");
-  var level = s.strength === "fast" ? "快速档" : s.strength === "full" ? "完整档" : "标准档";
+  var LEVEL_NAMES = { fast: "快速档", std: "标准档", deep: "深度档", full: "完整档", exhaustive: "穷尽档" };
+  var level = LEVEL_NAMES[s.strength] || "标准档";
   var html = '<div class="plan-head"><b>目标预检</b><span class="hint mono">' + esc(pf.final_url || pf.requested_url || "") + "</span></div>" +
     '<div class="plan-items">' +
     '<span class="plan-item">HTTP ' + (Number(pf.status) || 0) + "</span>" +

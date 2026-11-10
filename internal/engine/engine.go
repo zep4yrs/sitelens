@@ -65,6 +65,7 @@ type Options struct {
 	JSMap          bool                    // JS 攻击面提取（独立于 DAST 可开：bundle 端点/SourceMap，只读）
 	NetProto       bool                    // 协议模板检测（不开端口服务识别时仅跑 dns 类模板）
 	Checks         string                  // none | core | all
+	NucleiSubset   bool                    // 显式开启社区模板池（checks=core 时也可跑；5.3 深度/穷尽档用）
 	NucleiCap      int                     // Nuclei 单次模板上限（0 = 用配置默认 nuclei_cap）
 	DirMaxPaths    int                     // 目录探测字典上限（0 = 用配置默认）
 	DirFullWords   bool                    // 目录探测用全量词表（3.2k+6k 并集；大词表档位置位）
@@ -767,7 +768,7 @@ func (e *Engine) scanImpl(rawURL string, opts Options, onProgress progress, canc
 	}
 
 	// 6.5) Nuclei 社区模板子集（all 级别 + 模板库存在时）
-	if opts.Checks == "all" && !cancelled() && cfg.Checks.NucleiCap > 0 && cfg.Checks.NucleiDir != "" {
+	if (opts.Checks == "all" || opts.NucleiSubset) && !cancelled() && cfg.Checks.NucleiCap > 0 && cfg.Checks.NucleiDir != "" {
 		dtNuc, dsNuc := diag.begin()
 		onProgress(84, "运行 Nuclei 社区模板子集…")
 		live.setPhase("nuclei", "模板检测")

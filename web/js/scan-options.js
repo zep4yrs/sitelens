@@ -10,13 +10,18 @@
   "use strict";
 
   var TIERS = {
-    fast: { checks: "none", nuclei_cap: 300, dir_max_paths: 60,
-            shell_max_paths: 40, sub_max_words: 200, probe_ports: "common" },
-    std:  { checks: "core", nuclei_cap: 1500, dir_max_paths: 150,
-            shell_max_paths: 100, sub_max_words: 500, probe_ports: "common" },
-    full: { checks: "all",  nuclei_cap: 6000, dir_max_paths: 300,
-            shell_max_paths: 200, sub_max_words: 2000, probe_ports: "full" }
+    fast:       { checks: "none", nuclei: false, nuclei_cap: 300,   dir_max_paths: 60,
+                  shell_max_paths: 40,  sub_max_words: 200,  probe_ports: "common" },
+    std:        { checks: "core", nuclei: false, nuclei_cap: 1500,  dir_max_paths: 150,
+                  shell_max_paths: 100, sub_max_words: 500,  probe_ports: "common" },
+    deep:       { checks: "core", nuclei: true,  nuclei_cap: 3000,  dir_max_paths: 220,
+                  shell_max_paths: 140, sub_max_words: 1000, probe_ports: "common" },
+    full:       { checks: "all",  nuclei: true,  nuclei_cap: 6000,  dir_max_paths: 300,
+                  shell_max_paths: 200, sub_max_words: 2000, probe_ports: "full" },
+    exhaustive: { checks: "all",  nuclei: true,  nuclei_cap: 12000, dir_max_paths: 500,
+                  shell_max_paths: 300, sub_max_words: 4000, probe_ports: "full" }
   };
+
 
   var SCOPE_KEYS = ["web", "sub", "srv", "np", "js", "weak"];
   var VERIFY_ACTIVE = ["afp", "dir", "ws", "dast", "by", "ex", "settle"];
@@ -117,6 +122,7 @@
     // 强度档位旋钮（只对已选模块下发，缺省档沿用引擎配置的不下发）
     var tier = TIERS[strength];
     o.checks = tier.checks;
+    if (tier.nuclei) o.nuclei = true; // 显式开启社区模板池（std/fast 默认关，行为不变）
     o.nuclei_cap = tier.nuclei_cap;
     if (verify.dir) o.dir_max_paths = tier.dir_max_paths;
     if (verify.ws) o.shell_max_paths = tier.shell_max_paths;
