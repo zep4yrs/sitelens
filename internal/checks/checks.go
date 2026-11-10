@@ -184,7 +184,27 @@ func builtinChecks() []Check {
 		{"drupal-login", 1, "/user/login", c(200, "Drupal"), "Drupal 登录页", "info", "加访问控制"},
 		{"typecho-login", 1, "/admin/login.php", c(200, "Typecho"), "Typecho 登录页", "info", "加访问控制"},
 		{"tp-admin", 1, "/admin.php", c(200), "后台入口 admin.php", "info", "加访问控制"},
-	}
+		// ---- 5.3 借鉴 ARES：验证型 check 扩容（扩展集，仅「全面」档运行）----
+		// 判据一律用强特征（版本串/API 头/JSON 键），避免通用 200 误报；
+		// Lv=1 表示只在 level=="all"（全面识别）或 CMS 联动时调度，默认扫描请求量不变。
+		{"git-config", 1, "/.git/config", c(200, "[core]"), "Git config 泄露（含远程地址/凭据痕迹）", "high", "删除 Web 根下 .git 目录"},
+		{"git-logs", 1, "/.git/logs/HEAD", c(200, "commit "), "Git 操作日志泄露（可还原历史与作者）", "high", "删除 Web 根下 .git 目录"},
+		{"env-local", 1, "/.env.local", envLeakMatch(), ".env.local 环境变量泄露", "high", "移除 .env.local，配置走环境变量"},
+		{"env-prod", 1, "/.env.production", envLeakMatch(), ".env.production 环境变量泄露", "high", "移除 .env.production，配置走环境变量"},
+		{"backup-sql", 1, "/backup.sql", c(200, "INSERT INTO"), "数据库备份文件暴露", "high", "删除备份文件或移出 Web 根"},
+		{"heapdump", 1, "/actuator/heapdump", c(200, "JAVA PROFILE"), "Actuator heapdump 可下载（内存/凭据泄露）", "critical", "关闭 heapdump 端点并轮换密钥"},
+		{"actuator-health", 1, "/actuator/health", c(200, `"status":"UP"`), "Actuator health 端点暴露", "low", "生产关闭或加鉴权"},
+		{"actuator-mappings", 1, "/actuator/mappings", c(200, `"mappings"`), "Actuator mappings 端点暴露（API 全图）", "medium", "关闭或加鉴权"},
+		{"swagger-json", 1, "/swagger.json", c(200, `"swagger"`), "Swagger 规范文件暴露", "medium", "生产关闭或加鉴权"},
+		{"openapi-json", 1, "/openapi.json", c(200, `"openapi"`), "OpenAPI 规范文件暴露", "medium", "生产关闭或加鉴权"},
+		{"v3-api-docs", 1, "/v3/api-docs", c(200, `"openapi"`), "SpringDoc API 文档暴露", "medium", "生产关闭或加鉴权"},
+		{"graphql-introspect", 1, "/graphql", Match{Status: 200, Method: "POST", Body: `{"query":"{__typename}"}`, ContentType: "application/json", Contains: []string{"__typename"}}, "GraphQL 内省未授权（可枚举 schema）", "medium", "生产关闭 introspection"},
+		{"k8s-version", 1, "/version", c(200, `"gitVersion"`), "Kubernetes API 未授权（版本泄露）", "medium", "API Server 开启鉴权"},
+		{"k8s-namespaces", 1, "/api/v1/namespaces", c(200, `"kind":"NamespaceList"`), "Kubernetes 命名空间未授权列举", "high", "API Server 开启鉴权/网络隔离"},
+		{"docker-registry", 1, "/v2/", Match{Status: 200, HeaderContains: []string{"Docker-Distribution-Api-Version"}}, "Docker Registry 未授权访问", "medium", "开启鉴权或网络隔离"},
+		{"nginx-status", 1, "/nginx_status", c(200, "Active connections"), "Nginx stub_status 暴露", "low", "限制 stub_status 来源"},
+		{"phpmyadmin", 1, "/phpmyadmin/", c(200, "phpMyAdmin"), "phpMyAdmin 入口暴露", "medium", "加访问控制或删除"},
+		{"gitlab", 1, "/users/sign_in", c(200, "GitLab"), "GitLab 登录入口暴露", "low", "加访问控制"}}
 }
 
 // m 带版本抽取条件的 Match 快捷构造。
