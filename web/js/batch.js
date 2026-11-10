@@ -8,10 +8,10 @@
 
   var LIMIT = 50;
   var LEVEL_ALIAS = {
-    "快速": "quick", "标准": "standard", "深度": "deep", "完整": "full",
+    "快速": "quick", "标准": "standard", "深度": "deep", "完整": "full", "穷尽": "exhaustive",
     "quick": "quick", "standard": "standard", "deep": "deep", "full": "full"
   };
-  var LEVEL_LABEL = { quick: "快速", standard: "标准", deep: "深度", full: "完整" };
+  var LEVEL_LABEL = { quick: "快速", standard: "标准", deep: "深度", full: "完整", exhaustive: "穷尽", assets: "资产", stealth: "隐匿", apocalypse: "穷尽" };
   var lastRows = [];
   var resumable = [];
   box.addEventListener("input", updateCount);

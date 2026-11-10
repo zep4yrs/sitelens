@@ -8,7 +8,7 @@ const test = require("node:test");
 
 const base = { strength: "std" };
 
-test("强度三档产出真差异（fast==std 回归）", () => {
+test("强度五档产出真差异（fast==std 回归；5.3 扩容 deep/exhaustive）", () => {
   const input = (st) => ({
     scope: { web: true, sub: true, srv: true },
     verify: { dir: true, ws: true, dast: true, afp: true },
@@ -16,15 +16,28 @@ test("强度三档产出真差异（fast==std 回归）", () => {
   });
   const fast = scanOpts.build(input("fast"));
   const std = scanOpts.build(input("std"));
+  const deep = scanOpts.build(input("deep"));
   const full = scanOpts.build(input("full"));
+  const exh = scanOpts.build(input("exhaustive"));
   assert.notDeepStrictEqual(fast.options, std.options, "fast 与 std 不得再相同");
-  assert.notDeepStrictEqual(std.options, full.options, "std 与 full 不得再相同");
+  assert.notDeepStrictEqual(std.options, deep.options, "std 与 deep 不得再相同");
+  assert.notDeepStrictEqual(deep.options, full.options, "deep 与 full 不得再相同");
+  assert.notDeepStrictEqual(full.options, exh.options, "full 与 exhaustive 不得再相同");
   assert.strictEqual(fast.options.checks, "none");
   assert.strictEqual(std.options.checks, "core");
   assert.strictEqual(full.options.checks, "all");
+  assert.strictEqual(exh.options.checks, "all");
   assert.strictEqual(full.options.probe_ports, "full");
+  // 默认档（std）不得开启社区模板池：保持 5.2.3 默认请求行为
+  assert.strictEqual(std.options.nuclei, undefined, "标准档不得默认跑模板池");
+  assert.strictEqual(deep.options.nuclei, true, "深度档应开启模板池");
+  assert.strictEqual(full.options.nuclei, true);
+  assert.strictEqual(exh.options.nuclei, true);
+  // nuclei 上限严格递增（覆盖范围随档位放大）
   assert.ok(std.options.nuclei_cap > fast.options.nuclei_cap);
-  assert.ok(full.options.nuclei_cap > std.options.nuclei_cap);
+  assert.ok(deep.options.nuclei_cap > std.options.nuclei_cap);
+  assert.ok(full.options.nuclei_cap > deep.options.nuclei_cap);
+  assert.ok(exh.options.nuclei_cap > full.options.nuclei_cap);
 });
 
 test("被动互斥：主动验证被忽略、强度不消费、范围探测保留", () => {

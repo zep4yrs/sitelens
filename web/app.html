@@ -288,10 +288,13 @@
           <div class="opt-group" id="st-group">
             <span class="g-label">强度</span>
             <div class="seg" id="st-row">
-              <span class="seg-opt" data-st="fast" title="不跑验证引擎；字典与端口集收窄">快速</span>
-              <span class="seg-opt on" data-st="std" title="core 验证集 + nuclei 上限 1500 + 标准字典">标准</span>
-              <span class="seg-opt" data-st="full" title="all 全量模板 + nuclei 上限 6000 + 全字典 + 全端口集">完整</span>
+              <span class="seg-opt" data-st="fast" title="不跑验证引擎、不跑社区模板；字典与端口集收窄">快速</span>
+              <span class="seg-opt on" data-st="std" title="core 验证集（内置 60 条验证器）+ nuclei 上限 1500 + 标准字典（默认档，不跑社区模板池）">标准</span>
+              <span class="seg-opt" data-st="deep" title="core 验证集 + 社区模板池（nuclei 上限 3000）+ 放大字典；比标准多覆盖模板库，耗时增加">深度</span>
+              <span class="seg-opt" data-st="full" title="all 全量验证集 + 社区模板池（nuclei 上限 6000）+ 全字典 + 全端口集">完整</span>
+              <span class="seg-opt" data-st="exhaustive" title="极限档：all + 模板上限 12000 + 最大字典；覆盖最全、耗时最长，仅授权目标使用">穷尽</span>
             </div>
+
           </div>
           <!-- G09/G10 高级 Web 检测（默认全关；与「范围/验证」同款多选下拉，提交为 options.dast 对象） -->
           <div class="opt-group">

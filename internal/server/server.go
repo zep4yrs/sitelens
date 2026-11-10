@@ -701,11 +701,12 @@ func (s *Server) hScan(w http.ResponseWriter, r *http.Request) {
 var levelPresets = map[string]map[string]any{
 	"quick":      {"deep": false},
 	"standard":   {"deep": true},
-	"deep":       {"deep": true, "active_fp": true, "service_probe": true, "checks": "core", "dast": true},
+	"deep":       {"deep": true, "active_fp": true, "service_probe": true, "checks": "core", "dast": true, "nuclei": true, "nuclei_cap": 3000},
 	"full":       {"deep": true, "active_fp": true, "dir_scan": true, "dir_bypass": true, "dir_full_words": true, "subdomain": true, "webshell": true, "service_probe": true, "checks": "all", "dast": true, "netsec": true, "passive": true},
 	"assets":     {"deep": true, "dir_scan": true, "subdomain": true, "takeover": true, "active_fp": true},
 	"stealth":    {"deep": true, "browser_ua": true, "passive": true, "netsec": true},
 	"apocalypse": {"deep": true, "active_fp": true, "dir_scan": true, "dir_bypass": true, "dir_full_words": true, "subdomain": true, "takeover": true, "webshell": true, "weak_audit": true, "service_probe": true, "checks": "all", "dast": true, "netsec": true, "passive": true, "browser_ua": true, "nuclei_cap": 6000},
+	"exhaustive": {"deep": true, "active_fp": true, "dir_scan": true, "dir_bypass": true, "dir_full_words": true, "subdomain": true, "takeover": true, "webshell": true, "weak_audit": true, "service_probe": true, "checks": "all", "dast": true, "netsec": true, "passive": true, "browser_ua": true, "nuclei": true, "nuclei_cap": 12000},
 }
 
 // scanOptions 平铺 payload → 引擎选项（对齐 Python /api/scan）。
@@ -746,7 +747,8 @@ func scanOptions(body map[string]any) engine.Options {
 	} else {
 		o.DAST = boolOf(body["dast"], false)
 	}
-	o.Exploit = boolOf(body["exploit"], false) // config exploit.enabled 为总闸
+	o.Exploit = boolOf(body["exploit"], false)     // config exploit.enabled 为总闸
+	o.NucleiSubset = boolOf(body["nuclei"], false) // 5.3：显式开启社区模板池（深度/穷尽档）
 	o.Passive = boolOf(body["passive"], false)
 	o.JSMap = boolOf(body["js_map"], false)      // JS 攻击面提取（可独立于 DAST）
 	o.NetProto = boolOf(body["netproto"], false) // 协议模板（可独立于端口识别）

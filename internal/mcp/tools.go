@@ -155,7 +155,7 @@ func (t *toolbox) scanTool() Tool {
 		Active:      true,
 		InputSchema: objectSchema(map[string]any{
 			"url":   strProp("目标 URL（可含缺协议/hxxp/[.]/全角等脏形式，服务端自动归一；必须已获授权，且通过 SiteLens allow_hosts / gov.cn 硬闸门）"),
-			"level": enumProp("扫描档位预设；缺省由 options 决定", "quick", "standard", "deep", "full", "assets", "stealth", "apocalypse"),
+			"level": enumProp("扫描档位预设；缺省由 options 决定", "quick", "standard", "deep", "full", "assets", "stealth", "apocalypse", "exhaustive"),
 			"options": map[string]any{
 				"type":                 "object",
 				"description":          "透传 SiteLens /api/scan 的扫描选项（如 deep/dast/checks/passive/netsec/graph 等）；服务端做白名单映射",
@@ -189,7 +189,7 @@ func (t *toolbox) scanTool() Tool {
 				}
 			}
 			if lv, _ := argString(m, "level", false); lv != "" {
-				if !oneOf(lv, "quick", "standard", "deep", "full", "assets", "stealth", "apocalypse") {
+				if !oneOf(lv, "quick", "standard", "deep", "full", "assets", "stealth", "apocalypse", "exhaustive") {
 					return nil, fmt.Errorf("level 非法: %q", lv)
 				}
 				body["level"] = lv
