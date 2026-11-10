@@ -140,8 +140,17 @@ func jsonManifestMatch(keys ...string) Match {
 	}
 }
 
+// AllBuiltinPaths 返回内置 check 的路径集合（供 tools/tpl2check 转译管线去重）。
+func AllBuiltinPaths() map[string]bool {
+	list := builtinChecks()
+	out := make(map[string]bool, len(list))
+	for _, c := range list {
+		out[c.Path] = true
+	}
+	return out
+}
 func builtinChecks() []Check {
-	return []Check{
+	list := []Check{
 		{"git-leak", 0, "/.git/HEAD", c(200, "ref: refs/"), "Git 仓库泄露", "high", "删除 Web 根下 .git 目录"},
 		{"git-index", 0, "/.git/index", c(200, "DIRC"), "Git index 文件泄露", "high", "同上"},
 		{"env-leak", 0, "/.env", envLeakMatch(), ".env 环境变量泄露", "high", "移除 .env，配置走环境变量"},
@@ -204,7 +213,9 @@ func builtinChecks() []Check {
 		{"docker-registry", 1, "/v2/", Match{Status: 200, HeaderContains: []string{"Docker-Distribution-Api-Version"}}, "Docker Registry 未授权访问", "medium", "开启鉴权或网络隔离"},
 		{"nginx-status", 1, "/nginx_status", c(200, "Active connections"), "Nginx stub_status 暴露", "low", "限制 stub_status 来源"},
 		{"phpmyadmin", 1, "/phpmyadmin/", c(200, "phpMyAdmin"), "phpMyAdmin 入口暴露", "medium", "加访问控制或删除"},
-		{"gitlab", 1, "/users/sign_in", c(200, "GitLab"), "GitLab 登录入口暴露", "low", "加访问控制"}}
+		{"gitlab", 1, "/users/sign_in", c(200, "GitLab"), "GitLab 登录入口暴露", "low", "加访问控制"},
+	}
+	return append(list, tplChecks...)
 }
 
 // m 带版本抽取条件的 Match 快捷构造。

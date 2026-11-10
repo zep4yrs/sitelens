@@ -426,6 +426,12 @@ func matchBody(m Match, status int, body string, headers map[string]string, host
 	return ok
 }
 
+// MatchForTest 暴露 matcher 给零误报门禁工具（tools/tpl2check）使用：
+// 语义与线上判定完全一致（直接复用 matchBody），仅供生成/校验工具调用。
+func MatchForTest(m Match, status int, body string, headers map[string]string, host string) bool {
+	return matchBody(m, status, body, headers, host)
+}
+
 // matchBodyReason 同 matchBody 并返回命中原因（哪些条件、命中了什么），
 // 供证据展示——验证型扫描器的每条命中都应能自解释。
 // 语义与 matchBody 严格一致：任一条件不满足即不命中，全部满足才通过。
