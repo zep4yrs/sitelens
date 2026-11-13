@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"sort"
+	"strings"
 )
 
 // maxRequestBytes 单条 JSON-RPC 请求行上限。MCP stdio 用换行分隔，
@@ -25,6 +26,10 @@ type Options struct {
 	Active bool
 	// MaxBytes 单次工具响应文本上限（序列化后字节数）。<=0 用 512KB。
 	MaxBytes int
+	// AllowHosts 授权白名单（来自 scan.allow_hosts）。危险工具（scan /
+	// graphql_introspect / assets）在签发确认令牌前做 Pre-flight 范围检查；
+	// 为空 = 没有可核验的授权范围 → 危险工具一律拒绝（fail-closed）。
+	AllowHosts []string
 }
 
 // Server MCP stdio server。
@@ -32,6 +37,7 @@ type Server struct {
 	client *Client
 	opts   Options
 	tools  []Tool
+	conf   *confirmer
 }
 
 // NewServer 构造 server；tools 由 newTools 一次性生成（无运行期可变状态）。
@@ -42,8 +48,9 @@ func NewServer(client *Client, opts Options) *Server {
 	if opts.MaxBytes <= 0 {
 		opts.MaxBytes = 512 << 10
 	}
-	s := &Server{client: client, opts: opts}
-	s.tools = newTools(client, opts)
+	conf, _ := newConfirmer() // 失败时 conf=nil，危险工具在 callTool 里 fail-closed
+	s := &Server{client: client, opts: opts, conf: conf}
+	s.tools = newTools(client, opts, conf)
 	return s
 }
 
@@ -153,6 +160,30 @@ func (s *Server) callTool(ctx context.Context, params json.RawMessage) (any, err
 	}
 	if t.Active && !s.opts.Active {
 		return toolError("主动工具未启用：请以 sitelens mcp --allow-active 启动（或设置 SITELENS_MCP_ACTIVE=1）后重试"), nil
+	}
+	if t.Dangerous {
+		args := map[string]any{}
+		if len(bytes.TrimSpace(p.Arguments)) > 0 {
+			if uerr := json.Unmarshal(p.Arguments, &args); uerr != nil {
+				return toolError("危险工具参数不是合法 JSON: " + uerr.Error()), nil
+			}
+		}
+		token, _ := args["confirm_token"].(string)
+		if strings.TrimSpace(token) == "" {
+			return toolError("危险操作需要 confirm_token：先调用 confirm_action(tool=..., params=...) 获取一次性令牌（绑定工具+参数、60s 有效）"), nil
+		}
+		delete(args, "confirm_token")
+		clean, _ := json.Marshal(args)
+		if _, perr := preflightScope(t.Name, s.opts.AllowHosts, clean); perr != nil {
+			return toolError(perr.Error()), nil
+		}
+		if s.conf == nil {
+			return toolError("确认令牌服务不可用（fail-closed），危险工具已拒绝"), nil
+		}
+		if cerr := s.conf.Consume(t.Name, clean, token); cerr != nil {
+			return toolError(cerr.Error()), nil
+		}
+		p.Arguments = clean
 	}
 	v, err := t.Handler(ctx, p.Arguments)
 	if err != nil {

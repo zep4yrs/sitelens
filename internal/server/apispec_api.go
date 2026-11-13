@@ -86,7 +86,7 @@ func (s *Server) hAPISpecGraphQL(w http.ResponseWriter, r *http.Request) {
 	}
 	// V-07：传输层交给 httpx（禁跟随重定向 + 拨号层一次解析/校验/按 IP 拨号），
 	// Resolve 跟随 scan.resolve 姿态，堵住校验与建连之间的 DNS 重绑定窗口。
-	spec, err := apispec.DiscoverGraphQL(raw, apispec.DiscoverOptions{Resolve: cfg.Scan.Resolve})
+	spec, err := apispec.DiscoverGraphQL(raw, apispec.DiscoverOptions{Resolve: cfg.Scan.Resolve, AllowedHosts: cfg.Scan.AllowHosts})
 	if err != nil {
 		writeJSON(w, 502, map[string]any{"error": err.Error()})
 		return

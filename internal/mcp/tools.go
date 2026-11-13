@@ -69,8 +69,11 @@ type Tool struct {
 	Annotations ToolAnnotations
 	// Active 主动工具：未以 --allow-active 启动时不出现在 tools/list，
 	// 被直接调用也返回 isError（与 SiteLens「主动能力默认关」一致）。
-	Active  bool
-	Handler func(context.Context, json.RawMessage) (any, error)
+	Active bool
+	// Dangerous 危险工具：除 Active 总闸外，还必须携带 confirm_action 签发的
+	// 单次确认令牌（绑定工具+参数、TTL 60s），并做 allow_hosts Pre-flight 范围检查。
+	Dangerous bool
+	Handler   func(context.Context, json.RawMessage) (any, error)
 }
 
 // toolbox 工具集共享的依赖。
@@ -78,14 +81,17 @@ type toolbox struct {
 	c        *Client
 	active   bool
 	maxBytes int
+	scope    []string
+	conf     *confirmer
 	all      []Tool
 }
 
 // newTools 构造全套工具。工具字段只读，handler 通过 toolbox 调 API。
-func newTools(c *Client, opts Options) []Tool {
-	tb := &toolbox{c: c, active: opts.Active, maxBytes: opts.MaxBytes}
+func newTools(c *Client, opts Options, conf *confirmer) []Tool {
+	tb := &toolbox{c: c, active: opts.Active, maxBytes: opts.MaxBytes, scope: opts.AllowHosts, conf: conf}
 	tools := []Tool{
 		tb.capabilitiesTool(),
+		tb.confirmTool(),
 		tb.scanTool(),
 		tb.scanStatusTool(),
 		tb.scanResultTool(),
@@ -113,10 +119,12 @@ func (t *toolbox) capabilitiesTool() Tool {
 		Annotations: ToolAnnotations{ReadOnlyHint: true, IdempotentHint: true},
 		Handler: func(ctx context.Context, raw json.RawMessage) (any, error) {
 			out := map[string]any{
-				"server":         "sitelens",
-				"mcp_protocol":   protocolVersion,
-				"active_enabled": t.active,
-				"api":            t.c.base.Redacted(),
+				"server":           "sitelens",
+				"mcp_protocol":     protocolVersion,
+				"active_enabled":   t.active,
+				"allow_hosts":      append([]string(nil), t.scope...),
+				"confirm_required": true,
+				"api":              t.c.base.Redacted(),
 				"guards": []string{
 					"target.Validate（SSRF/DNS rebinding/云 metadata）",
 					"allow_hosts 授权白名单",
@@ -151,6 +159,7 @@ func (t *toolbox) capabilitiesTool() Tool {
 func (t *toolbox) scanTool() Tool {
 	return Tool{
 		Name:        "scan",
+		Dangerous:   true,
 		Description: "对授权目标提交一次 SiteLens 扫描（异步）。返回 job_id；用 scan_status 轮询，完成后用 scan_result 取验证发现与证据链。URL 可粘贴脏地址（缺协议/hxxp/[.]/全角），服务端会做格式归一并在响应回传 input_url/normalized_url/url_corrections。",
 		Active:      true,
 		InputSchema: objectSchema(map[string]any{
@@ -598,6 +607,7 @@ func (t *toolbox) apispecTool() Tool {
 func (t *toolbox) graphqlTool() Tool {
 	return Tool{
 		Name:        "graphql_introspect",
+		Dangerous:   true,
 		Description: "对一个 GraphQL 端点做一次只读 introspection（POST 固定 query），返回类型名清单。受 SiteLens SSRF 校验与 allow_hosts 白名单约束。",
 		Active:      true,
 		InputSchema: objectSchema(map[string]any{
@@ -624,6 +634,7 @@ func (t *toolbox) graphqlTool() Tool {
 func (t *toolbox) assetsTool() Tool {
 	return Tool{
 		Name:        "assets",
+		Dangerous:   true,
 		Description: "查询目标资产线索：证书到期/SAN（kind=cert）或端口暴露（kind=ports）。只读网络探测，受 target.Validate 与 allow_hosts 约束。",
 		Active:      true,
 		InputSchema: objectSchema(map[string]any{

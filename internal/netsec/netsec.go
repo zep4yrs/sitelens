@@ -727,7 +727,7 @@ const checkHTTPMaxHops = 5
 //     gov.cn / 端口），不合规立即停止，绝不发出该跳请求；
 //   - 只跟随**同主机**跳转（允许 http→https、端口变化）。跨主机 302 是常见
 //     SSRF 跳板，而 HSTS/升级检查本身不需要跨站跟随。
-func CheckHTTP(rawURL string) []Finding {
+func CheckHTTP(rawURL string, allowHosts []string) []Finding {
 	u, err := url.Parse(strings.TrimSpace(rawURL))
 	if err != nil || u.Host == "" {
 		return nil
@@ -756,6 +756,10 @@ func CheckHTTP(rawURL string) []Finding {
 		// 逐跳静态 SSRF 校验；跨主机跳转不跟随。
 		_, host, _, verr := target.Validate(curURL, false)
 		if verr != nil || !strings.EqualFold(host, originHost) {
+			break
+		}
+		// ScopeGuard：allow_hosts 非空时，逐跳都必须命中白名单（fail-closed）。
+		if !target.Allowed(host, allowHosts) {
 			break
 		}
 		req, rerr := http.NewRequest(http.MethodGet, curURL, nil)

@@ -608,7 +608,7 @@ func TestCheckHTTPHSTS(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			srv := mk(tc.hsts)
 			defer srv.Close()
-			hits := CheckHTTP(srv.URL)
+			hits := CheckHTTP(srv.URL, nil)
 			got := findByCheck(hits, "http-hsts")
 			if tc.wantSubstr == "" {
 				if len(got) > 0 {
@@ -637,7 +637,7 @@ func TestCheckHTTPNoHTTPSRedirect(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 	}))
 	defer srv.Close()
-	hits := CheckHTTP(srv.URL)
+	hits := CheckHTTP(srv.URL, nil)
 	f := mustFind(t, hits, "http-https-redirect", "medium")
 	if !strings.Contains(f.Evidence, "http://") {
 		t.Fatalf("evidence 应记录最终 URL: %q", f.Evidence)
@@ -657,7 +657,7 @@ func TestCheckHTTPRedirectsToHTTPS(t *testing.T) {
 		http.Redirect(w, r, tlsSrv.URL+"/", http.StatusMovedPermanently)
 	}))
 	defer plainSrv.Close()
-	hits := CheckHTTP(plainSrv.URL)
+	hits := CheckHTTP(plainSrv.URL, nil)
 	if len(hits) != 0 {
 		t.Fatalf("HTTP→HTTPS 且 HSTS 合规时不应有发现: %+v", hits)
 	}
@@ -666,7 +666,7 @@ func TestCheckHTTPRedirectsToHTTPS(t *testing.T) {
 // TestCheckHTTPInvalidInput 非法/非 http(s) 输入直接返回 nil。
 func TestCheckHTTPInvalidInput(t *testing.T) {
 	for _, in := range []string{"", "not a url", "ftp://example.com/x", "example.com"} {
-		if hits := CheckHTTP(in); hits != nil {
+		if hits := CheckHTTP(in, nil); hits != nil {
 			t.Fatalf("CheckHTTP(%q) 应返回 nil, got %+v", in, hits)
 		}
 	}

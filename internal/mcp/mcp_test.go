@@ -119,7 +119,7 @@ func newTestServer(t *testing.T, apiURL string, active bool, maxBytes int) *Serv
 	if err != nil {
 		t.Fatalf("NewClient: %v", err)
 	}
-	return NewServer(c, Options{Version: "test", Active: active, MaxBytes: maxBytes})
+	return NewServer(c, Options{Version: "test", Active: active, MaxBytes: maxBytes, AllowHosts: []string{"example.com"}})
 }
 
 // runRPC 把若干请求行喂给 server，返回解析后的响应行。
@@ -270,13 +270,13 @@ func TestScanGatedWhenInactive(t *testing.T) {
 func TestScanCallsAPI(t *testing.T) {
 	f := newFakeAPI(t)
 	s := newTestServer(t, f.srv.URL, true, 0)
-	text, isErr := toolResult(t, runRPC(t, s, toolCallReq(1, "scan", map[string]any{
+	text, isErr := toolResult(t, runRPC(t, s, toolCallReq(1, "scan", withConfirm(t, s, "scan", map[string]any{
 		"url":   "https://example.com/",
 		"level": "quick",
 		"options": map[string]any{
 			"dast": true,
 		},
-	}))[0])
+	})))[0])
 	if isErr {
 		t.Fatalf("scan 失败: %s", text)
 	}
@@ -302,9 +302,9 @@ func TestScanCallsAPI(t *testing.T) {
 func TestScanReturnsURLCorrections(t *testing.T) {
 	f := newFakeAPI(t)
 	s := newTestServer(t, f.srv.URL, true, 0)
-	text, isErr := toolResult(t, runRPC(t, s, toolCallReq(1, "scan", map[string]any{
+	text, isErr := toolResult(t, runRPC(t, s, toolCallReq(1, "scan", withConfirm(t, s, "scan", map[string]any{
 		"url": "hxxp://example[.]com。",
-	}))[0])
+	})))[0])
 	if isErr {
 		t.Fatalf("scan 失败: %s", text)
 	}
