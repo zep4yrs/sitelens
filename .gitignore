@@ -95,3 +95,6 @@ tui/demo.cmd
 ml/models/go/ml_assets/sev-prior*.onnx
 ml/models/onnxruntime/
 data/onnxruntime/
+
+# 内部工作文档（审查/审计/设计稿/todo/竞品/发布欠账）：保留在本地，不进公开仓库
+docs/_internal/

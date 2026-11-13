@@ -237,7 +237,7 @@ go build -o sitelens.exe ./cmd/sitelens
 
 使用本工具产生的合规责任由使用者承担，请遵守所在司法辖区的法律法规。主动能力默认关闭且有硬上限；`*.gov.cn` 政府站点在代码层面被强制拒绝扫描，该保护无法通过配置关闭。
 
-**多租户数据面隔离已按 `tenant` 字段接线（BL-5 / A-04 已修复）**：`web.auth_mode=token` 的 HMAC 令牌 / RBAC / `X-Tenant-ID` 负责"谁是谁"；存储层（JSON/Tiered 与 SQL 后端）记录带 `tenant` 字段，`/api/history`、`/api/export`、`/api/graph`、`/api/diff`、`/api/replay`、`/api/triage`、job 等按 `{id}` 读取/删除的接口均做跨租户归属校验，不匹配一律 **404**（不泄露存在性），列表/统计只返回本租户数据。**边界如实说明**：多租户目前是「认证基座 + 单机/单库数据隔离」——SQL 后端请自行评估跨实例共享库的隔离与运维（无分布式租户配额/审计）；`web.auth_mode=none`（默认单机部署）下记录 `tenant` 为空、全局可见（既有行为不变）。细节见 [`docs/企业版-6.x.md`](docs/企业版-6.x.md)。
+**多租户数据面隔离已按 `tenant` 字段接线（BL-5 / A-04 已修复）**：`web.auth_mode=token` 的 HMAC 令牌 / RBAC / `X-Tenant-ID` 负责"谁是谁"；存储层（JSON/Tiered 与 SQL 后端）记录带 `tenant` 字段，`/api/history`、`/api/export`、`/api/graph`、`/api/diff`、`/api/replay`、`/api/triage`、job 等按 `{id}` 读取/删除的接口均做跨租户归属校验，不匹配一律 **404**（不泄露存在性），列表/统计只返回本租户数据。**边界如实说明**：多租户目前是「认证基座 + 单机/单库数据隔离」——SQL 后端请自行评估跨实例共享库的隔离与运维（无分布式租户配额/审计）；`web.auth_mode=none`（默认单机部署）下记录 `tenant` 为空、全局可见（既有行为不变）。细节见 `内部文档（不随仓库分发）`（内部文档，不随仓库分发）。
 
 ## 开源协议
 
