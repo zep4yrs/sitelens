@@ -1,13 +1,18 @@
 # 更新日志
 
-## 未发布（5.3.1 待定）
+## v5.3.1（2026-11-14）
 
-### 内置验证集元数据复核（ATT&CK / 噪声 / 安全等级）
+### 内置验证集元数据复核收尾（ATT&CK / 噪声 / 安全等级）
 
-- 1,010 条 check 全部补齐元数据：safety 全 `read_only`；noise low 877 / medium 121 / high 12；
-  ATT&CK 按证据类型归到 15 个已核对技术（T1592/T1552.001/T1133/T1595/T1613 等）；
-- 新增 `checks.MetaOf` / `checks.AllMeta` 与复核工具 `tools/checkmeta`（CSV 导出 + 分布摘要）；
-- 完整性/合法性/代表性测试纳入 CI；复核记录（方法/抽样/残余限制）在内部文档。
+- 1,010 条 check 全部补齐元数据：safety 全 `read_only`；noise low 880 / medium 118 / high 12；
+- ATT&CK 映射第二轮补齐：默认桶从 115 条收敛到 5 条（仅剩 baseurl/oversized-header/
+  put-method/host-header 等真正的主动探测）；目录列举、管理面板、配置/凭据、调试页、
+  CVE 文件读取等按上游模板语义重新归类；
+- 元数据接入产品：`Hit` 增加 attack/noise/safety；SARIF 规则 `tags` + 结果
+  `properties` 带 ATT&CK/噪声/安全等级；新增只读 API `GET /api/checks`；
+- 新增 `checks.MetaOf/AllMeta/MetaForID` 与复核工具 `tools/checkmeta`；
+- 门禁：全量元数据非空/合法/白名单、high 噪声占比 <10%、代表性断言、safety 全 read_only、
+  SARIF/API 元数据回归。
 
 ## v5.3.0（2026-11-13）
 

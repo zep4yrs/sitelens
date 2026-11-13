@@ -137,6 +137,7 @@ var apiResourceAliases = map[string]string{
 	"preflight": "scan", "diff": "scan", "graph": "scan", "replay": "scan",
 	"verified": "scan", "vuln-search": "scan", "tasks": "scan",
 	"proof":  "scan", // 5.3 P1：目标/证明链属于扫描产物
+	"checks": "scan", // 5.3.1：内置验证 check 元数据（只读）
 	"report": "report", "export": "report",
 	"asset": "asset", "assets": "asset",
 	"triage": "triage", "whitelist": "whitelist",

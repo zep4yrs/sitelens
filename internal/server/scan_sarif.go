@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"strings"
 
+	"cnb.cool/feng-qiao/sitelens/internal/checks"
 	"cnb.cool/feng-qiao/sitelens/internal/store"
 )
 
@@ -38,6 +39,7 @@ type sarifRule struct {
 	Name             string     `json:"name,omitempty"`
 	ShortDescription sarifText  `json:"shortDescription"`
 	Help             *sarifText `json:"help,omitempty"`
+	Tags             []string   `json:"tags,omitempty"` // ATT&CK 技术 ID 等
 }
 
 type sarifText struct {
@@ -51,6 +53,7 @@ type sarifResult struct {
 	Message             sarifText         `json:"message"`
 	Locations           []sarifLocation   `json:"locations,omitempty"`
 	PartialFingerprints map[string]string `json:"partialFingerprints,omitempty"`
+	Properties          map[string]string `json:"properties,omitempty"` // attack/noise/safety
 }
 
 type sarifLocation struct {
@@ -100,21 +103,29 @@ func scanSARIF(rec *store.ScanRecord) ([]byte, error) {
 	var rules []sarifRule
 	var results []sarifResult
 
-	addRule := func(id, name, desc, help string) int {
+	addRule := func(id, name, desc, help string, tags []string) int {
 		if idx, ok := ruleIndex[id]; ok {
 			return idx
 		}
 		idx := len(rules)
 		ruleIndex[id] = idx
-		r := sarifRule{ID: id, Name: name, ShortDescription: sarifText{Text: desc}}
+		r := sarifRule{ID: id, Name: name, ShortDescription: sarifText{Text: desc}, Tags: tags}
 		if help != "" {
 			r.Help = &sarifText{Text: help}
 		}
 		rules = append(rules, r)
 		return idx
 	}
-	addResult := func(ruleID, title, desc, sev string) {
-		idx := addRule(ruleID, "", title, "")
+	addResult := func(ruleID, title, desc, sev string, meta *checks.Meta) {
+		var tags []string
+		props := map[string]string{}
+		if meta != nil && len(meta.ATTACK) > 0 {
+			tags = append(tags, meta.ATTACK...)
+			props["attack"] = strings.Join(meta.ATTACK, ";")
+			props["noise"] = meta.Noise
+			props["safety"] = meta.Safety
+		}
+		idx := addRule(ruleID, "", title, "", tags)
 		fp := sha256.Sum256([]byte(ruleID + "|" + uri + "|" + title))
 		msg := title
 		if desc != "" && desc != title {
@@ -130,6 +141,7 @@ func scanSARIF(rec *store.ScanRecord) ([]byte, error) {
 				Region:           &sarifRegion{StartLine: 1},
 			}}},
 			PartialFingerprints: map[string]string{"primaryLocationLineHash": hex.EncodeToString(fp[:])},
+			Properties:          props,
 		})
 	}
 
@@ -144,7 +156,7 @@ func scanSARIF(rec *store.ScanRecord) ([]byte, error) {
 		if title == "" {
 			title = v.Name
 		}
-		addResult(ruleID, title, v.Desc, v.Severity)
+		addResult(ruleID, title, v.Desc, v.Severity, nil)
 	}
 	for _, m := range res.Verified {
 		title := mapString(m, "title", "name", "type", "check")
@@ -157,7 +169,8 @@ func scanSARIF(rec *store.ScanRecord) ([]byte, error) {
 		if src != "" {
 			ruleID = "sitelens-verified-" + sanitizeRuleID(src)
 		}
-		addResult(ruleID, title, mapString(m, "evidence", "detail", "desc"), sev)
+		meta := checks.MetaForID(mapString(m, "check"))
+		addResult(ruleID, title, mapString(m, "evidence", "detail", "desc"), sev, &meta)
 	}
 
 	out := sarifLog{
