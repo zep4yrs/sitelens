@@ -553,6 +553,18 @@ func parseDSL(lines []string, e *entry) bool {
 	return true
 }
 // strongEntry 至少一个强特征：header 判据 / word ≥ 8 字符 / regex ≥ 12 字符。
+// literalAlnum 统计正则里的字面字母数字数量：`<!--(.*?)-->` 这类“只有语法没有字面量”
+// 的正则对任何页面都成立，不能当强特征（真实误报案例：tpl-developer-notes 命中任意 HTML 注释）。
+func literalAlnum(rx string) int {
+	n := 0
+	for _, r := range rx {
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') {
+			n++
+		}
+	}
+	return n
+}
+
 func strongEntry(e *entry) bool {
 	for _, w := range append(append([]string{}, e.Contains...), e.Any...) {
 		if strongWord(w) {
@@ -560,7 +572,7 @@ func strongEntry(e *entry) bool {
 		}
 	}
 	for _, rx := range e.Regex {
-		if len(rx) >= 8 {
+		if literalAlnum(rx) >= 6 {
 			return true
 		}
 	}
