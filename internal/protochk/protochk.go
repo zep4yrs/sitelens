@@ -40,7 +40,7 @@ const (
 	// defaultForgedOrigin 伪造 Origin：不是目标站点的来源。服务端接受带该
 	// Origin 的握手即说明没做 Origin 校验（CSWSH 面）。
 	defaultForgedOrigin = "https://protochk.invalid"
-	defaultUserAgent    = "SiteLens/5.3.1 (+https://cnb.cool/feng-qiao/sitelens)"
+	defaultUserAgent    = "SiteLens/5.3.2 (+https://cnb.cool/feng-qiao/sitelens)"
 )
 
 // Options 探测参数（零值 = 默认：5s 超时、校验 TLS 证书、固定伪造 Origin）。

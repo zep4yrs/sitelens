@@ -11,7 +11,6 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -170,12 +169,13 @@ func downloadAndInstall(d updater.Decision, m updater.Manifest, userData string,
 
 	// /S = 静默（不起向导页）；安装器按 InstallDirRegKey 就地覆盖。
 	// 走到这里的唯一前提：https 下载 + 摘要匹配 + 用户已点「是」。
-	cmd := exec.Command(dest, "/S")
-	hideChildWindow(cmd)
-	if err := cmd.Start(); err != nil {
-		return fmt.Errorf("拉起安装器失败：%w", err)
+	//
+	// 5.3.2：安装器是 admin 清单，非提权进程直接 CreateProcess 会 740 失败；
+	// 改走 ShellExecute 语义（cmd start）触发 UAC，由用户确认后以管理员安装。
+	if err := launchInstaller(dest); err != nil {
+		return fmt.Errorf("拉起安装器失败（需要管理员权限）：%w", err)
 	}
-	log.Printf("安装器已启动（pid=%d），本进程退出以释放待替换文件", cmd.Process.Pid)
+	log.Printf("安装器已启动（UAC 确认后自动完成覆盖安装并重启）")
 	return nil
 }
 
@@ -270,3 +270,38 @@ func runUpdateCheckStartup(notify func(kind, title, body string)) {
 
 // quitApp 抽象「退出壳」（仅此一项需要，便于将来注入测试替身）。
 type quitApp interface{ Quit() }
+
+// runUpdateCheckAuto 启动/周期自动更新（5.3.2）：
+// auto_update 开启时直接 检查 → 下载 → 校验 → 静默安装（会弹一次 UAC），
+// 装完由安装器拉起新版本；关闭时退回「只提示」的旧行为。
+func runUpdateCheckAuto(userData string, app quitApp, notify func(kind, title, body string)) {
+	d, m, err := checkUpdate(Version)
+	if err != nil {
+		log.Printf("自动更新检查失败：%v", err)
+		return
+	}
+	switch d.State {
+	case "latest":
+		log.Printf("自动更新：已是最新版本 v%s", d.Current)
+	case "available":
+		log.Printf("自动更新：发现新版本 v%s（当前 v%s），开始下载", d.Latest, d.Current)
+		if notify != nil {
+			notify(toastInfo, "发现新版本 v"+d.Latest, "正在下载并自动安装；如弹出 UAC 请点「是」")
+		}
+		go func() {
+			always := func(string, string) bool { return true }
+			if err := downloadAndInstall(d, m, userData, always); err != nil {
+				log.Printf("自动更新失败：%v", err)
+				if notify != nil {
+					notify(toastErr, "自动更新失败", err.Error())
+				}
+				return
+			}
+			if app != nil {
+				app.Quit() // 安装器接管：覆盖安装后自动拉起新版本
+			}
+		}()
+	default:
+		log.Printf("自动更新检查异常：state=%s err=%v", d.State, d.Err)
+	}
+}

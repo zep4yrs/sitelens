@@ -46,6 +46,8 @@ const (
 // shellPrefs 壳侧用户偏好（落 <userData>/shell-prefs.json，0600）。
 type shellPrefs struct {
 	CloseAction string `json:"close_action"`
+	// AutoUpdate 启动/周期自动更新（5.3.2）：nil = 未设置（默认开启）。
+	AutoUpdate *bool `json:"auto_update,omitempty"`
 }
 
 // ShellInfo GetInfo 的返回（JSON 用 snake_case，前端直接用）。
@@ -56,6 +58,7 @@ type ShellInfo struct {
 	DataDir        string `json:"data_dir"`
 	AutoStart      bool   `json:"autostart"`
 	CloseAction    string `json:"close_action"`
+	AutoUpdate     bool   `json:"auto_update"`
 }
 
 // UpdateInfo CheckUpdate 的返回。
@@ -96,10 +99,15 @@ func newShellBridge(app *application.App, shell *shellCtx, userData, dataDir str
 	}
 	b := &ShellBridge{app: app, shell: shell, userData: userData, dataDir: dataDir}
 	b.prefs.CloseAction = closeActionExit // 默认保持历史行为：点 X 退出
+	defAuto := true                       // 默认开启自动更新（产品承诺「内置自动更新」）
+	b.prefs.AutoUpdate = &defAuto
 	if data, err := os.ReadFile(b.prefsPath()); err == nil {
 		var p shellPrefs
 		if json.Unmarshal(data, &p) == nil {
 			b.prefs.CloseAction = normalizeCloseAction(p.CloseAction)
+			if p.AutoUpdate != nil {
+				b.prefs.AutoUpdate = p.AutoUpdate
+			}
 		}
 	}
 	return b
@@ -137,6 +145,7 @@ func (b *ShellBridge) GetInfo() ShellInfo {
 		DataDir:        dataDir,
 		AutoStart:      b.GetAutoStart(),
 		CloseAction:    b.GetCloseAction(),
+		AutoUpdate:     b.GetAutoUpdate(),
 	}
 	if b.shell != nil {
 		info.EngineVersion = b.shell.EngineVersion()
@@ -235,25 +244,45 @@ func (b *ShellBridge) savePrefs(p shellPrefs) error {
 	return os.WriteFile(b.prefsPath(), append(data, '\n'), 0o600)
 }
 
-// CheckUpdate 只查询（不下载、不安装）：复用 updater 的 fail-closed 校验。
+// notifyFn 返回壳通知函数（可能为 nil）。
+func (b *ShellBridge) notifyFn() func(kind, title, body string) {
+	if b.shell != nil {
+		return b.shell.notifier.Show
+	}
+	return nil
+}
+
+// GetAutoUpdate 是否启用启动/周期自动更新（默认 true）。
+func (b *ShellBridge) GetAutoUpdate() bool {
+	b.prefsMu.Lock()
+	defer b.prefsMu.Unlock()
+	if b.prefs.AutoUpdate == nil {
+		return true
+	}
+	return *b.prefs.AutoUpdate
+}
+
+// SetAutoUpdate 持久化自动更新开关（单向动作：页面无需回包）。
+func (b *ShellBridge) SetAutoUpdate(on bool) bool {
+	b.prefsMu.Lock()
+	v := on
+	b.prefs.AutoUpdate = &v
+	prefs := b.prefs
+	b.prefsMu.Unlock()
+	if err := b.savePrefs(prefs); err != nil {
+		log.Printf("保存自动更新偏好失败：%v", err)
+	}
+	log.Printf("自动更新已%s", map[bool]string{true: "开启", false: "关闭"}[on])
+	return on
+}
+
+// CheckUpdate 5.3.2 起是"完整更新动作"而不是只查询：
+// Wails 壳没有可靠的壳→页面回包通道（见 InfoFragment 注释），设置页点「检查更新」
+// 只能单向触发；因此这里直接走 检查 → 原生确认 → 下载 → 校验 → 安装 → 退出。
+// 结果写 shell.log 与托盘通知（发现新版本/失败都会提示）。
 func (b *ShellBridge) CheckUpdate() UpdateInfo {
-	d, m, err := checkUpdate(Version)
-	if err != nil {
-		log.Printf("桥检查更新失败：%v", err)
-		return UpdateInfo{Error: err.Error()}
-	}
-	switch d.State {
-	case "available":
-		notes := m.ReleaseDate
-		return UpdateInfo{Available: true, Version: d.Latest, Current: d.Current, Feed: feedForDisplay(), Notes: notes}
-	case "latest":
-		return UpdateInfo{Available: false, Version: d.Current, Current: d.Current, Feed: feedForDisplay()}
-	default:
-		if d.Err != nil {
-			return UpdateInfo{Error: d.Err.Error()}
-		}
-		return UpdateInfo{Error: "更新检查异常"}
-	}
+	go runUpdateCheck(b.userData, b.app, b.notifyFn())
+	return UpdateInfo{Current: Version, Feed: feedForDisplay()}
 }
 
 // InstallUpdate 用户点击「安装更新」：Go 侧原生确认框（默认「否」）→ 后台下载安装。
@@ -335,6 +364,16 @@ func (b *ShellBridge) dispatch(method string, args []json.RawMessage) (any, erro
 			}
 		}
 		return b.SetCloseAction(action), nil
+	case "GetAutoUpdate":
+		return b.GetAutoUpdate(), nil
+	case "SetAutoUpdate":
+		var on bool
+		if len(args) > 0 {
+			if err := json.Unmarshal(args[0], &on); err != nil {
+				return nil, fmt.Errorf("SetAutoUpdate 参数非法")
+			}
+		}
+		return b.SetAutoUpdate(on), nil
 	case "CheckUpdate":
 		return b.CheckUpdate(), nil
 	case "OpenDataDir":
