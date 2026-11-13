@@ -138,7 +138,7 @@ var metaRules = []metaRule{
 		meta:     Meta{ATTACK: []string{"T1552.001"}, Noise: NoiseLow, Safety: SafetyReadOnly, Reason: "发布脚本/备份残留（可能含凭据）"},
 	},
 	{ // 凭据/配置文件
-		keywords: []string{"credential", "aws", "kube", "dockercfg", "docker-config", ".env", "env-", "secrets", "npmrc", "pypirc", "git-config", "git-leak", "git-logs", "tfstate", "terraform", "wp-config", "config.php", "config.inc", "config.ini", "local.xml", "settings.py", "htpasswd", "my.cnf", "redis.conf", "mongod.conf", "nginx.conf", "httpd.conf", "php.ini", "context.xml", "application.ini", "config.xml", "parameters.yml", "config.yml", "config.yaml", "config.json", "app.config", "bzr", "svn", "idea-workspace", "workspace.xml", "wpeprivate"},
+		keywords: []string{"credential", "aws", "kube", "dockercfg", "docker-config", ".env", "env-", "secrets", "npmrc", "pypirc", "git-config", "git-leak", "git-logs", "tfstate", "terraform", "wp-config", "config.php", "config.inc", "config.ini", "local.xml", "settings.py", "htpasswd", "my.cnf", "redis.conf", "mongod.conf", "nginx.conf", "httpd.conf", "php.ini", "context.xml", "application.ini", "config.xml", "parameters.yml", "config.yml", "config.yaml", "config.json", "app.config", "bzr", "svn", "idea-workspace", "workspace.xml", "wpeprivate", "web.config", "webconfig", "web.xml", "web-inf", "htaccess", "filezilla", "front-page", "_vti", "service.pwd", "database.create", "service-account", "serverless", "drupal-settings", "vscode-settings", "apcu", "rack-mini-profiler", "git-index", "hg-requires"},
 		meta:     Meta{ATTACK: []string{"T1552.001"}, Noise: NoiseLow, Safety: SafetyReadOnly, Reason: "配置文件/凭据文件泄露"},
 	},
 	{ // API 文档 / schema（先于面板规则，避免 swagger-panel 被归为管理台）
@@ -146,11 +146,11 @@ var metaRules = []metaRule{
 		meta:     Meta{ATTACK: []string{"T1592"}, Noise: NoiseLow, Safety: SafetyReadOnly, Reason: "API 文档/schema 暴露（接口清单）"},
 	},
 	{ // 暴露的管理面板 / 控制台
-		keywords: []string{"admin", "console", "manager", "dashboard", "jenkins", "gitlab", "gitea", "gogs", "jira", "confluence", "bitbucket", "portainer", "rancher", "kibana", "grafana", "zabbix", "nagios", "cacti", "phpmyadmin", "pma", "adminer", "webmin", "rabbitmq", "minio", "nexus", "artifactory", "harbor", "airflow", "superset", "metabase", "jupyter", "nifi", "nacos", "zipkin", "skywalking", "traefik", "kubernetes", "k8s-dashboard", "hudson", "teamcity", "bamboo", "sonar", "jolokia", "jmx", "web-console", "host-manager", "solr", "couchdb-fauxton", "prometheus-ui", "alertmanager", "login", "logon", "panel", "gateway", "vpn", "fortinet", "fortigate", "citrix", "pulse", "netscaler", "netscalar", "cisco", "juniper", "bigip", "sonicwall", "sophos", "globalprotect", "paloalto", "rdweb", "mlflow", "jellyfin", "axis2-detect", "drupal-install", "redcap-install", "tomcat-scripts", "profileservice", "install.php", "dashboard", "redash", "cxf", "axis2"},
+		keywords: []string{"admin", "console", "manager", "dashboard", "jenkins", "gitlab", "gitea", "gogs", "jira", "confluence", "bitbucket", "portainer", "rancher", "kibana", "grafana", "zabbix", "nagios", "cacti", "phpmyadmin", "pma", "adminer", "webmin", "rabbitmq", "minio", "nexus", "artifactory", "harbor", "airflow", "superset", "metabase", "jupyter", "nifi", "nacos", "zipkin", "skywalking", "traefik", "kubernetes", "k8s-dashboard", "hudson", "teamcity", "bamboo", "sonar", "jolokia", "jmx", "web-console", "host-manager", "solr", "couchdb-fauxton", "prometheus-ui", "alertmanager", "login", "logon", "panel", "gateway", "vpn", "fortinet", "fortigate", "citrix", "pulse", "netscaler", "netscalar", "cisco", "juniper", "bigip", "sonicwall", "sophos", "globalprotect", "paloalto", "rdweb", "mlflow", "jellyfin", "axis2-detect", "drupal-install", "redcap-install", "tomcat-scripts", "profileservice", "install.php", "dashboard", "redash", "cxf", "axis2", "argo", "drone", "flower", "geoserver", "plesk", "roundcube", "squirrelmail", "druid", "eureka", "crxde", "munin", "siteminder", "saml"},
 		meta:     Meta{ATTACK: []string{"T1133", "T1592"}, Noise: NoiseLow, Safety: SafetyReadOnly, Reason: "管理面板/控制台暴露（远程服务）"},
 	},
 	{ // 容器/编排/数据平台发现面
-		keywords: []string{"k8s", "kubernetes", "docker", "registry", "_cluster", "_nodes", "_cat", "elasticsearch", "es-", "couchdb", "mongodb", "redis", "etcd", "consul", "nomad", "vault"},
+		keywords: []string{"k8s", "kubernetes", "docker", "registry", "_cluster", "_nodes", "_cat", "elasticsearch", "es-", "couchdb", "couchbase", "clickhouse", "mongodb", "redis", "etcd", "consul", "nomad", "vault"},
 		meta:     Meta{ATTACK: []string{"T1613", "T1592"}, Noise: NoiseLow, Safety: SafetyReadOnly, Reason: "容器/数据平台发现面"},
 	},
 	{ // 系统/应用信息（phpinfo、状态页、日志、metrics）
@@ -160,6 +160,14 @@ var metaRules = []metaRule{
 	{ // 用户/账号枚举
 		keywords: []string{"wp-json", "wp/v2/users", "user-enum", "users?context", "account-discovery"},
 		meta:     Meta{ATTACK: []string{"T1087"}, Noise: NoiseLow, Safety: SafetyReadOnly, Reason: "用户/账号枚举"},
+	},
+	{ // 调试页/信息端点/组件指纹（T1592）
+		keywords: []string{"jaeger", "loki", "clockwork", "debugmode", "debug-mode", "yii-debug", "elmah", "kronos", "cgi-test", "sony-bravia", "letter-opener", "search-for-ioc", "webeditors", "ckeditor", "fckeditor", "ueditor", "wp-readme", "wp-license", "wp-xmlrpc", "registrations", "crossdomain", ".ds-store", "cert.pem", "webpack-stats", "arcgis"},
+		meta:     Meta{ATTACK: []string{"T1592"}, Noise: NoiseLow, Safety: SafetyReadOnly, Reason: "调试页/信息端点/组件指纹暴露"},
+	},
+	{ // CVE 版本/文件检测（只读探测，不是利用）
+		keywords: []string{"cve-"},
+		meta:     Meta{ATTACK: []string{"T1592"}, Noise: NoiseLow, Safety: SafetyReadOnly, Reason: "CVE 相关组件/文件只读探测（非利用）"},
 	},
 	{ // 版本/指纹识别（只暴露技术栈版本）
 		keywords: []string{"detect", "version", "fingerprint", "extractor", "tech-", "technology", "app-site-association"},
@@ -178,6 +186,9 @@ var metaRules = []metaRule{
 // MetaOf 返回单条 check 的复核元数据。
 func MetaOf(c Check) Meta {
 	if m, ok := metaOverride[c.ID]; ok {
+		return m
+	}
+	if m, ok := metaExtraOverride[c.ID]; ok {
 		return m
 	}
 	key := strings.ToLower(c.ID + " " + c.Path + " " + c.Title)
@@ -211,4 +222,15 @@ func AllMeta() map[string]Meta {
 		out[c.ID] = MetaOf(c)
 	}
 	return out
+}
+
+// MetaForID 按 check ID 查元数据（报告/SARIF 侧按 ID 反查用）。
+// 未知 ID 返回空 Meta（调用方按"无元数据"处理）。
+func MetaForID(id string) Meta {
+	for _, c := range AllChecks() {
+		if c.ID == id {
+			return MetaOf(c)
+		}
+	}
+	return Meta{}
 }

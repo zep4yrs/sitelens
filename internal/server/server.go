@@ -49,7 +49,7 @@ import (
 )
 
 // Version 服务版本。
-const Version = "5.3.0"
+const Version = "5.3.1"
 
 // categoryNames 常见技术类别中文名（对齐 Wappalyzer 类别 id）。
 var categoryNames = map[string]string{
@@ -337,6 +337,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/proof/plan", s.hProofPlan)
 	mux.HandleFunc("GET /api/proof/chains", s.hProofChains)
 	mux.HandleFunc("GET /api/graph/paths", s.hGraphPaths)
+	mux.HandleFunc("GET /api/checks", s.hChecks)
 	mux.HandleFunc("GET /api/diff", s.hDiff)
 	mux.HandleFunc("GET /api/vuln-search", s.hVulnSearch)
 	mux.HandleFunc("GET /api/verified", s.hVerified)

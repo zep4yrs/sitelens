@@ -40,6 +40,10 @@ type Hit struct {
 	Confirmed  bool         `json:"confirmed,omitempty"`  // 经独立二次确认
 	Hypothesis string       `json:"hypothesis,omitempty"` // 验证假设（2.0 证据链扩展位）
 	Impact     string       `json:"impact,omitempty"`     // 影响面说明（2.0 证据链扩展位）
+	// 5.3.1：check 元数据（ATT&CK/噪声/安全等级），供报告/SARIF/Agent 消费。
+	ATTACK []string `json:"attack,omitempty"`
+	Noise  string   `json:"noise,omitempty"`
+	Safety string   `json:"safety,omitempty"`
 }
 
 // Options 执行参数。
@@ -346,6 +350,9 @@ func runList(client *httpx.Client, targetURL string, list []Check,
 						Signals:   strings.Split(reason, " + "),
 						Replay:    curlReplay(u, chk.Match),
 						Confirmed: true,
+						ATTACK:    MetaOf(chk).ATTACK,
+						Noise:     MetaOf(chk).Noise,
+						Safety:    MetaOf(chk).Safety,
 					}
 					mu.Lock()
 					if onHit != nil {
