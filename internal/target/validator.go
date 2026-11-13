@@ -8,6 +8,7 @@ import (
 	"net/netip"
 	"net/url"
 	"strings"
+	"sync/atomic"
 )
 
 // Error 校验失败（消息可直接展示给用户）。
@@ -66,7 +67,7 @@ func hostBlocked(host string) bool {
 	if alwaysBlockedHosts[host] {
 		return true
 	}
-	if allowPrivate {
+	if allowPrivate.Load() {
 		return false
 	}
 	return blockedHosts[host] || strings.HasSuffix(host, ".local") ||
@@ -84,10 +85,12 @@ func isGovCn(host string) bool {
 // 行为与既往版本一致）。由引擎装配层按 target.allow_private 配置置位；
 // 开启后仅放宽私网/保留地址与本地主机名校验——云厂商 metadata 端点与
 // gov.cn 硬保护不受本开关影响、永不放宽。
-var allowPrivate bool
+var allowPrivate atomic.Bool
 
 // SetAllowPrivate 装配层接线（engine.New / server 装配按配置调用）。
-func SetAllowPrivate(v bool) { allowPrivate = v }
+// atomic：装配层可能与其他扫描 goroutine 并发执行（server 多实例/测试并发），
+// 普通 bool 会触发数据竞争（CI -race 已实抓）。
+func SetAllowPrivate(v bool) { allowPrivate.Store(v) }
 
 // Validate 校验并规范化 URL，返回 (scheme, host, port)。
 // resolve=true 时做 DNS 解析并逐 IP 校验私网/保留地址。
@@ -182,7 +185,7 @@ func ValidateHostPort(scheme, host string, port int, resolve bool) error {
 		if isAlwaysBlockedIP(addr) {
 			return &Error{"云厂商元数据端点受代码级保护，SiteLens 拒绝探测（不可通过配置关闭）"}
 		}
-		if !allowPrivate && isBlockedIP(addr) {
+		if !allowPrivate.Load() && isBlockedIP(addr) {
 			return &Error{"目标是内网/保留地址，已拦截"}
 		}
 		return nil
@@ -238,7 +241,7 @@ func ValidateIP(addr netip.Addr) error {
 	if isAlwaysBlockedIP(addr) {
 		return &Error{"云厂商元数据端点受代码级保护，SiteLens 拒绝探测（不可通过配置关闭）"}
 	}
-	if !allowPrivate && isBlockedIP(addr) {
+	if !allowPrivate.Load() && isBlockedIP(addr) {
 		return &Error{"目标解析到内网/保留地址，已拦截"}
 	}
 	return nil
@@ -262,7 +265,7 @@ func ValidateIPs(addrs []netip.Addr) error {
 }
 
 // AllowPrivate 返回当前 allow_private 姿态（拨号层与测试复用）。
-func AllowPrivate() bool { return allowPrivate }
+func AllowPrivate() bool { return allowPrivate.Load() }
 
 // reservedPrefixes 特殊用途/保留地址段（V-19）：既不是合法的公网扫描目标，
 // 也可能被当作 SSRF 跳板。重点说明几条：
