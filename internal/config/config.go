@@ -136,7 +136,10 @@ type ScanConfig struct {
 	RateIntervalMS int    `yaml:"rate_interval_ms"` // 请求最小间隔（毫秒）——0/负值回退默认 400；polite 档固定间隔
 	RateMode       string `yaml:"rate_mode"`        // 限速档位：balanced（自适应，默认）/ polite（固定 rate_interval_ms，兼容旧行为）
 	RateMaxRPS     int    `yaml:"rate_max_rps"`     // balanced 档硬上限（req/s/主机，默认 8≈125ms；调低更保守，调高最多 10）
-	Preflight      bool   `yaml:"preflight"`        // 输入目标后自动发 1 次只读预检（供建议卡；开始扫描时复用为首页）；false = 完全关闭
+	// Opsec 噪声档位（5.3）：stealth/evasive/balanced/noisy；只调请求节奏与检测面，
+	// 不突破 5 req/s 代码红线。空/未知按 balanced。
+	Opsec     string `yaml:"opsec"`
+	Preflight bool   `yaml:"preflight"` // 输入目标后自动发 1 次只读预检（供建议卡；开始扫描时复用为首页）；false = 完全关闭
 	// AllowHosts 授权白名单（空 = 不限制）：精确域名或 "*.example.com" 后缀；
 	// 不在白名单的目标在扫描/网络层检测前直接拒绝（SSRF/gov.cn 等硬闸门不受影响）。
 	AllowHosts    []string `yaml:"allow_hosts"`
@@ -318,6 +321,7 @@ func Default() *Config {
 		Scan: ScanConfig{
 			RateIntervalMS: 400,
 			RateMode:       "balanced",
+			Opsec:          "balanced",
 			RateMaxRPS:     8,
 			Preflight:      true,
 			TimeoutSec:     15,
