@@ -293,6 +293,8 @@ func (e *Engine) scanImpl(rawURL string, opts Options, onProgress progress, canc
 	// A-09 配置快照：本次扫描（含其内部 goroutine）全程只用这里取到的一份，
 	// 设置页热更新只影响下一次扫描，避免扫描中途换枪导致前后段配置不一致。
 	cfg := e.Config()
+	// OPSEC 档位：stealth 收窄检测面（只核心 check、关模板池/利用级验证）。
+	opts = applyOpsecChecks(opts, cfg.Scan.Opsec)
 	if cfg == nil { // 防御：调用方未通过 New/SetConfig 注入配置
 		cfg = config.Default()
 	}
@@ -1329,16 +1331,18 @@ func (e *Engine) newClientWith(cfg *config.Config, opts Options) *httpx.Client {
 		cfg = config.Default()
 	}
 	sc := cfg.Scan
+	interval, maxRPS, adaptive := opsecRate(sc.Opsec,
+		time.Duration(sc.RateIntervalMS)*time.Millisecond, sc.RateMaxRPS, sc.RateMode == "balanced")
 	return httpx.NewWithOptions(httpx.ClientOptions{
-		Interval:     time.Duration(sc.RateIntervalMS) * time.Millisecond,
+		Interval:     interval,
 		Timeout:      time.Duration(sc.TimeoutSec) * time.Second,
 		MaxHops:      sc.MaxHops,
 		MaxBodyBytes: sc.MaxBodyMB * 1024 * 1024,
 		UserAgent:    uaFor(sc.UserAgent, opts.BrowserUA),
 		AuthCookie:   opts.AuthCookie,
 		Resolve:      sc.Resolve,
-		Adaptive:     sc.RateMode == "balanced",
-		MaxRPS:       sc.RateMaxRPS,
+		Adaptive:     adaptive,
+		MaxRPS:       maxRPS,
 		AllowedHosts: sc.AllowHosts,
 	})
 }

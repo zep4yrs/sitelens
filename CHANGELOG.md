@@ -1,5 +1,51 @@
 # 更新日志
 
+## v5.3.0（2026-11-13）
+
+> 5.2.3 之后的安全与验证能力升级；默认扫描行为与 5.2.3 一致（新能力全部 additive）。
+
+### 内置验证集 113 → 1,010 条
+
+- 手写核心 60 + 手写扩展 167（Spring Actuator 全端点、Jolokia、pprof、JBoss/Tomcat、
+  ES/CouchDB/MinIO/CI 数据平台面板、云/容器凭据文件、日志与仓库残留、备份/配置残留等）；
+- 模板转译 783：`tools/tpl2check` 从 afrog/nuclei 模板池提取「GET + 静态路径 + 强判据」，
+  过滤 payload/变量/利用类模板，通用页面零误报自检 + 判据签名去重；
+- 全部扩展/转译集 `Lv=1`，只在「完整/穷尽」档运行，标准档请求量不变；
+- 端到端实跑验证（`tools/checkvalidate` + 三个靶场）：通用站点/正常应用 **0 误报**，
+  暴露靶场 **30/30 命中**；报告见 [docs/5.3-验证集实跑报告.md](docs/5.3-验证集实跑报告.md)。
+
+### ScopeGuard 双层（安全）
+
+- `scan.allow_hosts` 从应用层下沉到拨号层：`httpx` 建连前校验（重定向逐跳）、
+  `netx` 协议拨号/DNS 查询校验、`netsec` 逐跳校验、GraphQL 内省透传；
+- 白名单为空保持旧行为；越权目标在拨号层零请求拒绝（fail-closed）。
+
+### MCP 危险操作确认（安全）
+
+- `scan` / `graphql_introspect` / `assets` 标记为危险工具；
+- 调用前必须用 `confirm_action` 获取一次性令牌（HMAC 绑定工具+参数、TTL 60s、单次有效），
+  并做 `allow_hosts` Pre-flight；未配置白名单时危险工具一律拒绝；
+- 新增 `--allow-hosts` / `SITELENS_MCP_ALLOW_HOSTS`；只读工具行为不变。
+
+### OPSEC 噪声档位
+
+- `scan.opsec`: `stealth` / `evasive` / `balanced`（默认）/ `noisy`；
+- `stealth`：≥1.2s/主机、≤2 req/s、只跑核心 check、关闭模板池/DAST/利用级验证；
+- `noisy`：200ms/主机、≤8 req/s；所有档位仍受 5 req/s 代码红线约束。
+
+### 目标导向证明链 + 攻击图路径（只读）
+
+- 新 API：`POST/GET /api/proof/goals`、`POST /api/proof/plan`、`GET /api/proof/chains`、
+  `GET /api/graph/paths`；
+- 规划只读事实图，不发请求；每条链标注 proven/gap 与覆盖度；
+- 攻击链页新增「路径 / 瓶颈 / 证据缺口」与「规划证明链」入口。
+
+### 工程与文档
+
+- Go 1.26.11（修复 GO-2026-6859 net/http MaxBytesReader 竞态），`target.allow_private`
+  改原子读写（消除 `-race` 实抓的数据竞争）；
+- 公开仓库文档整理：产品/开发/契约/验证类保留，内部审查/设计稿/todo 等移出。
+
 ## v5.2.3（2026-11-02，待发布；自 5.1.0 升级）
 
 > **版本说明**：5.2.0 / 5.2.1 / 5.2.2 均未单独发版；本版是 5.1.0 之后的**唯一正式发布**，

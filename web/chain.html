@@ -63,6 +63,7 @@
       <div class="cdd-pop"></div>
     </div>
     <button class="btn small" onclick="loadChain()">刷新</button>
+    <button class="btn ghost small" onclick="planProof()">规划证明链</button>
     <button class="btn ghost small" id="copy-json" style="display:none">复制链路 JSON</button>
     <a class="btn ghost small" id="dl" href="#" style="display:none">下载 graph JSONL</a>
   </div>
@@ -70,6 +71,10 @@
   <div class="meta" id="meta" style="display:none"></div>
 
   <div id="body"><div class="empty">选择一次扫描查看攻击链</div></div>
+
+  <div id="paths"></div>
+
+  <div id="proof"></div>
 
   <div class="note" id="note" style="display:none"></div>
       </main>
@@ -153,6 +158,7 @@ function loadChain(){
 }
 
 function render(g){
+  window.__SL_LAST_GRAPH__ = g;
   var c = g.counts||{};
   var m = document.getElementById("meta");
   m.style.display="flex";
@@ -192,6 +198,62 @@ function render(g){
   fetch("/api/graph/"+g.scan_id+"/chain", { headers: apiTok() }).then(function(r){ return r.json(); }).then(function(ch){
     renderChain(g, ch);
   }).catch(function(){ renderTables(g); });
+
+  loadPaths(g.scan_id);
+}
+
+// loadPaths 5.3 P1：最短路径 / 瓶颈节点 / 证据缺口（只读）。
+function loadPaths(id){
+  var box = document.getElementById("paths");
+  if(!box){ return; }
+  fetch("/api/graph/paths?scan_id="+id, { headers: apiTok() }).then(function(r){ return r.json(); }).then(function(p){
+    if(!p || !(p.paths||[]).length){ box.innerHTML = ""; return; }
+    var h = '<h2 style="margin-top:18px">路径 / 瓶颈 / 证据缺口</h2><div class="note">';
+    (p.paths||[]).forEach(function(path, i){
+      h += "<div>#"+(i+1)+" "+(path.nodes||[]).map(esc).join(" → ")+"</div>";
+    });
+    if((p.bottlenecks||[]).length){ h += "<div>瓶颈节点："+(p.bottlenecks||[]).map(esc).join("、")+"</div>"; }
+    if((p.evidence_gaps||[]).length){ h += "<div>证据缺口边："+(p.evidence_gaps||[]).map(esc).join("、")+"</div>"; }
+    h += "</div>";
+    box.innerHTML = h;
+  }).catch(function(){});
+}
+
+// planProof 5.3 P1：为当前扫描创建目标并规划证明链（只读规划，不新增请求）。
+function planProof(){
+  var g = window.__SL_LAST_GRAPH__;
+  if(!g || !(g.entry_points||[]).length){ toast("该扫描没有入口点，无法规划", "warn"); return; }
+  var raw = (g.entry_points[0].url||"").trim();
+  if(!raw){ toast("入口点缺少 URL", "warn"); return; }
+  var box = document.getElementById("proof");
+  box.innerHTML = '<div class="note">规划中…</div>';
+  fetch("/api/proof/goals", { method:"POST", headers: apiTok({"Content-Type":"application/json"}),
+      body: JSON.stringify({title:"攻击链验证", target:raw, level:"reach"}) })
+    .then(function(r){ return r.json().then(function(j){ return {ok:r.ok, j:j}; }); })
+    .then(function(res){
+      if(!res.ok){ box.innerHTML = '<div class="note">创建目标失败：'+esc(res.j.error||"")+'</div>'; return; }
+      var goal = res.j.goal || {};
+      return fetch("/api/proof/plan", { method:"POST", headers: apiTok({"Content-Type":"application/json"}),
+          body: JSON.stringify({goal_id:goal.id, scan_id:g.scan_id}) })
+        .then(function(r){ return r.json(); })
+        .then(function(p){ renderProof(p); });
+    }).catch(function(e){ box.innerHTML = '<div class="note">规划失败：'+esc(e)+'</div>'; });
+}
+
+function renderProof(p){
+  var box = document.getElementById("proof");
+  var chains = (p && p.chains) || [];
+  if(!chains.length){ box.innerHTML = '<div class="note">未产出证明链</div>'; return; }
+  var h = '<h2 style="margin-top:18px">证明链（只读规划）</h2><div class="note">';
+  chains.slice(0,8).forEach(function(c){
+    h += "<div><b>"+esc(c.id)+"</b> · 覆盖 "+Math.round((c.coverage||0)*100)+"% · "+
+         (c.complete?"已完整证明":"存在证据缺口")+"</div>";
+    (c.steps||[]).forEach(function(s){
+      h += '<div style="padding-left:14px">['+esc(s.status)+'] '+esc(s.kind)+" · "+esc(s.title||s.node_id||"")+"</div>";
+    });
+  });
+  h += "</div>";
+  box.innerHTML = h;
 }
 
 function renderChain(g, ch){

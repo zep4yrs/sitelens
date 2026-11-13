@@ -165,7 +165,7 @@ func scanSARIF(rec *store.ScanRecord) ([]byte, error) {
 		Version: "2.1.0",
 		Runs: []sarifRun{{
 			Tool: sarifTool{Driver: sarifDriver{
-				Name: "SiteLens", Version: "5.2.3",
+				Name: "SiteLens", Version: Version,
 				InformationURI: "https://cnb.cool/feng-qiao/sitelens",
 				Rules:          rules,
 			}},

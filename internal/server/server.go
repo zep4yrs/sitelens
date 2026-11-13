@@ -39,6 +39,7 @@ import (
 	"cnb.cool/feng-qiao/sitelens/internal/modules"
 	"cnb.cool/feng-qiao/sitelens/internal/netsec"
 	"cnb.cool/feng-qiao/sitelens/internal/nuclei"
+	"cnb.cool/feng-qiao/sitelens/internal/proof"
 	"cnb.cool/feng-qiao/sitelens/internal/replay"
 	"cnb.cool/feng-qiao/sitelens/internal/resource"
 	"cnb.cool/feng-qiao/sitelens/internal/sitelens"
@@ -48,7 +49,7 @@ import (
 )
 
 // Version 服务版本。
-const Version = "5.2.3"
+const Version = "5.3.0"
 
 // categoryNames 常见技术类别中文名（对齐 Wappalyzer 类别 id）。
 var categoryNames = map[string]string{
@@ -94,6 +95,11 @@ type Server struct {
 	cfgMu    sync.Mutex
 	dataMu   sync.Mutex
 	lastData map[string]int64 // 数据文件路径 → 上次加载时的 mtime（热更新基线）
+
+	// 目标导向证明链（5.3 P1）：进程内保存目标与规划结果（只读规划，不发请求）。
+	proofMu     sync.Mutex
+	proofGoals  []proof.Goal
+	proofChains []proof.Chain
 
 	osvMu       sync.Mutex // OSV 同步互斥（同时只允许一个同步任务）
 	osvRunning  bool
@@ -325,6 +331,12 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/graph/{id}", s.hGraph)
 	mux.HandleFunc("GET /api/graph/{id}/jsonl", s.hGraphJSONL)
 	mux.HandleFunc("GET /api/graph/{id}/chain", s.hGraphChain)
+	// 5.3 P1：目标导向证明链 + 攻击图路径（只读规划，不新增请求）
+	mux.HandleFunc("GET /api/proof/goals", s.hProofGoals)
+	mux.HandleFunc("POST /api/proof/goals", s.hProofGoals)
+	mux.HandleFunc("POST /api/proof/plan", s.hProofPlan)
+	mux.HandleFunc("GET /api/proof/chains", s.hProofChains)
+	mux.HandleFunc("GET /api/graph/paths", s.hGraphPaths)
 	mux.HandleFunc("GET /api/diff", s.hDiff)
 	mux.HandleFunc("GET /api/vuln-search", s.hVulnSearch)
 	mux.HandleFunc("GET /api/verified", s.hVerified)
