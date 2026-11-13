@@ -5,6 +5,7 @@ package httpx
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -86,12 +87,17 @@ type ClientOptions struct {
 	// MaxRPS 每主机硬上限（0=默认 5）。只能让上限更保守（更小）——间隔硬下限
 	// 200ms（5 req/s 代码级红线）不因 MaxRPS 变大而突破。
 	MaxRPS int
+	// AllowedHosts 授权白名单（来自 scan.allow_hosts；空 = 不限制）。拨号层
+	// fail-closed：重定向逐跳、DNS 解析后的最终连接都必须命中白名单，
+	// 与引擎入口的应用层检查形成双层 ScopeGuard（5.3 P0）。
+	AllowedHosts []string
 }
 
 // Client 限速 HTTP 客户端（自动重定向禁用，逐跳校验后手动跟随）。
 type Client struct {
 	http      *http.Client
 	resolve   bool
+	allowed   []string
 	mu        sync.Mutex
 	userAgent string
 	maxHops   int
@@ -145,6 +151,7 @@ func NewWithOptions(o ClientOptions) *Client {
 		maxBody:   o.MaxBodyBytes,
 		cookie:    o.AuthCookie,
 		resolve:   o.Resolve,
+		allowed:   o.AllowedHosts,
 		urlStatus: make(map[string]int),
 		limiterCfg: limiterConfig{
 			adaptive:   o.Adaptive,
@@ -200,12 +207,17 @@ func NewWithOptions(o ClientOptions) *Client {
 // 的集合，只拨 IP 字面量，不重新解析、不新增候选。
 // Resolve=false（本地/内网靶场姿态）不做 DNS 级拦截，与原行为一致。
 func (c *Client) dialContext(ctx context.Context, network, addr string) (net.Conn, error) {
-	if !c.resolve {
-		return baseDialer.DialContext(ctx, network, addr)
-	}
 	host, port, err := net.SplitHostPort(addr)
 	if err != nil {
 		return nil, err
+	}
+	// ScopeGuard 拨号层：无论是否做 SSRF 解析，实际建连的主机都必须命中
+	// allow_hosts（空=不限制）。重定向逐跳都走这里，因此越权跳转也会被拒。
+	if !target.Allowed(host, c.allowed) {
+		return nil, fmt.Errorf("scope: 目标 %s 不在 allow_hosts 授权白名单（已拒绝拨号）", host)
+	}
+	if !c.resolve {
+		return baseDialer.DialContext(ctx, network, addr)
 	}
 	// 字面 IP：直接按 IP 规则校验（元数据永久阻断；私网随 allow_private）。
 	if ip, perr := netip.ParseAddr(host); perr == nil {

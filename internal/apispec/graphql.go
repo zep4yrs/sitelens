@@ -23,6 +23,9 @@ type DiscoverOptions struct {
 	// 拨号」，把 target.Validate 与真正建连之间的 DNS 重绑定窗口关掉
 	// （与 BUG-021 同一修法）。调用方按 scan.resolve 传入。
 	Resolve bool
+	// AllowedHosts 授权白名单（来自 scan.allow_hosts；空 = 不限制），
+	// 透传到 httpx 拨号层 ScopeGuard。
+	AllowedHosts []string
 }
 
 // gqlResponse introspection 响应最小结构。
@@ -72,8 +75,9 @@ func DiscoverGraphQL(endpoint string, opts ...DiscoverOptions) (*Spec, error) {
 		return nil, fmt.Errorf("apispec: 构造 introspection 请求失败: %w", err)
 	}
 	client := httpx.NewWithOptions(httpx.ClientOptions{
-		Timeout: graphqlTimeout,
-		Resolve: opt.Resolve,
+		Timeout:      graphqlTimeout,
+		Resolve:      opt.Resolve,
+		AllowedHosts: opt.AllowedHosts,
 	})
 	resp, err := client.PostJSON(u.String(), string(reqBody))
 	if err != nil {

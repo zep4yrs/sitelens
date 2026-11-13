@@ -33,6 +33,8 @@ func mcpCommand(args []string) int {
 		"启用主动工具（scan / graphql_introspect / assets）；默认关闭")
 	allowRemote := fs.Bool("allow-remote-api", false,
 		"允许连接非回环 API（默认仅本机回环，防止 MCP 成为 SSRF 跳板）")
+	allowHosts := fs.String("allow-hosts", strings.TrimSpace(os.Getenv("SITELENS_MCP_ALLOW_HOSTS")),
+		"危险工具（scan/graphql_introspect/assets）授权白名单，逗号分隔（如 example.com,*.corp.example）；空 = 危险工具一律拒绝")
 	maxBytes := fs.Int("max-bytes", 512<<10, "单次工具响应文本上限（字节）")
 	fs.Usage = func() {
 		fmt.Fprintf(os.Stderr, `sitelens mcp — MCP stdio server（供智能体调用）
@@ -68,6 +70,7 @@ flags:
 		Version:    server.Version,
 		Active:     *allowActive,
 		MaxBytes:   *maxBytes,
+		AllowHosts: splitCSV(*allowHosts),
 	})
 
 	// 诊断只走 stderr；不打印 token。
@@ -81,6 +84,17 @@ flags:
 		return 1
 	}
 	return 0
+}
+
+// splitCSV 逗号分隔列表（去空白、丢空项）。
+func splitCSV(s string) []string {
+	var out []string
+	for _, p := range strings.Split(s, ",") {
+		if p = strings.TrimSpace(p); p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
 }
 
 // firstEnv 返回第一个非空环境变量，否则返回 def。

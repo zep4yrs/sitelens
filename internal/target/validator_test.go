@@ -53,8 +53,8 @@ func TestValidateHostPortBlocksGovCn(t *testing.T) {
 // 即使 allow_private 开启（授权内网扫描的正常姿态）也不放行——
 // 元数据服务里放着临时 IAM 凭证，扫到即等于把凭证交出去（BUG-003）。
 func TestValidateBlocksCloudMetadata(t *testing.T) {
-	old := allowPrivate
-	defer func() { allowPrivate = old }()
+	old := AllowPrivate()
+	defer SetAllowPrivate(old)
 
 	ips := []string{
 		"169.254.169.254", // AWS / GCP / Azure / 阿里云
@@ -62,7 +62,7 @@ func TestValidateBlocksCloudMetadata(t *testing.T) {
 		"fd00:ec2::254",   // AWS IPv6
 	}
 	for _, priv := range []bool{false, true} {
-		allowPrivate = priv
+		SetAllowPrivate(priv)
 		for _, ip := range ips {
 			raw := "http://" + ip + "/latest/meta-data/"
 			// resolve 开与关都必须拒——元数据保护不得依赖任何开关。
@@ -80,7 +80,7 @@ func TestValidateBlocksCloudMetadata(t *testing.T) {
 
 	// 主机名形态同样永久阻断。
 	for _, host := range []string{"metadata.google.internal", "metadata.goog", "instance-data.ec2.internal"} {
-		allowPrivate = true
+		SetAllowPrivate(true)
 		if _, _, _, err := Validate("http://"+host+"/", false); err == nil {
 			t.Errorf("allow_private=true 时 %s 应被拒", host)
 		}
@@ -90,10 +90,10 @@ func TestValidateBlocksCloudMetadata(t *testing.T) {
 // TestValidateAllowPrivateStillRelaxesPrivate 回归：allow_private 仍应放宽
 // 普通私网/本机（授权靶场场景），只是不再顺带放宽云元数据端点。
 func TestValidateAllowPrivateStillRelaxesPrivate(t *testing.T) {
-	old := allowPrivate
-	defer func() { allowPrivate = old }()
+	old := AllowPrivate()
+	defer SetAllowPrivate(old)
 
-	allowPrivate = true
+	SetAllowPrivate(true)
 	if _, _, _, err := Validate("http://127.0.0.1:8080/", true); err != nil {
 		t.Errorf("allow_private=true 时本机应放行：%v", err)
 	}
@@ -102,7 +102,7 @@ func TestValidateAllowPrivateStillRelaxesPrivate(t *testing.T) {
 	}
 
 	// resolve=true（引擎默认）时，allow_private=false 应拦下私网/本机。
-	allowPrivate = false
+	SetAllowPrivate(false)
 	if _, _, _, err := Validate("http://127.0.0.1:8080/", true); err == nil {
 		t.Errorf("allow_private=false 时本机应被拒")
 	}
@@ -114,10 +114,10 @@ func TestValidateAllowPrivateStillRelaxesPrivate(t *testing.T) {
 // TestValidateIPsAllOrNothing 拨号层全量校验：解析结果里混入私网/保留地址
 // 即整体拒绝（BUG-021 防 DNS 重绑定：不能挑一个合规 IP 拨号）。
 func TestValidateIPsAllOrNothing(t *testing.T) {
-	old := allowPrivate
-	defer func() { allowPrivate = old }()
+	old := AllowPrivate()
+	defer SetAllowPrivate(old)
 
-	allowPrivate = false
+	SetAllowPrivate(false)
 	if err := ValidateIPs([]netip.Addr{
 		netip.MustParseAddr("93.184.216.34"), // example.com：公网
 		netip.MustParseAddr("127.0.0.1"),     // 混入回环 → 整体拒绝
@@ -135,7 +135,7 @@ func TestValidateIPsAllOrNothing(t *testing.T) {
 	}
 
 	// allow_private 只放宽私网/本机，不放宽云元数据端点。
-	allowPrivate = true
+	SetAllowPrivate(true)
 	if err := ValidateIPs([]netip.Addr{netip.MustParseAddr("127.0.0.1")}); err != nil {
 		t.Errorf("allow_private=true 时私网应放行：%v", err)
 	}

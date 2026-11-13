@@ -1441,7 +1441,7 @@ func (s *Server) hNetsec(w http.ResponseWriter, r *http.Request) {
 	if port > 0 && !(scheme == "http" && port == 80) && !(scheme == "https" && port == 443) {
 		probeURL = fmt.Sprintf("%s://%s:%d", scheme, host, port)
 	}
-	findings = append(findings, netsec.CheckHTTP(probeURL)...)
+	findings = append(findings, netsec.CheckHTTP(probeURL, cfg.Scan.AllowHosts)...)
 	// 证书资产线索（SAN/颁发者/到期）+ 可选端口探测（?ports=1 或 ?ports=22,443）。
 	resp := map[string]any{"host": host, "findings": findings}
 	if sans, issuer, notAfter := netsec.CheckCertAssets(host, tlsPort); len(sans) > 0 || issuer != "" || !notAfter.IsZero() {

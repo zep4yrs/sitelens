@@ -31,6 +31,9 @@ type Config struct {
 	TLSSkipVerify bool `yaml:"tls_skip_verify"` // TLS 跳过证书校验，默认 false
 	MaxReadBytes  int  `yaml:"max_read_bytes"`  // 单次读取上限，默认 64KB
 	MaxRounds     int  `yaml:"max_rounds"`      // send/recv 轮次上限，默认 4
+	// AllowedHosts 授权白名单（空 = 不限制）：与 HTTP 层同一份 scan.allow_hosts，
+	// 协议模板/非 HTTP 检测在拨号入口同样 fail-closed。
+	AllowedHosts []string `yaml:"allowed_hosts,omitempty"`
 }
 
 const (
@@ -107,6 +110,10 @@ type Conn struct {
 func Dial(t Target, cfg Config, resolve bool) (*Conn, error) {
 	if err := t.Validate(resolve); err != nil {
 		return nil, err
+	}
+	// ScopeGuard 拨号层：allow_hosts 非空时，协议目标必须命中白名单（fail-closed）。
+	if !target.Allowed(t.Host, cfg.AllowedHosts) {
+		return nil, fmt.Errorf("netx: 目标 %s 不在 allow_hosts 授权白名单（已拒绝拨号）", t.Host)
 	}
 	return dial(t, cfg)
 }
@@ -224,6 +231,9 @@ var DNSRecordTypes = map[string]bool{
 
 // DNSQuery 查询域名记录（走系统解析器，超时受 Config 约束）。
 func DNSQuery(cfg Config, host, qtype string) ([]string, error) {
+	if !target.Allowed(host, cfg.AllowedHosts) {
+		return nil, fmt.Errorf("netx: 目标 %s 不在 allow_hosts 授权白名单（已拒绝 DNS 查询）", host)
+	}
 	if !DNSRecordTypes[strings.ToUpper(qtype)] {
 		return nil, fmt.Errorf("netx: 不支持的记录类型 %q", qtype)
 	}

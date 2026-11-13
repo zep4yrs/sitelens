@@ -187,7 +187,7 @@ func CheckHost(host string, port int, mailCheck bool) []Finding {
 	if mailCheck {
 		hits = append(hits, CheckDNSMail(host)...)
 	}
-	hits = append(hits, CheckHTTP(hostURL(host, port, "https"))...)
+	hits = append(hits, CheckHTTP(hostURL(host, port, "https"), nil)...) // 批量入口无配置上下文：不追加 allow_hosts（引擎扫描路径始终传 cfg.Scan.AllowHosts）
 	return hits
 }
 

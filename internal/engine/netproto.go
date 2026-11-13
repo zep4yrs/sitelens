@@ -53,7 +53,7 @@ func (e *Engine) netprotoScan(cfg *config.Config, host string, services []module
 	// （B24 解耦：不再复用 NucleiCap，避免 HTTP 子集调参误伤协议覆盖）
 	sort.Slice(protos, func(i, j int) bool { return protos[i].Sev < protos[j].Sev })
 
-	ncfg := netx.Config{TimeoutMS: cfg.Active.ProbeTimeoutMS, MaxRounds: 4}
+	ncfg := netx.Config{TimeoutMS: cfg.Active.ProbeTimeoutMS, MaxRounds: 4, AllowedHosts: cfg.Scan.AllowHosts}
 	if ncfg.TimeoutMS <= 0 {
 		ncfg.TimeoutMS = 3000
 	}

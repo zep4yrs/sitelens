@@ -31,7 +31,7 @@ func TestCheckHTTPCrossHostRedirectNotFollowed(t *testing.T) {
 	}))
 	defer public.Close()
 
-	hits := CheckHTTP(public.URL)
+	hits := CheckHTTP(public.URL, nil)
 	if atomic.LoadInt32(&hit) != 0 {
 		t.Fatal("跨主机重定向被跟随了：内部端点收到了请求")
 	}

@@ -1208,7 +1208,7 @@ func (e *Engine) scanImpl(rawURL string, opts Options, onProgress progress, canc
 			findings = append(findings, netsec.CheckDNSMail(host)...)
 		}
 		// HSTS / HTTP→HTTPS 跳转：一次只读 GET（≤5s、丢弃正文）。
-		findings = append(findings, netsec.CheckHTTP(seedURL)...)
+		findings = append(findings, netsec.CheckHTTP(seedURL, cfg.Scan.AllowHosts)...)
 		// 端口探测默认关（额外 TCP 连接）：netsec.port_scan 显式开启。
 		if cfg.Netsec.PortScan {
 			findings = append(findings, netsec.CheckPorts(host, nil, 1500*time.Millisecond)...)
@@ -1339,6 +1339,7 @@ func (e *Engine) newClientWith(cfg *config.Config, opts Options) *httpx.Client {
 		Resolve:      sc.Resolve,
 		Adaptive:     sc.RateMode == "balanced",
 		MaxRPS:       sc.RateMaxRPS,
+		AllowedHosts: sc.AllowHosts,
 	})
 }
 
