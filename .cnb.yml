@@ -5,7 +5,7 @@
     # 镜像版本跟随 go.mod 的 toolchain 行（单一来源）：重装工具链时不必
     # 两处改。语言补丁版落后于 toolchain 时，构建会自动下载 toolchain，
     # 也保证「本地构建」与「CI 扫描」用的是同一个 go 版本。
-    image: golang:1.26.10
+    image: golang:1.26.11
   stages:
     - name: gofmt 格式检查
       script:
@@ -92,7 +92,7 @@ main:
 #   tag_push:
 #     - name: 构建桌面版（Electron 壳，唯一交付形态；更新源在 GitHub）
 #       docker:
-#         image: golang:1.26.8
+#         image: golang:1.26.11
 #       stages:
 #         - name: build
 #           script:
@@ -187,7 +187,7 @@ main:
   tag_push:
     - name: 发版构建与上传（Wails 线：Windows 安装包 + Linux deb）
       docker:
-        image: golang:1.26.8
+        image: golang:1.26.11
       stages:
         - name: release
           script:
