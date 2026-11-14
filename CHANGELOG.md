@@ -1,5 +1,26 @@
 # 更新日志
 
+## v5.3.3（2026-11-14）
+
+### 安装器升级目录修复（5.3.2 静默升级落到默认目录 / 双安装）
+
+真机验证 5.3.2 静默安装时发现：旧版本装在 `D:\Program Files\SiteLens`，
+但 5.3.2 安装器把新版装到了默认的 `C:\Program Files\SiteLens`，形成双安装。
+
+根因：NSIS 引导程序是 32 位，`.onInit` 直接读 `HKLM\Software\SiteLens\InstallDir`
+会被 WOW64 重定向到 `WOW6432Node`；本产品把安装目录写在 64 位视图
+（Section 内 `SetRegView 64`），`.onInit` 不切视图读不到 → 回退默认目录。
+
+修复：
+
+- `.onInit` 先 `SetRegView 64` 读安装目录/卸载表，读不到再回退 32 位视图，
+  最后恢复 64 位；
+- 覆盖升级（含自动更新）现在会就地更新原有安装目录，不再产生第二份安装。
+
+> 已安装 5.3.2 且被装到 `C:\Program Files\SiteLens` 的机器：先运行
+> `C:\Program Files\SiteLens\uninstall.exe` 卸载多余副本，再装 5.3.3；
+> 5.3.3 会按注册表/卸载表回到原目录（本机为 `D:\Program Files\SiteLens`）。
+
 ## v5.3.2（2026-11-14）
 
 ### 桌面版自动更新修复（真机问题：发现新版本但点了没反应）
