@@ -1,4 +1,4 @@
-﻿; SiteLens 站点透视 — Windows 安装器 (NSIS)
+; SiteLens 站点透视 — Windows 安装器 (NSIS)
 ; CI 构建: makensis -V2 -DVERSION=1.0.0 -DSTAGEDIR=SiteLens -DOUTFILE=dist/SiteLens-1.0.0-setup.exe installer/installer.nsi
 ; 注意: 本文件必须保存为 UTF-8 with BOM（makensis 中文脚本要求）
 
@@ -73,23 +73,28 @@ VIAddVersionKey /LANG=2052 "ProductVersion" "${VERSION}"
 VIAddVersionKey /LANG=2052 "LegalCopyright" "fengqiao"
 
 Section "SiteLens 站点透视" SEC_MAIN
+  ; 静默覆盖更新（/S）前先结束正在运行的旧进程并等待文件解锁：
+  ; 旧壳被 app.Quit 关闭需要时间，直接 File 覆盖会因 sitelens.exe 被占用而失败，
+  ; 表现为“安装器跑了但版本没变”。taskkill 是兜底（正常退出路径不会命中）。
+  ${If} ${Silent}
+    ExecWait '"$SYSDIR\taskkill.exe" /IM sitelens.exe /F /T'
+    ExecWait '"$SYSDIR\taskkill.exe" /IM sitelens-engine.exe /F /T'
+    Sleep 1200
+  ${EndIf}
   SetOutPath "$INSTDIR"
   ; Windows 版 makensis 的 File 不认正斜杠路径段（实测 `C:\stage/SiteLens/*.*`
   ; 会退化成 `File: Returning to: "C:"` + “no files found”），必须反斜杠。
   File /r "${SRCDIR}\${STAGEDIR}\*.*"
 
   ; 静默覆盖更新（/S，桌面壳自动更新拉起时）没有完成页——MUI_FINISHPAGE_RUN
-  ; 只作用于交互向导的完成页，静默路径下不显式处理就「装完没窗口」，用户以为
-  ; 升级失败。这里装完直接拉起新版（与完成页勾选「立即启动」同效果）。
+  ; 只作用于交互向导的完成页；静默路径的新版启动统一放在本 Section 末尾
+  ; （所有文件/注册表落盘之后），避免新进程读到半写文件。
   ;
   ; 注意（如实说明，不粉饰）：本安装器是**机器级**安装（RequestExecutionLevel
   ; admin + $PROGRAMFILES64），因此从非提权进程拉起的自动更新会弹一次 UAC。
   ; 这不影响「就地覆盖、无向导页、装完自动重开」的语义，但不是零交互升级；
   ; 要做到零 UAC 需改用户级安装（per-user + $LOCALAPPDATA），那是安装形态的
   ; 变更，另行评估。
-  ${If} ${Silent}
-    Exec "$INSTDIR\sitelens.exe"
-  ${EndIf}
 
   ; 开始菜单快捷方式
   CreateDirectory "$SMPROGRAMS\SiteLens"
@@ -112,6 +117,11 @@ Section "SiteLens 站点透视" SEC_MAIN
   WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\SiteLens" "Publisher" "fengqiao"
   WriteRegDWORD HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\SiteLens" "NoModify" 1
   WriteRegDWORD HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\SiteLens" "NoRepair" 1
+
+  ; 静默更新：所有文件/注册表落盘后再拉起新版（避免新进程读到半写文件）。
+  ${If} ${Silent}
+    Exec "$INSTDIR\sitelens.exe"
+  ${EndIf}
 
   DetailPrint "安装完成：$INSTDIR"
 SectionEnd

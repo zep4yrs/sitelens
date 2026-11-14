@@ -329,10 +329,10 @@
         <span id="updMsg" style="font-size:13px"></span>
       </div>
       <p class="note" id="updNoteDesktop">
-        桌面版：应用内置自动更新——启动时静默检查，运行期每 6 小时复查，
-        更新源按 <span class="mono">CNB → Gitee → GitHub</span> 自动轮询切换
-        （哪个通用哪个）。发现新版本即后台差量下载，完成后弹窗提示重启升级；
-        也可在托盘图标右键菜单随时手动检查。
+        桌面版：内置自动更新（默认开启）——启动后检查一次、运行期每 6 小时复查；
+        发现新版本自动下载并静默安装，安装器会请求一次管理员权限（UAC 弹窗点「是」），
+        装完自动重启新版本。也可在托盘图标右键「检查更新」手动触发。
+        关闭「桌面端 → 自动更新」后只提示、不自动安装。
       </p>
       <p class="note" id="updNoteBrowser" style="display:none">
         浏览器模式：请关注发布页获取新版本，替换二进制即可（配置与历史数据兼容）。
@@ -615,6 +615,11 @@
         <label>开机自启</label>
         <input type="checkbox" id="dkAutoStart">
         <span class="hint inline">登录后后台启动（引擎随壳）。</span>
+      </div>
+      <div class="row">
+        <label>自动更新</label>
+        <input type="checkbox" id="dkAutoUpdate">
+        <span class="hint inline">启动/每 6 小时检查；发现新版本自动下载安装（安装器会请求一次管理员权限 UAC）。</span>
       </div>
       <div class="row">
         <label>点击窗口 × 时</label>
@@ -1110,25 +1115,18 @@
     }
     var b = $("checkUpd");
     b.disabled = true;
-    m.textContent = "正在检查更新（更新源轮询：CNB → Gitee → GitHub）…";
+    m.textContent = "正在检查更新…";
     bridge.checkUpdate().then(function (r) {
       b.disabled = false;
-      if (!r) return;
-      if (r.state === "latest") {
-        m.textContent = "已是最新版本 v" + r.current + "。";
-      } else if (r.state === "available") {
-        m.textContent = "发现新版本 v" + r.latest + "，正在后台下载（更新源：" +
-          r.feed + "），完成后可在此重启升级。";
-      } else if (r.state === "dev") {
+      if (r && r.state === "sent") {
+        // 5.3.2：壳侧「检查更新」是完整动作（检查→确认→下载→校验→安装→重启），
+        // 回包通道不可用（见 bridge.js 注释），结果看托盘通知/日志。
+        m.textContent = "已发起检查更新。如有新版本会弹出确认框，确认后自动下载安装" +
+          "（安装器会请求一次管理员权限）；进度与结果见托盘通知或 %APPDATA%\\SiteLens-Wails\\shell.log。";
+      } else if (r && r.state === "dev") {
         m.textContent = "开发模式下不检查更新。";
-      } else if (r.state === "sent") {
-        // Wails 壳：回包通道不可用（见 bridge.js 顶部注释），检查结果写 shell.log /
-        // 托盘通知；页面只确认"已发起"，不误报失败。
-        m.textContent = "已发起检查（更新源轮询：CNB → Gitee → GitHub）。" +
-          "如发现新版本，壳会后台下载并在完成后提示；日志见 " +
-          "%APPDATA%\\SiteLens-Wails\\shell.log。";
       } else {
-        m.textContent = "检查失败：所有更新源均不可达（CNB / Gitee / GitHub）。";
+        m.textContent = "已发起检查更新；如未收到提示，可稍后在托盘图标右键「检查更新」重试。";
       }
     }).catch(function (e) {
       b.disabled = false;
@@ -1177,6 +1175,7 @@
       $("dkInstallDir").textContent = info.installDir || "-";
       $("dkDataDir").textContent = info.dataDir;
       $("dkAutoStart").checked = !!info.autoStart;
+      if ($("dkAutoUpdate")) $("dkAutoUpdate").checked = info.autoUpdate !== false;
       $("segClose").querySelectorAll("button").forEach(function (b) {
         b.classList.toggle("on", b.getAttribute("data-v") === info.closeAction);
       });

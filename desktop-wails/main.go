@@ -350,13 +350,25 @@ func main() {
 	// 左键单击托盘图标 = 唤起工作台（右键出菜单）；与 Electron 壳单击行为对齐。
 	tray.OnClick(func() { go safeRun("唤起工作台", shell.wakeAndFocusURL) })
 
-	// 启动静默检查一次：**只提示、不下载、不执行**（D-01）。
-	// 旧实现发现新版即后台下载并以 /S 静默安装——更新源被劫持就等于静默装马；
-	// 现在下载/安装只能从托盘「检查更新」入口触发（那里会弹原生确认对话框）。
-	// 检查失败完全静默（离线/源不可达是常态，不该打扰用户），shell.log 留痕可查。
+	// 启动/周期自动更新（5.3.2）：auto_update 默认开启——启动 8s 后检查一次，
+	// 运行期每 6 小时复查；发现新版本自动下载+校验+静默安装（会弹一次 UAC），
+	// 装完由安装器拉起新版本。关闭开关时退回「只提示、不安装」的旧行为。
+	// 更新源仍强制 https + sha512 校验（fail-closed），检查失败静默留日志。
 	go func() {
 		time.Sleep(8 * time.Second) // 让启动页/引擎就绪先走完，不抢启动期资源
-		runUpdateCheckStartup(shell.notifier.Show)
+		tick := func() {
+			if bridge != nil && bridge.GetAutoUpdate() {
+				runUpdateCheckAuto(userData, app, shell.notifier.Show)
+			} else {
+				runUpdateCheckStartup(shell.notifier.Show)
+			}
+		}
+		tick()
+		ticker := time.NewTicker(6 * time.Hour)
+		defer ticker.Stop()
+		for range ticker.C {
+			tick()
+		}
 	}()
 
 	log.Println("进入事件循环")

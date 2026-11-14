@@ -11,6 +11,7 @@
 package main
 
 import (
+	"fmt"
 	"log"
 	"os"
 	"os/exec"
@@ -32,4 +33,10 @@ func confirmInstallDialog(latest, current string) bool {
 	log.Printf("当前平台不支持自动更新安装器（v%s → v%s），已跳过；请手动下载对应平台安装包",
 		current, latest)
 	return false
+}
+
+// launchInstaller 非 Windows 平台不支持 NSIS 安装器（downloadAndInstall 会提前
+// 拒绝，不会走到这里）；返回错误而不是静默成功。
+func launchInstaller(path string) error {
+	return fmt.Errorf("当前平台不支持自动更新安装器：%s", path)
 }

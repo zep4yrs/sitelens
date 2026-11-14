@@ -160,7 +160,7 @@ test("旧方法别名：desktopSetCloseAction 值映射 + 无注入时 desktopGe
   });
   assert.deepEqual(await infoP, {
     version: "5.3.0", engineVersion: "5.3.0", installDir: "C:\\App",
-    dataDir: "C:\\Data", autoStart: true, closeAction: "tray",
+    dataDir: "C:\\Data", autoStart: true, autoUpdate: true, closeAction: "tray",
   });
 });
 

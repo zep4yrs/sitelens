@@ -94,3 +94,22 @@ func confirmInstallDialog(latest, current string) bool {
 	log.Printf("更新确认对话框返回 %d（6=是）", int(ret))
 	return int(ret) == idYes
 }
+
+// launchInstaller 拉起 NSIS 安装器（/S 静默覆盖安装）。
+//
+// 为什么不能直接 exec.Command(installer, "/S")：安装器清单是
+// RequestExecutionLevel=admin（机器级安装到 Program Files），非提权壳进程直接
+// CreateProcess 会得到 ERROR_ELEVATION_REQUIRED(740)，安装器根本起不来——
+// 这正是 5.2.3/5.3.0/5.3.1 自动更新"看起来没反应"的根因。
+//
+// 走 `cmd /c start "" installer /S` 是 ShellExecute 语义：由 shell 负责触发
+// UAC 提权（用户确认后安装器以管理员运行）。已提权进程调用则直接继承提权，
+// 不会重复弹 UAC。
+func launchInstaller(path string) error {
+	if strings.TrimSpace(path) == "" {
+		return fmt.Errorf("安装器路径为空")
+	}
+	cmd := exec.Command("cmd", "/c", "start", "", path, "/S")
+	hideChildWindow(cmd)
+	return cmd.Start()
+}

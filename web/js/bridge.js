@@ -143,6 +143,14 @@
     GetCloseAction: function () {
       return infoOr("GetCloseAction", function (i) { return i.close_action || "exit"; }, "exit");
     },
+    GetAutoUpdate: function () {
+      return infoOr("GetAutoUpdate", function (v) { return v !== false; }, true).then(asBool);
+    },
+    SetAutoUpdate: function (on) {
+      if (!shellReady()) return Promise.resolve(false);
+      send("SetAutoUpdate", [!!on]);
+      return Promise.resolve(!!on);
+    },
     SetCloseAction: function (a) {
       if (!shellReady()) return Promise.resolve("exit");
       var v = toGoAction(a);
@@ -177,6 +185,7 @@
           installDir: i.install_dir || "",
           dataDir: i.data_dir,
           autoStart: i.autostart === true,
+          autoUpdate: i.auto_update !== false,
           closeAction: toUIAction(i.close_action)
         };
       });
@@ -185,6 +194,12 @@
       if (!shellReady()) return Promise.resolve(false);
       send("SetAutoStart", [!!on]);
       return Promise.resolve(!!on);
+    },
+    desktopGetAutoUpdate: function () {
+      return api.GetAutoUpdate();
+    },
+    desktopSetAutoUpdate: function (on) {
+      return api.SetAutoUpdate(on);
     },
     desktopSetCloseAction: function (v) {
       if (!shellReady()) return Promise.resolve("quit");
