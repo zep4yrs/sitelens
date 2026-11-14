@@ -36,13 +36,30 @@ ShowUnInstDetails show
 ; 升级目录解析：优先 Software\SiteLens\InstallDir（InstallDirRegKey 已处理）；
 ; 旧版本没有该键时回退卸载表 UninstallString 的父目录，避免静默安装默认落到
 ; C:\Program Files 与旧目录形成双安装（2026-11-01 真机回归发现）。
+;
+; 5.3.3 修复：NSIS 引导程序是 32 位，默认读 HKLM\Software 会被 WOW64 重定向到
+; WOW6432Node；本产品把安装目录写在 64 位视图（Section 内 SetRegView 64），
+; 不先切视图就读不到 → 静默升级会落到默认 C:\Program Files，与旧目录（如
+; D:\Program Files\SiteLens）形成双安装。这里先切 64 位视图，读不到再回退 32 位。
 Function .onInit
+  SetRegView 64
   ReadRegStr $0 HKLM "Software\SiteLens" "InstallDir"
   ${If} $0 == ""
     ReadRegStr $0 HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\SiteLens" "UninstallString"
     ${If} $0 != ""
       ${GetParent} "$0" $0
     ${EndIf}
+  ${EndIf}
+  ${If} $0 == ""
+    SetRegView 32
+    ReadRegStr $0 HKLM "Software\SiteLens" "InstallDir"
+    ${If} $0 == ""
+      ReadRegStr $0 HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\SiteLens" "UninstallString"
+      ${If} $0 != ""
+        ${GetParent} "$0" $0
+      ${EndIf}
+    ${EndIf}
+    SetRegView 64
   ${EndIf}
   ${If} $0 != ""
     StrCpy $INSTDIR "$0"

@@ -9,4 +9,4 @@ package main
 // 校验：tools/release_local.sh 会比对 Version 与 `sitelens.exe -version`
 // 输出（引擎版本），不一致直接失败——历史上 5.0.0 发布时 README 下载入口
 // 漏改，就是没有这层「文档/包/引擎三处一致」的硬闸。
-const Version = "5.3.2"
+const Version = "5.3.3"
